@@ -3,8 +3,12 @@
 import argparse
 import sys
 
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8080
 
-def main():
+
+def main() -> None:
+    """Parse command-line arguments and launch desktop or web mode."""
     parser = argparse.ArgumentParser(
         description="Consensus - Moderated Discussion Platform"
     )
@@ -12,8 +16,8 @@ def main():
         "--web", action="store_true",
         help="Run as web server instead of desktop app",
     )
-    parser.add_argument("--host", default="0.0.0.0", help="Web server host")
-    parser.add_argument("--port", type=int, default=8080, help="Web server port")
+    parser.add_argument("--host", default=DEFAULT_HOST, help="Web server host")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Web server port")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
 
     args = parser.parse_args()

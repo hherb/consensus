@@ -1,6 +1,7 @@
 """Web server mode using aiohttp."""
 
 import asyncio
+import inspect
 import json
 import os
 
@@ -8,12 +9,18 @@ from aiohttp import web
 
 from .app import ConsensusApp
 
+# Default server settings
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8080
 
-async def launch_web(host: str = "0.0.0.0", port: int = 8080):
+
+async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
+    """Start the aiohttp web server and block until interrupted."""
     app = ConsensusApp()
-    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    static_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "static"))
 
     async def handle_api(request: web.Request) -> web.Response:
+        """Route API calls to the appropriate ConsensusApp method."""
         method = request.match_info["method"]
         try:
             data = await request.json() if request.content_length else {}
@@ -75,7 +82,7 @@ async def launch_web(host: str = "0.0.0.0", port: int = 8080):
 
         try:
             result = handler()
-            if asyncio.iscoroutine(result):
+            if inspect.isawaitable(result):
                 result = await result
             return web.json_response(
                 {"result": result, "state": app.get_state()},
@@ -84,8 +91,12 @@ async def launch_web(host: str = "0.0.0.0", port: int = 8080):
             return web.json_response({"error": str(e)}, status=500)
 
     async def serve_static(request: web.Request) -> web.Response:
+        """Serve static files with path traversal protection."""
         path = request.match_info.get("path", "") or "index.html"
-        filepath = os.path.join(static_dir, path)
+        filepath = os.path.realpath(os.path.join(static_dir, path))
+        # Prevent path traversal outside the static directory
+        if not filepath.startswith(static_dir + os.sep) and filepath != static_dir:
+            return web.Response(status=403, text="Forbidden")
         if os.path.isfile(filepath):
             return web.FileResponse(filepath)
         return web.FileResponse(os.path.join(static_dir, "index.html"))
@@ -103,4 +114,7 @@ async def launch_web(host: str = "0.0.0.0", port: int = 8080):
     site = web.TCPSite(runner, host, port)
     await site.start()
     print(f"Consensus web server running at http://{host}:{port}")
-    await asyncio.Event().wait()
+    try:
+        await asyncio.Event().wait()
+    finally:
+        await runner.cleanup()

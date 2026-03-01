@@ -1,30 +1,34 @@
 """Application state and API for the discussion system."""
 
+import logging
 import time
 from typing import Optional, Callable
 
 from .models import (
-    Discussion, Entity, EntityType, AIConfig,
-    Message, MessageRole, StoryboardEntry,
+    Discussion, Entity, EntityType, Message, MessageRole, StoryboardEntry,
 )
 from .moderator import Moderator
 from .database import Database
 from .config import get_db_path
 
+logger = logging.getLogger(__name__)
+
 
 class ConsensusApp:
     """Main application controller backed by SQLite."""
 
-    def __init__(self, db_path: str = ""):
+    def __init__(self, db_path: str = "") -> None:
         self.db = Database(db_path or get_db_path())
         self.discussion = Discussion()
         self.moderator = Moderator(self.discussion, self.db)
         self._on_update: Optional[Callable] = None
 
-    def set_update_callback(self, callback: Callable):
+    def set_update_callback(self, callback: Callable) -> None:
+        """Register a callback invoked whenever state changes."""
         self._on_update = callback
 
-    def _notify(self):
+    def _notify(self) -> None:
+        """Push current state to the registered update callback."""
         if self._on_update:
             self._on_update(self.get_state())
 
@@ -33,6 +37,7 @@ class ConsensusApp:
     # ------------------------------------------------------------------
 
     def get_state(self) -> dict:
+        """Return the complete application state for the frontend."""
         state = self.discussion.to_dict()
         state["providers"] = self.db.get_providers()
         state["saved_entities"] = self.db.get_entities()
@@ -45,19 +50,23 @@ class ConsensusApp:
     # ------------------------------------------------------------------
 
     def add_provider(self, name: str, base_url: str,
-                     api_key_env: str = "") -> dict:
+                     api_key_env: str = "") -> Optional[dict]:
+        """Add a new API provider and return its data."""
         pid = self.db.add_provider(name, base_url, api_key_env)
         return self.db.get_provider(pid)
 
-    def update_provider(self, provider_id: str, **kwargs) -> bool:
+    def update_provider(self, provider_id: str, **kwargs: object) -> bool:
+        """Update an existing provider's fields."""
         self.db.update_provider(provider_id, **kwargs)
         return True
 
     def delete_provider(self, provider_id: str) -> bool:
+        """Delete a provider by ID."""
         self.db.delete_provider(provider_id)
         return True
 
     def get_providers(self) -> list[dict]:
+        """Return all configured providers."""
         return self.db.get_providers()
 
     # ------------------------------------------------------------------
@@ -69,7 +78,7 @@ class ConsensusApp:
                     provider_id: str = "", model: str = "",
                     temperature: float = 0.7, max_tokens: int = 1024,
                     system_prompt: str = "",
-                    entity_id: str = "") -> dict:
+                    entity_id: str = "") -> Optional[dict]:
         """Create or update a persistent entity profile."""
         if entity_id:
             self.db.update_entity(
@@ -86,10 +95,12 @@ class ConsensusApp:
         return self.db.get_entity(entity_id)
 
     def delete_entity(self, entity_id: str) -> bool:
+        """Delete an entity profile by ID."""
         self.db.delete_entity(entity_id)
         return True
 
     def get_entities(self) -> list[dict]:
+        """Return all saved entity profiles."""
         return self.db.get_entities()
 
     # ------------------------------------------------------------------
@@ -97,17 +108,20 @@ class ConsensusApp:
     # ------------------------------------------------------------------
 
     def save_prompt(self, prompt_id: str, name: str, role: str,
-                    target: str, task: str, content: str) -> dict:
+                    target: str, task: str, content: str) -> Optional[dict]:
+        """Create or update a prompt template."""
         pid = self.db.save_prompt(
             prompt_id or None, name, role, target, task, content,
         )
         return self.db.get_prompt(pid)
 
     def delete_prompt(self, prompt_id: str) -> bool:
+        """Delete a prompt template by ID."""
         self.db.delete_prompt(prompt_id)
         return True
 
     def get_prompts(self) -> list[dict]:
+        """Return all prompt templates."""
         return self.db.get_prompts()
 
     # ------------------------------------------------------------------
@@ -124,7 +138,6 @@ class ConsensusApp:
 
         entity = Entity.from_db_row(row)
 
-        # Prevent duplicates
         if self.discussion.get_entity(entity_id):
             return {"error": f"{entity.name} is already in the discussion"}
 
@@ -137,6 +150,7 @@ class ConsensusApp:
         return entity.to_dict()
 
     def remove_from_discussion(self, entity_id: str) -> bool:
+        """Remove an entity from the current discussion."""
         self.discussion.entities = [
             e for e in self.discussion.entities if e.id != entity_id
         ]
@@ -149,6 +163,7 @@ class ConsensusApp:
 
     def set_moderator(self, entity_id: str,
                       also_participant: bool = False) -> bool:
+        """Designate an entity as the moderator."""
         entity = self.discussion.get_entity(entity_id)
         if entity:
             self.discussion.moderator_id = entity_id
@@ -157,6 +172,7 @@ class ConsensusApp:
         return False
 
     def set_topic(self, topic: str) -> bool:
+        """Set the discussion topic."""
         self.discussion.topic = topic
         self._notify()
         return True
@@ -166,12 +182,17 @@ class ConsensusApp:
     # ------------------------------------------------------------------
 
     def start_discussion(self, moderator_participates: bool = False) -> dict:
+        """Start a new discussion with the configured entities and topic."""
         if not self.discussion.topic:
             return {"error": "No topic set"}
         if len(self.discussion.entities) < 2:
             return {"error": "Need at least 2 participants"}
         if not self.discussion.moderator_id:
             return {"error": "No moderator designated"}
+
+        mod = self.discussion.moderator
+        if not mod:
+            return {"error": "Moderator entity not found"}
 
         # Create DB record
         did = self.db.create_discussion(
@@ -200,10 +221,9 @@ class ConsensusApp:
         self.discussion.is_active = True
 
         # Opening message from moderator
-        mod = self.discussion.moderator
+        target_type = "ai" if mod.entity_type == EntityType.AI else "human"
         open_prompt = self.moderator._resolve_prompt(
-            "moderator", "ai" if mod.entity_type == EntityType.AI else "human",
-            "open",
+            "moderator", target_type, "open",
             entity_name=mod.name,
             topic=self.discussion.topic,
             participants=", ".join(
@@ -230,6 +250,7 @@ class ConsensusApp:
         return self.get_state()
 
     def submit_human_message(self, entity_id: str, content: str) -> dict:
+        """Submit a message from a human participant."""
         entity = self.discussion.get_entity(entity_id)
         if not entity:
             return {"error": "Entity not found"}
@@ -251,6 +272,7 @@ class ConsensusApp:
         return msg.to_dict()
 
     def submit_moderator_message(self, content: str) -> dict:
+        """Submit a message from the human moderator."""
         mod = self.discussion.moderator
         if not mod:
             return {"error": "No moderator"}
@@ -268,6 +290,7 @@ class ConsensusApp:
         return msg.to_dict()
 
     async def generate_ai_turn(self) -> dict:
+        """Generate an AI participant's contribution for the current turn."""
         current = self.discussion.current_speaker
         if not current:
             return {"error": "No current speaker"}
@@ -296,15 +319,17 @@ class ConsensusApp:
                 completion_tokens=resp.completion_tokens,
                 total_tokens=resp.total_tokens,
                 latency_ms=resp.latency_ms,
-                temperature_used=current.ai_config.temperature,
+                temperature_used=current.ai_config.temperature if current.ai_config else 0,
                 prompt_id=prompt_id,
             )
             self._notify()
             return msg.to_dict()
         except Exception as e:
+            logger.exception("AI generation failed for %s", current.name)
             return {"error": f"AI generation failed: {e}"}
 
     async def complete_turn(self, moderator_summary: str = "") -> dict:
+        """Complete the current turn: generate or accept summary, advance turn order."""
         mod = self.discussion.moderator
         summary_text = ""
 
@@ -326,14 +351,17 @@ class ConsensusApp:
                         latency_ms=resp.latency_ms,
                         prompt_id=prompt_id,
                     )
-            except Exception:
-                pass
-        elif moderator_summary:
+            except Exception as e:
+                logger.exception("AI summary generation failed")
+                return {"error": f"Summary generation failed: {e}"}
+        elif mod and moderator_summary:
             summary_text = moderator_summary
             self.db.add_message(
                 self.discussion.id, mod.id, summary_text, "moderator",
                 turn_number=self.discussion.turn_number,
             )
+        elif not mod:
+            return {"error": "No moderator designated"}
         else:
             return {
                 "awaiting_moderator_summary": True,
@@ -373,6 +401,7 @@ class ConsensusApp:
         }
 
     def reassign_turn(self, entity_id: str) -> dict:
+        """Reassign the current turn to a different participant."""
         entity = self.moderator.reassign_turn(entity_id)
         if entity:
             self._notify()
@@ -380,6 +409,7 @@ class ConsensusApp:
         return {"error": "Could not reassign turn"}
 
     async def mediate(self, context: str = "") -> dict:
+        """Have the moderator intervene to mediate a conflict."""
         mod = self.discussion.moderator
         if not mod:
             return {"error": "No moderator"}
@@ -413,10 +443,12 @@ class ConsensusApp:
                 self._notify()
                 return msg.to_dict()
             except Exception as e:
+                logger.exception("Mediation failed")
                 return {"error": f"Mediation failed: {e}"}
         return {"awaiting_human_moderator": True}
 
     async def conclude_discussion(self) -> dict:
+        """End the discussion, generating a final synthesis if the moderator is AI."""
         mod = self.discussion.moderator
         if mod and mod.entity_type == EntityType.AI:
             try:
@@ -450,8 +482,9 @@ class ConsensusApp:
                     self.discussion.id, self.discussion.turn_number,
                     f"CONCLUSION: {conclusion}", mod.id,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.exception("Conclusion generation failed")
+                # Continue to mark discussion as concluded even if AI fails
 
         self.discussion.is_active = False
         if self.discussion.id:
@@ -467,7 +500,7 @@ class ConsensusApp:
     # ------------------------------------------------------------------
 
     def load_discussion(self, discussion_id: str) -> dict:
-        """Load a past discussion for review."""
+        """Load a past discussion for review, restoring full state."""
         disc = self.db.get_discussion(discussion_id)
         if not disc:
             return {"error": "Discussion not found"}
@@ -480,6 +513,12 @@ class ConsensusApp:
         msgs = [Message.from_db_row(m) for m in messages]
         sb = [StoryboardEntry.from_db_row(s) for s in storyboard]
 
+        # Restore turn order from discussion_members.turn_position
+        turn_order: list[str] = [
+            m["entity_id"] for m in members
+            if m.get("turn_position") is not None
+        ]
+
         self.discussion = Discussion(
             id=discussion_id,
             topic=disc["topic"],
@@ -487,6 +526,7 @@ class ConsensusApp:
             moderator_id=disc.get("moderator_id"),
             messages=msgs,
             storyboard=sb,
+            turn_order=turn_order,
             is_active=disc["status"] == "active",
         )
         self.moderator = Moderator(self.discussion, self.db)
@@ -494,6 +534,7 @@ class ConsensusApp:
         return self.get_state()
 
     def reset(self) -> bool:
+        """Reset to a clean state for a new discussion."""
         self.discussion = Discussion()
         self.moderator = Moderator(self.discussion, self.db)
         self._notify()

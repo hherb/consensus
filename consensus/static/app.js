@@ -11,7 +11,7 @@ class DesktopAPI {
     async updateProvider(id, n, u, k) { return await window.pywebview.api.update_provider(id, n, u, k); }
     async deleteProvider(id) { return await window.pywebview.api.delete_provider(id); }
     // Entity profiles
-    async saveEntity(p) { return await window.pywebview.api.save_entity(p.name, p.entity_type, p.avatar_color||'#3b82f6', p.provider_id||'', p.model||'', p.temperature||0.7, p.max_tokens||1024, p.system_prompt||'', p.entity_id||''); }
+    async saveEntity(p) { return await window.pywebview.api.save_entity(p.name, p.entity_type, p.avatar_color||'#3b82f6', p.provider_id||'', p.model||'', p.temperature ?? 0.7, p.max_tokens ?? 1024, p.system_prompt||'', p.entity_id||''); }
     async deleteEntity(id) { return await window.pywebview.api.delete_entity(id); }
     // Prompts
     async savePrompt(p) { return await window.pywebview.api.save_prompt(p.prompt_id||'', p.name, p.role, p.target, p.task, p.content); }
@@ -43,6 +43,11 @@ class WebAPI {
             body: JSON.stringify(data),
         });
         const json = await resp.json();
+        if (!resp.ok) {
+            const errMsg = json.error || `Server error (${resp.status})`;
+            showToast(errMsg);
+            return { error: errMsg };
+        }
         if (json.state) onStateUpdate(json.state);
         return json.result;
     }
@@ -91,17 +96,22 @@ let renderedStoryboardCount = 0;
 
 function renderMarkdown(text) {
     if (!text) return '';
-    return text
+    // Escape HTML first to prevent XSS, then apply markdown formatting
+    let html = escHtml(text);
+    return html
         .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
         .replace(/^### (.+)$/gm, '<h3>$1</h3>')
         .replace(/^## (.+)$/gm, '<h2>$1</h2>')
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.+?)\*/g, '<em>$1</em>')
         .replace(/`([^`]+)`/g, '<code>$1</code>')
-        .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
-        .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
-        .replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>')
-        .replace(/^(?!<[huplo])(.*\S.*)$/gm, '<p>$1</p>');
+        .replace(/^[-*] (.+)$/gm, '<uli>$1</uli>')
+        .replace(/^\d+\. (.+)$/gm, '<oli>$1</oli>')
+        .replace(/((?:<uli>.*<\/uli>\n?)+)/g, (m) =>
+            '<ul>' + m.replace(/<uli>/g, '<li>').replace(/<\/uli>/g, '</li>') + '</ul>')
+        .replace(/((?:<oli>.*<\/oli>\n?)+)/g, (m) =>
+            '<ol>' + m.replace(/<oli>/g, '<li>').replace(/<\/oli>/g, '</li>') + '</ol>')
+        .replace(/^(?!<[huplos])(.*\S.*)$/gm, '<p>$1</p>');
 }
 
 const $ = (sel) => document.querySelector(sel);
@@ -109,14 +119,14 @@ const $$ = (sel) => document.querySelectorAll(sel);
 function show(el) { if (typeof el === 'string') el = $(el); el?.classList.remove('hidden'); }
 function hide(el) { if (typeof el === 'string') el = $(el); el?.classList.add('hidden'); }
 
-function showToast(msg, duration = 4000) {
+function showToast(msg, duration = 4000, type = 'error') {
     const existing = $('.toast');
     if (existing) existing.remove();
     const toast = document.createElement('div');
-    toast.className = 'toast';
+    toast.className = `toast toast-${type}`;
     toast.textContent = msg;
     document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), duration);
+    setTimeout(() => { toast.classList.add('toast-fade-out'); setTimeout(() => toast.remove(), 300); }, duration);
 }
 
 function getInitials(name) {
@@ -678,7 +688,8 @@ async function onSendMessage() {
         if (result?.error) return showToast(result.error);
         const s = await api.getState();
         onStateUpdate(s);
-        await completeTurnFlow();
+        const completed = await completeTurnFlow();
+        if (completed) processCurrentTurn();
     } catch (e) {
         showToast('Failed to send: ' + e.message);
         input.disabled = false;
@@ -688,7 +699,7 @@ async function onSendMessage() {
 
 async function completeTurnFlow() {
     const mod = getEntity(state.moderator_id);
-    if (!mod) return;
+    if (!mod) return true;
     if (mod.entity_type === 'ai') {
         showTypingIndicator(mod.name + ' (summarizing)');
         try {
@@ -700,9 +711,10 @@ async function completeTurnFlow() {
             onStateUpdate(await api.getState());
         }
         renderDiscussion();
-        processCurrentTurn();
+        return true;  // Turn fully completed, caller can continue
     } else {
         promptModeratorInput('summary');
+        return false;  // Waiting for human moderator input
     }
 }
 
@@ -731,7 +743,7 @@ async function onConfirmModeratorInput() {
         if (result?.state) onStateUpdate(result.state);
         else onStateUpdate(await api.getState());
         renderDiscussion();
-        processCurrentTurn();
+        processCurrentTurn();  // Check if next speaker is AI
     } else {
         await api.submitModeratorMessage(content);
         onStateUpdate(await api.getState());
@@ -741,25 +753,28 @@ async function onConfirmModeratorInput() {
 
 async function processCurrentTurn() {
     if (!state.is_active || processing) return;
-    const speaker = getEntity(state.current_speaker_id);
-    if (!speaker) return;
-
-    if (speaker.entity_type === 'ai') {
-        processing = true;
-        showTypingIndicator(speaker.name);
-        renderDiscussion();
-        try {
+    processing = true;
+    try {
+        // Loop to handle sequential AI speakers without recursion
+        while (state.is_active) {
+            const speaker = getEntity(state.current_speaker_id);
+            if (!speaker || speaker.entity_type !== 'ai') {
+                renderDiscussion();
+                break;
+            }
+            showTypingIndicator(speaker.name);
+            renderDiscussion();
             const result = await api.generateAiTurn();
-            if (result?.error) { showToast(result.error); processing = false; return; }
+            if (result?.error) { showToast(result.error); break; }
             onStateUpdate(await api.getState());
             renderDiscussion();
-            await completeTurnFlow();
-        } catch (e) {
-            showToast('AI turn failed: ' + e.message);
+            const turnCompleted = await completeTurnFlow();
+            if (!turnCompleted) break;  // Human moderator needs input
         }
+    } catch (e) {
+        showToast('AI turn failed: ' + e.message);
+    } finally {
         processing = false;
-    } else {
-        renderDiscussion();
     }
 }
 
@@ -914,8 +929,10 @@ function bootstrap() {
     init();
 }
 
+// Bootstrap: detect pywebview or fall back to web mode
+const WEBVIEW_DETECT_TIMEOUT_MS = 500;
 if (window.pywebview) { bootstrap(); }
 else {
     window.addEventListener('pywebviewready', bootstrap);
-    setTimeout(() => { if (!api) bootstrap(); }, 500);
+    setTimeout(() => { if (!api) bootstrap(); }, WEBVIEW_DETECT_TIMEOUT_MS);
 }

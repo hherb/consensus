@@ -7,17 +7,12 @@ import os
 import time
 import uuid
 
-
-class EntityType(Enum):
-    HUMAN = "human"
-    AI = "ai"
-
-
-class MessageRole(Enum):
-    PARTICIPANT = "participant"
-    MODERATOR = "moderator"
-    SYSTEM = "system"
-
+# Default configuration values
+DEFAULT_BASE_URL = "http://localhost:11434/v1"
+DEFAULT_MODEL = "llama3"
+DEFAULT_TEMPERATURE = 0.7
+DEFAULT_MAX_TOKENS = 1024
+DEFAULT_AVATAR_COLOR = "#3b82f6"
 
 ENTITY_COLORS = [
     "#3b82f6", "#ef4444", "#22c55e", "#f59e0b",
@@ -25,18 +20,37 @@ ENTITY_COLORS = [
 ]
 
 
+def generate_id() -> str:
+    """Generate a short unique identifier."""
+    return str(uuid.uuid4())[:8]
+
+
+class EntityType(Enum):
+    """Types of discussion participants."""
+    HUMAN = "human"
+    AI = "ai"
+
+
+class MessageRole(Enum):
+    """Roles a message can have in a discussion."""
+    PARTICIPANT = "participant"
+    MODERATOR = "moderator"
+    SYSTEM = "system"
+
+
 @dataclass
 class AIConfig:
     """Configuration for an AI entity, resolved from DB + environment."""
-    base_url: str = "http://localhost:11434/v1"
+    base_url: str = DEFAULT_BASE_URL
     api_key: str = ""
-    model: str = "llama3"
-    temperature: float = 0.7
-    max_tokens: int = 1024
+    model: str = DEFAULT_MODEL
+    temperature: float = DEFAULT_TEMPERATURE
+    max_tokens: int = DEFAULT_MAX_TOKENS
     system_prompt: str = ""
     provider_id: str = ""
 
     def to_dict(self) -> dict:
+        """Serialize AI configuration to a dictionary."""
         return {
             "base_url": self.base_url,
             "model": self.model,
@@ -51,12 +65,14 @@ class AIConfig:
         """Build AIConfig from a joined entity+provider DB row."""
         api_key_env = row.get("api_key_env") or ""
         api_key = os.environ.get(api_key_env, "") if api_key_env else ""
+        temp = row.get("temperature")
+        tokens = row.get("max_tokens")
         return cls(
-            base_url=row.get("base_url") or "http://localhost:11434/v1",
+            base_url=row.get("base_url") or DEFAULT_BASE_URL,
             api_key=api_key,
-            model=row.get("model") or "llama3",
-            temperature=row.get("temperature", 0.7) or 0.7,
-            max_tokens=row.get("max_tokens", 1024) or 1024,
+            model=row.get("model") or DEFAULT_MODEL,
+            temperature=temp if temp is not None else DEFAULT_TEMPERATURE,
+            max_tokens=tokens if tokens is not None else DEFAULT_MAX_TOKENS,
             system_prompt=row.get("system_prompt") or "",
             provider_id=row.get("provider_id") or "",
         )
@@ -68,7 +84,7 @@ class Entity:
     name: str
     entity_type: EntityType
     ai_config: Optional[AIConfig] = None
-    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    id: str = field(default_factory=lambda: generate_id())
     avatar_color: str = ""
 
     def __post_init__(self):
@@ -76,6 +92,7 @@ class Entity:
             self.avatar_color = ENTITY_COLORS[hash(self.id) % len(ENTITY_COLORS)]
 
     def to_dict(self) -> dict:
+        """Serialize entity to a dictionary."""
         d = {
             "id": self.id,
             "name": self.name,
@@ -88,6 +105,7 @@ class Entity:
 
     @classmethod
     def from_db_row(cls, row: dict) -> "Entity":
+        """Build an Entity from a database row dictionary."""
         etype = EntityType(row["entity_type"])
         ai_config = AIConfig.from_db_row(row) if etype == EntityType.AI else None
         return cls(
@@ -107,7 +125,7 @@ class Message:
     content: str
     role: MessageRole = MessageRole.PARTICIPANT
     timestamp: float = field(default_factory=time.time)
-    id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    id: str = field(default_factory=lambda: generate_id())
     # AI metadata (populated only for AI-generated messages)
     model_used: str = ""
     prompt_tokens: int = 0
@@ -116,6 +134,7 @@ class Message:
     latency_ms: int = 0
 
     def to_dict(self) -> dict:
+        """Serialize message to a dictionary."""
         d = {
             "id": self.id,
             "entity_id": self.entity_id,
@@ -134,6 +153,7 @@ class Message:
 
     @classmethod
     def from_db_row(cls, row: dict) -> "Message":
+        """Build a Message from a database row dictionary."""
         return cls(
             entity_id=row["entity_id"],
             entity_name=row.get("entity_name", ""),
@@ -158,6 +178,7 @@ class StoryboardEntry:
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
+        """Serialize storyboard entry to a dictionary."""
         return {
             "turn_number": self.turn_number,
             "summary": self.summary,
@@ -167,6 +188,7 @@ class StoryboardEntry:
 
     @classmethod
     def from_db_row(cls, row: dict) -> "StoryboardEntry":
+        """Build a StoryboardEntry from a database row dictionary."""
         return cls(
             turn_number=row["turn_number"],
             summary=row["summary"],
@@ -191,6 +213,7 @@ class Discussion:
 
     @property
     def moderator(self) -> Optional[Entity]:
+        """Return the designated moderator entity, or None."""
         for e in self.entities:
             if e.id == self.moderator_id:
                 return e
@@ -198,6 +221,7 @@ class Discussion:
 
     @property
     def current_speaker(self) -> Optional[Entity]:
+        """Return the entity whose turn it is to speak, or None."""
         if not self.turn_order:
             return None
         idx = self.current_turn_index % len(self.turn_order)
@@ -205,12 +229,14 @@ class Discussion:
         return self.get_entity(speaker_id)
 
     def get_entity(self, entity_id: str) -> Optional[Entity]:
+        """Look up an entity by ID within this discussion."""
         for e in self.entities:
             if e.id == entity_id:
                 return e
         return None
 
     def to_dict(self) -> dict:
+        """Serialize the full discussion state to a dictionary."""
         return {
             "id": self.id,
             "topic": self.topic,

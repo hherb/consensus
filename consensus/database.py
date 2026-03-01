@@ -2,19 +2,27 @@
 
 import os
 import sqlite3
-import uuid
+import threading
 import time
 from typing import Optional
 
-
-def _uid() -> str:
-    return str(uuid.uuid4())[:8]
+from .models import generate_id, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_AVATAR_COLOR
 
 
 class Database:
-    def __init__(self, db_path: str):
+    """Thread-safe SQLite database for the consensus application.
+
+    All write operations are serialized via a threading lock to prevent
+    concurrent write errors when accessed from multiple threads (e.g.
+    pywebview js_api calls).
+    """
+
+    def __init__(self, db_path: str) -> None:
+        parent = os.path.dirname(db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        self._lock = threading.Lock()
         self.db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -22,104 +30,138 @@ class Database:
         self._create_tables()
         self._seed_default_prompts()
 
-    def _create_tables(self):
-        self.conn.executescript("""
-            CREATE TABLE IF NOT EXISTS providers (
-                id          TEXT PRIMARY KEY,
-                name        TEXT NOT NULL,
-                base_url    TEXT NOT NULL,
-                api_key_env TEXT NOT NULL DEFAULT '',
-                created_at  REAL NOT NULL
-            );
+    def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+        """Execute a single write statement under the lock and commit."""
+        with self._lock:
+            cur = self.conn.execute(sql, params)
+            self.conn.commit()
+            return cur
 
-            CREATE TABLE IF NOT EXISTS entities (
-                id              TEXT PRIMARY KEY,
-                name            TEXT NOT NULL,
-                entity_type     TEXT NOT NULL CHECK(entity_type IN ('human','ai')),
-                avatar_color    TEXT NOT NULL DEFAULT '#3b82f6',
-                provider_id     TEXT,
-                model           TEXT,
-                temperature     REAL DEFAULT 0.7,
-                max_tokens      INTEGER DEFAULT 1024,
-                system_prompt   TEXT DEFAULT '',
-                created_at      REAL NOT NULL,
-                updated_at      REAL NOT NULL,
-                FOREIGN KEY (provider_id) REFERENCES providers(id)
-                    ON DELETE SET NULL
-            );
+    def _create_tables(self) -> None:
+        """Create all required tables if they don't already exist."""
+        with self._lock:
+            self.conn.executescript("""
+                CREATE TABLE IF NOT EXISTS providers (
+                    id          TEXT PRIMARY KEY,
+                    name        TEXT NOT NULL,
+                    base_url    TEXT NOT NULL,
+                    api_key_env TEXT NOT NULL DEFAULT '',
+                    created_at  REAL NOT NULL
+                );
 
-            CREATE TABLE IF NOT EXISTS prompts (
-                id          TEXT PRIMARY KEY,
-                name        TEXT NOT NULL,
-                role        TEXT NOT NULL CHECK(role IN ('moderator','participant')),
-                target      TEXT NOT NULL CHECK(target IN ('ai','human')),
-                task        TEXT NOT NULL,
-                content     TEXT NOT NULL,
-                is_default  INTEGER NOT NULL DEFAULT 0,
-                created_at  REAL NOT NULL,
-                updated_at  REAL NOT NULL
-            );
+                CREATE TABLE IF NOT EXISTS entities (
+                    id              TEXT PRIMARY KEY,
+                    name            TEXT NOT NULL,
+                    entity_type     TEXT NOT NULL CHECK(entity_type IN ('human','ai')),
+                    avatar_color    TEXT NOT NULL DEFAULT '#3b82f6',
+                    provider_id     TEXT,
+                    model           TEXT,
+                    temperature     REAL DEFAULT 0.7,
+                    max_tokens      INTEGER DEFAULT 1024,
+                    system_prompt   TEXT DEFAULT '',
+                    created_at      REAL NOT NULL,
+                    updated_at      REAL NOT NULL,
+                    FOREIGN KEY (provider_id) REFERENCES providers(id)
+                        ON DELETE SET NULL
+                );
 
-            CREATE TABLE IF NOT EXISTS discussions (
-                id              TEXT PRIMARY KEY,
-                topic           TEXT NOT NULL,
-                moderator_id    TEXT,
-                started_at      REAL,
-                ended_at        REAL,
-                status          TEXT NOT NULL DEFAULT 'setup'
-                    CHECK(status IN ('setup','active','concluded')),
-                FOREIGN KEY (moderator_id) REFERENCES entities(id)
-            );
+                CREATE TABLE IF NOT EXISTS prompts (
+                    id          TEXT PRIMARY KEY,
+                    name        TEXT NOT NULL,
+                    role        TEXT NOT NULL CHECK(role IN ('moderator','participant')),
+                    target      TEXT NOT NULL CHECK(target IN ('ai','human')),
+                    task        TEXT NOT NULL,
+                    content     TEXT NOT NULL,
+                    is_default  INTEGER NOT NULL DEFAULT 0,
+                    created_at  REAL NOT NULL,
+                    updated_at  REAL NOT NULL
+                );
 
-            CREATE TABLE IF NOT EXISTS discussion_members (
-                discussion_id       TEXT NOT NULL,
-                entity_id           TEXT NOT NULL,
-                is_moderator        INTEGER NOT NULL DEFAULT 0,
-                also_participant    INTEGER NOT NULL DEFAULT 0,
-                turn_position       INTEGER,
-                PRIMARY KEY (discussion_id, entity_id),
-                FOREIGN KEY (discussion_id) REFERENCES discussions(id),
-                FOREIGN KEY (entity_id)     REFERENCES entities(id)
-            );
+                CREATE TABLE IF NOT EXISTS discussions (
+                    id              TEXT PRIMARY KEY,
+                    topic           TEXT NOT NULL,
+                    moderator_id    TEXT,
+                    started_at      REAL,
+                    ended_at        REAL,
+                    status          TEXT NOT NULL DEFAULT 'setup'
+                        CHECK(status IN ('setup','active','concluded')),
+                    FOREIGN KEY (moderator_id) REFERENCES entities(id)
+                );
 
-            CREATE TABLE IF NOT EXISTS messages (
-                id              TEXT PRIMARY KEY,
-                discussion_id   TEXT NOT NULL,
-                entity_id       TEXT NOT NULL,
-                content         TEXT NOT NULL,
-                role            TEXT NOT NULL
-                    CHECK(role IN ('participant','moderator','system')),
-                turn_number     INTEGER,
-                timestamp       REAL NOT NULL,
-                model_used      TEXT,
-                prompt_tokens   INTEGER,
-                completion_tokens INTEGER,
-                total_tokens    INTEGER,
-                latency_ms      INTEGER,
-                temperature_used REAL,
-                prompt_id       TEXT,
-                FOREIGN KEY (discussion_id) REFERENCES discussions(id),
-                FOREIGN KEY (entity_id)     REFERENCES entities(id)
-            );
+                CREATE TABLE IF NOT EXISTS discussion_members (
+                    discussion_id       TEXT NOT NULL,
+                    entity_id           TEXT NOT NULL,
+                    is_moderator        INTEGER NOT NULL DEFAULT 0,
+                    also_participant    INTEGER NOT NULL DEFAULT 0,
+                    turn_position       INTEGER,
+                    PRIMARY KEY (discussion_id, entity_id),
+                    FOREIGN KEY (discussion_id) REFERENCES discussions(id),
+                    FOREIGN KEY (entity_id)     REFERENCES entities(id)
+                );
 
-            CREATE TABLE IF NOT EXISTS storyboard_entries (
-                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                discussion_id       TEXT NOT NULL,
-                turn_number         INTEGER NOT NULL,
-                summary             TEXT NOT NULL,
-                speaker_entity_id   TEXT,
-                timestamp           REAL NOT NULL,
-                FOREIGN KEY (discussion_id)     REFERENCES discussions(id),
-                FOREIGN KEY (speaker_entity_id) REFERENCES entities(id)
-            );
-        """)
-        self.conn.commit()
+                CREATE TABLE IF NOT EXISTS messages (
+                    id              TEXT PRIMARY KEY,
+                    discussion_id   TEXT NOT NULL,
+                    entity_id       TEXT NOT NULL,
+                    content         TEXT NOT NULL,
+                    role            TEXT NOT NULL
+                        CHECK(role IN ('participant','moderator','system')),
+                    turn_number     INTEGER,
+                    timestamp       REAL NOT NULL,
+                    model_used      TEXT,
+                    prompt_tokens   INTEGER,
+                    completion_tokens INTEGER,
+                    total_tokens    INTEGER,
+                    latency_ms      INTEGER,
+                    temperature_used REAL,
+                    prompt_id       TEXT,
+                    FOREIGN KEY (discussion_id) REFERENCES discussions(id),
+                    FOREIGN KEY (entity_id)     REFERENCES entities(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS storyboard_entries (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    discussion_id       TEXT NOT NULL,
+                    turn_number         INTEGER NOT NULL,
+                    summary             TEXT NOT NULL,
+                    speaker_entity_id   TEXT,
+                    timestamp           REAL NOT NULL,
+                    FOREIGN KEY (discussion_id)     REFERENCES discussions(id),
+                    FOREIGN KEY (speaker_entity_id) REFERENCES entities(id)
+                );
+            """)
+            self.conn.commit()
+
+    # ------------------------------------------------------------------
+    # Generic helpers
+    # ------------------------------------------------------------------
+
+    def _update_row(self, table: str, row_id: str,
+                    allowed: set[str], extra_sets: Optional[dict] = None,
+                    **kwargs: object) -> None:
+        """Generic row update: filters kwargs to allowed fields, appends
+        extra_sets (e.g. updated_at), and executes a single UPDATE."""
+        sets: list[str] = []
+        vals: list[object] = []
+        for k, v in kwargs.items():
+            if k in allowed:
+                sets.append(f"{k}=?")
+                vals.append(v)
+        if extra_sets:
+            for k, v in extra_sets.items():
+                sets.append(f"{k}=?")
+                vals.append(v)
+        if sets:
+            vals.append(row_id)
+            self._execute_write(
+                f"UPDATE {table} SET {','.join(sets)} WHERE id=?", tuple(vals)
+            )
 
     # ------------------------------------------------------------------
     # Prompts
     # ------------------------------------------------------------------
 
-    def _seed_default_prompts(self):
+    def _seed_default_prompts(self) -> None:
         """Insert default prompts only if none exist yet."""
         count = self.conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0]
         if count > 0:
@@ -242,19 +284,21 @@ class Database:
             },
         ]
 
-        for d in defaults:
-            self.conn.execute(
-                "INSERT INTO prompts (id, name, role, target, task, content, "
-                "is_default, created_at, updated_at) VALUES (?,?,?,?,?,?,1,?,?)",
-                (_uid(), d["name"], d["role"], d["target"], d["task"],
-                 d["content"], now, now),
-            )
-        self.conn.commit()
+        with self._lock:
+            for d in defaults:
+                self.conn.execute(
+                    "INSERT INTO prompts (id, name, role, target, task, content, "
+                    "is_default, created_at, updated_at) VALUES (?,?,?,?,?,?,1,?,?)",
+                    (generate_id(), d["name"], d["role"], d["target"], d["task"],
+                     d["content"], now, now),
+                )
+            self.conn.commit()
 
     def get_prompts(self, role: str = "", target: str = "",
                     task: str = "") -> list[dict]:
+        """Retrieve prompts, optionally filtered by role, target, and/or task."""
         sql = "SELECT * FROM prompts WHERE 1=1"
-        params: list = []
+        params: list[str] = []
         if role:
             sql += " AND role=?"
             params.append(role)
@@ -268,6 +312,7 @@ class Database:
         return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
 
     def get_prompt(self, prompt_id: str) -> Optional[dict]:
+        """Retrieve a single prompt by ID."""
         row = self.conn.execute(
             "SELECT * FROM prompts WHERE id=?", (prompt_id,)
         ).fetchone()
@@ -275,7 +320,7 @@ class Database:
 
     def get_prompt_by_task(self, role: str, target: str,
                            task: str) -> Optional[dict]:
-        """Get the first matching prompt (prefers default)."""
+        """Get the first matching prompt for a role/target/task (prefers default)."""
         row = self.conn.execute(
             "SELECT * FROM prompts WHERE role=? AND target=? AND task=? "
             "ORDER BY is_default DESC LIMIT 1",
@@ -285,26 +330,26 @@ class Database:
 
     def save_prompt(self, prompt_id: Optional[str], name: str, role: str,
                     target: str, task: str, content: str) -> str:
+        """Create or update a prompt template. Returns the prompt ID."""
         now = time.time()
         if prompt_id:
-            self.conn.execute(
+            self._execute_write(
                 "UPDATE prompts SET name=?, role=?, target=?, task=?, "
                 "content=?, updated_at=? WHERE id=?",
                 (name, role, target, task, content, now, prompt_id),
             )
         else:
-            prompt_id = _uid()
-            self.conn.execute(
+            prompt_id = generate_id()
+            self._execute_write(
                 "INSERT INTO prompts (id,name,role,target,task,content,"
                 "is_default,created_at,updated_at) VALUES (?,?,?,?,?,?,0,?,?)",
                 (prompt_id, name, role, target, task, content, now, now),
             )
-        self.conn.commit()
         return prompt_id
 
-    def delete_prompt(self, prompt_id: str):
-        self.conn.execute("DELETE FROM prompts WHERE id=?", (prompt_id,))
-        self.conn.commit()
+    def delete_prompt(self, prompt_id: str) -> None:
+        """Delete a prompt by ID."""
+        self._execute_write("DELETE FROM prompts WHERE id=?", (prompt_id,))
 
     # ------------------------------------------------------------------
     # Providers
@@ -312,57 +357,55 @@ class Database:
 
     def add_provider(self, name: str, base_url: str,
                      api_key_env: str = "") -> str:
-        pid = _uid()
-        self.conn.execute(
+        """Add a new API provider. Returns the new provider ID."""
+        pid = generate_id()
+        self._execute_write(
             "INSERT INTO providers (id,name,base_url,api_key_env,created_at) "
             "VALUES (?,?,?,?,?)",
             (pid, name, base_url, api_key_env, time.time()),
         )
-        self.conn.commit()
         return pid
 
     def get_providers(self) -> list[dict]:
+        """Return all providers ordered by name."""
         return [dict(r) for r in
                 self.conn.execute("SELECT * FROM providers ORDER BY name")
                 .fetchall()]
 
     def get_provider(self, provider_id: str) -> Optional[dict]:
+        """Retrieve a single provider by ID."""
         row = self.conn.execute(
             "SELECT * FROM providers WHERE id=?", (provider_id,)
         ).fetchone()
         return dict(row) if row else None
 
-    def update_provider(self, provider_id: str, **kwargs):
-        allowed = {"name", "base_url", "api_key_env"}
-        sets = []
-        vals = []
-        for k, v in kwargs.items():
-            if k in allowed:
-                sets.append(f"{k}=?")
-                vals.append(v)
-        if sets:
-            vals.append(provider_id)
-            self.conn.execute(
-                f"UPDATE providers SET {','.join(sets)} WHERE id=?", vals
-            )
-            self.conn.commit()
+    def update_provider(self, provider_id: str, **kwargs: object) -> None:
+        """Update a provider's mutable fields."""
+        self._update_row(
+            "providers", provider_id,
+            allowed={"name", "base_url", "api_key_env"},
+            **kwargs,
+        )
 
-    def delete_provider(self, provider_id: str):
-        self.conn.execute("DELETE FROM providers WHERE id=?", (provider_id,))
-        self.conn.commit()
+    def delete_provider(self, provider_id: str) -> None:
+        """Delete a provider by ID."""
+        self._execute_write(
+            "DELETE FROM providers WHERE id=?", (provider_id,))
 
     # ------------------------------------------------------------------
     # Entities
     # ------------------------------------------------------------------
 
     def add_entity(self, name: str, entity_type: str,
-                   avatar_color: str = "#3b82f6",
+                   avatar_color: str = DEFAULT_AVATAR_COLOR,
                    provider_id: str = "", model: str = "",
-                   temperature: float = 0.7, max_tokens: int = 1024,
+                   temperature: float = DEFAULT_TEMPERATURE,
+                   max_tokens: int = DEFAULT_MAX_TOKENS,
                    system_prompt: str = "") -> str:
-        eid = _uid()
+        """Add a new entity profile. Returns the new entity ID."""
+        eid = generate_id()
         now = time.time()
-        self.conn.execute(
+        self._execute_write(
             "INSERT INTO entities "
             "(id,name,entity_type,avatar_color,provider_id,model,"
             "temperature,max_tokens,system_prompt,created_at,updated_at) "
@@ -371,28 +414,28 @@ class Database:
              provider_id or None, model, temperature, max_tokens,
              system_prompt, now, now),
         )
-        self.conn.commit()
         return eid
 
     def get_entities(self, entity_type: str = "") -> list[dict]:
+        """Return entities with joined provider info, optionally filtered by type."""
+        base = (
+            "SELECT e.*, p.name AS provider_name, p.base_url, "
+            "p.api_key_env FROM entities e "
+            "LEFT JOIN providers p ON e.provider_id=p.id"
+        )
         if entity_type:
             rows = self.conn.execute(
-                "SELECT e.*, p.name AS provider_name, p.base_url, "
-                "p.api_key_env FROM entities e "
-                "LEFT JOIN providers p ON e.provider_id=p.id "
-                "WHERE e.entity_type=? ORDER BY e.name",
+                f"{base} WHERE e.entity_type=? ORDER BY e.name",
                 (entity_type,),
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT e.*, p.name AS provider_name, p.base_url, "
-                "p.api_key_env FROM entities e "
-                "LEFT JOIN providers p ON e.provider_id=p.id "
-                "ORDER BY e.name",
+                f"{base} ORDER BY e.name",
             ).fetchall()
         return [dict(r) for r in rows]
 
     def get_entity(self, entity_id: str) -> Optional[dict]:
+        """Retrieve a single entity with joined provider info."""
         row = self.conn.execute(
             "SELECT e.*, p.name AS provider_name, p.base_url, "
             "p.api_key_env FROM entities e "
@@ -402,29 +445,22 @@ class Database:
         ).fetchone()
         return dict(row) if row else None
 
-    def update_entity(self, entity_id: str, **kwargs):
-        allowed = {
-            "name", "entity_type", "avatar_color", "provider_id",
-            "model", "temperature", "max_tokens", "system_prompt",
-        }
-        sets = []
-        vals = []
-        for k, v in kwargs.items():
-            if k in allowed:
-                sets.append(f"{k}=?")
-                vals.append(v)
-        if sets:
-            sets.append("updated_at=?")
-            vals.append(time.time())
-            vals.append(entity_id)
-            self.conn.execute(
-                f"UPDATE entities SET {','.join(sets)} WHERE id=?", vals
-            )
-            self.conn.commit()
+    def update_entity(self, entity_id: str, **kwargs: object) -> None:
+        """Update an entity's mutable fields."""
+        self._update_row(
+            "entities", entity_id,
+            allowed={
+                "name", "entity_type", "avatar_color", "provider_id",
+                "model", "temperature", "max_tokens", "system_prompt",
+            },
+            extra_sets={"updated_at": time.time()},
+            **kwargs,
+        )
 
-    def delete_entity(self, entity_id: str):
-        self.conn.execute("DELETE FROM entities WHERE id=?", (entity_id,))
-        self.conn.commit()
+    def delete_entity(self, entity_id: str) -> None:
+        """Delete an entity by ID."""
+        self._execute_write(
+            "DELETE FROM entities WHERE id=?", (entity_id,))
 
     # ------------------------------------------------------------------
     # Discussions
@@ -432,60 +468,56 @@ class Database:
 
     def create_discussion(self, topic: str,
                           moderator_id: str = "") -> str:
-        did = _uid()
-        self.conn.execute(
+        """Create a new discussion record. Returns the discussion ID."""
+        did = generate_id()
+        self._execute_write(
             "INSERT INTO discussions (id,topic,moderator_id,started_at,status) "
             "VALUES (?,?,?,?,?)",
             (did, topic, moderator_id or None, time.time(), "setup"),
         )
-        self.conn.commit()
         return did
 
     def get_discussions(self) -> list[dict]:
+        """Return all discussions ordered by start time (newest first)."""
         return [dict(r) for r in
                 self.conn.execute(
                     "SELECT * FROM discussions ORDER BY started_at DESC"
                 ).fetchall()]
 
     def get_discussion(self, discussion_id: str) -> Optional[dict]:
+        """Retrieve a single discussion by ID."""
         row = self.conn.execute(
             "SELECT * FROM discussions WHERE id=?", (discussion_id,)
         ).fetchone()
         return dict(row) if row else None
 
-    def update_discussion(self, discussion_id: str, **kwargs):
-        allowed = {"topic", "moderator_id", "status", "ended_at", "started_at"}
-        sets = []
-        vals = []
-        for k, v in kwargs.items():
-            if k in allowed:
-                sets.append(f"{k}=?")
-                vals.append(v)
-        if sets:
-            vals.append(discussion_id)
-            self.conn.execute(
-                f"UPDATE discussions SET {','.join(sets)} WHERE id=?", vals
-            )
-            self.conn.commit()
+    def update_discussion(self, discussion_id: str, **kwargs: object) -> None:
+        """Update a discussion's mutable fields."""
+        self._update_row(
+            "discussions", discussion_id,
+            allowed={"topic", "moderator_id", "status", "ended_at", "started_at"},
+            **kwargs,
+        )
 
     def add_discussion_member(self, discussion_id: str, entity_id: str,
                               is_moderator: bool = False,
                               also_participant: bool = False,
-                              turn_position: Optional[int] = None):
-        self.conn.execute(
+                              turn_position: Optional[int] = None) -> None:
+        """Add or update a discussion member record."""
+        self._execute_write(
             "INSERT OR REPLACE INTO discussion_members "
             "(discussion_id,entity_id,is_moderator,also_participant,"
             "turn_position) VALUES (?,?,?,?,?)",
             (discussion_id, entity_id, int(is_moderator),
              int(also_participant), turn_position),
         )
-        self.conn.commit()
 
     def get_discussion_members(self, discussion_id: str) -> list[dict]:
+        """Return all members of a discussion with joined entity and provider info."""
         rows = self.conn.execute(
-            "SELECT dm.*, e.name, e.entity_type, e.avatar_color, "
-            "e.provider_id, e.model, e.temperature, e.max_tokens, "
-            "e.system_prompt, p.base_url, p.api_key_env "
+            "SELECT dm.entity_id AS id, dm.*, e.name, e.entity_type, "
+            "e.avatar_color, e.provider_id, e.model, e.temperature, "
+            "e.max_tokens, e.system_prompt, p.base_url, p.api_key_env "
             "FROM discussion_members dm "
             "JOIN entities e ON dm.entity_id=e.id "
             "LEFT JOIN providers p ON e.provider_id=p.id "
@@ -505,8 +537,9 @@ class Database:
                     completion_tokens: int = 0, total_tokens: int = 0,
                     latency_ms: int = 0, temperature_used: float = 0,
                     prompt_id: str = "") -> str:
-        mid = _uid()
-        self.conn.execute(
+        """Store a message and return its generated ID."""
+        mid = generate_id()
+        self._execute_write(
             "INSERT INTO messages "
             "(id,discussion_id,entity_id,content,role,turn_number,"
             "timestamp,model_used,prompt_tokens,completion_tokens,"
@@ -518,10 +551,10 @@ class Database:
              latency_ms or None, temperature_used or None,
              prompt_id or None),
         )
-        self.conn.commit()
         return mid
 
     def get_messages(self, discussion_id: str) -> list[dict]:
+        """Return all messages for a discussion with entity names, ordered by time."""
         return [dict(r) for r in
                 self.conn.execute(
                     "SELECT m.*, e.name AS entity_name, e.avatar_color "
@@ -538,17 +571,18 @@ class Database:
     def add_storyboard_entry(self, discussion_id: str, turn_number: int,
                              summary: str,
                              speaker_entity_id: str = "") -> int:
-        cur = self.conn.execute(
+        """Add a storyboard entry and return its auto-generated row ID."""
+        cur = self._execute_write(
             "INSERT INTO storyboard_entries "
             "(discussion_id,turn_number,summary,speaker_entity_id,timestamp) "
             "VALUES (?,?,?,?,?)",
             (discussion_id, turn_number, summary,
              speaker_entity_id or None, time.time()),
         )
-        self.conn.commit()
-        return cur.lastrowid
+        return cur.lastrowid or 0
 
     def get_storyboard(self, discussion_id: str) -> list[dict]:
+        """Return all storyboard entries for a discussion, ordered by time."""
         return [dict(r) for r in
                 self.conn.execute(
                     "SELECT se.*, e.name AS speaker_name "
@@ -558,5 +592,6 @@ class Database:
                     (discussion_id,),
                 ).fetchall()]
 
-    def close(self):
+    def close(self) -> None:
+        """Close the database connection."""
         self.conn.close()

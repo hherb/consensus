@@ -188,7 +188,7 @@ label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-s
 }
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
-.tab-content { }
+/* .tab-content: no additional styles needed, managed via .hidden */
 
 /* Settings panels */
 .settings-panel { max-width: 700px; }
@@ -566,20 +566,24 @@ input[type="checkbox"] { width: auto; }
 }
 .reassign-item:hover { background: var(--surface-elevated); }
 
-/* Error toast */
+/* Toast notifications */
 .toast {
     position: fixed;
     bottom: 1.5rem;
     left: 50%;
     transform: translateX(-50%);
-    background: var(--error);
     color: #fff;
     padding: 0.6rem 1.2rem;
     border-radius: var(--radius);
     font-size: 0.85rem;
     z-index: 200;
     animation: fadeInUp 0.3s;
+    transition: opacity 0.3s;
 }
+.toast-error { background: var(--error); }
+.toast-success { background: var(--success); }
+.toast-info { background: var(--primary); }
+.toast-fade-out { opacity: 0; }
 @keyframes fadeInUp {
     from { opacity: 0; transform: translateX(-50%) translateY(10px); }
     to { opacity: 1; transform: translateX(-50%) translateY(0); }
