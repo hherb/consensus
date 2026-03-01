@@ -21,37 +21,65 @@ async def launch_web(host: str = "0.0.0.0", port: int = 8080):
             data = {}
 
         handlers = {
+            # State
             "get_state": lambda: app.get_state(),
-            "add_entity": lambda: app.add_entity(**data),
-            "remove_entity": lambda: app.remove_entity(data["entity_id"]),
-            "set_moderator": lambda: app.set_moderator(data["entity_id"]),
+            # Providers
+            "add_provider": lambda: app.add_provider(
+                data["name"], data["base_url"], data.get("api_key_env", "")),
+            "update_provider": lambda: app.update_provider(
+                data["provider_id"], **{
+                    k: v for k, v in data.items() if k != "provider_id"
+                }),
+            "delete_provider": lambda: app.delete_provider(
+                data["provider_id"]),
+            # Entity profiles
+            "save_entity": lambda: app.save_entity(**data),
+            "delete_entity": lambda: app.delete_entity(data["entity_id"]),
+            # Prompts
+            "save_prompt": lambda: app.save_prompt(**data),
+            "delete_prompt": lambda: app.delete_prompt(data["prompt_id"]),
+            # Discussion setup
+            "add_to_discussion": lambda: app.add_to_discussion(
+                data["entity_id"],
+                data.get("is_moderator", False),
+                data.get("also_participant", False)),
+            "remove_from_discussion": lambda: app.remove_from_discussion(
+                data["entity_id"]),
+            "set_moderator": lambda: app.set_moderator(
+                data["entity_id"], data.get("also_participant", False)),
             "set_topic": lambda: app.set_topic(data["topic"]),
-            "start_discussion": lambda: app.start_discussion(),
+            # Discussion lifecycle
+            "start_discussion": lambda: app.start_discussion(
+                data.get("moderator_participates", False)),
             "submit_human_message": lambda: app.submit_human_message(
-                data["entity_id"], data["content"]
-            ),
+                data["entity_id"], data["content"]),
             "submit_moderator_message": lambda: app.submit_moderator_message(
-                data["content"]
-            ),
+                data["content"]),
             "generate_ai_turn": lambda: app.generate_ai_turn(),
             "complete_turn": lambda: app.complete_turn(
-                data.get("moderator_summary", "")
-            ),
+                data.get("moderator_summary", "")),
             "reassign_turn": lambda: app.reassign_turn(data["entity_id"]),
             "mediate": lambda: app.mediate(data.get("context", "")),
             "conclude": lambda: app.conclude_discussion(),
+            # History
+            "load_discussion": lambda: app.load_discussion(
+                data["discussion_id"]),
             "reset": lambda: app.reset(),
         }
 
         handler = handlers.get(method)
         if not handler:
-            return web.json_response({"error": f"Unknown method: {method}"}, status=404)
+            return web.json_response(
+                {"error": f"Unknown method: {method}"}, status=404,
+            )
 
         try:
             result = handler()
             if asyncio.iscoroutine(result):
                 result = await result
-            return web.json_response({"result": result, "state": app.get_state()})
+            return web.json_response(
+                {"result": result, "state": app.get_state()},
+            )
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
@@ -64,7 +92,10 @@ async def launch_web(host: str = "0.0.0.0", port: int = 8080):
 
     webapp = web.Application()
     webapp.router.add_post("/api/{method}", handle_api)
-    webapp.router.add_get("/", lambda r: web.FileResponse(os.path.join(static_dir, "index.html")))
+    webapp.router.add_get(
+        "/", lambda r: web.FileResponse(
+            os.path.join(static_dir, "index.html")),
+    )
     webapp.router.add_get("/{path:.*}", serve_static)
 
     runner = web.AppRunner(webapp)

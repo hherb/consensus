@@ -9,28 +9,114 @@
 <body>
 <div id="app">
 
-    <!-- ===== SETUP PHASE ===== -->
+    <!-- ===== MAIN / SETUP PHASE ===== -->
     <section id="setup-phase">
         <header class="setup-header">
             <h1>Consensus</h1>
             <p class="subtitle">Moderated Discussion Platform</p>
         </header>
 
-        <div class="setup-grid">
-            <div class="card">
-                <h2>Topic</h2>
-                <textarea id="topic-input" placeholder="Enter the discussion topic..." rows="3"></textarea>
-            </div>
+        <!-- Tab bar -->
+        <div class="tab-bar">
+            <button class="tab active" data-tab="new-discussion">New Discussion</button>
+            <button class="tab" data-tab="settings-providers">Providers</button>
+            <button class="tab" data-tab="settings-entities">Profiles</button>
+            <button class="tab" data-tab="settings-prompts">Prompts</button>
+            <button class="tab" data-tab="history">History</button>
+        </div>
 
-            <div class="card">
-                <h2>Participants</h2>
-                <div id="entity-list"></div>
-                <button id="add-entity-btn" class="btn btn-outline">+ Add Participant</button>
-            </div>
+        <!-- === Tab: New Discussion === -->
+        <div id="tab-new-discussion" class="tab-content">
+            <div class="setup-grid">
+                <div class="card">
+                    <h2>Topic</h2>
+                    <textarea id="topic-input" placeholder="Enter the discussion topic..." rows="3"></textarea>
+                </div>
 
-            <button id="start-btn" class="btn btn-primary btn-large" disabled>
-                Start Discussion
-            </button>
+                <div class="card">
+                    <h2>Discussion Participants</h2>
+                    <p class="text-muted" style="margin-bottom:0.5rem">
+                        Select saved profiles to add to this discussion:
+                    </p>
+                    <div id="available-entities"></div>
+                    <div style="margin-top:0.5rem">
+                        <button id="quick-add-btn" class="btn btn-outline btn-sm">+ Create New Profile</button>
+                    </div>
+                    <h3 style="margin-top:1rem">In This Discussion</h3>
+                    <div id="discussion-roster"></div>
+                </div>
+
+                <div class="card">
+                    <label>
+                        <input type="checkbox" id="mod-participates"> Moderator also participates in discussion turns
+                    </label>
+                </div>
+
+                <button id="start-btn" class="btn btn-primary btn-large" disabled>
+                    Start Discussion
+                </button>
+            </div>
+        </div>
+
+        <!-- === Tab: Providers === -->
+        <div id="tab-settings-providers" class="tab-content hidden">
+            <div class="settings-panel">
+                <div class="card">
+                    <h2>API Providers</h2>
+                    <p class="text-muted">
+                        Configure LLM API endpoints. API keys are read from environment
+                        variables (never stored on disk).
+                    </p>
+                    <div id="provider-list"></div>
+                    <button id="add-provider-btn" class="btn btn-outline" style="margin-top:0.75rem">
+                        + Add Provider
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- === Tab: Entity Profiles === -->
+        <div id="tab-settings-entities" class="tab-content hidden">
+            <div class="settings-panel">
+                <div class="card">
+                    <h2>Entity Profiles</h2>
+                    <p class="text-muted">
+                        Persistent profiles for humans and AI models. Reusable across discussions.
+                    </p>
+                    <div id="profile-list"></div>
+                    <button id="add-profile-btn" class="btn btn-outline" style="margin-top:0.75rem">
+                        + Add Profile
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- === Tab: Prompts === -->
+        <div id="tab-settings-prompts" class="tab-content hidden">
+            <div class="settings-panel">
+                <div class="card">
+                    <h2>Prompt Templates</h2>
+                    <p class="text-muted">
+                        Customize prompts for moderators and participants.
+                        Use {entity_name}, {topic}, {participants}, {speaker_name},
+                        {turn_number}, {context} as template variables.
+                    </p>
+                    <div id="prompt-list"></div>
+                    <button id="add-prompt-btn" class="btn btn-outline" style="margin-top:0.75rem">
+                        + Add Prompt
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- === Tab: History === -->
+        <div id="tab-history" class="tab-content hidden">
+            <div class="settings-panel">
+                <div class="card">
+                    <h2>Discussion History</h2>
+                    <div id="history-list"></div>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -50,13 +136,11 @@
         </header>
 
         <div class="discussion-grid">
-            <!-- Left: Entities -->
             <aside id="entities-panel" class="panel">
                 <h3>Participants</h3>
                 <div id="discussion-entities"></div>
             </aside>
 
-            <!-- Center: Chat -->
             <main id="chat-panel" class="panel">
                 <div id="messages"></div>
                 <div id="input-area">
@@ -68,7 +152,6 @@
                 </div>
             </main>
 
-            <!-- Right: Storyboard -->
             <aside id="storyboard-panel" class="panel">
                 <h3>Storyboard</h3>
                 <div id="storyboard"></div>
@@ -76,10 +159,37 @@
         </div>
     </section>
 
-    <!-- ===== ADD ENTITY DIALOG ===== -->
+    <!-- ===== PROVIDER DIALOG ===== -->
+    <div id="provider-dialog" class="dialog-overlay hidden">
+        <div class="dialog">
+            <h3 id="provider-dialog-title">Add Provider</h3>
+            <div class="form-group">
+                <label for="prov-name">Name</label>
+                <input id="prov-name" type="text" placeholder="e.g. OpenAI, Local Ollama">
+            </div>
+            <div class="form-group">
+                <label for="prov-url">Base URL</label>
+                <input id="prov-url" type="text" placeholder="https://api.openai.com/v1">
+            </div>
+            <div class="form-group">
+                <label for="prov-key-env">API Key Environment Variable</label>
+                <input id="prov-key-env" type="text" placeholder="e.g. OPENAI_API_KEY">
+                <span class="text-muted" style="font-size:0.75rem">
+                    The name of the env var holding your API key (never stored on disk)
+                </span>
+            </div>
+            <input id="prov-edit-id" type="hidden" value="">
+            <div class="dialog-actions">
+                <button id="cancel-provider-btn" class="btn btn-ghost">Cancel</button>
+                <button id="confirm-provider-btn" class="btn btn-primary">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== ENTITY PROFILE DIALOG ===== -->
     <div id="entity-dialog" class="dialog-overlay hidden">
         <div class="dialog">
-            <h3>Add Participant</h3>
+            <h3 id="entity-dialog-title">Add Profile</h3>
             <div class="form-group">
                 <label for="entity-name">Name</label>
                 <input id="entity-name" type="text" placeholder="e.g. Alice, GPT-4o">
@@ -97,12 +207,10 @@
             </div>
             <div id="ai-config" class="hidden">
                 <div class="form-group">
-                    <label for="ai-base-url">API Base URL</label>
-                    <input id="ai-base-url" type="text" value="http://localhost:11434/v1">
-                </div>
-                <div class="form-group">
-                    <label for="ai-api-key">API Key</label>
-                    <input id="ai-api-key" type="password" placeholder="Optional">
+                    <label for="ai-provider">Provider</label>
+                    <select id="ai-provider">
+                        <option value="">-- Select Provider --</option>
+                    </select>
                 </div>
                 <div class="form-group">
                     <label for="ai-model">Model</label>
@@ -120,12 +228,64 @@
                 </div>
                 <div class="form-group">
                     <label for="ai-system-prompt">Custom System Prompt</label>
-                    <textarea id="ai-system-prompt" rows="2" placeholder="Optional persona/instructions"></textarea>
+                    <textarea id="ai-system-prompt" rows="2" placeholder="Optional - overrides default prompt template"></textarea>
                 </div>
             </div>
+            <input id="entity-edit-id" type="hidden" value="">
             <div class="dialog-actions">
                 <button id="cancel-entity-btn" class="btn btn-ghost">Cancel</button>
-                <button id="confirm-entity-btn" class="btn btn-primary">Add</button>
+                <button id="confirm-entity-btn" class="btn btn-primary">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== PROMPT DIALOG ===== -->
+    <div id="prompt-dialog" class="dialog-overlay hidden">
+        <div class="dialog" style="max-width:560px">
+            <h3 id="prompt-dialog-title">Edit Prompt</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="prompt-name">Name</label>
+                    <input id="prompt-name" type="text" placeholder="Descriptive name">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="prompt-role">Role</label>
+                    <select id="prompt-role">
+                        <option value="moderator">Moderator</option>
+                        <option value="participant">Participant</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="prompt-target">Target</label>
+                    <select id="prompt-target">
+                        <option value="ai">AI</option>
+                        <option value="human">Human</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="prompt-task">Task</label>
+                    <select id="prompt-task">
+                        <option value="system">System</option>
+                        <option value="turn">Turn</option>
+                        <option value="summarize">Summarize</option>
+                        <option value="mediate">Mediate</option>
+                        <option value="conclude">Conclude</option>
+                        <option value="open">Open</option>
+                        <option value="guidance">Guidance</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="prompt-content">Prompt Template</label>
+                <textarea id="prompt-content" rows="8"
+                    placeholder="Use {entity_name}, {topic}, {participants}, {speaker_name}, {turn_number}, {context}"></textarea>
+            </div>
+            <input id="prompt-edit-id" type="hidden" value="">
+            <div class="dialog-actions">
+                <button id="cancel-prompt-btn" class="btn btn-ghost">Cancel</button>
+                <button id="confirm-prompt-btn" class="btn btn-primary">Save</button>
             </div>
         </div>
     </div>

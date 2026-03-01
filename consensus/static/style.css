@@ -149,13 +149,13 @@ label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-s
 
 /* === Setup Phase === */
 #setup-phase {
-    max-width: 600px;
+    max-width: 700px;
     margin: 0 auto;
-    padding: 3rem 1.5rem;
+    padding: 2rem 1.5rem;
 }
 .setup-header {
     text-align: center;
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
 }
 .setup-header h1 { font-size: 2rem; margin-bottom: 0.25rem; }
 .setup-grid {
@@ -164,6 +164,83 @@ label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-s
     gap: 1.25rem;
 }
 #start-btn { align-self: center; }
+
+/* Tab bar */
+.tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.25rem;
+    overflow-x: auto;
+}
+.tab {
+    padding: 0.5rem 1rem;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+.tab-content { }
+
+/* Settings panels */
+.settings-panel { max-width: 700px; }
+.settings-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--border);
+}
+.settings-item:last-child { border-bottom: none; }
+.settings-item .entity-info { flex: 1; min-width: 0; }
+.settings-item .entity-name { font-weight: 500; }
+.settings-item .entity-type { font-size: 0.75rem; color: var(--text-muted); }
+.settings-item .entity-actions { display: flex; gap: 0.25rem; }
+.settings-item .entity-actions .btn { padding: 0.2rem 0.5rem; font-size: 0.75rem; }
+.settings-detail { font-size: 0.75rem; color: var(--text-muted); }
+
+/* History items */
+.history-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.7rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    border-radius: var(--radius);
+    transition: background 0.15s;
+}
+.history-item:hover { background: var(--surface-elevated); }
+.history-topic { font-weight: 500; }
+.history-meta { font-size: 0.75rem; color: var(--text-muted); }
+.history-status {
+    font-size: 0.65rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+.history-status.concluded { background: var(--success); color: #fff; }
+.history-status.active { background: var(--warning); color: #000; }
+
+/* Checkbox label */
+label:has(input[type="checkbox"]) {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+input[type="checkbox"] { width: auto; }
 
 /* Entity list in setup */
 .entity-item {

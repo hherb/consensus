@@ -1,9 +1,22 @@
 """OpenAI-compatible API client using httpx."""
 
 import json
+import time
+from dataclasses import dataclass
 from typing import AsyncIterator
 
 import httpx
+
+
+@dataclass
+class AIResponse:
+    """Response from an AI completion, including usage metadata."""
+    content: str
+    model: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    latency_ms: int = 0
 
 
 class AIClient:
@@ -14,18 +27,20 @@ class AIClient:
         self.api_key = api_key
         self.timeout = timeout
 
+    def _headers(self) -> dict:
+        h = {"Content-Type": "application/json"}
+        if self.api_key:
+            h["Authorization"] = f"Bearer {self.api_key}"
+        return h
+
     async def complete(
         self,
         messages: list[dict],
         model: str,
         temperature: float = 0.7,
         max_tokens: int = 1024,
-    ) -> str:
-        """Send a chat completion request and return the response text."""
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-
+    ) -> AIResponse:
+        """Send a chat completion request and return response with metadata."""
         payload = {
             "model": model,
             "messages": messages,
@@ -34,15 +49,26 @@ class AIClient:
             "stream": False,
         }
 
+        start = time.monotonic()
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(
                 f"{self.base_url}/chat/completions",
-                headers=headers,
+                headers=self._headers(),
                 json=payload,
             )
             response.raise_for_status()
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+        elapsed = int((time.monotonic() - start) * 1000)
+
+        usage = data.get("usage", {})
+        return AIResponse(
+            content=data["choices"][0]["message"]["content"],
+            model=data.get("model", model),
+            prompt_tokens=usage.get("prompt_tokens", 0),
+            completion_tokens=usage.get("completion_tokens", 0),
+            total_tokens=usage.get("total_tokens", 0),
+            latency_ms=elapsed,
+        )
 
     async def stream(
         self,
@@ -52,10 +78,6 @@ class AIClient:
         max_tokens: int = 1024,
     ) -> AsyncIterator[str]:
         """Stream a chat completion response, yielding content chunks."""
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-
         payload = {
             "model": model,
             "messages": messages,
@@ -68,7 +90,7 @@ class AIClient:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/chat/completions",
-                headers=headers,
+                headers=self._headers(),
                 json=payload,
             ) as response:
                 response.raise_for_status()
