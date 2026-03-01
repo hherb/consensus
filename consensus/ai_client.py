@@ -1,11 +1,14 @@
 """OpenAI-compatible API client using httpx."""
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import AsyncIterator, Optional
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # Default timeout for API requests (seconds)
 DEFAULT_API_TIMEOUT = 120.0
@@ -131,4 +134,5 @@ class AIClient:
                     if content:
                         yield content
                 except (json.JSONDecodeError, KeyError, IndexError):
+                    logger.debug("Failed to parse SSE chunk: %s", data)
                     continue

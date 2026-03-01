@@ -6,7 +6,13 @@ import threading
 import time
 from typing import Optional
 
-from .models import generate_id, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_AVATAR_COLOR
+from .models import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_AVATAR_COLOR
+
+SCHEMA_VERSION = 1
+
+_VALID_TABLES = frozenset({
+    "providers", "entities", "prompts", "discussions",
+})
 
 
 class Database:
@@ -41,8 +47,12 @@ class Database:
         """Create all required tables if they don't already exist."""
         with self._lock:
             self.conn.executescript("""
+                CREATE TABLE IF NOT EXISTS schema_version (
+                    version INTEGER NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS providers (
-                    id          TEXT PRIMARY KEY,
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     name        TEXT NOT NULL,
                     base_url    TEXT NOT NULL,
                     api_key_env TEXT NOT NULL DEFAULT '',
@@ -50,11 +60,11 @@ class Database:
                 );
 
                 CREATE TABLE IF NOT EXISTS entities (
-                    id              TEXT PRIMARY KEY,
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
                     name            TEXT NOT NULL,
                     entity_type     TEXT NOT NULL CHECK(entity_type IN ('human','ai')),
                     avatar_color    TEXT NOT NULL DEFAULT '#3b82f6',
-                    provider_id     TEXT,
+                    provider_id     INTEGER,
                     model           TEXT,
                     temperature     REAL DEFAULT 0.7,
                     max_tokens      INTEGER DEFAULT 1024,
@@ -66,7 +76,7 @@ class Database:
                 );
 
                 CREATE TABLE IF NOT EXISTS prompts (
-                    id          TEXT PRIMARY KEY,
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     name        TEXT NOT NULL,
                     role        TEXT NOT NULL CHECK(role IN ('moderator','participant')),
                     target      TEXT NOT NULL CHECK(target IN ('ai','human')),
@@ -78,9 +88,9 @@ class Database:
                 );
 
                 CREATE TABLE IF NOT EXISTS discussions (
-                    id              TEXT PRIMARY KEY,
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
                     topic           TEXT NOT NULL,
-                    moderator_id    TEXT,
+                    moderator_id    INTEGER,
                     started_at      REAL,
                     ended_at        REAL,
                     status          TEXT NOT NULL DEFAULT 'setup'
@@ -89,8 +99,8 @@ class Database:
                 );
 
                 CREATE TABLE IF NOT EXISTS discussion_members (
-                    discussion_id       TEXT NOT NULL,
-                    entity_id           TEXT NOT NULL,
+                    discussion_id       INTEGER NOT NULL,
+                    entity_id           INTEGER NOT NULL,
                     is_moderator        INTEGER NOT NULL DEFAULT 0,
                     also_participant    INTEGER NOT NULL DEFAULT 0,
                     turn_position       INTEGER,
@@ -100,9 +110,9 @@ class Database:
                 );
 
                 CREATE TABLE IF NOT EXISTS messages (
-                    id              TEXT PRIMARY KEY,
-                    discussion_id   TEXT NOT NULL,
-                    entity_id       TEXT NOT NULL,
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    discussion_id   INTEGER NOT NULL,
+                    entity_id       INTEGER NOT NULL,
                     content         TEXT NOT NULL,
                     role            TEXT NOT NULL
                         CHECK(role IN ('participant','moderator','system')),
@@ -114,33 +124,44 @@ class Database:
                     total_tokens    INTEGER,
                     latency_ms      INTEGER,
                     temperature_used REAL,
-                    prompt_id       TEXT,
+                    prompt_id       INTEGER,
                     FOREIGN KEY (discussion_id) REFERENCES discussions(id),
                     FOREIGN KEY (entity_id)     REFERENCES entities(id)
                 );
 
                 CREATE TABLE IF NOT EXISTS storyboard_entries (
                     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                    discussion_id       TEXT NOT NULL,
+                    discussion_id       INTEGER NOT NULL,
                     turn_number         INTEGER NOT NULL,
                     summary             TEXT NOT NULL,
-                    speaker_entity_id   TEXT,
+                    speaker_entity_id   INTEGER,
                     timestamp           REAL NOT NULL,
                     FOREIGN KEY (discussion_id)     REFERENCES discussions(id),
                     FOREIGN KEY (speaker_entity_id) REFERENCES entities(id)
                 );
             """)
+            # Initialize schema version if not present
+            row = self.conn.execute(
+                "SELECT version FROM schema_version LIMIT 1"
+            ).fetchone()
+            if not row:
+                self.conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)",
+                    (SCHEMA_VERSION,),
+                )
             self.conn.commit()
 
     # ------------------------------------------------------------------
     # Generic helpers
     # ------------------------------------------------------------------
 
-    def _update_row(self, table: str, row_id: str,
+    def _update_row(self, table: str, row_id: int,
                     allowed: set[str], extra_sets: Optional[dict] = None,
                     **kwargs: object) -> None:
         """Generic row update: filters kwargs to allowed fields, appends
         extra_sets (e.g. updated_at), and executes a single UPDATE."""
+        if table not in _VALID_TABLES:
+            raise ValueError(f"Invalid table: {table}")
         sets: list[str] = []
         vals: list[object] = []
         for k, v in kwargs.items():
@@ -287,9 +308,9 @@ class Database:
         with self._lock:
             for d in defaults:
                 self.conn.execute(
-                    "INSERT INTO prompts (id, name, role, target, task, content, "
-                    "is_default, created_at, updated_at) VALUES (?,?,?,?,?,?,1,?,?)",
-                    (generate_id(), d["name"], d["role"], d["target"], d["task"],
+                    "INSERT INTO prompts (name, role, target, task, content, "
+                    "is_default, created_at, updated_at) VALUES (?,?,?,?,?,1,?,?)",
+                    (d["name"], d["role"], d["target"], d["task"],
                      d["content"], now, now),
                 )
             self.conn.commit()
@@ -311,7 +332,7 @@ class Database:
         sql += " ORDER BY is_default DESC, name"
         return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
 
-    def get_prompt(self, prompt_id: str) -> Optional[dict]:
+    def get_prompt(self, prompt_id: int) -> Optional[dict]:
         """Retrieve a single prompt by ID."""
         row = self.conn.execute(
             "SELECT * FROM prompts WHERE id=?", (prompt_id,)
@@ -328,8 +349,8 @@ class Database:
         ).fetchone()
         return dict(row) if row else None
 
-    def save_prompt(self, prompt_id: Optional[str], name: str, role: str,
-                    target: str, task: str, content: str) -> str:
+    def save_prompt(self, prompt_id: Optional[int], name: str, role: str,
+                    target: str, task: str, content: str) -> int:
         """Create or update a prompt template. Returns the prompt ID."""
         now = time.time()
         if prompt_id:
@@ -339,15 +360,15 @@ class Database:
                 (name, role, target, task, content, now, prompt_id),
             )
         else:
-            prompt_id = generate_id()
-            self._execute_write(
-                "INSERT INTO prompts (id,name,role,target,task,content,"
-                "is_default,created_at,updated_at) VALUES (?,?,?,?,?,?,0,?,?)",
-                (prompt_id, name, role, target, task, content, now, now),
+            cur = self._execute_write(
+                "INSERT INTO prompts (name,role,target,task,content,"
+                "is_default,created_at,updated_at) VALUES (?,?,?,?,?,0,?,?)",
+                (name, role, target, task, content, now, now),
             )
+            prompt_id = cur.lastrowid
         return prompt_id
 
-    def delete_prompt(self, prompt_id: str) -> None:
+    def delete_prompt(self, prompt_id: int) -> None:
         """Delete a prompt by ID."""
         self._execute_write("DELETE FROM prompts WHERE id=?", (prompt_id,))
 
@@ -356,15 +377,14 @@ class Database:
     # ------------------------------------------------------------------
 
     def add_provider(self, name: str, base_url: str,
-                     api_key_env: str = "") -> str:
+                     api_key_env: str = "") -> int:
         """Add a new API provider. Returns the new provider ID."""
-        pid = generate_id()
-        self._execute_write(
-            "INSERT INTO providers (id,name,base_url,api_key_env,created_at) "
-            "VALUES (?,?,?,?,?)",
-            (pid, name, base_url, api_key_env, time.time()),
+        cur = self._execute_write(
+            "INSERT INTO providers (name,base_url,api_key_env,created_at) "
+            "VALUES (?,?,?,?)",
+            (name, base_url, api_key_env, time.time()),
         )
-        return pid
+        return cur.lastrowid
 
     def get_providers(self) -> list[dict]:
         """Return all providers ordered by name."""
@@ -372,14 +392,14 @@ class Database:
                 self.conn.execute("SELECT * FROM providers ORDER BY name")
                 .fetchall()]
 
-    def get_provider(self, provider_id: str) -> Optional[dict]:
+    def get_provider(self, provider_id: int) -> Optional[dict]:
         """Retrieve a single provider by ID."""
         row = self.conn.execute(
             "SELECT * FROM providers WHERE id=?", (provider_id,)
         ).fetchone()
         return dict(row) if row else None
 
-    def update_provider(self, provider_id: str, **kwargs: object) -> None:
+    def update_provider(self, provider_id: int, **kwargs: object) -> None:
         """Update a provider's mutable fields."""
         self._update_row(
             "providers", provider_id,
@@ -387,7 +407,7 @@ class Database:
             **kwargs,
         )
 
-    def delete_provider(self, provider_id: str) -> None:
+    def delete_provider(self, provider_id: int) -> None:
         """Delete a provider by ID."""
         self._execute_write(
             "DELETE FROM providers WHERE id=?", (provider_id,))
@@ -398,23 +418,22 @@ class Database:
 
     def add_entity(self, name: str, entity_type: str,
                    avatar_color: str = DEFAULT_AVATAR_COLOR,
-                   provider_id: str = "", model: str = "",
+                   provider_id: int = 0, model: str = "",
                    temperature: float = DEFAULT_TEMPERATURE,
                    max_tokens: int = DEFAULT_MAX_TOKENS,
-                   system_prompt: str = "") -> str:
+                   system_prompt: str = "") -> int:
         """Add a new entity profile. Returns the new entity ID."""
-        eid = generate_id()
         now = time.time()
-        self._execute_write(
+        cur = self._execute_write(
             "INSERT INTO entities "
-            "(id,name,entity_type,avatar_color,provider_id,model,"
+            "(name,entity_type,avatar_color,provider_id,model,"
             "temperature,max_tokens,system_prompt,created_at,updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (eid, name, entity_type, avatar_color,
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (name, entity_type, avatar_color,
              provider_id or None, model, temperature, max_tokens,
              system_prompt, now, now),
         )
-        return eid
+        return cur.lastrowid
 
     def get_entities(self, entity_type: str = "") -> list[dict]:
         """Return entities with joined provider info, optionally filtered by type."""
@@ -434,7 +453,7 @@ class Database:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_entity(self, entity_id: str) -> Optional[dict]:
+    def get_entity(self, entity_id: int) -> Optional[dict]:
         """Retrieve a single entity with joined provider info."""
         row = self.conn.execute(
             "SELECT e.*, p.name AS provider_name, p.base_url, "
@@ -445,7 +464,7 @@ class Database:
         ).fetchone()
         return dict(row) if row else None
 
-    def update_entity(self, entity_id: str, **kwargs: object) -> None:
+    def update_entity(self, entity_id: int, **kwargs: object) -> None:
         """Update an entity's mutable fields."""
         self._update_row(
             "entities", entity_id,
@@ -457,7 +476,7 @@ class Database:
             **kwargs,
         )
 
-    def delete_entity(self, entity_id: str) -> None:
+    def delete_entity(self, entity_id: int) -> None:
         """Delete an entity by ID."""
         self._execute_write(
             "DELETE FROM entities WHERE id=?", (entity_id,))
@@ -467,15 +486,14 @@ class Database:
     # ------------------------------------------------------------------
 
     def create_discussion(self, topic: str,
-                          moderator_id: str = "") -> str:
+                          moderator_id: int = 0) -> int:
         """Create a new discussion record. Returns the discussion ID."""
-        did = generate_id()
-        self._execute_write(
-            "INSERT INTO discussions (id,topic,moderator_id,started_at,status) "
-            "VALUES (?,?,?,?,?)",
-            (did, topic, moderator_id or None, time.time(), "setup"),
+        cur = self._execute_write(
+            "INSERT INTO discussions (topic,moderator_id,started_at,status) "
+            "VALUES (?,?,?,?)",
+            (topic, moderator_id or None, time.time(), "setup"),
         )
-        return did
+        return cur.lastrowid
 
     def get_discussions(self) -> list[dict]:
         """Return all discussions ordered by start time (newest first)."""
@@ -484,14 +502,14 @@ class Database:
                     "SELECT * FROM discussions ORDER BY started_at DESC"
                 ).fetchall()]
 
-    def get_discussion(self, discussion_id: str) -> Optional[dict]:
+    def get_discussion(self, discussion_id: int) -> Optional[dict]:
         """Retrieve a single discussion by ID."""
         row = self.conn.execute(
             "SELECT * FROM discussions WHERE id=?", (discussion_id,)
         ).fetchone()
         return dict(row) if row else None
 
-    def update_discussion(self, discussion_id: str, **kwargs: object) -> None:
+    def update_discussion(self, discussion_id: int, **kwargs: object) -> None:
         """Update a discussion's mutable fields."""
         self._update_row(
             "discussions", discussion_id,
@@ -499,7 +517,7 @@ class Database:
             **kwargs,
         )
 
-    def add_discussion_member(self, discussion_id: str, entity_id: str,
+    def add_discussion_member(self, discussion_id: int, entity_id: int,
                               is_moderator: bool = False,
                               also_participant: bool = False,
                               turn_position: Optional[int] = None) -> None:
@@ -512,7 +530,7 @@ class Database:
              int(also_participant), turn_position),
         )
 
-    def get_discussion_members(self, discussion_id: str) -> list[dict]:
+    def get_discussion_members(self, discussion_id: int) -> list[dict]:
         """Return all members of a discussion with joined entity and provider info."""
         rows = self.conn.execute(
             "SELECT dm.entity_id AS id, dm.*, e.name, e.entity_type, "
@@ -531,29 +549,28 @@ class Database:
     # Messages
     # ------------------------------------------------------------------
 
-    def add_message(self, discussion_id: str, entity_id: str,
+    def add_message(self, discussion_id: int, entity_id: int,
                     content: str, role: str, turn_number: int = 0,
                     model_used: str = "", prompt_tokens: int = 0,
                     completion_tokens: int = 0, total_tokens: int = 0,
                     latency_ms: int = 0, temperature_used: float = 0,
-                    prompt_id: str = "") -> str:
+                    prompt_id: int = 0) -> int:
         """Store a message and return its generated ID."""
-        mid = generate_id()
-        self._execute_write(
+        cur = self._execute_write(
             "INSERT INTO messages "
-            "(id,discussion_id,entity_id,content,role,turn_number,"
+            "(discussion_id,entity_id,content,role,turn_number,"
             "timestamp,model_used,prompt_tokens,completion_tokens,"
             "total_tokens,latency_ms,temperature_used,prompt_id) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (mid, discussion_id, entity_id, content, role, turn_number,
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (discussion_id, entity_id, content, role, turn_number,
              time.time(), model_used or None, prompt_tokens or None,
              completion_tokens or None, total_tokens or None,
              latency_ms or None, temperature_used or None,
              prompt_id or None),
         )
-        return mid
+        return cur.lastrowid
 
-    def get_messages(self, discussion_id: str) -> list[dict]:
+    def get_messages(self, discussion_id: int) -> list[dict]:
         """Return all messages for a discussion with entity names, ordered by time."""
         return [dict(r) for r in
                 self.conn.execute(
@@ -568,9 +585,9 @@ class Database:
     # Storyboard
     # ------------------------------------------------------------------
 
-    def add_storyboard_entry(self, discussion_id: str, turn_number: int,
+    def add_storyboard_entry(self, discussion_id: int, turn_number: int,
                              summary: str,
-                             speaker_entity_id: str = "") -> int:
+                             speaker_entity_id: int = 0) -> int:
         """Add a storyboard entry and return its auto-generated row ID."""
         cur = self._execute_write(
             "INSERT INTO storyboard_entries "
@@ -581,7 +598,7 @@ class Database:
         )
         return cur.lastrowid or 0
 
-    def get_storyboard(self, discussion_id: str) -> list[dict]:
+    def get_storyboard(self, discussion_id: int) -> list[dict]:
         """Return all storyboard entries for a discussion, ordered by time."""
         return [dict(r) for r in
                 self.conn.execute(

@@ -5,7 +5,6 @@ from enum import Enum
 from typing import Optional
 import os
 import time
-import uuid
 
 # Default configuration values
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
@@ -18,11 +17,6 @@ ENTITY_COLORS = [
     "#3b82f6", "#ef4444", "#22c55e", "#f59e0b",
     "#8b5cf6", "#ec4899", "#06b6d4", "#f97316",
 ]
-
-
-def generate_id() -> str:
-    """Generate a short unique identifier."""
-    return str(uuid.uuid4())[:8]
 
 
 class EntityType(Enum):
@@ -47,7 +41,7 @@ class AIConfig:
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: int = DEFAULT_MAX_TOKENS
     system_prompt: str = ""
-    provider_id: str = ""
+    provider_id: int = 0
 
     def to_dict(self) -> dict:
         """Serialize AI configuration to a dictionary."""
@@ -74,7 +68,7 @@ class AIConfig:
             temperature=temp if temp is not None else DEFAULT_TEMPERATURE,
             max_tokens=tokens if tokens is not None else DEFAULT_MAX_TOKENS,
             system_prompt=row.get("system_prompt") or "",
-            provider_id=row.get("provider_id") or "",
+            provider_id=row.get("provider_id") or 0,
         )
 
 
@@ -84,7 +78,7 @@ class Entity:
     name: str
     entity_type: EntityType
     ai_config: Optional[AIConfig] = None
-    id: str = field(default_factory=lambda: generate_id())
+    id: int = 0
     avatar_color: str = ""
 
     def __post_init__(self):
@@ -120,12 +114,12 @@ class Entity:
 @dataclass
 class Message:
     """A single message in the discussion."""
-    entity_id: str
+    entity_id: int
     entity_name: str
     content: str
     role: MessageRole = MessageRole.PARTICIPANT
     timestamp: float = field(default_factory=time.time)
-    id: str = field(default_factory=lambda: generate_id())
+    id: int = 0
     # AI metadata (populated only for AI-generated messages)
     model_used: str = ""
     prompt_tokens: int = 0
@@ -200,13 +194,13 @@ class StoryboardEntry:
 @dataclass
 class Discussion:
     """The overall discussion state (in-memory working copy)."""
-    id: str = ""
+    id: int = 0
     topic: str = ""
     entities: list[Entity] = field(default_factory=list)
-    moderator_id: Optional[str] = None
+    moderator_id: Optional[int] = None
     messages: list[Message] = field(default_factory=list)
     storyboard: list[StoryboardEntry] = field(default_factory=list)
-    turn_order: list[str] = field(default_factory=list)
+    turn_order: list[int] = field(default_factory=list)
     current_turn_index: int = 0
     turn_number: int = 0
     is_active: bool = False
@@ -228,7 +222,7 @@ class Discussion:
         speaker_id = self.turn_order[idx]
         return self.get_entity(speaker_id)
 
-    def get_entity(self, entity_id: str) -> Optional[Entity]:
+    def get_entity(self, entity_id: int) -> Optional[Entity]:
         """Look up an entity by ID within this discussion."""
         for e in self.entities:
             if e.id == entity_id:

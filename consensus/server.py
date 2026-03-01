@@ -10,7 +10,7 @@ from aiohttp import web
 from .app import ConsensusApp
 
 # Default server settings
-DEFAULT_HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8080
 
 
@@ -19,12 +19,27 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None
     app = ConsensusApp()
     static_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "static"))
 
+    @web.middleware
+    async def cors_middleware(request: web.Request,
+                              handler: object) -> web.Response:
+        """Restrict API access to same-origin requests."""
+        if request.path.startswith("/api/"):
+            origin = request.headers.get("Origin", "")
+            if origin:
+                allowed = f"http://{host}:{port}"
+                if origin != allowed:
+                    return web.json_response(
+                        {"error": "Forbidden origin"}, status=403,
+                    )
+        response = await handler(request)
+        return response
+
     async def handle_api(request: web.Request) -> web.Response:
         """Route API calls to the appropriate ConsensusApp method."""
         method = request.match_info["method"]
         try:
-            data = await request.json() if request.content_length else {}
-        except json.JSONDecodeError:
+            data = await request.json()
+        except (json.JSONDecodeError, Exception):
             data = {}
 
         handlers = {
@@ -101,7 +116,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None
             return web.FileResponse(filepath)
         return web.FileResponse(os.path.join(static_dir, "index.html"))
 
-    webapp = web.Application()
+    webapp = web.Application(middlewares=[cors_middleware])
     webapp.router.add_post("/api/{method}", handle_api)
     webapp.router.add_get(
         "/", lambda r: web.FileResponse(

@@ -55,12 +55,12 @@ class ConsensusApp:
         pid = self.db.add_provider(name, base_url, api_key_env)
         return self.db.get_provider(pid)
 
-    def update_provider(self, provider_id: str, **kwargs: object) -> bool:
+    def update_provider(self, provider_id: int, **kwargs: object) -> bool:
         """Update an existing provider's fields."""
         self.db.update_provider(provider_id, **kwargs)
         return True
 
-    def delete_provider(self, provider_id: str) -> bool:
+    def delete_provider(self, provider_id: int) -> bool:
         """Delete a provider by ID."""
         self.db.delete_provider(provider_id)
         return True
@@ -75,10 +75,10 @@ class ConsensusApp:
 
     def save_entity(self, name: str, entity_type: str,
                     avatar_color: str = "#3b82f6",
-                    provider_id: str = "", model: str = "",
+                    provider_id: int = 0, model: str = "",
                     temperature: float = 0.7, max_tokens: int = 1024,
                     system_prompt: str = "",
-                    entity_id: str = "") -> Optional[dict]:
+                    entity_id: int = 0) -> Optional[dict]:
         """Create or update a persistent entity profile."""
         if entity_id:
             self.db.update_entity(
@@ -94,7 +94,7 @@ class ConsensusApp:
             )
         return self.db.get_entity(entity_id)
 
-    def delete_entity(self, entity_id: str) -> bool:
+    def delete_entity(self, entity_id: int) -> bool:
         """Delete an entity profile by ID."""
         self.db.delete_entity(entity_id)
         return True
@@ -107,7 +107,7 @@ class ConsensusApp:
     # Prompt management
     # ------------------------------------------------------------------
 
-    def save_prompt(self, prompt_id: str, name: str, role: str,
+    def save_prompt(self, prompt_id: int, name: str, role: str,
                     target: str, task: str, content: str) -> Optional[dict]:
         """Create or update a prompt template."""
         pid = self.db.save_prompt(
@@ -115,7 +115,7 @@ class ConsensusApp:
         )
         return self.db.get_prompt(pid)
 
-    def delete_prompt(self, prompt_id: str) -> bool:
+    def delete_prompt(self, prompt_id: int) -> bool:
         """Delete a prompt template by ID."""
         self.db.delete_prompt(prompt_id)
         return True
@@ -128,7 +128,7 @@ class ConsensusApp:
     # Discussion setup
     # ------------------------------------------------------------------
 
-    def add_to_discussion(self, entity_id: str,
+    def add_to_discussion(self, entity_id: int,
                           is_moderator: bool = False,
                           also_participant: bool = False) -> dict:
         """Add a saved entity to the current discussion."""
@@ -149,7 +149,7 @@ class ConsensusApp:
         self._notify()
         return entity.to_dict()
 
-    def remove_from_discussion(self, entity_id: str) -> bool:
+    def remove_from_discussion(self, entity_id: int) -> bool:
         """Remove an entity from the current discussion."""
         self.discussion.entities = [
             e for e in self.discussion.entities if e.id != entity_id
@@ -161,7 +161,7 @@ class ConsensusApp:
         self._notify()
         return True
 
-    def set_moderator(self, entity_id: str,
+    def set_moderator(self, entity_id: int,
                       also_participant: bool = False) -> bool:
         """Designate an entity as the moderator."""
         entity = self.discussion.get_entity(entity_id)
@@ -222,7 +222,7 @@ class ConsensusApp:
 
         # Opening message from moderator
         target_type = "ai" if mod.entity_type == EntityType.AI else "human"
-        open_prompt = self.moderator._resolve_prompt(
+        open_prompt = self.moderator.resolve_prompt(
             "moderator", target_type, "open",
             entity_name=mod.name,
             topic=self.discussion.topic,
@@ -249,7 +249,7 @@ class ConsensusApp:
         self._notify()
         return self.get_state()
 
-    def submit_human_message(self, entity_id: str, content: str) -> dict:
+    def submit_human_message(self, entity_id: int, content: str) -> dict:
         """Submit a message from a human participant."""
         entity = self.discussion.get_entity(entity_id)
         if not entity:
@@ -310,7 +310,7 @@ class ConsensusApp:
             )
             self.discussion.messages.append(msg)
 
-            prompt_id = self.moderator._prompt_id("participant", "ai", "turn")
+            prompt_id = self.moderator.prompt_id("participant", "ai", "turn")
             self.db.add_message(
                 self.discussion.id, current.id, resp.content, "participant",
                 turn_number=self.discussion.turn_number,
@@ -333,12 +333,17 @@ class ConsensusApp:
         mod = self.discussion.moderator
         summary_text = ""
 
+        # Capture the current speaker before summary generation changes messages
+        current = self.discussion.current_speaker
+        speaker_name = current.name if current else "Unknown"
+        speaker_id = current.id if current else 0
+
         if mod and mod.entity_type == EntityType.AI:
             try:
                 resp = await self.moderator.generate_summary()
                 summary_text = resp.content
                 if summary_text:
-                    prompt_id = self.moderator._prompt_id(
+                    prompt_id = self.moderator.prompt_id(
                         "moderator", "ai", "summarize",
                     )
                     self.db.add_message(
@@ -369,20 +374,16 @@ class ConsensusApp:
             }
 
         if summary_text:
-            last_msg = (
-                self.discussion.messages[-1] if self.discussion.messages else None
-            )
             entry = StoryboardEntry(
                 turn_number=self.discussion.turn_number,
                 summary=summary_text,
-                speaker_name=last_msg.entity_name if last_msg else "Unknown",
+                speaker_name=speaker_name,
             )
             self.discussion.storyboard.append(entry)
 
-            speaker_entity = last_msg.entity_id if last_msg else ""
             self.db.add_storyboard_entry(
                 self.discussion.id, self.discussion.turn_number,
-                summary_text, speaker_entity,
+                summary_text, speaker_id,
             )
 
             summary_msg = Message(
@@ -400,7 +401,7 @@ class ConsensusApp:
             "state": self.get_state(),
         }
 
-    def reassign_turn(self, entity_id: str) -> dict:
+    def reassign_turn(self, entity_id: int) -> dict:
         """Reassign the current turn to a different participant."""
         entity = self.moderator.reassign_turn(entity_id)
         if entity:
@@ -427,7 +428,7 @@ class ConsensusApp:
                     latency_ms=resp.latency_ms,
                 )
                 self.discussion.messages.append(msg)
-                prompt_id = self.moderator._prompt_id(
+                prompt_id = self.moderator.prompt_id(
                     "moderator", "ai", "mediate",
                 )
                 self.db.add_message(
@@ -499,7 +500,7 @@ class ConsensusApp:
     # History
     # ------------------------------------------------------------------
 
-    def load_discussion(self, discussion_id: str) -> dict:
+    def load_discussion(self, discussion_id: int) -> dict:
         """Load a past discussion for review, restoring full state."""
         disc = self.db.get_discussion(discussion_id)
         if not disc:
@@ -514,7 +515,7 @@ class ConsensusApp:
         sb = [StoryboardEntry.from_db_row(s) for s in storyboard]
 
         # Restore turn order from discussion_members.turn_position
-        turn_order: list[str] = [
+        turn_order: list[int] = [
             m["entity_id"] for m in members
             if m.get("turn_position") is not None
         ]

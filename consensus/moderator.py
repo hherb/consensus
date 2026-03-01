@@ -1,10 +1,13 @@
 """Moderator logic for managing discussions."""
 
+import logging
 from typing import Optional
 
 from .models import Discussion, Entity, EntityType
 from .ai_client import AIClient, AIResponse
 from .database import Database
+
+logger = logging.getLogger(__name__)
 
 # How many recent messages to include in AI context
 CONTEXT_MESSAGE_LIMIT = 20
@@ -22,9 +25,10 @@ class Moderator:
     def __init__(self, discussion: Discussion, db: Database) -> None:
         self.discussion = discussion
         self.db = db
+        self._clients: dict[int, AIClient] = {}
 
-    def _resolve_prompt(self, role: str, target: str, task: str,
-                        **variables: object) -> str:
+    def resolve_prompt(self, role: str, target: str, task: str,
+                       **variables: object) -> str:
         """Look up a prompt template from DB and fill in template variables."""
         row = self.db.get_prompt_by_task(role, target, task)
         if not row:
@@ -34,10 +38,10 @@ class Moderator:
             template = template.replace("{" + key + "}", str(val))
         return template
 
-    def _prompt_id(self, role: str, target: str, task: str) -> str:
+    def prompt_id(self, role: str, target: str, task: str) -> int:
         """Get prompt ID for metadata logging."""
         row = self.db.get_prompt_by_task(role, target, task)
-        return row["id"] if row else ""
+        return row["id"] if row else 0
 
     def _participant_names(self) -> str:
         """Return a formatted comma-separated list of participant names and types."""
@@ -58,13 +62,24 @@ class Moderator:
         return messages
 
     def _get_client(self, entity: Entity) -> AIClient:
-        """Create an AI client for the given entity's provider configuration."""
+        """Return a cached AI client for the given entity, creating one if needed."""
         if not entity.ai_config:
             raise ValueError(f"{entity.name} has no AI configuration")
-        return AIClient(
-            base_url=entity.ai_config.base_url,
-            api_key=entity.ai_config.api_key,
-        )
+        if entity.id not in self._clients:
+            self._clients[entity.id] = AIClient(
+                base_url=entity.ai_config.base_url,
+                api_key=entity.ai_config.api_key,
+            )
+        return self._clients[entity.id]
+
+    async def close(self) -> None:
+        """Close all cached AI clients."""
+        for client in self._clients.values():
+            try:
+                await client.close()
+            except Exception:
+                logger.debug("Error closing AI client", exc_info=True)
+        self._clients.clear()
 
     async def generate_turn(self, entity: Entity) -> AIResponse:
         """Generate an AI entity's contribution to the discussion."""
@@ -75,14 +90,14 @@ class Moderator:
         if cfg.system_prompt:
             system_prompt = cfg.system_prompt
         else:
-            system_prompt = self._resolve_prompt(
+            system_prompt = self.resolve_prompt(
                 "participant", "ai", "system",
                 entity_name=entity.name,
                 topic=self.discussion.topic,
                 participants=participants,
             )
 
-        task = self._resolve_prompt(
+        task = self.resolve_prompt(
             "participant", "ai", "turn",
             entity_name=entity.name,
             topic=self.discussion.topic,
@@ -109,14 +124,14 @@ class Moderator:
         speaker = last_msg.entity_name if last_msg else "Unknown"
         participants = self._participant_names()
 
-        system_prompt = self._resolve_prompt(
+        system_prompt = self.resolve_prompt(
             "moderator", "ai", "system",
             entity_name=mod.name,
             topic=self.discussion.topic,
             participants=participants,
         )
 
-        task = self._resolve_prompt(
+        task = self.resolve_prompt(
             "moderator", "ai", "summarize",
             entity_name=mod.name,
             topic=self.discussion.topic,
@@ -143,14 +158,14 @@ class Moderator:
         client = self._get_client(mod)
         participants = self._participant_names()
 
-        system_prompt = self._resolve_prompt(
+        system_prompt = self.resolve_prompt(
             "moderator", "ai", "system",
             entity_name=mod.name,
             topic=self.discussion.topic,
             participants=participants,
         )
 
-        task = self._resolve_prompt(
+        task = self.resolve_prompt(
             "moderator", "ai", "conclude",
             topic=self.discussion.topic,
             participants=participants,
@@ -174,14 +189,14 @@ class Moderator:
         client = self._get_client(mod)
         participants = self._participant_names()
 
-        system_prompt = self._resolve_prompt(
+        system_prompt = self.resolve_prompt(
             "moderator", "ai", "system",
             entity_name=mod.name,
             topic=self.discussion.topic,
             participants=participants,
         )
 
-        task = self._resolve_prompt(
+        task = self.resolve_prompt(
             "moderator", "ai", "mediate",
             context=context or "A disagreement has arisen.",
             topic=self.discussion.topic,
@@ -199,7 +214,7 @@ class Moderator:
 
     def get_human_guidance(self, role: str) -> str:
         """Get guidance text to display to a human moderator or participant."""
-        return self._resolve_prompt(
+        return self.resolve_prompt(
             role, "human", "guidance",
             topic=self.discussion.topic,
             participants=self._participant_names(),
@@ -216,7 +231,7 @@ class Moderator:
         self.discussion.turn_number += 1
         return self.discussion.current_speaker
 
-    def reassign_turn(self, entity_id: str) -> Optional[Entity]:
+    def reassign_turn(self, entity_id: int) -> Optional[Entity]:
         """Reassign the current turn to a specific entity."""
         entity = self.discussion.get_entity(entity_id)
         if entity and entity_id in self.discussion.turn_order:

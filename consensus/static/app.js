@@ -111,7 +111,7 @@ function renderMarkdown(text) {
             '<ul>' + m.replace(/<uli>/g, '<li>').replace(/<\/uli>/g, '</li>') + '</ul>')
         .replace(/((?:<oli>.*<\/oli>\n?)+)/g, (m) =>
             '<ol>' + m.replace(/<oli>/g, '<li>').replace(/<\/oli>/g, '</li>') + '</ol>')
-        .replace(/^(?!<[huplos])(.*\S.*)$/gm, '<p>$1</p>');
+        .replace(/^(?!<(?:h[1-6]|ul|ol|li|p|pre))(.*\S.*)$/gm, '<p>$1</p>');
 }
 
 const $ = (sel) => document.querySelector(sel);
@@ -185,8 +185,8 @@ function renderProviders() {
                 <div class="settings-detail">Key env: ${p.api_key_env ? escHtml(p.api_key_env) : '<em>none</em>'}</div>
             </div>
             <div class="entity-actions">
-                <button class="btn btn-ghost btn-sm" onclick="editProvider('${p.id}')">Edit</button>
-                <button class="btn btn-ghost btn-sm" onclick="removeProvider('${p.id}')">Delete</button>
+                <button class="btn btn-ghost btn-sm" data-action="edit-provider" data-id="${p.id}">Edit</button>
+                <button class="btn btn-ghost btn-sm" data-action="delete-provider" data-id="${p.id}">Delete</button>
             </div>
         </div>
     `).join('');
@@ -253,8 +253,8 @@ function renderProfiles() {
                     : 'Human'}</div>
             </div>
             <div class="entity-actions">
-                <button class="btn btn-ghost btn-sm" onclick="editProfile('${e.id}')">Edit</button>
-                <button class="btn btn-ghost btn-sm" onclick="removeProfile('${e.id}')">Delete</button>
+                <button class="btn btn-ghost btn-sm" data-action="edit-profile" data-id="${e.id}">Edit</button>
+                <button class="btn btn-ghost btn-sm" data-action="delete-profile" data-id="${e.id}">Delete</button>
             </div>
         </div>
     `).join('');
@@ -345,8 +345,8 @@ function renderPrompts() {
                 <div class="settings-detail">${p.role} / ${p.target} / ${p.task}</div>
             </div>
             <div class="entity-actions">
-                <button class="btn btn-ghost btn-sm" onclick="editPrompt('${p.id}')">Edit</button>
-                <button class="btn btn-ghost btn-sm" onclick="removePrompt('${p.id}')">Delete</button>
+                <button class="btn btn-ghost btn-sm" data-action="edit-prompt" data-id="${p.id}">Edit</button>
+                <button class="btn btn-ghost btn-sm" data-action="delete-prompt" data-id="${p.id}">Delete</button>
             </div>
         </div>
     `).join('');
@@ -407,7 +407,7 @@ function renderHistory() {
         return;
     }
     list.innerHTML = discussions.map(d => `
-        <div class="history-item" onclick="loadDiscussion('${d.id}')">
+        <div class="history-item" data-action="load-discussion" data-id="${d.id}">
             <div>
                 <div class="history-topic">${escHtml(d.topic)}</div>
                 <div class="history-meta">${d.started_at ? formatDate(d.started_at) : 'Not started'}</div>
@@ -457,7 +457,7 @@ function renderAvailableEntities() {
                     <span class="entity-name">${escHtml(e.name)}</span>
                     <span class="entity-type">${e.entity_type === 'ai' ? 'AI' : 'Human'}</span>
                 </div>
-                <button class="btn btn-outline btn-sm" onclick="addToDiscussion('${e.id}')">Add</button>
+                <button class="btn btn-outline btn-sm" data-action="add-to-discussion" data-id="${e.id}">Add</button>
             </div>
         `).join('') || '<div class="text-muted" style="padding:0.5rem 0;font-size:0.85rem">All profiles added to discussion</div>';
 }
@@ -478,9 +478,9 @@ function renderDiscussionRoster() {
             </div>
             <div class="entity-actions">
                 ${e.id !== state.moderator_id
-                    ? `<button class="btn btn-ghost btn-sm" onclick="setModerator('${e.id}')">Set Mod</button>`
+                    ? `<button class="btn btn-ghost btn-sm" data-action="set-moderator" data-id="${e.id}">Set Mod</button>`
                     : ''}
-                <button class="btn btn-ghost btn-sm" onclick="removeFromDiscussion('${e.id}')">Remove</button>
+                <button class="btn btn-ghost btn-sm" data-action="remove-from-discussion" data-id="${e.id}">Remove</button>
             </div>
         </div>
     `).join('');
@@ -783,7 +783,7 @@ async function onReassign() {
     list.innerHTML = state.entities
         .filter(e => state.turn_order.includes(e.id))
         .map(e => `
-            <div class="reassign-item" onclick="doReassign('${e.id}')">
+            <div class="reassign-item" data-action="do-reassign" data-id="${e.id}">
                 <div class="entity-avatar" style="background:${e.avatar_color};width:28px;height:28px;font-size:0.7rem">${getInitials(e.name)}</div>
                 <span>${escHtml(e.name)}</span>
                 <span class="text-muted">${e.entity_type}</span>
@@ -913,6 +913,27 @@ function init() {
     $('#entity-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmEntity(); });
     $('#prov-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') confirmProvider(); });
 
+    // Event delegation for dynamically rendered buttons
+    document.addEventListener('click', (e) => {
+        const target = e.target.closest('[data-action]');
+        if (!target) return;
+        const action = target.dataset.action;
+        const id = target.dataset.id != null ? Number(target.dataset.id) : null;
+        switch (action) {
+            case 'edit-provider': editProvider(id); break;
+            case 'delete-provider': removeProvider(id); break;
+            case 'edit-profile': editProfile(id); break;
+            case 'delete-profile': removeProfile(id); break;
+            case 'edit-prompt': editPrompt(id); break;
+            case 'delete-prompt': removePrompt(id); break;
+            case 'load-discussion': loadDiscussion(id); break;
+            case 'add-to-discussion': addToDiscussion(id); break;
+            case 'set-moderator': setModerator(id); break;
+            case 'remove-from-discussion': removeFromDiscussion(id); break;
+            case 'do-reassign': doReassign(id); break;
+        }
+    });
+
     // Load initial state
     api.getState().then(s => {
         onStateUpdate(s);
@@ -930,7 +951,7 @@ function bootstrap() {
 }
 
 // Bootstrap: detect pywebview or fall back to web mode
-const WEBVIEW_DETECT_TIMEOUT_MS = 500;
+const WEBVIEW_DETECT_TIMEOUT_MS = 100;
 if (window.pywebview) { bootstrap(); }
 else {
     window.addEventListener('pywebviewready', bootstrap);
