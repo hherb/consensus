@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "consensus"
+version = "0.1.0"
+description = "A moderated discussion platform for humans and AI"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+desktop = ["pywebview>=5.0"]
+web = ["aiohttp>=3.9"]
+all = [
+    "pywebview>=5.0",
+    "aiohttp>=3.9",
+]
+
+[project.scripts]
+consensus = "consensus.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["consensus*"]
+
+[tool.setuptools.package-data]
+consensus = ["static/*"]

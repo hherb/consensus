@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Consensus - Discussion Moderator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+    <!-- ===== SETUP PHASE ===== -->
+    <section id="setup-phase">
+        <header class="setup-header">
+            <h1>Consensus</h1>
+            <p class="subtitle">Moderated Discussion Platform</p>
+        </header>
+
+        <div class="setup-grid">
+            <div class="card">
+                <h2>Topic</h2>
+                <textarea id="topic-input" placeholder="Enter the discussion topic..." rows="3"></textarea>
+            </div>
+
+            <div class="card">
+                <h2>Participants</h2>
+                <div id="entity-list"></div>
+                <button id="add-entity-btn" class="btn btn-outline">+ Add Participant</button>
+            </div>
+
+            <button id="start-btn" class="btn btn-primary btn-large" disabled>
+                Start Discussion
+            </button>
+        </div>
+    </section>
+
+    <!-- ===== DISCUSSION PHASE ===== -->
+    <section id="discussion-phase" class="hidden">
+        <header class="discussion-header">
+            <div class="header-left">
+                <button id="back-btn" class="btn btn-ghost" title="New Discussion">&#8592;</button>
+                <h1 id="discussion-topic"></h1>
+            </div>
+            <div class="header-controls">
+                <span id="turn-badge" class="badge"></span>
+                <button id="reassign-btn" class="btn btn-outline btn-sm" title="Reassign Turn">Reassign</button>
+                <button id="mediate-btn" class="btn btn-outline btn-sm" title="Moderator Intervention">Mediate</button>
+                <button id="conclude-btn" class="btn btn-accent btn-sm" title="End Discussion">Conclude</button>
+            </div>
+        </header>
+
+        <div class="discussion-grid">
+            <!-- Left: Entities -->
+            <aside id="entities-panel" class="panel">
+                <h3>Participants</h3>
+                <div id="discussion-entities"></div>
+            </aside>
+
+            <!-- Center: Chat -->
+            <main id="chat-panel" class="panel">
+                <div id="messages"></div>
+                <div id="input-area">
+                    <div id="turn-info"></div>
+                    <div class="input-row">
+                        <textarea id="message-input" placeholder="Type your message..." rows="2" disabled></textarea>
+                        <button id="send-btn" class="btn btn-primary" disabled>Send</button>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Right: Storyboard -->
+            <aside id="storyboard-panel" class="panel">
+                <h3>Storyboard</h3>
+                <div id="storyboard"></div>
+            </aside>
+        </div>
+    </section>
+
+    <!-- ===== ADD ENTITY DIALOG ===== -->
+    <div id="entity-dialog" class="dialog-overlay hidden">
+        <div class="dialog">
+            <h3>Add Participant</h3>
+            <div class="form-group">
+                <label for="entity-name">Name</label>
+                <input id="entity-name" type="text" placeholder="e.g. Alice, GPT-4o">
+            </div>
+            <div class="form-group">
+                <label for="entity-type">Type</label>
+                <select id="entity-type">
+                    <option value="human">Human</option>
+                    <option value="ai">AI (LLM)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="entity-color">Color</label>
+                <input id="entity-color" type="color" value="#3b82f6">
+            </div>
+            <div id="ai-config" class="hidden">
+                <div class="form-group">
+                    <label for="ai-base-url">API Base URL</label>
+                    <input id="ai-base-url" type="text" value="http://localhost:11434/v1">
+                </div>
+                <div class="form-group">
+                    <label for="ai-api-key">API Key</label>
+                    <input id="ai-api-key" type="password" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label for="ai-model">Model</label>
+                    <input id="ai-model" type="text" value="llama3" placeholder="e.g. gpt-4o, llama3">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="ai-temperature">Temperature</label>
+                        <input id="ai-temperature" type="number" value="0.7" step="0.1" min="0" max="2">
+                    </div>
+                    <div class="form-group">
+                        <label for="ai-max-tokens">Max Tokens</label>
+                        <input id="ai-max-tokens" type="number" value="1024">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="ai-system-prompt">Custom System Prompt</label>
+                    <textarea id="ai-system-prompt" rows="2" placeholder="Optional persona/instructions"></textarea>
+                </div>
+            </div>
+            <div class="dialog-actions">
+                <button id="cancel-entity-btn" class="btn btn-ghost">Cancel</button>
+                <button id="confirm-entity-btn" class="btn btn-primary">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== MODERATOR INPUT DIALOG ===== -->
+    <div id="moderator-dialog" class="dialog-overlay hidden">
+        <div class="dialog">
+            <h3 id="moderator-dialog-title">Moderator Summary</h3>
+            <div class="form-group">
+                <textarea id="moderator-input" rows="4" placeholder="Enter your summary or mediation..."></textarea>
+            </div>
+            <div class="dialog-actions">
+                <button id="cancel-moderator-btn" class="btn btn-ghost">Cancel</button>
+                <button id="confirm-moderator-btn" class="btn btn-primary">Submit</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== REASSIGN DIALOG ===== -->
+    <div id="reassign-dialog" class="dialog-overlay hidden">
+        <div class="dialog">
+            <h3>Reassign Turn</h3>
+            <p class="text-muted">Select who should speak next:</p>
+            <div id="reassign-list"></div>
+            <div class="dialog-actions">
+                <button id="cancel-reassign-btn" class="btn btn-ghost">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
