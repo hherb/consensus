@@ -298,7 +298,9 @@ function openEntityDialog(entity) {
     $('#entity-dialog-title').textContent = entity ? 'Edit Profile' : 'Add Profile';
     $('#entity-name').value = entity?.name || '';
     $('#entity-type').value = entity?.entity_type || 'human';
-    $('#entity-color').value = entity?.avatar_color || '#3b82f6';
+    const color = entity?.avatar_color || '#3b82f6';
+    $('#entity-color').value = color;
+    $('#entity-color-hex').value = color;
     $('#entity-edit-id').value = entity?.id || '';
 
     // Populate provider dropdown
@@ -333,10 +335,12 @@ async function confirmEntity() {
     const name = $('#entity-name').value.trim();
     if (!name) return showToast('Please enter a name');
 
+    const hexVal = $('#entity-color-hex').value;
+    const avatar_color = /^#[0-9a-fA-F]{6}$/.test(hexVal) ? hexVal : $('#entity-color').value;
     const params = {
         name,
         entity_type: $('#entity-type').value,
-        avatar_color: $('#entity-color').value,
+        avatar_color,
         entity_id: $('#entity-edit-id').value,
     };
 
@@ -924,6 +928,14 @@ function init() {
     // Clear custom input when a model is selected from dropdown
     $('#ai-model').addEventListener('change', () => {
         if ($('#ai-model').value) $('#ai-model-custom').value = '';
+    });
+    // Sync color picker <-> hex text input
+    $('#entity-color').addEventListener('input', (e) => {
+        $('#entity-color-hex').value = e.target.value;
+    });
+    $('#entity-color-hex').addEventListener('input', (e) => {
+        const v = e.target.value;
+        if (/^#[0-9a-fA-F]{6}$/.test(v)) $('#entity-color').value = v;
     });
     $('#confirm-entity-btn').addEventListener('click', confirmEntity);
     $('#cancel-entity-btn').addEventListener('click', () => hide('#entity-dialog'));

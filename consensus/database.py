@@ -464,13 +464,14 @@ class Database:
                    system_prompt: str = "") -> int:
         """Add a new entity profile. Returns the new entity ID."""
         now = time.time()
+        prov_id = int(provider_id) if provider_id else None
         cur = self._execute_write(
             "INSERT INTO entities "
             "(name,entity_type,avatar_color,provider_id,model,"
             "temperature,max_tokens,system_prompt,created_at,updated_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (name, entity_type, avatar_color,
-             provider_id or None, model, temperature, max_tokens,
+             prov_id, model, temperature, max_tokens,
              system_prompt, now, now),
         )
         return cur.lastrowid
@@ -528,10 +529,11 @@ class Database:
     def create_discussion(self, topic: str,
                           moderator_id: int = 0) -> int:
         """Create a new discussion record. Returns the discussion ID."""
+        mod_id = int(moderator_id) if moderator_id else None
         cur = self._execute_write(
             "INSERT INTO discussions (topic,moderator_id,started_at,status) "
             "VALUES (?,?,?,?)",
-            (topic, moderator_id or None, time.time(), "setup"),
+            (topic, mod_id, time.time(), "setup"),
         )
         return cur.lastrowid
 
