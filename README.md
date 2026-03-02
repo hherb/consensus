@@ -1,6 +1,10 @@
 # Consensus
 
-A moderated discussion platform where two or more entities (humans and/or AI via OpenAI-compatible APIs) can discuss topics with a designated moderator who arbitrates, summarizes, and synthesizes conclusions.
+A moderated discussion platform where two or more entities (humans and/or AI via OpenAI-compatible APIs) can discuss topics with a designated moderator who arbitrates, summarizes, and synthesizes conclusions. The moderator can be AI or human and may participate in the dicussion
+
+<p align="center">
+  <img src="assets/consensus.png" alt="Consensus" width="200">
+</p>
 
 ## Features
 
