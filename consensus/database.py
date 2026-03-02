@@ -35,6 +35,7 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys=ON")
         self._create_tables()
         self._seed_default_prompts()
+        self._seed_default_providers()
 
     def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         """Execute a single write statement under the lock and commit."""
@@ -312,6 +313,45 @@ class Database:
                     "is_default, created_at, updated_at) VALUES (?,?,?,?,?,1,?,?)",
                     (d["name"], d["role"], d["target"], d["task"],
                      d["content"], now, now),
+                )
+            self.conn.commit()
+
+    def _seed_default_providers(self) -> None:
+        """Insert default providers only if none exist yet."""
+        count = self.conn.execute("SELECT COUNT(*) FROM providers").fetchone()[0]
+        if count > 0:
+            return
+
+        now = time.time()
+        defaults = [
+            {
+                "name": "Ollama (Local)",
+                "base_url": "http://localhost:11434/v1",
+                "api_key_env": "",
+            },
+            {
+                "name": "Anthropic",
+                "base_url": "https://api.anthropic.com/v1",
+                "api_key_env": "ANTHROPIC_API_KEY",
+            },
+            {
+                "name": "DeepSeek",
+                "base_url": "https://api.deepseek.com/v1",
+                "api_key_env": "DEEPSEEK_API_KEY",
+            },
+            {
+                "name": "OpenAI",
+                "base_url": "https://api.openai.com/v1",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+        ]
+
+        with self._lock:
+            for d in defaults:
+                self.conn.execute(
+                    "INSERT INTO providers (name, base_url, api_key_env, "
+                    "created_at) VALUES (?,?,?,?)",
+                    (d["name"], d["base_url"], d["api_key_env"], now),
                 )
             self.conn.commit()
 

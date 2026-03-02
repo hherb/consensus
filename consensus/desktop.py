@@ -82,6 +82,10 @@ class DesktopBridge:
         """Delete a provider by ID."""
         return self.app.delete_provider(provider_id)
 
+    def fetch_models(self, provider_id: int) -> list:
+        """Fetch available models from a provider's API."""
+        return self._run_async(self.app.fetch_models(provider_id))
+
     # -- Entity profiles --
     def save_entity(self, name: str, entity_type: str,
                     avatar_color: str = "#3b82f6",

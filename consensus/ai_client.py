@@ -63,6 +63,20 @@ class AIClient:
     async def __aexit__(self, *args: object) -> None:
         await self.close()
 
+    async def list_models(self) -> list[str]:
+        """Fetch available model IDs from the /models endpoint."""
+        client = self._get_client()
+        try:
+            response = await client.get(f"{self.base_url}/models")
+            response.raise_for_status()
+            data = response.json()
+            models = data.get("data", [])
+            return sorted(m["id"] for m in models if "id" in m)
+        except Exception:
+            logger.debug("Failed to list models from %s", self.base_url,
+                         exc_info=True)
+            return []
+
     async def complete(
         self,
         messages: list[dict],

@@ -10,6 +10,7 @@ class DesktopAPI {
     async addProvider(n, u, k) { return await window.pywebview.api.add_provider(n, u, k || ''); }
     async updateProvider(id, n, u, k) { return await window.pywebview.api.update_provider(id, n, u, k); }
     async deleteProvider(id) { return await window.pywebview.api.delete_provider(id); }
+    async fetchModels(providerId) { return await window.pywebview.api.fetch_models(providerId); }
     // Entity profiles
     async saveEntity(p) { return await window.pywebview.api.save_entity(p.name, p.entity_type, p.avatar_color||'#3b82f6', p.provider_id||'', p.model||'', p.temperature ?? 0.7, p.max_tokens ?? 1024, p.system_prompt||'', p.entity_id||''); }
     async deleteEntity(id) { return await window.pywebview.api.delete_entity(id); }
@@ -55,6 +56,7 @@ class WebAPI {
     async addProvider(n, u, k) { return await this._post('add_provider', { name: n, base_url: u, api_key_env: k || '' }); }
     async updateProvider(id, n, u, k) { return await this._post('update_provider', { provider_id: id, name: n, base_url: u, api_key_env: k }); }
     async deleteProvider(id) { return await this._post('delete_provider', { provider_id: id }); }
+    async fetchModels(providerId) { return await this._post('fetch_models', { provider_id: providerId }); }
     async saveEntity(p) { return await this._post('save_entity', p); }
     async deleteEntity(id) { return await this._post('delete_entity', { entity_id: id }); }
     async savePrompt(p) { return await this._post('save_prompt', p); }
@@ -260,6 +262,38 @@ function renderProfiles() {
     `).join('');
 }
 
+async function loadModelsForProvider(providerId, currentModel) {
+    const modelSelect = $('#ai-model');
+    const customInput = $('#ai-model-custom');
+    modelSelect.innerHTML = '<option value="">Loading models...</option>';
+    customInput.value = '';
+
+    if (!providerId) {
+        modelSelect.innerHTML = '<option value="">-- Select a provider first --</option>';
+        return;
+    }
+
+    let models = [];
+    try {
+        models = await api.fetchModels(providerId);
+    } catch (e) { /* ignore fetch errors */ }
+
+    if (models && models.length > 0) {
+        const currentInList = currentModel && models.includes(currentModel);
+        modelSelect.innerHTML =
+            '<option value="">-- Select Model --</option>' +
+            models.map(m =>
+                `<option value="${escHtml(m)}" ${m === currentModel ? 'selected' : ''}>${escHtml(m)}</option>`
+            ).join('');
+        if (currentModel && !currentInList) {
+            customInput.value = currentModel;
+        }
+    } else {
+        modelSelect.innerHTML = '<option value="">No models found</option>';
+        if (currentModel) customInput.value = currentModel;
+    }
+}
+
 function openEntityDialog(entity) {
     $('#entity-dialog-title').textContent = entity ? 'Edit Profile' : 'Add Profile';
     $('#entity-name').value = entity?.name || '';
@@ -274,12 +308,19 @@ function openEntityDialog(entity) {
             `<option value="${p.id}" ${entity?.provider_id === p.id ? 'selected' : ''}>${escHtml(p.name)}</option>`
         ).join('');
 
+    // Reset model fields
+    $('#ai-model').innerHTML = '<option value="">-- Select a provider first --</option>';
+    $('#ai-model-custom').value = '';
+
     if ((entity?.entity_type || 'human') === 'ai') {
         show('#ai-config');
-        $('#ai-model').value = entity?.model || 'llama3';
         $('#ai-temperature').value = entity?.temperature ?? 0.7;
         $('#ai-max-tokens').value = entity?.max_tokens ?? 1024;
         $('#ai-system-prompt').value = entity?.system_prompt || '';
+        // Load models if provider is set
+        if (entity?.provider_id) {
+            loadModelsForProvider(entity.provider_id, entity.model || '');
+        }
     } else {
         hide('#ai-config');
     }
@@ -301,7 +342,7 @@ async function confirmEntity() {
 
     if (params.entity_type === 'ai') {
         params.provider_id = $('#ai-provider').value;
-        params.model = $('#ai-model').value;
+        params.model = $('#ai-model-custom').value.trim() || $('#ai-model').value;
         params.temperature = parseFloat($('#ai-temperature').value);
         params.max_tokens = parseInt($('#ai-max-tokens').value);
         params.system_prompt = $('#ai-system-prompt').value;
@@ -871,6 +912,18 @@ function init() {
     $('#entity-type').addEventListener('change', (e) => {
         if (e.target.value === 'ai') show('#ai-config');
         else hide('#ai-config');
+    });
+    $('#ai-provider').addEventListener('change', (e) => {
+        const pid = e.target.value;
+        if (pid) loadModelsForProvider(parseInt(pid), '');
+        else {
+            $('#ai-model').innerHTML = '<option value="">-- Select a provider first --</option>';
+            $('#ai-model-custom').value = '';
+        }
+    });
+    // Clear custom input when a model is selected from dropdown
+    $('#ai-model').addEventListener('change', () => {
+        if ($('#ai-model').value) $('#ai-model-custom').value = '';
     });
     $('#confirm-entity-btn').addEventListener('click', confirmEntity);
     $('#cancel-entity-btn').addEventListener('click', () => hide('#entity-dialog'));

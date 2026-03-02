@@ -1,9 +1,11 @@
 """Application state and API for the discussion system."""
 
 import logging
+import os
 import time
 from typing import Optional, Callable
 
+from .ai_client import AIClient
 from .models import (
     Discussion, Entity, EntityType, Message, MessageRole, StoryboardEntry,
 )
@@ -68,6 +70,17 @@ class ConsensusApp:
     def get_providers(self) -> list[dict]:
         """Return all configured providers."""
         return self.db.get_providers()
+
+    async def fetch_models(self, provider_id: int) -> list[str]:
+        """Fetch available models from a provider's API."""
+        provider = self.db.get_provider(provider_id)
+        if not provider:
+            return []
+        api_key = ""
+        if provider["api_key_env"]:
+            api_key = os.environ.get(provider["api_key_env"], "")
+        async with AIClient(provider["base_url"], api_key) as client:
+            return await client.list_models()
 
     # ------------------------------------------------------------------
     # Entity profile management (persistent)

@@ -54,6 +54,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None
                 }),
             "delete_provider": lambda: app.delete_provider(
                 data["provider_id"]),
+            "fetch_models": lambda: app.fetch_models(
+                data["provider_id"]),
             # Entity profiles
             "save_entity": lambda: app.save_entity(**data),
             "delete_entity": lambda: app.delete_entity(data["entity_id"]),
