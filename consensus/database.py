@@ -363,6 +363,8 @@ class Database:
 
     def _migrate_providers(self) -> None:
         """Apply provider data fixes for existing databases."""
+        from .config import save_api_key
+
         with self._lock:
             # Fix DeepSeek base_url (was /v1, which breaks /models endpoint)
             self.conn.execute(
@@ -380,6 +382,34 @@ class Database:
                     ("Mistral", "https://api.mistral.ai/v1",
                      "MISTRAL_API_KEY", time.time()),
                 )
+
+            # Migrate literal API keys out of api_key_env into ~/.consensus/.env
+            rows = self.conn.execute(
+                "SELECT id, name, api_key_env FROM providers WHERE api_key_env != ''"
+            ).fetchall()
+            for row in rows:
+                value = row[2]  # api_key_env
+                # Heuristic: env var names are UPPER_SNAKE_CASE and short.
+                # Literal keys contain lowercase, dashes, dots, or are long.
+                is_literal = (
+                    any(c in value for c in "-.") or
+                    value != value.upper() or
+                    len(value) > 40
+                )
+                if is_literal:
+                    # Derive env var name from provider name
+                    env_var = (row[1].upper()
+                               .replace(" ", "_")
+                               .replace("(", "")
+                               .replace(")", "") + "_API_KEY")
+                    if env_var.endswith("_API_KEY_API_KEY"):
+                        env_var = env_var[:-8]
+                    save_api_key(env_var, value)
+                    self.conn.execute(
+                        "UPDATE providers SET api_key_env = ? WHERE id = ?",
+                        (env_var, row[0]),
+                    )
+
             self.conn.commit()
 
     def get_prompts(self, role: str = "", target: str = "",

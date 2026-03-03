@@ -61,13 +61,15 @@ class DesktopBridge:
 
     # -- Providers --
     def add_provider(self, name: str, base_url: str,
-                     api_key_env: str = "") -> Optional[dict]:
+                     api_key_env: str = "",
+                     api_key: str = "") -> Optional[dict]:
         """Add a new API provider."""
-        return self.app.add_provider(name, base_url, api_key_env)
+        return self.app.add_provider(name, base_url, api_key_env, api_key)
 
     def update_provider(self, provider_id: int, name: str = "",
                         base_url: str = "",
-                        api_key_env: str = "") -> bool:
+                        api_key_env: str = "",
+                        api_key: str = "") -> bool:
         """Update an existing provider."""
         kwargs: dict[str, str] = {}
         if name:
@@ -76,7 +78,7 @@ class DesktopBridge:
             kwargs["base_url"] = base_url
         if api_key_env is not None:
             kwargs["api_key_env"] = api_key_env
-        return self.app.update_provider(provider_id, **kwargs)
+        return self.app.update_provider(provider_id, api_key=api_key, **kwargs)
 
     def delete_provider(self, provider_id: int) -> bool:
         """Delete a provider by ID."""
@@ -186,6 +188,8 @@ class DesktopBridge:
 def launch_desktop(debug: bool = False) -> None:
     """Launch the desktop application using pywebview."""
     import webview
+    from .config import load_env
+    load_env()
 
     app = ConsensusApp()
     bridge = DesktopBridge(app)

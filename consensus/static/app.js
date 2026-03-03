@@ -7,8 +7,8 @@
 class DesktopAPI {
     async getState() { return await window.pywebview.api.get_state(); }
     // Providers
-    async addProvider(n, u, k) { return await window.pywebview.api.add_provider(n, u, k || ''); }
-    async updateProvider(id, n, u, k) { return await window.pywebview.api.update_provider(id, n, u, k); }
+    async addProvider(n, u, ke, k) { return await window.pywebview.api.add_provider(n, u, ke || '', k || ''); }
+    async updateProvider(id, n, u, ke, k) { return await window.pywebview.api.update_provider(id, n, u, ke, k || ''); }
     async deleteProvider(id) { return await window.pywebview.api.delete_provider(id); }
     async fetchModels(providerId) { return await window.pywebview.api.fetch_models(providerId); }
     // Entity profiles
@@ -53,8 +53,8 @@ class WebAPI {
         return json.result;
     }
     async getState() { return await this._post('get_state'); }
-    async addProvider(n, u, k) { return await this._post('add_provider', { name: n, base_url: u, api_key_env: k || '' }); }
-    async updateProvider(id, n, u, k) { return await this._post('update_provider', { provider_id: id, name: n, base_url: u, api_key_env: k }); }
+    async addProvider(n, u, ke, k) { return await this._post('add_provider', { name: n, base_url: u, api_key_env: ke || '', api_key: k || '' }); }
+    async updateProvider(id, n, u, ke, k) { return await this._post('update_provider', { provider_id: id, name: n, base_url: u, api_key_env: ke, api_key: k || '' }); }
     async deleteProvider(id) { return await this._post('delete_provider', { provider_id: id }); }
     async fetchModels(providerId) { return await this._post('fetch_models', { provider_id: providerId }); }
     async saveEntity(p) { return await this._post('save_entity', p); }
@@ -184,7 +184,7 @@ function renderProviders() {
             <div class="entity-info">
                 <div class="entity-name">${escHtml(p.name)}</div>
                 <div class="settings-detail">${escHtml(p.base_url)}</div>
-                <div class="settings-detail">Key env: ${p.api_key_env ? escHtml(p.api_key_env) : '<em>none</em>'}</div>
+                <div class="settings-detail">API Key: ${p.has_key ? '<span style="color:var(--color-success)">Configured</span>' : '<em>Not set</em>'}</div>
             </div>
             <div class="entity-actions">
                 <button class="btn btn-ghost btn-sm" data-action="edit-provider" data-id="${p.id}">Edit</button>
@@ -199,7 +199,14 @@ function openProviderDialog(provider) {
     $('#prov-name').value = provider?.name || '';
     $('#prov-url').value = provider?.base_url || '';
     $('#prov-key-env').value = provider?.api_key_env || '';
+    $('#prov-api-key').value = '';
     $('#prov-edit-id').value = provider?.id || '';
+    const hint = $('#prov-key-hint');
+    if (provider?.has_key) {
+        hint.textContent = 'Leave blank to keep current key, or enter new key to replace';
+    } else {
+        hint.textContent = 'Enter the API key for this provider';
+    }
     show('#provider-dialog');
     $('#prov-name').focus();
 }
@@ -209,12 +216,13 @@ async function confirmProvider() {
     const url = $('#prov-url').value.trim();
     if (!name || !url) return showToast('Name and URL are required');
     const keyEnv = $('#prov-key-env').value.trim();
+    const apiKey = $('#prov-api-key').value.trim();
     const editId = $('#prov-edit-id').value;
 
     if (editId) {
-        await api.updateProvider(editId, name, url, keyEnv);
+        await api.updateProvider(editId, name, url, keyEnv, apiKey);
     } else {
-        await api.addProvider(name, url, keyEnv);
+        await api.addProvider(name, url, keyEnv, apiKey);
     }
     const s = await api.getState();
     onStateUpdate(s);

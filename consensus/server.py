@@ -16,6 +16,8 @@ DEFAULT_PORT = 8080
 
 async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
     """Start the aiohttp web server and block until interrupted."""
+    from .config import load_env
+    load_env()
     app = ConsensusApp()
     static_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "static"))
 
@@ -47,11 +49,14 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None
             "get_state": lambda: app.get_state(),
             # Providers
             "add_provider": lambda: app.add_provider(
-                data["name"], data["base_url"], data.get("api_key_env", "")),
+                data["name"], data["base_url"],
+                data.get("api_key_env", ""),
+                data.get("api_key", "")),
             "update_provider": lambda: app.update_provider(
-                data["provider_id"], **{
-                    k: v for k, v in data.items() if k != "provider_id"
-                }),
+                data["provider_id"],
+                api_key=data.get("api_key", ""),
+                **{k: v for k, v in data.items()
+                   if k not in ("provider_id", "api_key")}),
             "delete_provider": lambda: app.delete_provider(
                 data["provider_id"]),
             "fetch_models": lambda: app.fetch_models(

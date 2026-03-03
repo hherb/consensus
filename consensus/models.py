@@ -19,19 +19,11 @@ ENTITY_COLORS = [
 ]
 
 
-def resolve_api_key(value: str) -> str:
-    """Resolve an API key from either an env var name or a literal value.
-
-    If *value* matches an environment variable, return its contents.
-    Otherwise treat *value* itself as a literal API key.
-    """
-    if not value:
+def resolve_api_key(env_var: str) -> str:
+    """Resolve an API key by looking up the env var name in os.environ."""
+    if not env_var:
         return ""
-    env_val = os.environ.get(value, "")
-    if env_val:
-        return env_val
-    # Not a known env var — treat as a literal key
-    return value
+    return os.environ.get(env_var, "")
 
 
 class EntityType(Enum):
