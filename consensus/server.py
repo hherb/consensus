@@ -85,6 +85,9 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None
             "reassign_turn": lambda: app.reassign_turn(data["entity_id"]),
             "mediate": lambda: app.mediate(data.get("context", "")),
             "conclude": lambda: app.conclude_discussion(),
+            # Export
+            "get_export_data": lambda: app.get_export_data(
+                data["discussion_id"]),
             # History
             "load_discussion": lambda: app.load_discussion(
                 data["discussion_id"]),

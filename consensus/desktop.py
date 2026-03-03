@@ -168,6 +168,11 @@ class DesktopBridge:
         """End the discussion and generate a conclusion."""
         return self._run_async(self.app.conclude_discussion())
 
+    # -- Export --
+    def get_export_data(self, discussion_id: int) -> dict:
+        """Get discussion data for export without mutating current state."""
+        return self.app.get_export_data(discussion_id)
+
     # -- History --
     def load_discussion(self, discussion_id: int) -> dict:
         """Load a past discussion for review."""

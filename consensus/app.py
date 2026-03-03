@@ -513,6 +513,37 @@ class ConsensusApp:
     # History
     # ------------------------------------------------------------------
 
+    def get_export_data(self, discussion_id: int) -> dict:
+        """Get discussion data for export without mutating current state."""
+        disc = self.db.get_discussion(discussion_id)
+        if not disc:
+            return {"error": "Discussion not found"}
+
+        members = self.db.get_discussion_members(discussion_id)
+        messages = self.db.get_messages(discussion_id)
+        storyboard = self.db.get_storyboard(discussion_id)
+
+        entities = [Entity.from_db_row(m) for m in members]
+        msgs = [Message.from_db_row(m) for m in messages]
+        sb = [StoryboardEntry.from_db_row(s) for s in storyboard]
+
+        turn_order = [
+            m["entity_id"] for m in members
+            if m.get("turn_position") is not None
+        ]
+
+        d = Discussion(
+            id=discussion_id,
+            topic=disc["topic"],
+            entities=entities,
+            moderator_id=disc.get("moderator_id"),
+            messages=msgs,
+            storyboard=sb,
+            turn_order=turn_order,
+            is_active=disc["status"] == "active",
+        )
+        return d.to_dict()
+
     def load_discussion(self, discussion_id: int) -> dict:
         """Load a past discussion for review, restoring full state."""
         disc = self.db.get_discussion(discussion_id)

@@ -788,6 +788,10 @@ function exportAsJson(exportState) {
     showToast('Exported as JSON', 2000, 'success');
 }
 
+function safeColor(c) {
+    return /^#[0-9a-fA-F]{3,8}$/.test(c) ? c : '#666';
+}
+
 function buildExportHtml(exportState) {
     const s = exportState || state;
     const mod = s.entities.find(e => e.id === s.moderator_id);
@@ -798,14 +802,14 @@ function buildExportHtml(exportState) {
         const typeLabel = e.entity_type === 'ai' ? (e.ai_config?.model || 'AI') : 'Human';
         const modBadge = e.id === s.moderator_id ? ' <span class="mod-badge">MOD</span>' : '';
         return `<div class="participant">
-            <div class="avatar" style="background:${e.avatar_color}">${escHtml(initials)}</div>
+            <div class="avatar" style="background:${safeColor(e.avatar_color)}">${escHtml(initials)}</div>
             <div><span class="name">${escHtml(e.name)}${modBadge}</span><br><span class="type">${escHtml(typeLabel)}</span></div>
         </div>`;
     }).join('\n');
 
     const messagesHtml = s.messages.map(m => {
         const entity = s.entities.find(e => e.id === m.entity_id);
-        const color = entity?.avatar_color || '#666';
+        const color = safeColor(entity?.avatar_color || '#666');
         const isMod = m.role === 'moderator';
         const isSystem = m.role === 'system';
         const initials = getInitials(m.entity_name);
@@ -950,14 +954,20 @@ function exportAsHtml(exportState) {
 
 function exportAsPdf(exportState) {
     const html = buildExportHtml(exportState);
+    // In pywebview desktop mode, window.open may not work — fall back to download
+    if (window.pywebview) {
+        downloadFile(html, exportFilename('html', exportState), 'text/html');
+        showToast('HTML downloaded — open and print to PDF', 3000, 'info');
+        return;
+    }
     const w = window.open('', '_blank');
     if (!w) {
         showToast('Pop-up blocked — please allow pop-ups for PDF export');
         return;
     }
+    w.onload = () => { w.print(); };
     w.document.write(html);
     w.document.close();
-    w.onload = () => { w.print(); };
 }
 
 function toggleExportMenu() {
@@ -970,11 +980,12 @@ function closeExportMenu() {
     if (menu) menu.classList.add('hidden');
 }
 
-function toggleHistoryExportMenu(discussionId, e) {
-    e.stopPropagation();
-    closeAllHistoryMenus();
+function toggleHistoryExportMenu(discussionId) {
     const menu = $(`#history-export-menu-${discussionId}`);
-    if (menu) menu.classList.toggle('hidden');
+    if (!menu) return;
+    const wasHidden = menu.classList.contains('hidden');
+    closeAllHistoryMenus();
+    if (wasHidden) menu.classList.remove('hidden');
 }
 
 function closeAllHistoryMenus() {
@@ -983,18 +994,18 @@ function closeAllHistoryMenus() {
 
 async function exportHistoryDiscussion(discussionId, format) {
     try {
-        // Fetch discussion data without navigating
+        // Fetch discussion data via get_export_data to avoid mutating server state
         let exportState;
         if (window.pywebview) {
-            exportState = await window.pywebview.api.load_discussion(discussionId);
+            exportState = await window.pywebview.api.get_export_data(discussionId);
         } else {
-            const resp = await fetch('/api/load_discussion', {
+            const resp = await fetch('/api/get_export_data', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ discussion_id: discussionId }),
             });
             const json = await resp.json();
-            exportState = json.state || json.result;
+            exportState = json.result;
         }
         if (!exportState || exportState.error) {
             showToast(exportState?.error || 'Failed to load discussion');
@@ -1007,9 +1018,6 @@ async function exportHistoryDiscussion(discussionId, format) {
         showToast('Export failed: ' + e.message);
     }
 }
-
-// Close history menus when clicking elsewhere
-document.addEventListener('click', () => closeAllHistoryMenus());
 
 // ============================================================
 // Discussion Event Handlers
@@ -1268,8 +1276,13 @@ function init() {
     $('#reassign-btn').addEventListener('click', onReassign);
     $('#mediate-btn').addEventListener('click', onMediate);
     $('#conclude-btn').addEventListener('click', onConclude);
-    $('#export-btn').addEventListener('click', (e) => { e.stopPropagation(); toggleExportMenu(); });
-    document.addEventListener('click', () => closeExportMenu());
+    $('#export-btn').addEventListener('click', () => toggleExportMenu());
+    document.addEventListener('click', (ev) => {
+        if (!ev.target.closest('.export-dropdown')) {
+            closeExportMenu();
+            closeAllHistoryMenus();
+        }
+    });
     $('#back-btn').addEventListener('click', onBack);
 
     // Moderator dialog
@@ -1312,7 +1325,7 @@ function init() {
             case 'export-json': closeExportMenu(); exportAsJson(); break;
             case 'export-html': closeExportMenu(); exportAsHtml(); break;
             case 'export-pdf': closeExportMenu(); exportAsPdf(); break;
-            case 'toggle-history-export': toggleHistoryExportMenu(id, e); break;
+            case 'toggle-history-export': toggleHistoryExportMenu(id); break;
             case 'export-history-json': closeAllHistoryMenus(); exportHistoryDiscussion(id, 'json'); break;
             case 'export-history-html': closeAllHistoryMenus(); exportHistoryDiscussion(id, 'html'); break;
             case 'export-history-pdf': closeAllHistoryMenus(); exportHistoryDiscussion(id, 'pdf'); break;
