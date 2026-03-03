@@ -607,6 +607,66 @@ input[type="checkbox"] { width: auto; }
     to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
+/* === Export Dropdown === */
+.export-dropdown { position: relative; }
+.export-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 0.25rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    z-index: 50;
+    min-width: 100px;
+    overflow: hidden;
+}
+.export-option {
+    display: block;
+    width: 100%;
+    padding: 0.45rem 0.9rem;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.8rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.export-option:hover { background: var(--surface-elevated); }
+.export-option + .export-option { border-top: 1px solid var(--border); }
+
+/* History export button */
+.history-export-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    border-radius: var(--radius);
+    padding: 0.25rem 0.5rem;
+    font-size: 0.7rem;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.15s;
+}
+.history-export-btn:hover { border-color: var(--text-secondary); color: var(--text); background: var(--surface-elevated); }
+
+/* History export menu (positioned relative to history item) */
+.history-item { position: relative; }
+.history-export-menu {
+    position: absolute;
+    right: 0.5rem;
+    top: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    z-index: 50;
+    min-width: 100px;
+    overflow: hidden;
+}
+
 /* === Scrollbars === */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

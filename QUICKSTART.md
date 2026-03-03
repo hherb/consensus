@@ -21,24 +21,20 @@ Clone the repository and install with uv:
 ```bash
 git clone https://github.com/hherb/consensus.git
 cd consensus
+
+# Install as a global command (both desktop + web modes)
+uv tool install -e ".[all]"
 ```
 
-Choose one of:
+This places the `consensus` command in `~/.local/bin/` so it works from anywhere. The `-e` flag keeps it editable — source changes take effect immediately.
 
-```bash
-# Desktop app (native window via pywebview)
-uv pip install -e ".[desktop]"
-
-# Web server (access from any browser)
-uv pip install -e ".[web]"
-
-# Both modes
-uv pip install -e ".[all]"
-```
+> **Pick a single mode instead:**
+> ```bash
+> uv tool install -e ".[desktop]"   # desktop only
+> uv tool install -e ".[web]"       # web server only
+> ```
 
 ## Run
-
-Installing with `uv pip install` registers the `consensus` command on your PATH.
 
 ### Desktop mode (default)
 
@@ -126,12 +122,12 @@ Go to **New Discussion** tab:
 
 **"Web mode requires aiohttp"** — You installed without the `web` extra:
 ```bash
-uv pip install -e ".[web]"
+uv tool install -e ".[web]"    # or ".[all]" for both modes
 ```
 
 **"Desktop mode requires pywebview"** — You installed without the `desktop` extra:
 ```bash
-uv pip install -e ".[desktop]"
+uv tool install -e ".[desktop]"    # or ".[all]" for both modes
 ```
 
 **AI responses fail** — Verify your provider is running and reachable. For Ollama:

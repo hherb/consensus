@@ -132,6 +132,14 @@
                 <button id="reassign-btn" class="btn btn-outline btn-sm" title="Reassign Turn">Reassign</button>
                 <button id="mediate-btn" class="btn btn-outline btn-sm" title="Moderator Intervention">Mediate</button>
                 <button id="conclude-btn" class="btn btn-accent btn-sm" title="End Discussion">Conclude</button>
+                <div class="export-dropdown">
+                    <button id="export-btn" class="btn btn-outline btn-sm" title="Export Discussion">Export &#9662;</button>
+                    <div id="export-menu" class="export-menu hidden">
+                        <button data-action="export-json" class="export-option">JSON</button>
+                        <button data-action="export-html" class="export-option">HTML</button>
+                        <button data-action="export-pdf" class="export-option">PDF</button>
+                    </div>
+                </div>
             </div>
         </header>
 

@@ -56,38 +56,39 @@ A moderated discussion platform where two or more entities (humans and/or AI via
 
 ## Installation
 
-Consensus uses [uv](https://docs.astral.sh/uv/) for dependency management (though pip works too).
+Consensus uses [uv](https://docs.astral.sh/uv/) for fast Python package management. Requires Python 3.11+.
 
 ```bash
-# Using uv (recommended)
-uv sync                        # core dependencies
-uv sync --extra desktop        # + pywebview for desktop mode
-uv sync --extra web            # + aiohttp for web server mode
-uv sync --extra all            # everything
+git clone https://github.com/hherb/consensus.git
+cd consensus
 
-# Using pip
-pip install .                  # core only
-pip install ".[desktop]"       # desktop mode
-pip install ".[web]"           # web server mode
-pip install ".[all]"           # everything
+# Install as a global command (recommended)
+uv tool install -e ".[all]"        # desktop + web, editable
+
+# Or pick a mode:
+uv tool install -e ".[desktop]"    # desktop only
+uv tool install -e ".[web]"        # web server only
 ```
 
-Requires Python 3.11 or later.
+This installs the `consensus` command into `~/.local/bin/` so it works from anywhere. The `-e` flag keeps it editable — source changes take effect immediately.
+
+> **Alternative: pip**
+> ```bash
+> pip install ".[all]"    # installs into current venv
+> ```
 
 ## Usage
 
 ```bash
 # Desktop mode (default)
-python -m consensus
-# or
 consensus
 
 # Web server mode (accessible from browser/mobile)
-python -m consensus --web
-python -m consensus --web --host 0.0.0.0 --port 8080
+consensus --web
+consensus --web --host 0.0.0.0 --port 8080
 
 # Debug mode
-python -m consensus --web --debug
+consensus --web --debug
 ```
 
 ### Setting Up AI Providers
