@@ -111,13 +111,31 @@ input:focus, textarea:focus, select:focus {
 }
 textarea { resize: vertical; }
 select { cursor: pointer; }
-input[type="color"] {
-    width: 48px; height: 36px;
-    padding: 2px;
-    background: var(--surface-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+.color-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.color-swatches {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+.color-swatch {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
     cursor: pointer;
+    padding: 0;
+    outline: none;
+    transition: border-color 0.15s, transform 0.15s;
+}
+.color-swatch:hover {
+    transform: scale(1.15);
+}
+.color-swatch.selected {
+    border-color: var(--text);
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text);
 }
 label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 0.25rem; }
 .form-group { margin-bottom: 0.75rem; }

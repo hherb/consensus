@@ -294,13 +294,20 @@ async function loadModelsForProvider(providerId, currentModel) {
     }
 }
 
+function selectColorSwatch(color) {
+    const hex = color || '#3b82f6';
+    $('#entity-color-hex').value = hex;
+    document.querySelectorAll('#color-swatches .color-swatch').forEach(s => {
+        s.classList.toggle('selected', s.dataset.color === hex);
+    });
+}
+
 function openEntityDialog(entity) {
     $('#entity-dialog-title').textContent = entity ? 'Edit Profile' : 'Add Profile';
     $('#entity-name').value = entity?.name || '';
     $('#entity-type').value = entity?.entity_type || 'human';
     const color = entity?.avatar_color || '#3b82f6';
-    $('#entity-color').value = color;
-    $('#entity-color-hex').value = color;
+    selectColorSwatch(color);
     $('#entity-edit-id').value = entity?.id || '';
 
     // Populate provider dropdown
@@ -336,7 +343,7 @@ async function confirmEntity() {
     if (!name) return showToast('Please enter a name');
 
     const hexVal = $('#entity-color-hex').value;
-    const avatar_color = /^#[0-9a-fA-F]{6}$/.test(hexVal) ? hexVal : $('#entity-color').value;
+    const avatar_color = /^#[0-9a-fA-F]{6}$/.test(hexVal) ? hexVal : '#3b82f6';
     const params = {
         name,
         entity_type: $('#entity-type').value,
@@ -1248,13 +1255,16 @@ function init() {
     $('#ai-model').addEventListener('change', () => {
         if ($('#ai-model').value) $('#ai-model-custom').value = '';
     });
-    // Sync color picker <-> hex text input
-    $('#entity-color').addEventListener('input', (e) => {
-        $('#entity-color-hex').value = e.target.value;
+    // Color swatch selection
+    $('#color-swatches').addEventListener('click', (e) => {
+        const swatch = e.target.closest('.color-swatch');
+        if (!swatch) return;
+        selectColorSwatch(swatch.dataset.color);
     });
+    // Hex input updates swatch selection
     $('#entity-color-hex').addEventListener('input', (e) => {
         const v = e.target.value;
-        if (/^#[0-9a-fA-F]{6}$/.test(v)) $('#entity-color').value = v;
+        if (/^#[0-9a-fA-F]{6}$/.test(v)) selectColorSwatch(v);
     });
     $('#confirm-entity-btn').addEventListener('click', confirmEntity);
     $('#cancel-entity-btn').addEventListener('click', () => hide('#entity-dialog'));

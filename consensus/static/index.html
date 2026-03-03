@@ -210,9 +210,18 @@
                 </select>
             </div>
             <div class="form-group">
-                <label for="entity-color">Color</label>
-                <div style="display:flex;align-items:center;gap:0.5rem">
-                    <input id="entity-color" type="color" value="#3b82f6">
+                <label>Color</label>
+                <div class="color-picker-row">
+                    <div id="color-swatches" class="color-swatches">
+                        <button type="button" class="color-swatch selected" data-color="#3b82f6" style="background:#3b82f6" title="#3b82f6"></button>
+                        <button type="button" class="color-swatch" data-color="#ef4444" style="background:#ef4444" title="#ef4444"></button>
+                        <button type="button" class="color-swatch" data-color="#22c55e" style="background:#22c55e" title="#22c55e"></button>
+                        <button type="button" class="color-swatch" data-color="#f59e0b" style="background:#f59e0b" title="#f59e0b"></button>
+                        <button type="button" class="color-swatch" data-color="#8b5cf6" style="background:#8b5cf6" title="#8b5cf6"></button>
+                        <button type="button" class="color-swatch" data-color="#ec4899" style="background:#ec4899" title="#ec4899"></button>
+                        <button type="button" class="color-swatch" data-color="#06b6d4" style="background:#06b6d4" title="#06b6d4"></button>
+                        <button type="button" class="color-swatch" data-color="#f97316" style="background:#f97316" title="#f97316"></button>
+                    </div>
                     <input id="entity-color-hex" type="text" value="#3b82f6" style="width:7em" maxlength="7" placeholder="#3b82f6">
                 </div>
             </div>
