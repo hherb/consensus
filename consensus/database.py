@@ -36,6 +36,7 @@ class Database:
         self._create_tables()
         self._seed_default_prompts()
         self._seed_default_providers()
+        self._migrate_providers()
 
     def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         """Execute a single write statement under the lock and commit."""
@@ -336,8 +337,13 @@ class Database:
             },
             {
                 "name": "DeepSeek",
-                "base_url": "https://api.deepseek.com/v1",
+                "base_url": "https://api.deepseek.com",
                 "api_key_env": "DEEPSEEK_API_KEY",
+            },
+            {
+                "name": "Mistral",
+                "base_url": "https://api.mistral.ai/v1",
+                "api_key_env": "MISTRAL_API_KEY",
             },
             {
                 "name": "OpenAI",
@@ -352,6 +358,27 @@ class Database:
                     "INSERT INTO providers (name, base_url, api_key_env, "
                     "created_at) VALUES (?,?,?,?)",
                     (d["name"], d["base_url"], d["api_key_env"], now),
+                )
+            self.conn.commit()
+
+    def _migrate_providers(self) -> None:
+        """Apply provider data fixes for existing databases."""
+        with self._lock:
+            # Fix DeepSeek base_url (was /v1, which breaks /models endpoint)
+            self.conn.execute(
+                "UPDATE providers SET base_url = ? WHERE base_url = ?",
+                ("https://api.deepseek.com", "https://api.deepseek.com/v1"),
+            )
+            # Add Mistral if not already present
+            has_mistral = self.conn.execute(
+                "SELECT COUNT(*) FROM providers WHERE base_url LIKE '%api.mistral.ai%'"
+            ).fetchone()[0]
+            if not has_mistral:
+                self.conn.execute(
+                    "INSERT INTO providers (name, base_url, api_key_env, "
+                    "created_at) VALUES (?,?,?,?)",
+                    ("Mistral", "https://api.mistral.ai/v1",
+                     "MISTRAL_API_KEY", time.time()),
                 )
             self.conn.commit()
 

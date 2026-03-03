@@ -19,6 +19,21 @@ ENTITY_COLORS = [
 ]
 
 
+def resolve_api_key(value: str) -> str:
+    """Resolve an API key from either an env var name or a literal value.
+
+    If *value* matches an environment variable, return its contents.
+    Otherwise treat *value* itself as a literal API key.
+    """
+    if not value:
+        return ""
+    env_val = os.environ.get(value, "")
+    if env_val:
+        return env_val
+    # Not a known env var — treat as a literal key
+    return value
+
+
 class EntityType(Enum):
     """Types of discussion participants."""
     HUMAN = "human"
@@ -57,8 +72,7 @@ class AIConfig:
     @classmethod
     def from_db_row(cls, row: dict) -> "AIConfig":
         """Build AIConfig from a joined entity+provider DB row."""
-        api_key_env = row.get("api_key_env") or ""
-        api_key = os.environ.get(api_key_env, "") if api_key_env else ""
+        api_key = resolve_api_key(row.get("api_key_env") or "")
         temp = row.get("temperature")
         tokens = row.get("max_tokens")
         return cls(

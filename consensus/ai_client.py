@@ -63,10 +63,15 @@ class AIClient:
     async def __aexit__(self, *args: object) -> None:
         await self.close()
 
+    def _is_anthropic(self) -> bool:
+        return "api.anthropic.com" in self.base_url
+
     async def list_models(self) -> list[str]:
-        """Fetch available model IDs from the /models endpoint."""
-        client = self._get_client()
+        """Fetch available model IDs from the provider's models endpoint."""
         try:
+            if self._is_anthropic():
+                return await self._list_models_anthropic()
+            client = self._get_client()
             response = await client.get(f"{self.base_url}/models")
             response.raise_for_status()
             data = response.json()
@@ -76,6 +81,30 @@ class AIClient:
             logger.debug("Failed to list models from %s", self.base_url,
                          exc_info=True)
             return []
+
+    async def _list_models_anthropic(self) -> list[str]:
+        """Fetch models from Anthropic's API (uses x-api-key auth)."""
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        async with httpx.AsyncClient(timeout=self.timeout,
+                                     headers=headers) as client:
+            models: list[str] = []
+            url = f"{self.base_url}/models?limit=100"
+            while url:
+                response = await client.get(url)
+                response.raise_for_status()
+                data = response.json()
+                for m in data.get("data", []):
+                    if "id" in m:
+                        models.append(m["id"])
+                if data.get("has_more"):
+                    last = data.get("last_id", "")
+                    url = f"{self.base_url}/models?limit=100&after_id={last}"
+                else:
+                    url = ""
+            return sorted(models)
 
     async def complete(
         self,
