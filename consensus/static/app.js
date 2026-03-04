@@ -1021,10 +1021,31 @@ function exportAsHtml(exportState) {
 
 function exportAsPdf(exportState) {
     const html = buildExportHtml(exportState);
-    // In pywebview desktop mode, window.open may not work — fall back to download
+    // In pywebview desktop mode, replace page with export preview + print toolbar
     if (window.pywebview) {
-        downloadFile(html, exportFilename('html', exportState), 'text/html');
-        showToast('HTML downloaded — open and print to PDF', 3000, 'info');
+        document.open();
+        document.write(html);
+        document.close();
+        // Inject a print toolbar at the top (hidden from print output)
+        const toolbar = document.createElement('div');
+        toolbar.id = 'pdf-toolbar';
+        toolbar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;display:flex;align-items:center;gap:1rem;padding:0.75rem 1.5rem;background:#1e293b;border-bottom:2px solid #3b82f6;font-family:-apple-system,BlinkMacSystemFont,sans-serif;';
+        toolbar.innerHTML = `
+            <button onclick="window.print()" style="padding:0.5rem 1.25rem;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-size:0.9rem;font-weight:600;cursor:pointer;">Print / Save as PDF</button>
+            <button id="pdf-back-btn" style="padding:0.5rem 1.25rem;background:#475569;color:#fff;border:none;border-radius:6px;font-size:0.9rem;cursor:pointer;">Back to Discussion</button>
+            <span style="color:#94a3b8;font-size:0.8rem;margin-left:auto;">Use Print dialog to save as PDF</span>
+        `;
+        document.body.style.paddingTop = '60px';
+        document.body.insertBefore(toolbar, document.body.firstChild);
+        // Hide toolbar when printing
+        const style = document.createElement('style');
+        style.textContent = '#pdf-toolbar { display: none !important; } body { padding-top: 0 !important; }';
+        style.media = 'print';
+        document.head.appendChild(style);
+        // Back button reloads the app
+        document.getElementById('pdf-back-btn').addEventListener('click', () => {
+            location.reload();
+        });
         return;
     }
     const w = window.open('', '_blank');
