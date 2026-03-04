@@ -183,6 +183,24 @@ class DesktopBridge:
         """Get discussion data for export without mutating current state."""
         return self.app.get_export_data(discussion_id)
 
+    def save_file(self, content: str, filename: str, file_types: str = "") -> bool:
+        """Show a native save dialog and write content to the chosen path."""
+        import webview
+        if not self._window:
+            return False
+        file_filter = file_types or "All files (*.*)"
+        result = self._window.create_file_dialog(
+            webview.SAVE_DIALOG,
+            save_filename=filename,
+            file_types=(file_filter,),
+        )
+        if not result:
+            return False
+        path = result if isinstance(result, str) else result[0]
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return True
+
     # -- History --
     def load_discussion(self, discussion_id: int) -> dict:
         """Load a past discussion for review."""

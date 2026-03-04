@@ -865,7 +865,14 @@ function buildExportData(exportState) {
     };
 }
 
-function downloadFile(content, filename, mimeType) {
+async function downloadFile(content, filename, mimeType) {
+    // In pywebview desktop mode, use native save dialog
+    if (window.pywebview) {
+        const ext = filename.split('.').pop();
+        const typeMap = { json: 'JSON files (*.json)', html: 'HTML files (*.html)', txt: 'Text files (*.txt)' };
+        const saved = await window.pywebview.api.save_file(content, filename, typeMap[ext] || '');
+        return saved;
+    }
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -875,13 +882,14 @@ function downloadFile(content, filename, mimeType) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    return true;
 }
 
-function exportAsJson(exportState) {
+async function exportAsJson(exportState) {
     const data = buildExportData(exportState);
     const json = JSON.stringify(data, null, 2);
-    downloadFile(json, exportFilename('json', exportState), 'application/json');
-    showToast('Exported as JSON', 2000, 'success');
+    const saved = await downloadFile(json, exportFilename('json', exportState), 'application/json');
+    if (saved) showToast('Exported as JSON', 2000, 'success');
 }
 
 function safeColor(c) {
@@ -1042,10 +1050,10 @@ ${s.storyboard.length ? `<section>
 </html>`;
 }
 
-function exportAsHtml(exportState) {
+async function exportAsHtml(exportState) {
     const html = buildExportHtml(exportState);
-    downloadFile(html, exportFilename('html', exportState), 'text/html');
-    showToast('Exported as HTML', 2000, 'success');
+    const saved = await downloadFile(html, exportFilename('html', exportState), 'text/html');
+    if (saved) showToast('Exported as HTML', 2000, 'success');
 }
 
 function exportAsPdf(exportState) {
