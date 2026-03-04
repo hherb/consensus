@@ -14,6 +14,8 @@ class DesktopAPI {
     // Entity profiles
     async saveEntity(p) { return await window.pywebview.api.save_entity(p.name, p.entity_type, p.avatar_color||'#3b82f6', p.provider_id||'', p.model||'', p.temperature ?? 0.7, p.max_tokens ?? 1024, p.system_prompt||'', p.entity_id||''); }
     async deleteEntity(id) { return await window.pywebview.api.delete_entity(id); }
+    async reactivateEntity(id) { return await window.pywebview.api.reactivate_entity(id); }
+    async getInactiveEntities() { return await window.pywebview.api.get_inactive_entities(); }
     // Prompts
     async savePrompt(p) { return await window.pywebview.api.save_prompt(p.prompt_id||'', p.name, p.role, p.target, p.task, p.content); }
     async deletePrompt(id) { return await window.pywebview.api.delete_prompt(id); }
@@ -59,6 +61,8 @@ class WebAPI {
     async fetchModels(providerId) { return await this._post('fetch_models', { provider_id: providerId }); }
     async saveEntity(p) { return await this._post('save_entity', p); }
     async deleteEntity(id) { return await this._post('delete_entity', { entity_id: id }); }
+    async reactivateEntity(id) { return await this._post('reactivate_entity', { entity_id: id }); }
+    async getInactiveEntities() { return await this._post('get_inactive_entities'); }
     async savePrompt(p) { return await this._post('save_prompt', p); }
     async deletePrompt(id) { return await this._post('delete_prompt', { prompt_id: id }); }
     async addToDiscussion(eid, isMod, alsoPart) { return await this._post('add_to_discussion', { entity_id: eid, is_moderator: !!isMod, also_participant: !!alsoPart }); }
@@ -162,7 +166,7 @@ function switchTab(tabName) {
     if (target) target.classList.remove('hidden');
     // Render tab content
     if (tabName === 'settings-providers') renderProviders();
-    else if (tabName === 'settings-entities') renderProfiles();
+    else if (tabName === 'settings-entities') { renderProfiles(); renderInactiveProfiles(); }
     else if (tabName === 'settings-prompts') renderPrompts();
     else if (tabName === 'history') renderHistory();
     else if (tabName === 'new-discussion') renderSetupTab();
@@ -381,10 +385,58 @@ async function editProfile(id) {
 }
 
 async function removeProfile(id) {
-    await api.deleteEntity(id);
+    const entity = (state.saved_entities || []).find(x => x.id === id);
+    const name = entity ? entity.name : 'this profile';
+    if (!confirm(`Delete "${name}"?`)) return;
+    const result = await api.deleteEntity(id);
     const s = await api.getState();
     onStateUpdate(s);
     renderProfiles();
+    renderInactiveProfiles();
+    if (result && result.deactivated) {
+        showToast(`"${name}" deactivated (used in past discussions). Reactivate from the Profiles tab.`, 5000, 'info');
+    }
+}
+
+async function reactivateProfile(id) {
+    await api.reactivateEntity(id);
+    const s = await api.getState();
+    onStateUpdate(s);
+    renderProfiles();
+    renderInactiveProfiles();
+    renderSetupTab();
+    showToast('Profile reactivated', 3000, 'info');
+}
+
+async function renderInactiveProfiles() {
+    const container = $('#inactive-profiles');
+    if (!container) return;
+    let inactive = [];
+    try {
+        inactive = await api.getInactiveEntities();
+    } catch (e) { /* ignore */ }
+    if (!inactive || !inactive.length) {
+        container.innerHTML = '';
+        return;
+    }
+    container.innerHTML = `
+        <h3 style="margin-top:1.5rem;margin-bottom:0.5rem;font-size:0.95rem;color:var(--text-secondary)">Inactive Profiles</h3>
+        <p class="text-muted" style="font-size:0.8rem;margin-bottom:0.5rem">These profiles were deactivated because they participated in past discussions.</p>
+        ${inactive.map(e => `
+            <div class="settings-item inactive-entity">
+                <div class="entity-avatar" style="background:${e.avatar_color};opacity:0.5">${getInitials(e.name)}</div>
+                <div class="entity-info">
+                    <div class="entity-name" style="opacity:0.6">${escHtml(e.name)}</div>
+                    <div class="entity-type" style="opacity:0.6">${e.entity_type === 'ai'
+                        ? 'AI - ' + escHtml(e.model || 'LLM') + (e.provider_name ? ' via ' + escHtml(e.provider_name) : '')
+                        : 'Human'}</div>
+                </div>
+                <div class="entity-actions">
+                    <button class="btn btn-outline btn-sm" data-action="reactivate-profile" data-id="${e.id}">Reactivate</button>
+                </div>
+            </div>
+        `).join('')}
+    `;
 }
 
 // ============================================================
@@ -1333,6 +1385,7 @@ function init() {
             case 'delete-provider': removeProvider(id); break;
             case 'edit-profile': editProfile(id); break;
             case 'delete-profile': removeProfile(id); break;
+            case 'reactivate-profile': reactivateProfile(id); break;
             case 'edit-prompt': editPrompt(id); break;
             case 'delete-prompt': removePrompt(id); break;
             case 'load-discussion': loadDiscussion(id); break;

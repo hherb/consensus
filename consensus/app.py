@@ -136,14 +136,21 @@ class ConsensusApp:
             )
         return self.db.get_entity(entity_id)
 
-    def delete_entity(self, entity_id: int) -> bool:
-        """Delete an entity profile by ID."""
-        self.db.delete_entity(entity_id)
-        return True
+    def delete_entity(self, entity_id: int) -> dict:
+        """Delete or deactivate an entity profile by ID."""
+        return self.db.delete_entity(entity_id)
+
+    def reactivate_entity(self, entity_id: int) -> bool:
+        """Reactivate a previously deactivated entity profile."""
+        return self.db.reactivate_entity(entity_id)
 
     def get_entities(self) -> list[dict]:
-        """Return all saved entity profiles."""
+        """Return all saved active entity profiles."""
         return self.db.get_entities()
+
+    def get_inactive_entities(self) -> list[dict]:
+        """Return all inactive (soft-deleted) entity profiles."""
+        return self.db.get_inactive_entities()
 
     # ------------------------------------------------------------------
     # Prompt management

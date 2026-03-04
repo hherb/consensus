@@ -64,6 +64,9 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None
             # Entity profiles
             "save_entity": lambda: app.save_entity(**data),
             "delete_entity": lambda: app.delete_entity(data["entity_id"]),
+            "reactivate_entity": lambda: app.reactivate_entity(
+                data["entity_id"]),
+            "get_inactive_entities": lambda: app.get_inactive_entities(),
             # Prompts
             "save_prompt": lambda: app.save_prompt(**data),
             "delete_prompt": lambda: app.delete_prompt(data["prompt_id"]),

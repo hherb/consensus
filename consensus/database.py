@@ -37,6 +37,7 @@ class Database:
         self._seed_default_prompts()
         self._seed_default_providers()
         self._migrate_providers()
+        self._migrate_entity_active()
 
     def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         """Execute a single write statement under the lock and commit."""
@@ -412,6 +413,16 @@ class Database:
 
             self.conn.commit()
 
+    def _migrate_entity_active(self) -> None:
+        """Add 'active' column to entities if not present."""
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(entities)")}
+        if "active" not in cols:
+            with self._lock:
+                self.conn.execute(
+                    "ALTER TABLE entities ADD COLUMN active INTEGER NOT NULL DEFAULT 1"
+                )
+                self.conn.commit()
+
     def get_prompts(self, role: str = "", target: str = "",
                     task: str = "") -> list[dict]:
         """Retrieve prompts, optionally filtered by role, target, and/or task."""
@@ -533,22 +544,35 @@ class Database:
         )
         return cur.lastrowid
 
-    def get_entities(self, entity_type: str = "") -> list[dict]:
+    def get_entities(self, entity_type: str = "",
+                     include_inactive: bool = False) -> list[dict]:
         """Return entities with joined provider info, optionally filtered by type."""
         base = (
             "SELECT e.*, p.name AS provider_name, p.base_url, "
             "p.api_key_env FROM entities e "
             "LEFT JOIN providers p ON e.provider_id=p.id"
         )
+        conditions = []
+        params: list[object] = []
+        if not include_inactive:
+            conditions.append("e.active=1")
         if entity_type:
-            rows = self.conn.execute(
-                f"{base} WHERE e.entity_type=? ORDER BY e.name",
-                (entity_type,),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                f"{base} ORDER BY e.name",
-            ).fetchall()
+            conditions.append("e.entity_type=?")
+            params.append(entity_type)
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        rows = self.conn.execute(
+            f"{base}{where} ORDER BY e.name", tuple(params),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_inactive_entities(self) -> list[dict]:
+        """Return only inactive (soft-deleted) entities."""
+        rows = self.conn.execute(
+            "SELECT e.*, p.name AS provider_name, p.base_url, "
+            "p.api_key_env FROM entities e "
+            "LEFT JOIN providers p ON e.provider_id=p.id "
+            "WHERE e.active=0 ORDER BY e.name",
+        ).fetchall()
         return [dict(r) for r in rows]
 
     def get_entity(self, entity_id: int) -> Optional[dict]:
@@ -574,10 +598,27 @@ class Database:
             **kwargs,
         )
 
-    def delete_entity(self, entity_id: int) -> None:
-        """Delete an entity by ID."""
+    def delete_entity(self, entity_id: int) -> dict:
+        """Delete an entity by ID, or deactivate if referenced by past discussions.
+
+        Returns {"deleted": True} or {"deactivated": True}.
+        """
+        try:
+            self._execute_write(
+                "DELETE FROM entities WHERE id=?", (entity_id,))
+            return {"deleted": True}
+        except sqlite3.IntegrityError:
+            self._execute_write(
+                "UPDATE entities SET active=0, updated_at=? WHERE id=?",
+                (time.time(), entity_id))
+            return {"deactivated": True}
+
+    def reactivate_entity(self, entity_id: int) -> bool:
+        """Reactivate a soft-deleted entity."""
         self._execute_write(
-            "DELETE FROM entities WHERE id=?", (entity_id,))
+            "UPDATE entities SET active=1, updated_at=? WHERE id=?",
+            (time.time(), entity_id))
+        return True
 
     # ------------------------------------------------------------------
     # Discussions

@@ -100,9 +100,17 @@ class DesktopBridge:
             model, temperature, max_tokens, system_prompt, entity_id,
         )
 
-    def delete_entity(self, entity_id: int) -> bool:
-        """Delete an entity profile."""
+    def delete_entity(self, entity_id: int) -> dict:
+        """Delete or deactivate an entity profile."""
         return self.app.delete_entity(entity_id)
+
+    def reactivate_entity(self, entity_id: int) -> bool:
+        """Reactivate a previously deactivated entity profile."""
+        return self.app.reactivate_entity(entity_id)
+
+    def get_inactive_entities(self) -> list[dict]:
+        """Return all inactive (soft-deleted) entity profiles."""
+        return self.app.get_inactive_entities()
 
     # -- Prompts --
     def save_prompt(self, prompt_id: int, name: str, role: str,
