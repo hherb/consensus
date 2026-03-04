@@ -558,19 +558,45 @@ function renderSetupTab() {
     updateStartButton();
 }
 
+const MOST_RECENT_ENTITIES = 6;
+
 function renderAvailableEntities() {
     const container = $('#available-entities');
+    const searchInput = $('#entity-search');
     const saved = state.saved_entities || [];
     const inDiscussion = new Set(state.entities.map(e => e.id));
+    const query = (searchInput?.value || '').trim().toLowerCase();
 
     if (!saved.length) {
         container.innerHTML = '<div class="empty-state">No profiles yet. Create one in the Profiles tab or use the button below.</div>';
+        if (searchInput) searchInput.style.display = 'none';
         return;
     }
 
-    container.innerHTML = saved
-        .filter(e => !inDiscussion.has(e.id))
-        .map(e => `
+    let available = saved.filter(e => !inDiscussion.has(e.id));
+
+    // Hide search box when few entities
+    if (searchInput) searchInput.style.display = saved.length > MOST_RECENT_ENTITIES ? '' : 'none';
+
+    if (query) {
+        // When searching, show all matches
+        available = available.filter(e =>
+            e.name.toLowerCase().includes(query) ||
+            (e.entity_type === 'ai' && (e.model || '').toLowerCase().includes(query)) ||
+            (e.provider_name || '').toLowerCase().includes(query)
+        );
+    } else {
+        // No search: sort by most recently updated, limit to MOST_RECENT_ENTITIES
+        available = available
+            .slice()
+            .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))
+            .slice(0, MOST_RECENT_ENTITIES);
+    }
+
+    const totalAvailable = saved.filter(e => !inDiscussion.has(e.id)).length;
+    const hiddenCount = !query ? totalAvailable - available.length : 0;
+
+    container.innerHTML = available.map(e => `
             <div class="settings-item">
                 <div class="entity-avatar" style="background:${e.avatar_color};width:28px;height:28px;font-size:0.65rem">${getInitials(e.name)}</div>
                 <div class="entity-info">
@@ -579,7 +605,10 @@ function renderAvailableEntities() {
                 </div>
                 <button class="btn btn-outline btn-sm" data-action="add-to-discussion" data-id="${e.id}">Add</button>
             </div>
-        `).join('') || '<div class="text-muted" style="padding:0.5rem 0;font-size:0.85rem">All profiles added to discussion</div>';
+        `).join('')
+        + (hiddenCount > 0 ? `<div class="text-muted" style="padding:0.5rem 0;font-size:0.8rem">Showing ${available.length} most recent — use search to find ${hiddenCount} more</div>` : '')
+        + (query && !available.length ? '<div class="text-muted" style="padding:0.5rem 0;font-size:0.85rem">No matching profiles</div>' : '')
+        || '<div class="text-muted" style="padding:0.5rem 0;font-size:0.85rem">All profiles added to discussion</div>';
 }
 
 function renderDiscussionRoster() {
@@ -1356,6 +1385,7 @@ function init() {
     $('#cancel-prompt-btn').addEventListener('click', () => hide('#prompt-dialog'));
 
     // Discussion setup
+    $('#entity-search').addEventListener('input', () => renderAvailableEntities());
     $('#topic-input').addEventListener('input', updateStartButton);
     $('#start-btn').addEventListener('click', onStartDiscussion);
 

@@ -240,6 +240,7 @@ label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-s
 .settings-item .entity-actions { display: flex; gap: 0.25rem; }
 .settings-item .entity-actions .btn { padding: 0.2rem 0.5rem; font-size: 0.75rem; }
 .settings-detail { font-size: 0.75rem; color: var(--text-muted); }
+#entity-search { padding: 0.4rem 0.6rem; font-size: 0.8rem; }
 
 /* History items */
 .history-item {
