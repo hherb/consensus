@@ -209,6 +209,10 @@ class DesktopBridge:
         """Resume a paused discussion."""
         return self.app.resume_discussion()
 
+    def reopen_discussion(self) -> dict:
+        """Reopen a concluded discussion for continuation."""
+        return self.app.reopen_discussion()
+
     # -- History --
     def load_discussion(self, discussion_id: int) -> dict:
         """Load a past discussion for review."""

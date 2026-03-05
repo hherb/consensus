@@ -35,6 +35,7 @@ class DesktopAPI {
     async conclude() { return await window.pywebview.api.conclude(); }
     async pauseDiscussion() { return await window.pywebview.api.pause_discussion(); }
     async resumeDiscussion() { return await window.pywebview.api.resume_discussion(); }
+    async reopenDiscussion() { return await window.pywebview.api.reopen_discussion(); }
     // History
     async loadDiscussion(id) { return await window.pywebview.api.load_discussion(id); }
     async reset() { return await window.pywebview.api.reset(); }
@@ -81,6 +82,7 @@ class WebAPI {
     async conclude() { return await this._post('conclude'); }
     async pauseDiscussion() { return await this._post('pause_discussion'); }
     async resumeDiscussion() { return await this._post('resume_discussion'); }
+    async reopenDiscussion() { return await this._post('reopen_discussion'); }
     async loadDiscussion(id) { return await this._post('load_discussion', { discussion_id: id }); }
     async reset() { return await this._post('reset'); }
 }
@@ -526,6 +528,7 @@ function renderHistory() {
         const canResume = d.status === 'active' || d.status === 'paused';
         const btnLabel = canResume ? 'Resume' : 'View';
         const btnClass = canResume ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
+        const showReopen = d.status === 'concluded';
         return `
         <div class="history-item">
             <div style="flex:1;cursor:pointer" data-action="load-discussion" data-id="${d.id}">
@@ -534,6 +537,7 @@ function renderHistory() {
             </div>
             <span class="history-status ${d.status}">${d.status}</span>
             <button class="${btnClass}" data-action="load-discussion" data-id="${d.id}">${btnLabel}</button>
+            ${showReopen ? `<button class="btn btn-primary btn-sm" data-action="reopen-discussion" data-id="${d.id}">Resume</button>` : ''}
             <div class="export-dropdown">
                 <button class="history-export-btn" data-action="toggle-history-export" data-id="${d.id}" title="Export">Export &#9662;</button>
                 <div id="history-export-menu-${d.id}" class="history-export-menu hidden">
@@ -710,13 +714,16 @@ function renderDiscussion() {
     }
     // Show/hide pause/resume and other controls based on status
     if (state.status === 'active') {
-        show('#pause-btn'); hide('#resume-btn');
+        show('#pause-btn'); hide('#resume-btn'); hide('#reopen-btn');
         show('#reassign-btn'); show('#mediate-btn'); show('#conclude-btn');
     } else if (state.status === 'paused') {
-        hide('#pause-btn'); show('#resume-btn');
+        hide('#pause-btn'); show('#resume-btn'); hide('#reopen-btn');
         hide('#reassign-btn'); hide('#mediate-btn'); show('#conclude-btn');
+    } else if (state.status === 'concluded') {
+        hide('#pause-btn'); hide('#resume-btn'); show('#reopen-btn');
+        hide('#reassign-btn'); hide('#mediate-btn'); hide('#conclude-btn');
     } else {
-        hide('#pause-btn'); hide('#resume-btn');
+        hide('#pause-btn'); hide('#resume-btn'); hide('#reopen-btn');
         hide('#reassign-btn'); hide('#mediate-btn'); hide('#conclude-btn');
     }
     renderSidebarEntities();
@@ -834,8 +841,9 @@ function updateInputArea() {
     const speaker = getEntity(state.current_speaker_id);
 
     if (state.status === 'paused') {
-        turnInfo.textContent = 'Discussion is paused. Manage participants, then resume.';
-        input.disabled = true; sendBtn.disabled = true;
+        turnInfo.textContent = 'Discussion is paused. Manage participants, then click Resume.';
+        input.disabled = false; sendBtn.disabled = false;
+        input.placeholder = 'Optional: Enter a prompt to guide the resumed discussion...';
         return;
     }
     if (!state.is_active) {
@@ -1233,7 +1241,18 @@ async function onStartDiscussion() {
 async function onSendMessage() {
     const input = $('#message-input');
     const content = input.value.trim();
-    if (!content || !state.current_speaker_id) return;
+    if (!content) return;
+
+    // When paused, Send submits a moderator message (guidance for resumption)
+    if (state.status === 'paused') {
+        input.value = '';
+        const result = await api.submitModeratorMessage(content);
+        if (result?.error) return showToast(result.error);
+        renderDiscussion();
+        return;
+    }
+
+    if (!state.current_speaker_id) return;
     input.value = '';
     input.disabled = true;
     $('#send-btn').disabled = true;
@@ -1389,11 +1408,41 @@ async function onPause() {
 }
 
 async function onResume() {
+    // If the user typed a prompt while paused, send it as a moderator message first
+    const input = $('#message-input');
+    const resumePrompt = input.value.trim();
+    if (resumePrompt) {
+        input.value = '';
+        const msgResult = await api.submitModeratorMessage(resumePrompt);
+        if (msgResult?.error) showToast(msgResult.error);
+    }
     const result = await api.resumeDiscussion();
     if (result?.error) return showToast(result.error);
     onStateUpdate(result);
     renderDiscussion();
     processCurrentTurn();
+}
+
+async function reopenFromHistory(id) {
+    const result = await api.loadDiscussion(id);
+    if (result?.error) return showToast(result.error);
+    onStateUpdate(result);
+    hide('#setup-phase');
+    show('#discussion-phase');
+    renderedMessageCount = 0;
+    renderedStoryboardCount = 0;
+    renderDiscussion();
+    // Now reopen (transitions concluded → paused)
+    await onReopen();
+}
+
+async function onReopen() {
+    const result = await api.reopenDiscussion();
+    if (result?.error) return showToast(result.error);
+    onStateUpdate(result);
+    renderedMessageCount = 0;
+    renderedStoryboardCount = 0;
+    renderDiscussion();
 }
 
 async function onBack() {
@@ -1487,6 +1536,7 @@ function init() {
     $('#mediate-btn').addEventListener('click', onMediate);
     $('#pause-btn').addEventListener('click', onPause);
     $('#resume-btn').addEventListener('click', onResume);
+    $('#reopen-btn').addEventListener('click', onReopen);
     $('#conclude-btn').addEventListener('click', onConclude);
     $('#export-btn').addEventListener('click', () => toggleExportMenu());
     document.addEventListener('click', (ev) => {
@@ -1531,6 +1581,7 @@ function init() {
             case 'edit-prompt': editPrompt(id); break;
             case 'delete-prompt': removePrompt(id); break;
             case 'load-discussion': loadDiscussion(id); break;
+            case 'reopen-discussion': reopenFromHistory(id); break;
             case 'add-to-discussion': addToDiscussion(id); break;
             case 'set-moderator': setModerator(id); break;
             case 'remove-from-discussion': removeFromDiscussion(id); break;

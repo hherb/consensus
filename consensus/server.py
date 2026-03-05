@@ -95,6 +95,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None
             "conclude": lambda: app.conclude_discussion(),
             "pause_discussion": lambda: app.pause_discussion(),
             "resume_discussion": lambda: app.resume_discussion(),
+            "reopen_discussion": lambda: app.reopen_discussion(),
             # Export
             "get_export_data": lambda: app.get_export_data(
                 data["discussion_id"]),

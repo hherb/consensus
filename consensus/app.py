@@ -752,6 +752,45 @@ class ConsensusApp:
         self._notify()
         return self.get_state()
 
+    def reopen_discussion(self) -> dict:
+        """Reopen a concluded discussion for continuation.
+
+        Transitions the discussion to 'paused' so the user can manage
+        participants before resuming with a new prompt.
+        """
+        if not self.discussion.id:
+            return {"error": "No discussion loaded"}
+        if self.discussion.status != "concluded":
+            return {"error": "Discussion is not concluded"}
+
+        self.discussion.status = "paused"
+        self.discussion.is_active = False
+        self.db.update_discussion(
+            self.discussion.id, status="paused", ended_at=None,
+        )
+
+        # Restore turn state so the discussion can continue
+        if self.discussion.turn_order:
+            self.discussion.current_turn_index = 0
+        self.discussion.turn_number = (
+            self.db.get_max_turn_number(self.discussion.id) + 1
+        )
+
+        mod_id = self.discussion.moderator_id or 0
+        sys_msg = Message(
+            entity_id=mod_id, entity_name="System",
+            content="-- Discussion reopened --",
+            role=MessageRole.SYSTEM,
+        )
+        self.discussion.messages.append(sys_msg)
+        self.db.add_message(
+            self.discussion.id, mod_id,
+            "-- Discussion reopened --", "system",
+            turn_number=self.discussion.turn_number,
+        )
+        self._notify()
+        return self.get_state()
+
     def reset(self) -> bool:
         """Reset to a clean state for a new discussion."""
         self.discussion = Discussion()
