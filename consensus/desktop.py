@@ -201,6 +201,14 @@ class DesktopBridge:
             f.write(content)
         return True
 
+    def pause_discussion(self) -> dict:
+        """Pause the active discussion."""
+        return self.app.pause_discussion()
+
+    def resume_discussion(self) -> dict:
+        """Resume a paused discussion."""
+        return self.app.resume_discussion()
+
     # -- History --
     def load_discussion(self, discussion_id: int) -> dict:
         """Load a past discussion for review."""

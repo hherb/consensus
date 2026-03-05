@@ -195,18 +195,82 @@ class ConsensusApp:
         if is_moderator:
             self.discussion.moderator_id = entity_id
 
+        # Persist to DB if discussion is already started
+        if self.discussion.id and self.discussion.status in ("active", "paused"):
+            next_pos = len(self.discussion.turn_order)
+            self.db.add_discussion_member(
+                self.discussion.id, entity_id,
+                is_moderator=is_moderator,
+                also_participant=True,
+                turn_position=next_pos,
+            )
+            self.discussion.turn_order.append(entity_id)
+
+            sys_msg = Message(
+                entity_id=entity_id, entity_name=entity.name,
+                content=f"-- {entity.name} joined the discussion --",
+                role=MessageRole.SYSTEM,
+            )
+            self.discussion.messages.append(sys_msg)
+            self.db.add_message(
+                self.discussion.id, entity_id,
+                f"-- {entity.name} joined the discussion --",
+                "system", turn_number=self.discussion.turn_number,
+            )
+
         self._notify()
         return entity.to_dict()
 
-    def remove_from_discussion(self, entity_id: int) -> bool:
+    def remove_from_discussion(self, entity_id: int) -> dict | bool:
         """Remove an entity from the current discussion."""
+        # Guard: cannot remove moderator or current speaker mid-discussion
+        if self.discussion.id and self.discussion.status in ("active", "paused"):
+            if entity_id == self.discussion.moderator_id:
+                return {"error": "Cannot remove the moderator"}
+            current = self.discussion.current_speaker
+            if (self.discussion.status == "active"
+                    and current and current.id == entity_id):
+                return {"error": "Cannot remove the current speaker"}
+
+        entity = self.discussion.get_entity(entity_id)
+        entity_name = entity.name if entity else str(entity_id)
+
+        # Adjust current_turn_index before removing from turn_order
+        if entity_id in self.discussion.turn_order:
+            removed_pos = self.discussion.turn_order.index(entity_id)
+            self.discussion.turn_order.remove(entity_id)
+            if removed_pos < self.discussion.current_turn_index:
+                self.discussion.current_turn_index -= 1
+            if self.discussion.turn_order:
+                self.discussion.current_turn_index = (
+                    self.discussion.current_turn_index
+                    % len(self.discussion.turn_order)
+                )
+            else:
+                self.discussion.current_turn_index = 0
+
         self.discussion.entities = [
             e for e in self.discussion.entities if e.id != entity_id
         ]
         if self.discussion.moderator_id == entity_id:
             self.discussion.moderator_id = None
-        if entity_id in self.discussion.turn_order:
-            self.discussion.turn_order.remove(entity_id)
+
+        # Persist to DB if discussion is already started
+        if self.discussion.id and self.discussion.status in ("active", "paused"):
+            self.db.remove_discussion_member(self.discussion.id, entity_id)
+
+            sys_msg = Message(
+                entity_id=entity_id, entity_name=entity_name,
+                content=f"-- {entity_name} left the discussion --",
+                role=MessageRole.SYSTEM,
+            )
+            self.discussion.messages.append(sys_msg)
+            self.db.add_message(
+                self.discussion.id, entity_id,
+                f"-- {entity_name} left the discussion --",
+                "system", turn_number=self.discussion.turn_number,
+            )
+
         self._notify()
         return True
 
@@ -268,6 +332,7 @@ class ConsensusApp:
         self.discussion.current_turn_index = 0
         self.discussion.turn_number = 1
         self.discussion.is_active = True
+        self.discussion.status = "active"
 
         # Opening message from moderator
         target_type = "ai" if mod.entity_type == EntityType.AI else "human"
@@ -537,6 +602,7 @@ class ConsensusApp:
                 # Continue to mark discussion as concluded even if AI fails
 
         self.discussion.is_active = False
+        self.discussion.status = "concluded"
         if self.discussion.id:
             self.db.update_discussion(
                 self.discussion.id,
@@ -568,6 +634,7 @@ class ConsensusApp:
             if m.get("turn_position") is not None
         ]
 
+        status = disc["status"]
         d = Discussion(
             id=discussion_id,
             topic=disc["topic"],
@@ -576,12 +643,13 @@ class ConsensusApp:
             messages=msgs,
             storyboard=sb,
             turn_order=turn_order,
-            is_active=disc["status"] == "active",
+            is_active=status == "active",
+            status=status,
         )
         return d.to_dict()
 
     def load_discussion(self, discussion_id: int) -> dict:
-        """Load a past discussion for review, restoring full state."""
+        """Load a past discussion, restoring full state including turn position."""
         disc = self.db.get_discussion(discussion_id)
         if not disc:
             return {"error": "Discussion not found"}
@@ -600,6 +668,25 @@ class ConsensusApp:
             if m.get("turn_position") is not None
         ]
 
+        status = disc["status"]
+        is_active = status == "active"
+
+        # Recover turn state for resumable discussions
+        current_turn_index = 0
+        turn_number = 0
+        if status in ("active", "paused") and turn_order and msgs:
+            turn_number = self.db.get_max_turn_number(discussion_id)
+            # Find the last participant message to determine next speaker
+            last_participant = next(
+                (m for m in reversed(msgs)
+                 if m.role == MessageRole.PARTICIPANT),
+                None,
+            )
+            if last_participant and last_participant.entity_id in turn_order:
+                last_idx = turn_order.index(last_participant.entity_id)
+                current_turn_index = (last_idx + 1) % len(turn_order)
+            turn_number = max(turn_number, 1)
+
         self.discussion = Discussion(
             id=discussion_id,
             topic=disc["topic"],
@@ -608,9 +695,60 @@ class ConsensusApp:
             messages=msgs,
             storyboard=sb,
             turn_order=turn_order,
-            is_active=disc["status"] == "active",
+            current_turn_index=current_turn_index,
+            turn_number=turn_number,
+            is_active=is_active,
+            status=status,
         )
         self.moderator = Moderator(self.discussion, self.db)
+        self._notify()
+        return self.get_state()
+
+    def pause_discussion(self) -> dict:
+        """Pause the current active discussion."""
+        if not self.discussion.id or self.discussion.status != "active":
+            return {"error": "Discussion is not active"}
+
+        self.discussion.status = "paused"
+        self.discussion.is_active = False
+        self.db.update_discussion(self.discussion.id, status="paused")
+
+        mod_id = self.discussion.moderator_id or 0
+        sys_msg = Message(
+            entity_id=mod_id, entity_name="System",
+            content="-- Discussion paused --",
+            role=MessageRole.SYSTEM,
+        )
+        self.discussion.messages.append(sys_msg)
+        self.db.add_message(
+            self.discussion.id, mod_id,
+            "-- Discussion paused --", "system",
+            turn_number=self.discussion.turn_number,
+        )
+        self._notify()
+        return self.get_state()
+
+    def resume_discussion(self) -> dict:
+        """Resume a paused discussion."""
+        if not self.discussion.id or self.discussion.status != "paused":
+            return {"error": "Discussion is not paused"}
+
+        self.discussion.status = "active"
+        self.discussion.is_active = True
+        self.db.update_discussion(self.discussion.id, status="active")
+
+        mod_id = self.discussion.moderator_id or 0
+        sys_msg = Message(
+            entity_id=mod_id, entity_name="System",
+            content="-- Discussion resumed --",
+            role=MessageRole.SYSTEM,
+        )
+        self.discussion.messages.append(sys_msg)
+        self.db.add_message(
+            self.discussion.id, mod_id,
+            "-- Discussion resumed --", "system",
+            turn_number=self.discussion.turn_number,
+        )
         self._notify()
         return self.get_state()
 

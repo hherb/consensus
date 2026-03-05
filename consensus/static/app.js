@@ -33,6 +33,8 @@ class DesktopAPI {
     async reassignTurn(eid) { return await window.pywebview.api.reassign_turn(eid); }
     async mediate(ctx) { return await window.pywebview.api.mediate(ctx || ''); }
     async conclude() { return await window.pywebview.api.conclude(); }
+    async pauseDiscussion() { return await window.pywebview.api.pause_discussion(); }
+    async resumeDiscussion() { return await window.pywebview.api.resume_discussion(); }
     // History
     async loadDiscussion(id) { return await window.pywebview.api.load_discussion(id); }
     async reset() { return await window.pywebview.api.reset(); }
@@ -77,6 +79,8 @@ class WebAPI {
     async reassignTurn(eid) { return await this._post('reassign_turn', { entity_id: eid }); }
     async mediate(ctx) { return await this._post('mediate', { context: ctx || '' }); }
     async conclude() { return await this._post('conclude'); }
+    async pauseDiscussion() { return await this._post('pause_discussion'); }
+    async resumeDiscussion() { return await this._post('resume_discussion'); }
     async loadDiscussion(id) { return await this._post('load_discussion', { discussion_id: id }); }
     async reset() { return await this._post('reset'); }
 }
@@ -89,7 +93,7 @@ let api = null;
 let state = {
     topic: '', entities: [], moderator_id: null, messages: [],
     storyboard: [], turn_order: [], current_turn_index: 0,
-    turn_number: 0, is_active: false, current_speaker_id: null,
+    turn_number: 0, is_active: false, status: 'setup', current_speaker_id: null,
     providers: [], saved_entities: [], prompts: [], discussions_history: [],
 };
 let processing = false;
@@ -518,13 +522,18 @@ function renderHistory() {
         list.innerHTML = '<div class="empty-state">No past discussions</div>';
         return;
     }
-    list.innerHTML = discussions.map(d => `
+    list.innerHTML = discussions.map(d => {
+        const canResume = d.status === 'active' || d.status === 'paused';
+        const btnLabel = canResume ? 'Resume' : 'View';
+        const btnClass = canResume ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm';
+        return `
         <div class="history-item">
             <div style="flex:1;cursor:pointer" data-action="load-discussion" data-id="${d.id}">
                 <div class="history-topic">${escHtml(d.topic)}</div>
                 <div class="history-meta">${d.started_at ? formatDate(d.started_at) : 'Not started'}</div>
             </div>
             <span class="history-status ${d.status}">${d.status}</span>
+            <button class="${btnClass}" data-action="load-discussion" data-id="${d.id}">${btnLabel}</button>
             <div class="export-dropdown">
                 <button class="history-export-btn" data-action="toggle-history-export" data-id="${d.id}" title="Export">Export &#9662;</button>
                 <div id="history-export-menu-${d.id}" class="history-export-menu hidden">
@@ -534,7 +543,7 @@ function renderHistory() {
                 </div>
             </div>
         </div>
-    `).join('');
+    `;}).join('');
 }
 
 async function loadDiscussion(id) {
@@ -546,6 +555,7 @@ async function loadDiscussion(id) {
     renderedMessageCount = 0;
     renderedStoryboardCount = 0;
     renderDiscussion();
+    if (state.is_active) processCurrentTurn();
 }
 
 // ============================================================
@@ -652,14 +662,23 @@ async function addToDiscussion(entityId) {
     if (result?.error) return showToast(result.error);
     const s = await api.getState();
     onStateUpdate(s);
-    renderSetupTab();
+    if (!$('#discussion-phase').classList.contains('hidden')) {
+        renderDiscussion();
+    } else {
+        renderSetupTab();
+    }
 }
 
 async function removeFromDiscussion(entityId) {
-    await api.removeFromDiscussion(entityId);
+    const result = await api.removeFromDiscussion(entityId);
+    if (result?.error) return showToast(result.error);
     const s = await api.getState();
     onStateUpdate(s);
-    renderSetupTab();
+    if (!$('#discussion-phase').classList.contains('hidden')) {
+        renderDiscussion();
+    } else {
+        renderSetupTab();
+    }
 }
 
 async function setModerator(entityId) {
@@ -677,14 +696,28 @@ function renderDiscussion() {
     $('#discussion-topic').textContent = state.topic;
     const speaker = getEntity(state.current_speaker_id);
     const badge = $('#turn-badge');
-    if (speaker && state.is_active) {
+    if (state.status === 'paused') {
+        badge.textContent = 'Paused';
+        badge.className = 'badge paused';
+    } else if (speaker && state.is_active) {
         badge.textContent = `Turn ${state.turn_number}: ${speaker.name}`;
         badge.className = 'badge active';
-    } else if (!state.is_active && state.messages.length > 0) {
+    } else if (state.status === 'concluded' && state.messages.length > 0) {
         badge.textContent = 'Concluded';
         badge.className = 'badge';
     } else {
         badge.textContent = '';
+    }
+    // Show/hide pause/resume and other controls based on status
+    if (state.status === 'active') {
+        show('#pause-btn'); hide('#resume-btn');
+        show('#reassign-btn'); show('#mediate-btn'); show('#conclude-btn');
+    } else if (state.status === 'paused') {
+        hide('#pause-btn'); show('#resume-btn');
+        hide('#reassign-btn'); hide('#mediate-btn'); show('#conclude-btn');
+    } else {
+        hide('#pause-btn'); hide('#resume-btn');
+        hide('#reassign-btn'); hide('#mediate-btn'); hide('#conclude-btn');
     }
     renderSidebarEntities();
     renderNewMessages();
@@ -696,16 +729,44 @@ function renderSidebarEntities() {
     $('#discussion-entities').innerHTML = state.entities.map(e => {
         const isSpeaking = e.id === state.current_speaker_id && state.is_active;
         const isMod = e.id === state.moderator_id;
+        const canRemove = state.status === 'paused' && !isMod;
         return `
             <div class="entity-sidebar-item ${isSpeaking ? 'speaking' : ''}">
                 <div class="entity-avatar" style="background:${e.avatar_color}">${getInitials(e.name)}</div>
-                <div>
+                <div style="flex:1">
                     <div class="entity-name">${escHtml(e.name)}${isMod ? ' <span class="moderator-badge">MOD</span>' : ''}</div>
                     <div class="entity-type">${e.entity_type === 'ai' ? e.ai_config?.model || 'AI' : 'Human'}</div>
                 </div>
                 ${isSpeaking ? '<div class="speaking-indicator"></div>' : ''}
+                ${canRemove ? `<button class="btn btn-ghost btn-sm" data-action="remove-from-discussion" data-id="${e.id}" title="Remove" style="padding:0.1rem 0.3rem;font-size:0.75rem">✕</button>` : ''}
             </div>`;
     }).join('');
+
+    // Show/hide the add-participant panel when paused
+    const mgmt = $('#pause-management');
+    if (state.status === 'paused') {
+        show(mgmt);
+        renderPauseAvailableEntities();
+    } else {
+        hide(mgmt);
+    }
+}
+
+function renderPauseAvailableEntities() {
+    const container = $('#pause-available-entities');
+    const inDiscussion = new Set(state.entities.map(e => e.id));
+    const available = (state.saved_entities || []).filter(e => !inDiscussion.has(e.id));
+    if (!available.length) {
+        container.innerHTML = '<div class="text-muted" style="font-size:0.8rem">No additional profiles available</div>';
+        return;
+    }
+    container.innerHTML = available.map(e => `
+        <div class="settings-item" style="padding:0.25rem 0;display:flex;align-items:center;gap:0.5rem">
+            <div class="entity-avatar" style="background:${e.avatar_color};width:24px;height:24px;font-size:0.6rem">${getInitials(e.name)}</div>
+            <span style="font-size:0.85rem;flex:1">${escHtml(e.name)}</span>
+            <button class="btn btn-outline btn-sm" data-action="add-to-discussion" data-id="${e.id}" style="font-size:0.75rem;padding:0.15rem 0.4rem">Add</button>
+        </div>
+    `).join('');
 }
 
 function renderNewMessages() {
@@ -772,6 +833,11 @@ function updateInputArea() {
     const turnInfo = $('#turn-info');
     const speaker = getEntity(state.current_speaker_id);
 
+    if (state.status === 'paused') {
+        turnInfo.textContent = 'Discussion is paused. Manage participants, then resume.';
+        input.disabled = true; sendBtn.disabled = true;
+        return;
+    }
     if (!state.is_active) {
         turnInfo.textContent = 'Discussion has concluded.';
         input.disabled = true; sendBtn.disabled = true;
@@ -1315,6 +1381,21 @@ async function onConclude() {
     } catch (e) { showToast('Conclusion failed: ' + e.message); }
 }
 
+async function onPause() {
+    const result = await api.pauseDiscussion();
+    if (result?.error) return showToast(result.error);
+    onStateUpdate(result);
+    renderDiscussion();
+}
+
+async function onResume() {
+    const result = await api.resumeDiscussion();
+    if (result?.error) return showToast(result.error);
+    onStateUpdate(result);
+    renderDiscussion();
+    processCurrentTurn();
+}
+
 async function onBack() {
     await api.reset();
     onStateUpdate(await api.getState());
@@ -1404,6 +1485,8 @@ function init() {
     });
     $('#reassign-btn').addEventListener('click', onReassign);
     $('#mediate-btn').addEventListener('click', onMediate);
+    $('#pause-btn').addEventListener('click', onPause);
+    $('#resume-btn').addEventListener('click', onResume);
     $('#conclude-btn').addEventListener('click', onConclude);
     $('#export-btn').addEventListener('click', () => toggleExportMenu());
     document.addEventListener('click', (ev) => {

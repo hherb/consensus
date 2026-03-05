@@ -210,6 +210,7 @@ class Discussion:
     current_turn_index: int = 0
     turn_number: int = 0
     is_active: bool = False
+    status: str = "setup"
 
     @property
     def moderator(self) -> Optional[Entity]:
@@ -248,6 +249,8 @@ class Discussion:
             "current_turn_index": self.current_turn_index,
             "turn_number": self.turn_number,
             "is_active": self.is_active,
+            "status": self.status,
+            "is_paused": self.status == "paused",
             "current_speaker_id": (
                 self.current_speaker.id if self.current_speaker else None
             ),

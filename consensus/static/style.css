@@ -164,6 +164,7 @@ label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-s
     border: 1px solid var(--border);
 }
 .badge.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.badge.paused { background: var(--warning); color: #000; border-color: var(--warning); }
 
 /* === Setup Phase === */
 #setup-phase {
@@ -265,6 +266,7 @@ label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-s
 }
 .history-status.concluded { background: var(--success); color: #fff; }
 .history-status.active { background: var(--warning); color: #000; }
+.history-status.paused { background: #f59e0b; color: #000; }
 
 /* Checkbox label */
 label:has(input[type="checkbox"]) {

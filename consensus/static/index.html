@@ -133,6 +133,8 @@
                 <span id="turn-badge" class="badge"></span>
                 <button id="reassign-btn" class="btn btn-outline btn-sm" title="Reassign Turn">Reassign</button>
                 <button id="mediate-btn" class="btn btn-outline btn-sm" title="Moderator Intervention">Mediate</button>
+                <button id="pause-btn" class="btn btn-outline btn-sm" title="Pause Discussion">Pause</button>
+                <button id="resume-btn" class="btn btn-primary btn-sm hidden" title="Resume Discussion">Resume</button>
                 <button id="conclude-btn" class="btn btn-accent btn-sm" title="End Discussion">Conclude</button>
                 <div class="export-dropdown">
                     <button id="export-btn" class="btn btn-outline btn-sm" title="Export Discussion">Export &#9662;</button>
@@ -149,6 +151,10 @@
             <aside id="entities-panel" class="panel">
                 <h3>Participants</h3>
                 <div id="discussion-entities"></div>
+                <div id="pause-management" class="hidden" style="margin-top:1rem;border-top:1px solid var(--border);padding-top:0.75rem">
+                    <h4 style="font-size:0.85rem;margin-bottom:0.5rem">Add Participants</h4>
+                    <div id="pause-available-entities"></div>
+                </div>
             </aside>
 
             <main id="chat-panel" class="panel">

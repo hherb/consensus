@@ -38,6 +38,7 @@ class Database:
         self._seed_default_providers()
         self._migrate_providers()
         self._migrate_entity_active()
+        self._migrate_discussion_paused()
 
     def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         """Execute a single write statement under the lock and commit."""
@@ -97,7 +98,7 @@ class Database:
                     started_at      REAL,
                     ended_at        REAL,
                     status          TEXT NOT NULL DEFAULT 'setup'
-                        CHECK(status IN ('setup','active','concluded')),
+                        CHECK(status IN ('setup','active','paused','concluded')),
                     FOREIGN KEY (moderator_id) REFERENCES entities(id)
                 );
 
@@ -423,6 +424,32 @@ class Database:
                 )
                 self.conn.commit()
 
+    def _migrate_discussion_paused(self) -> None:
+        """Widen the discussions.status CHECK constraint to include 'paused'."""
+        row = self.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='discussions'"
+        ).fetchone()
+        if row and "paused" not in row[0]:
+            with self._lock:
+                self.conn.execute("PRAGMA foreign_keys=OFF")
+                self.conn.executescript("""
+                    ALTER TABLE discussions RENAME TO discussions_old;
+                    CREATE TABLE discussions (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        topic           TEXT NOT NULL,
+                        moderator_id    INTEGER,
+                        started_at      REAL,
+                        ended_at        REAL,
+                        status          TEXT NOT NULL DEFAULT 'setup'
+                            CHECK(status IN ('setup','active','paused','concluded')),
+                        FOREIGN KEY (moderator_id) REFERENCES entities(id)
+                    );
+                    INSERT INTO discussions SELECT * FROM discussions_old;
+                    DROP TABLE discussions_old;
+                """)
+                self.conn.execute("PRAGMA foreign_keys=ON")
+                self.conn.commit()
+
     def get_prompts(self, role: str = "", target: str = "",
                     task: str = "") -> list[dict]:
         """Retrieve prompts, optionally filtered by role, target, and/or task."""
@@ -684,6 +711,23 @@ class Database:
             (discussion_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def remove_discussion_member(self, discussion_id: int,
+                                 entity_id: int) -> None:
+        """Remove a member from a discussion."""
+        self._execute_write(
+            "DELETE FROM discussion_members "
+            "WHERE discussion_id=? AND entity_id=?",
+            (discussion_id, entity_id),
+        )
+
+    def get_max_turn_number(self, discussion_id: int) -> int:
+        """Return the highest turn_number from messages for a discussion."""
+        row = self.conn.execute(
+            "SELECT MAX(turn_number) FROM messages WHERE discussion_id=?",
+            (discussion_id,),
+        ).fetchone()
+        return row[0] if row and row[0] is not None else 0
 
     # ------------------------------------------------------------------
     # Messages
