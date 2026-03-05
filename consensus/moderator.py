@@ -1,7 +1,8 @@
 """Moderator logic for managing discussions."""
 
+import asyncio
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 from .models import Discussion, Entity, EntityType
 from .ai_client import AIClient, AIResponse
@@ -23,7 +24,7 @@ class Moderator:
     """Manages discussion flow, turn-taking, and synthesis."""
 
     def __init__(self, discussion: Discussion, db: Database,
-                 key_resolver: object = None) -> None:
+                 key_resolver: Optional[Callable[[int, str], str]] = None) -> None:
         self.discussion = discussion
         self.db = db
         self._clients: dict[int, AIClient] = {}
@@ -84,8 +85,13 @@ class Moderator:
         # Recreate client if the API key has changed (e.g. BYOK per-request)
         existing = self._clients.get(entity.id)
         if existing and existing.api_key != api_key:
-            # Key changed — close old client and create new one
-            self._clients.pop(entity.id)
+            # Key changed — schedule async close and create new one
+            old_client = self._clients.pop(entity.id)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(old_client.close())
+            except RuntimeError:
+                pass  # No event loop; client will be garbage-collected
         if entity.id not in self._clients:
             self._clients[entity.id] = AIClient(
                 base_url=entity.ai_config.base_url,

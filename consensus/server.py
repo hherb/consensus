@@ -1,15 +1,18 @@
 """Web server mode using aiohttp."""
 
 import asyncio
-import hashlib
 import inspect
 import json
 import logging
 import os
 import secrets
 import time
+from typing import Awaitable, Callable
 
 from aiohttp import web
+
+# Type alias for aiohttp request handlers
+RequestHandler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
 from .app import ConsensusApp
 from .session import SessionManager
@@ -60,6 +63,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
     # Rate limiting state: {client_key: [timestamps]}
     rate_limits: dict[str, list[float]] = {}
+    rate_limit_last_cleanup: float = 0.0
 
     # Allowed CORS origins (configurable via env)
     allowed_origins_env = os.environ.get("CONSENSUS_ALLOWED_ORIGINS", "")
@@ -73,7 +77,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
     @web.middleware
     async def security_headers_middleware(request: web.Request,
-                                         handler: object) -> web.Response:
+                                         handler: RequestHandler) -> web.Response:
         """Add security headers to all responses."""
         response = await handler(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -83,7 +87,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
     @web.middleware
     async def cors_middleware(request: web.Request,
-                              handler: object) -> web.Response:
+                              handler: RequestHandler) -> web.Response:
         """Restrict API access to same-origin or allowed-origin requests."""
         if request.path.startswith("/api/"):
             origin = request.headers.get("Origin", "")
@@ -110,7 +114,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
     @web.middleware
     async def rate_limit_middleware(request: web.Request,
-                                   handler: object) -> web.Response:
+                                   handler: RequestHandler) -> web.Response:
         """Simple per-IP rate limiting for API endpoints."""
         if not request.path.startswith("/api/"):
             return await handler(request)
@@ -123,6 +127,17 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
         now = time.time()
         window_start = now - RATE_LIMIT_WINDOW
+
+        # Periodically purge stale client entries (every RATE_LIMIT_WINDOW seconds)
+        nonlocal rate_limit_last_cleanup
+        if now - rate_limit_last_cleanup > RATE_LIMIT_WINDOW:
+            stale_keys = [
+                k for k, ts in rate_limits.items()
+                if not ts or ts[-1] < window_start
+            ]
+            for k in stale_keys:
+                del rate_limits[k]
+            rate_limit_last_cleanup = now
 
         # Clean old entries and check limit
         if client_key not in rate_limits:
