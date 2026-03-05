@@ -43,9 +43,15 @@ class DesktopAPI {
 
 class WebAPI {
     async _post(method, data = {}) {
+        const headers = { 'Content-Type': 'application/json' };
+        // Attach BYOK API keys from sessionStorage
+        const byokKeys = getByokKeys();
+        if (Object.keys(byokKeys).length > 0) {
+            data._api_keys = byokKeys;
+        }
         const resp = await fetch(`/api/${method}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify(data),
         });
         const json = await resp.json();
@@ -101,6 +107,36 @@ let state = {
 let processing = false;
 let renderedMessageCount = 0;
 let renderedStoryboardCount = 0;
+
+// ============================================================
+// BYOK (Bring Your Own Key) — Client-side API Key Management
+// ============================================================
+
+const BYOK_STORAGE_KEY = 'consensus_api_keys';
+
+function getByokKeys() {
+    try {
+        return JSON.parse(sessionStorage.getItem(BYOK_STORAGE_KEY) || '{}');
+    } catch { return {}; }
+}
+
+function setByokKey(providerId, key) {
+    const keys = getByokKeys();
+    if (key) {
+        keys[String(providerId)] = key;
+    } else {
+        delete keys[String(providerId)];
+    }
+    sessionStorage.setItem(BYOK_STORAGE_KEY, JSON.stringify(keys));
+}
+
+function hasByokKey(providerId) {
+    return !!getByokKeys()[String(providerId)];
+}
+
+function clearByokKeys() {
+    sessionStorage.removeItem(BYOK_STORAGE_KEY);
+}
 
 // ============================================================
 // Helpers
@@ -189,19 +225,32 @@ function renderProviders() {
         list.innerHTML = '<div class="empty-state">No providers configured yet</div>';
         return;
     }
-    list.innerHTML = providers.map(p => `
+    const isWeb = !window.pywebview;
+    list.innerHTML = providers.map(p => {
+        const byok = hasByokKey(p.id);
+        const hasServer = p.has_env_key || p.has_key;
+        let keyStatus;
+        if (byok) {
+            keyStatus = '<span style="color:var(--color-success)">Session key set</span>';
+        } else if (hasServer) {
+            keyStatus = '<span style="color:var(--color-success)">Server key configured</span>';
+        } else {
+            keyStatus = '<em>Not set</em>';
+        }
+        return `
         <div class="settings-item">
             <div class="entity-info">
                 <div class="entity-name">${escHtml(p.name)}</div>
                 <div class="settings-detail">${escHtml(p.base_url)}</div>
-                <div class="settings-detail">API Key: ${p.has_key ? '<span style="color:var(--color-success)">Configured</span>' : '<em>Not set</em>'}</div>
+                <div class="settings-detail">API Key: ${keyStatus}</div>
             </div>
             <div class="entity-actions">
+                ${isWeb ? `<button class="btn btn-outline btn-sm" data-action="set-byok" data-id="${p.id}">Set Key</button>` : ''}
                 <button class="btn btn-ghost btn-sm" data-action="edit-provider" data-id="${p.id}">Edit</button>
                 <button class="btn btn-ghost btn-sm" data-action="delete-provider" data-id="${p.id}">Delete</button>
             </div>
         </div>
-    `).join('');
+    `;}).join('');
 }
 
 function openProviderDialog(provider) {
@@ -250,6 +299,24 @@ async function removeProvider(id) {
     const s = await api.getState();
     onStateUpdate(s);
     renderProviders();
+}
+
+function promptByokKey(providerId) {
+    const provider = (state.providers || []).find(p => p.id === providerId);
+    const name = provider ? provider.name : 'this provider';
+    const existing = hasByokKey(providerId);
+    const msg = existing
+        ? `Update API key for ${name}?\nLeave blank to remove the session key.`
+        : `Enter your API key for ${name}.\nThis key is stored in your browser only and never sent to the server for storage.`;
+    const key = prompt(msg, '');
+    if (key === null) return; // cancelled
+    setByokKey(providerId, key.trim());
+    renderProviders();
+    if (key.trim()) {
+        showToast(`API key set for ${name} (this session only)`, 3000, 'info');
+    } else {
+        showToast(`API key removed for ${name}`, 3000, 'info');
+    }
 }
 
 // ============================================================
@@ -1575,6 +1642,7 @@ function init() {
         switch (action) {
             case 'edit-provider': editProvider(id); break;
             case 'delete-provider': removeProvider(id); break;
+            case 'set-byok': promptByokKey(id); break;
             case 'edit-profile': editProfile(id); break;
             case 'delete-profile': removeProfile(id); break;
             case 'reactivate-profile': reactivateProfile(id); break;

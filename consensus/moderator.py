@@ -22,10 +22,14 @@ MEDIATION_MAX_TOKENS = 512
 class Moderator:
     """Manages discussion flow, turn-taking, and synthesis."""
 
-    def __init__(self, discussion: Discussion, db: Database) -> None:
+    def __init__(self, discussion: Discussion, db: Database,
+                 key_resolver: object = None) -> None:
         self.discussion = discussion
         self.db = db
         self._clients: dict[int, AIClient] = {}
+        # Optional callback: (provider_id, env_var) -> api_key
+        # When set, overrides the entity's resolved api_key for AI calls.
+        self._key_resolver = key_resolver
 
     def resolve_prompt(self, role: str, target: str, task: str,
                        **variables: object) -> str:
@@ -61,14 +65,31 @@ class Moderator:
         messages.append({"role": "user", "content": context + "\n" + task})
         return messages
 
+    def _resolve_api_key(self, entity: Entity) -> str:
+        """Resolve the API key for an entity, using BYOK resolver if available."""
+        if not entity.ai_config:
+            return ""
+        if self._key_resolver:
+            return self._key_resolver(
+                entity.ai_config.provider_id,
+                "",  # env_var looked up by resolver
+            )
+        return entity.ai_config.api_key
+
     def _get_client(self, entity: Entity) -> AIClient:
         """Return a cached AI client for the given entity, creating one if needed."""
         if not entity.ai_config:
             raise ValueError(f"{entity.name} has no AI configuration")
+        api_key = self._resolve_api_key(entity)
+        # Recreate client if the API key has changed (e.g. BYOK per-request)
+        existing = self._clients.get(entity.id)
+        if existing and existing.api_key != api_key:
+            # Key changed — close old client and create new one
+            self._clients.pop(entity.id)
         if entity.id not in self._clients:
             self._clients[entity.id] = AIClient(
                 base_url=entity.ai_config.base_url,
-                api_key=entity.ai_config.api_key,
+                api_key=api_key,
             )
         return self._clients[entity.id]
 

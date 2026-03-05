@@ -17,7 +17,8 @@ pip install -e ".[all]"       # everything
 
 # Run
 python -m consensus            # desktop mode (default)
-python -m consensus --web      # web server mode
+python -m consensus --web      # web server mode (single-user)
+python -m consensus --web --multi-user  # multi-user mode (public deployment)
 python -m consensus --web --port 8080 --debug
 
 # CLI entry point
@@ -43,7 +44,8 @@ ConsensusApp (app.py) — orchestrator, state management, callbacks
 - `models.py` — dataclasses: `Entity`, `AIConfig`, `Message`, `Discussion`, `StoryboardEntry`
 - `config.py` — platform-aware data dirs (macOS: `~/Library/Application Support/consensus`)
 - `desktop.py` — `DesktopBridge` exposes async Python to JS via pywebview; runs background event loop
-- `server.py` — aiohttp routes mapping to `ConsensusApp` methods; serves static files with path traversal protection
+- `server.py` — aiohttp routes mapping to `ConsensusApp` methods; serves static files with path traversal protection; includes rate limiting, security headers, CORS, health endpoint
+- `session.py` — `SessionManager` for multi-user deployments; per-session `ConsensusApp` + SQLite with TTL-based expiry
 
 **Database schema (SQLite, 7 tables):** `providers`, `entities`, `prompts`, `discussions`, `discussion_members`, `messages`, `storyboard_entries`. Seeded with default moderator/participant prompt templates on first run.
 
@@ -56,6 +58,8 @@ ConsensusApp (app.py) — orchestrator, state management, callbacks
 - `AIClient` targets any OpenAI-compatible API endpoint — provider registry allows multiple backends.
 - Prompt templates stored in database, customizable per role (moderator vs participant) and task (turn, summary, conclusion, mediation).
 - `Discussion` object held in memory as current session state; historical data persisted to SQLite.
+- BYOK (Bring Your Own Key): In web mode, users can provide API keys via the browser UI (stored in `sessionStorage`). Keys are sent per-request and never persisted on the server. Environment-based keys remain the default fallback.
+- Multi-user mode (`--multi-user`): Each browser session gets its own `ConsensusApp` instance and SQLite database, isolated by session cookie. Sessions expire after 24h of inactivity.
 
 ## License
 
