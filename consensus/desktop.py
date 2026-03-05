@@ -190,7 +190,7 @@ class DesktopBridge:
             return False
         file_filter = file_types or "All files (*.*)"
         result = self._window.create_file_dialog(
-            webview.SAVE_DIALOG,
+            webview.FileDialog.SAVE,
             save_filename=filename,
             file_types=(file_filter,),
         )
