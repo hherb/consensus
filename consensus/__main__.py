@@ -23,6 +23,10 @@ def main() -> None:
     parser.add_argument("--host", default=DEFAULT_HOST, help="Web server host")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Web server port")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument(
+        "--multi-user", action="store_true",
+        help="Enable multi-user mode with per-session isolation (for public deployment)",
+    )
 
     args = parser.parse_args()
 
@@ -33,7 +37,9 @@ def main() -> None:
             print("Web mode requires aiohttp. Install with: pip install consensus[web]")
             sys.exit(1)
         import asyncio
-        asyncio.run(launch_web(host=args.host, port=args.port))
+        asyncio.run(launch_web(
+            host=args.host, port=args.port, multi_user=args.multi_user,
+        ))
     else:
         try:
             from .desktop import launch_desktop

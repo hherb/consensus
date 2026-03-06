@@ -1,7 +1,8 @@
 """Moderator logic for managing discussions."""
 
+import asyncio
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 from .models import Discussion, Entity, EntityType
 from .ai_client import AIClient, AIResponse
@@ -22,10 +23,14 @@ MEDIATION_MAX_TOKENS = 512
 class Moderator:
     """Manages discussion flow, turn-taking, and synthesis."""
 
-    def __init__(self, discussion: Discussion, db: Database) -> None:
+    def __init__(self, discussion: Discussion, db: Database,
+                 key_resolver: Optional[Callable[[int, str], str]] = None) -> None:
         self.discussion = discussion
         self.db = db
         self._clients: dict[int, AIClient] = {}
+        # Optional callback: (provider_id, env_var) -> api_key
+        # When set, overrides the entity's resolved api_key for AI calls.
+        self._key_resolver = key_resolver
 
     def resolve_prompt(self, role: str, target: str, task: str,
                        **variables: object) -> str:
@@ -61,14 +66,43 @@ class Moderator:
         messages.append({"role": "user", "content": context + "\n" + task})
         return messages
 
+    def _resolve_api_key(self, entity: Entity) -> str:
+        """Resolve the API key for an entity, using BYOK resolver if available."""
+        if not entity.ai_config:
+            return ""
+        if self._key_resolver:
+            return self._key_resolver(
+                entity.ai_config.provider_id,
+                "",  # env_var looked up by resolver
+            )
+        return entity.ai_config.api_key
+
     def _get_client(self, entity: Entity) -> AIClient:
         """Return a cached AI client for the given entity, creating one if needed."""
         if not entity.ai_config:
             raise ValueError(f"{entity.name} has no AI configuration")
+        api_key = self._resolve_api_key(entity)
+        # Recreate client if the API key has changed (e.g. BYOK per-request)
+        existing = self._clients.get(entity.id)
+        if existing and existing.api_key != api_key:
+            # Key changed — schedule async close and create new one
+            old_client = self._clients.pop(entity.id)
+            try:
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(old_client.close())
+
+                def _on_close_done(t: asyncio.Task) -> None:  # type: ignore[type-arg]
+                    exc = t.exception()
+                    if exc:
+                        logger.debug("Error closing old AI client: %s", exc)
+
+                task.add_done_callback(_on_close_done)
+            except RuntimeError:
+                pass  # No event loop; client will be garbage-collected
         if entity.id not in self._clients:
             self._clients[entity.id] = AIClient(
                 base_url=entity.ai_config.base_url,
-                api_key=entity.ai_config.api_key,
+                api_key=api_key,
             )
         return self._clients[entity.id]
 
@@ -83,7 +117,8 @@ class Moderator:
 
     async def generate_turn(self, entity: Entity) -> AIResponse:
         """Generate an AI entity's contribution to the discussion."""
-        client = self._get_client(entity)
+        client = self._get_client(entity)  # raises if no ai_config
+        assert entity.ai_config is not None
         cfg = entity.ai_config
         participants = self._participant_names()
 

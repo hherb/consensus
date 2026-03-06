@@ -65,8 +65,8 @@
                 <div class="card">
                     <h2>API Providers</h2>
                     <p class="text-muted">
-                        Configure LLM API endpoints. API keys are read from environment
-                        variables (never stored on disk).
+                        Configure LLM API endpoints. Use "Set Key" to provide your own
+                        API key for this session (stored in your browser only, never on the server).
                     </p>
                     <div id="provider-list"></div>
                     <button id="add-provider-btn" class="btn btn-outline" style="margin-top:0.75rem">
@@ -339,6 +339,27 @@
             <div class="dialog-actions">
                 <button id="cancel-moderator-btn" class="btn btn-ghost">Cancel</button>
                 <button id="confirm-moderator-btn" class="btn btn-primary">Submit</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== BYOK KEY DIALOG ===== -->
+    <div id="byok-dialog" class="dialog-overlay hidden">
+        <div class="dialog">
+            <h3 id="byok-dialog-title">Set API Key</h3>
+            <p id="byok-dialog-desc" class="text-muted"></p>
+            <div class="form-group">
+                <label for="byok-key-input">API Key</label>
+                <input id="byok-key-input" type="password" placeholder="Enter your API key" autocomplete="off">
+                <span class="text-muted" style="font-size:0.75rem">
+                    Stored in your browser session only — never sent to the server for storage.
+                </span>
+            </div>
+            <input id="byok-provider-id" type="hidden" value="">
+            <div class="dialog-actions">
+                <button id="byok-remove-btn" class="btn btn-ghost hidden">Remove Key</button>
+                <button id="cancel-byok-btn" class="btn btn-ghost">Cancel</button>
+                <button id="confirm-byok-btn" class="btn btn-primary">Save</button>
             </div>
         </div>
     </div>

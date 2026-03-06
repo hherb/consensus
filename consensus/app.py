@@ -1,5 +1,6 @@
 """Application state and API for the discussion system."""
 
+import contextvars
 import logging
 import time
 from typing import Optional, Callable
@@ -15,6 +16,11 @@ from .config import get_db_path, save_api_key, remove_api_key, has_api_key
 
 logger = logging.getLogger(__name__)
 
+# Per-request BYOK API keys, isolated via contextvars (no cross-request leakage)
+_request_api_keys_var: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
+    "_request_api_keys_var", default={},
+)
+
 
 class ConsensusApp:
     """Main application controller backed by SQLite."""
@@ -22,8 +28,46 @@ class ConsensusApp:
     def __init__(self, db_path: str = "") -> None:
         self.db = Database(db_path or get_db_path())
         self.discussion = Discussion()
-        self.moderator = Moderator(self.discussion, self.db)
+        self.moderator = Moderator(
+            self.discussion, self.db,
+            key_resolver=self._resolve_key_for_moderator,
+        )
         self._on_update: Optional[Callable] = None
+
+    @staticmethod
+    def set_request_api_keys(keys: dict[str, str]) -> None:
+        """Set per-request API keys (BYOK) via contextvars. Called by the web server."""
+        _request_api_keys_var.set(keys)
+
+    @staticmethod
+    def clear_request_api_keys() -> None:
+        """Clear per-request API keys after the request is handled."""
+        _request_api_keys_var.set({})
+
+    def _resolve_key_for_moderator(self, provider_id: int,
+                                   env_var: str) -> str:
+        """Key resolver callback for the Moderator's AI clients."""
+        # Look up env_var from DB if not provided
+        if not env_var and provider_id:
+            provider = self.db.get_provider(provider_id)
+            if provider:
+                env_var = provider.get("api_key_env") or ""
+        return self.resolve_provider_api_key(provider_id, env_var)
+
+    def resolve_provider_api_key(self, provider_id: int,
+                                 env_var: str) -> str:
+        """Resolve API key for a provider: BYOK first, then env var.
+
+        Order of precedence:
+        1. Per-request BYOK key (from browser)
+        2. Environment variable (from server config / .env file)
+        """
+        # Check BYOK keys first (from contextvars, request-scoped)
+        byok_key = _request_api_keys_var.get({}).get(str(provider_id), "")
+        if byok_key:
+            return byok_key
+        # Fall back to env-based resolution (original behavior)
+        return resolve_api_key(env_var or "")
 
     def set_update_callback(self, callback: Callable) -> None:
         """Register a callback invoked whenever state changes."""
@@ -51,13 +95,17 @@ class ConsensusApp:
     # Provider management
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _provider_for_frontend(p: Optional[dict]) -> Optional[dict]:
+    def _provider_for_frontend(self, p: Optional[dict]) -> Optional[dict]:
         """Redact secrets before sending provider data to the frontend."""
         if not p:
             return None
         p = dict(p)
-        p["has_key"] = has_api_key(p.get("api_key_env") or "")
+        env_var = p.get("api_key_env") or ""
+        provider_id = p.get("id", 0)
+        # Key is available if set via env OR via BYOK
+        has_env = has_api_key(env_var)
+        has_byok = bool(_request_api_keys_var.get({}).get(str(provider_id), ""))
+        p["has_key"] = has_env or has_byok
         p.pop("api_key_env", None)
         return p
 
@@ -107,7 +155,9 @@ class ConsensusApp:
         provider = self.db.get_provider(provider_id)
         if not provider:
             return []
-        api_key = resolve_api_key(provider["api_key_env"] or "")
+        api_key = self.resolve_provider_api_key(
+            provider_id, provider["api_key_env"] or "",
+        )
         async with AIClient(provider["base_url"], api_key) as client:
             return await client.list_models()
 
@@ -700,7 +750,10 @@ class ConsensusApp:
             is_active=is_active,
             status=status,
         )
-        self.moderator = Moderator(self.discussion, self.db)
+        self.moderator = Moderator(
+            self.discussion, self.db,
+            key_resolver=self._resolve_key_for_moderator,
+        )
         self._notify()
         return self.get_state()
 
@@ -794,6 +847,9 @@ class ConsensusApp:
     def reset(self) -> bool:
         """Reset to a clean state for a new discussion."""
         self.discussion = Discussion()
-        self.moderator = Moderator(self.discussion, self.db)
+        self.moderator = Moderator(
+            self.discussion, self.db,
+            key_resolver=self._resolve_key_for_moderator,
+        )
         self._notify()
         return True
