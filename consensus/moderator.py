@@ -89,7 +89,14 @@ class Moderator:
             old_client = self._clients.pop(entity.id)
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(old_client.close())
+                task = loop.create_task(old_client.close())
+
+                def _on_close_done(t: asyncio.Task) -> None:  # type: ignore[type-arg]
+                    exc = t.exception()
+                    if exc:
+                        logger.debug("Error closing old AI client: %s", exc)
+
+                task.add_done_callback(_on_close_done)
             except RuntimeError:
                 pass  # No event loop; client will be garbage-collected
         if entity.id not in self._clients:
@@ -110,7 +117,8 @@ class Moderator:
 
     async def generate_turn(self, entity: Entity) -> AIResponse:
         """Generate an AI entity's contribution to the discussion."""
-        client = self._get_client(entity)
+        client = self._get_client(entity)  # raises if no ai_config
+        assert entity.ai_config is not None
         cfg = entity.ai_config
         participants = self._participant_names()
 

@@ -44,10 +44,10 @@ class DesktopAPI {
 class WebAPI {
     async _post(method, data = {}) {
         const headers = { 'Content-Type': 'application/json' };
-        // Attach BYOK API keys from sessionStorage
+        // Attach BYOK API keys via header (never in the body)
         const byokKeys = getByokKeys();
         if (Object.keys(byokKeys).length > 0) {
-            data._api_keys = byokKeys;
+            headers['X-API-Keys'] = JSON.stringify(byokKeys);
         }
         const resp = await fetch(`/api/${method}`, {
             method: 'POST',
@@ -228,11 +228,10 @@ function renderProviders() {
     const isWeb = !window.pywebview;
     list.innerHTML = providers.map(p => {
         const byok = hasByokKey(p.id);
-        const hasServer = p.has_env_key || p.has_key;
         let keyStatus;
         if (byok) {
             keyStatus = '<span style="color:var(--color-success)">Session key set</span>';
-        } else if (hasServer) {
+        } else if (p.has_key) {
             keyStatus = '<span style="color:var(--color-success)">Server key configured</span>';
         } else {
             keyStatus = '<em>Not set</em>';
@@ -305,18 +304,38 @@ function promptByokKey(providerId) {
     const provider = (state.providers || []).find(p => p.id === providerId);
     const name = provider ? provider.name : 'this provider';
     const existing = hasByokKey(providerId);
-    const msg = existing
-        ? `Update API key for ${name}?\nLeave blank to remove the session key.`
-        : `Enter your API key for ${name}.\nThis key is stored in your browser only and never sent to the server for storage.`;
-    const key = prompt(msg, '');
-    if (key === null) return; // cancelled
-    setByokKey(providerId, key.trim());
-    renderProviders();
-    if (key.trim()) {
+    $('#byok-dialog-title').textContent = existing ? `Update API Key — ${name}` : `Set API Key — ${name}`;
+    $('#byok-dialog-desc').textContent = existing
+        ? 'Update or remove the session key for this provider.'
+        : 'Enter your API key for this provider.';
+    $('#byok-key-input').value = '';
+    $('#byok-provider-id').value = providerId;
+    if (existing) { show('#byok-remove-btn'); } else { hide('#byok-remove-btn'); }
+    show('#byok-dialog');
+    $('#byok-key-input').focus();
+}
+
+function confirmByokKey() {
+    const providerId = $('#byok-provider-id').value;
+    const key = $('#byok-key-input').value.trim();
+    const provider = (state.providers || []).find(p => String(p.id) === String(providerId));
+    const name = provider ? provider.name : 'this provider';
+    if (key) {
+        setByokKey(providerId, key);
         showToast(`API key set for ${name} (this session only)`, 3000, 'info');
-    } else {
-        showToast(`API key removed for ${name}`, 3000, 'info');
     }
+    hide('#byok-dialog');
+    renderProviders();
+}
+
+function removeByokKey() {
+    const providerId = $('#byok-provider-id').value;
+    const provider = (state.providers || []).find(p => String(p.id) === String(providerId));
+    const name = provider ? provider.name : 'this provider';
+    setByokKey(providerId, '');
+    showToast(`API key removed for ${name}`, 3000, 'info');
+    hide('#byok-dialog');
+    renderProviders();
 }
 
 // ============================================================
@@ -1550,6 +1569,11 @@ function init() {
     $('#add-provider-btn').addEventListener('click', () => openProviderDialog(null));
     $('#confirm-provider-btn').addEventListener('click', confirmProvider);
     $('#cancel-provider-btn').addEventListener('click', () => hide('#provider-dialog'));
+
+    // BYOK key dialog
+    $('#confirm-byok-btn').addEventListener('click', confirmByokKey);
+    $('#cancel-byok-btn').addEventListener('click', () => hide('#byok-dialog'));
+    $('#byok-remove-btn').addEventListener('click', removeByokKey);
 
     // Entity profile dialog
     $('#add-profile-btn').addEventListener('click', () => openEntityDialog(null));

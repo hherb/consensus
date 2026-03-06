@@ -71,13 +71,20 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     if allowed_origins_env:
         allowed_origins = {o.strip() for o in allowed_origins_env.split(",") if o.strip()}
 
+    if multi_user and not allowed_origins:
+        logger.warning(
+            "Multi-user mode with no CONSENSUS_ALLOWED_ORIGINS set. "
+            "CORS will reject all cross-origin requests. Set "
+            "CONSENSUS_ALLOWED_ORIGINS=https://yourdomain.com to allow access."
+        )
+
     # ------------------------------------------------------------------
     # Middleware
     # ------------------------------------------------------------------
 
     @web.middleware
     async def security_headers_middleware(request: web.Request,
-                                         handler: RequestHandler) -> web.Response:
+                                         handler: RequestHandler) -> web.StreamResponse:
         """Add security headers to all responses."""
         response = await handler(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -87,7 +94,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
     @web.middleware
     async def cors_middleware(request: web.Request,
-                              handler: RequestHandler) -> web.Response:
+                              handler: RequestHandler) -> web.StreamResponse:
         """Restrict API access to same-origin or allowed-origin requests."""
         if request.path.startswith("/api/"):
             origin = request.headers.get("Origin", "")
@@ -98,23 +105,17 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                     pass  # always allowed
                 elif allowed_origins and origin in allowed_origins:
                     pass  # explicitly allowed
-                elif not allowed_origins and not multi_user:
-                    # Single-user: only local origin
+                else:
+                    # Block: unknown origin in any mode
                     return web.json_response(
                         {"error": "Forbidden origin"}, status=403,
                     )
-                elif allowed_origins and origin not in allowed_origins:
-                    return web.json_response(
-                        {"error": "Forbidden origin"}, status=403,
-                    )
-                # In multi-user mode with no explicit origins, allow any
-                # (deployment should use reverse proxy for origin control)
         response = await handler(request)
         return response
 
     @web.middleware
     async def rate_limit_middleware(request: web.Request,
-                                   handler: RequestHandler) -> web.Response:
+                                   handler: RequestHandler) -> web.StreamResponse:
         """Simple per-IP rate limiting for API endpoints."""
         if not request.path.startswith("/api/"):
             return await handler(request)
@@ -122,7 +123,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         # Use session ID if available, fall back to IP
         client_key = request.cookies.get(SESSION_COOKIE, "")
         if not client_key:
-            peername = request.transport.get_extra_info("peername")
+            transport = request.transport
+            peername = transport.get_extra_info("peername") if transport else None
             client_key = peername[0] if peername else "unknown"
 
         now = time.time()
@@ -167,8 +169,9 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return shared_app, ""
 
         # Multi-user: look up or create session
+        assert session_mgr is not None  # guaranteed when shared_app is None
         sid = request.cookies.get(SESSION_COOKIE, "")
-        if not sid:
+        if not sid or not session_mgr.is_valid_session_id(sid):
             sid = _generate_session_id()
 
         app = await session_mgr.get_app(sid)
@@ -192,39 +195,28 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     # BYOK: extract API keys from request
     # ------------------------------------------------------------------
 
-    def _extract_api_keys(request: web.Request, data: dict) -> dict[str, str]:
-        """Extract per-provider API keys from the request.
-
-        Keys can be provided:
-        1. In the JSON body as `_api_keys`: {provider_id: key, ...}
-        2. In the header `X-API-Keys` as JSON: {provider_id: key, ...}
+    def _extract_api_keys(request: web.Request) -> dict[str, str]:
+        """Extract per-provider API keys from the X-API-Keys header.
 
         Returns a dict mapping provider_id (as str) to key value.
+        Keys are sent via header only — never in the request body.
         """
-        keys: dict[str, str] = {}
-
-        # From JSON body
-        body_keys = data.pop("_api_keys", None)
-        if isinstance(body_keys, dict):
-            keys.update({str(k): v for k, v in body_keys.items()})
-
-        # From header (takes precedence)
         header = request.headers.get("X-API-Keys", "")
-        if header:
-            try:
-                header_keys = json.loads(header)
-                if isinstance(header_keys, dict):
-                    keys.update({str(k): v for k, v in header_keys.items()})
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        return keys
+        if not header:
+            return {}
+        try:
+            header_keys = json.loads(header)
+            if isinstance(header_keys, dict):
+                return {str(k): v for k, v in header_keys.items()}
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return {}
 
     # ------------------------------------------------------------------
     # API handler
     # ------------------------------------------------------------------
 
-    async def handle_api(request: web.Request) -> web.Response:
+    async def handle_api(request: web.Request) -> web.StreamResponse:
         """Route API calls to the appropriate ConsensusApp method."""
         method = request.match_info["method"]
 
@@ -242,7 +234,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             data = {}
 
         # Extract BYOK keys and inject into app context
-        api_keys = _extract_api_keys(request, data)
+        api_keys = _extract_api_keys(request)
         if api_keys:
             app.set_request_api_keys(api_keys)
 
@@ -314,7 +306,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             )
 
         try:
-            result = handler()
+            result: object = handler()
             if inspect.isawaitable(result):
                 result = await result
             resp = web.json_response(
@@ -333,7 +325,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     # Health endpoint
     # ------------------------------------------------------------------
 
-    async def handle_health(request: web.Request) -> web.Response:
+    async def handle_health(request: web.Request) -> web.StreamResponse:
         """Health check endpoint for load balancers."""
         info: dict = {"status": "ok"}
         if session_mgr:
@@ -344,7 +336,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     # Static file serving
     # ------------------------------------------------------------------
 
-    async def serve_static(request: web.Request) -> web.Response:
+    async def serve_static(request: web.Request) -> web.StreamResponse:
         """Serve static files with path traversal protection."""
         path = request.match_info.get("path", "") or "index.html"
         filepath = os.path.realpath(os.path.join(static_dir, path))
@@ -363,10 +355,10 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     webapp = web.Application(middlewares=middlewares)
     webapp.router.add_get("/health", handle_health)
     webapp.router.add_post("/api/{method}", handle_api)
-    webapp.router.add_get(
-        "/", lambda r: web.FileResponse(
-            os.path.join(static_dir, "index.html")),
-    )
+    async def serve_index(request: web.Request) -> web.StreamResponse:
+        return web.FileResponse(os.path.join(static_dir, "index.html"))
+
+    webapp.router.add_get("/", serve_index)
     webapp.router.add_get("/{path:.*}", serve_static)
 
     if session_mgr:

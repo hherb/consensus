@@ -200,7 +200,9 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/opt/consensus
 Environment=CONSENSUS_ENV=production
-ExecStart=/opt/consensus/venv/bin/python -m consensus --web --host 127.0.0.1 --port 8080
+Environment=CONSENSUS_ALLOWED_ORIGINS=https://your-domain.com
+Environment=CONSENSUS_SESSION_DIR=/opt/consensus/data/sessions
+ExecStart=/opt/consensus/venv/bin/python -m consensus --web --multi-user --host 127.0.0.1 --port 8080
 Restart=always
 RestartSec=5
 MemoryMax=4G

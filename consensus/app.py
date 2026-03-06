@@ -1,5 +1,6 @@
 """Application state and API for the discussion system."""
 
+import contextvars
 import logging
 import time
 from typing import Optional, Callable
@@ -15,6 +16,11 @@ from .config import get_db_path, save_api_key, remove_api_key, has_api_key
 
 logger = logging.getLogger(__name__)
 
+# Per-request BYOK API keys, isolated via contextvars (no cross-request leakage)
+_request_api_keys_var: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
+    "_request_api_keys_var", default={},
+)
+
 
 class ConsensusApp:
     """Main application controller backed by SQLite."""
@@ -27,16 +33,16 @@ class ConsensusApp:
             key_resolver=self._resolve_key_for_moderator,
         )
         self._on_update: Optional[Callable] = None
-        # Per-request BYOK API keys: {provider_id_str: key_value}
-        self._request_api_keys: dict[str, str] = {}
 
-    def set_request_api_keys(self, keys: dict[str, str]) -> None:
-        """Set per-request API keys (BYOK). Called by the web server."""
-        self._request_api_keys = keys
+    @staticmethod
+    def set_request_api_keys(keys: dict[str, str]) -> None:
+        """Set per-request API keys (BYOK) via contextvars. Called by the web server."""
+        _request_api_keys_var.set(keys)
 
-    def clear_request_api_keys(self) -> None:
+    @staticmethod
+    def clear_request_api_keys() -> None:
         """Clear per-request API keys after the request is handled."""
-        self._request_api_keys = {}
+        _request_api_keys_var.set({})
 
     def _resolve_key_for_moderator(self, provider_id: int,
                                    env_var: str) -> str:
@@ -56,8 +62,8 @@ class ConsensusApp:
         1. Per-request BYOK key (from browser)
         2. Environment variable (from server config / .env file)
         """
-        # Check BYOK keys first
-        byok_key = self._request_api_keys.get(str(provider_id), "")
+        # Check BYOK keys first (from contextvars, request-scoped)
+        byok_key = _request_api_keys_var.get({}).get(str(provider_id), "")
         if byok_key:
             return byok_key
         # Fall back to env-based resolution (original behavior)
@@ -98,9 +104,8 @@ class ConsensusApp:
         provider_id = p.get("id", 0)
         # Key is available if set via env OR via BYOK
         has_env = has_api_key(env_var)
-        has_byok = bool(self._request_api_keys.get(str(provider_id), ""))
+        has_byok = bool(_request_api_keys_var.get({}).get(str(provider_id), ""))
         p["has_key"] = has_env or has_byok
-        p["has_env_key"] = has_env
         p.pop("api_key_env", None)
         return p
 

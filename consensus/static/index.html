@@ -343,6 +343,27 @@
         </div>
     </div>
 
+    <!-- ===== BYOK KEY DIALOG ===== -->
+    <div id="byok-dialog" class="dialog-overlay hidden">
+        <div class="dialog">
+            <h3 id="byok-dialog-title">Set API Key</h3>
+            <p id="byok-dialog-desc" class="text-muted"></p>
+            <div class="form-group">
+                <label for="byok-key-input">API Key</label>
+                <input id="byok-key-input" type="password" placeholder="Enter your API key" autocomplete="off">
+                <span class="text-muted" style="font-size:0.75rem">
+                    Stored in your browser session only — never sent to the server for storage.
+                </span>
+            </div>
+            <input id="byok-provider-id" type="hidden" value="">
+            <div class="dialog-actions">
+                <button id="byok-remove-btn" class="btn btn-ghost hidden">Remove Key</button>
+                <button id="cancel-byok-btn" class="btn btn-ghost">Cancel</button>
+                <button id="confirm-byok-btn" class="btn btn-primary">Save</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ===== REASSIGN DIALOG ===== -->
     <div id="reassign-dialog" class="dialog-overlay hidden">
         <div class="dialog">
