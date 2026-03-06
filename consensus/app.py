@@ -29,6 +29,7 @@ class ConsensusApp:
 
     def __init__(self, db_path: str = "") -> None:
         self.db = Database(db_path or get_db_path())
+        self.db.purge_deleted_discussions()
         self.discussion = Discussion()
         self.tool_registry = ToolRegistry(db=self.db)
         self.moderator = Moderator(
@@ -796,6 +797,16 @@ class ConsensusApp:
         )
         self._notify()
         return self.get_state()
+
+    def delete_discussions(self, discussion_ids: list[int]) -> dict:
+        """Soft-delete discussions by IDs."""
+        count = self.db.soft_delete_discussions(discussion_ids)
+        return {"deleted": count, "state": self.get_state()}
+
+    def restore_discussion(self, discussion_id: int) -> dict:
+        """Restore a soft-deleted discussion."""
+        restored = self.db.restore_discussion(discussion_id)
+        return {"restored": restored, "state": self.get_state()}
 
     def pause_discussion(self) -> dict:
         """Pause the current active discussion."""
