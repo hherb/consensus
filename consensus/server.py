@@ -15,6 +15,7 @@ from aiohttp import web
 RequestHandler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
 from .app import ConsensusApp
+from .auth import AuthDatabase, AuthManager, get_available_oauth_providers, build_oauth_authorize_url
 from .session import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,19 @@ RATE_LIMIT_MAX = 120  # requests per window
 
 # Session cookie name
 SESSION_COOKIE = "consensus_sid"
+
+# Auth cookie/header name
+AUTH_COOKIE = "consensus_auth"
+AUTH_HEADER = "Authorization"
+
+# Paths that don't require authentication (even in multi-user mode)
+AUTH_EXEMPT_PATHS = frozenset({
+    "/health",
+    "/auth/register",
+    "/auth/login",
+    "/auth/oauth/providers",
+    "/auth/status",
+})
 
 
 def _generate_session_id() -> str:
@@ -77,6 +91,18 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             "CORS will reject all cross-origin requests. Set "
             "CONSENSUS_ALLOWED_ORIGINS=https://yourdomain.com to allow access."
         )
+
+    # ------------------------------------------------------------------
+    # Authentication setup (multi-user mode only)
+    # ------------------------------------------------------------------
+    auth_mgr: AuthManager | None = None
+    auth_required = multi_user  # auth only enforced in hosted/multi-user mode
+
+    if multi_user:
+        from .config import get_data_dir
+        auth_db_path = os.path.join(get_data_dir(), "auth.db")
+        auth_db = AuthDatabase(auth_db_path)
+        auth_mgr = AuthManager(auth_db)
 
     # ------------------------------------------------------------------
     # Middleware
@@ -155,6 +181,46 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
         rate_limits[client_key].append(now)
         return await handler(request)
+
+    @web.middleware
+    async def auth_middleware(request: web.Request,
+                              handler: RequestHandler) -> web.StreamResponse:
+        """Enforce authentication in multi-user mode.
+
+        Extracts auth token from cookie or Authorization header and attaches
+        the authenticated user to request['auth_user']. Unauthenticated
+        requests to protected paths get a 401 response.
+        """
+        request["auth_user"] = None
+
+        if not auth_required or not auth_mgr:
+            return await handler(request)
+
+        # Allow auth endpoints, static files, health checks, and OAuth callbacks
+        path = request.path
+        if (path in AUTH_EXEMPT_PATHS
+                or path.startswith("/auth/oauth/")
+                or not path.startswith("/api/")):
+            return await handler(request)
+
+        # Extract token from Authorization header or cookie
+        token = ""
+        auth_header = request.headers.get(AUTH_HEADER, "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        if not token:
+            token = request.cookies.get(AUTH_COOKIE, "")
+
+        if token:
+            user = auth_mgr.get_current_user(token)
+            if user:
+                request["auth_user"] = user
+                return await handler(request)
+
+        return web.json_response(
+            {"error": "Authentication required"},
+            status=401,
+        )
 
     # ------------------------------------------------------------------
     # Session helpers
@@ -338,6 +404,223 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                 app.clear_request_api_keys()
 
     # ------------------------------------------------------------------
+    # Auth endpoints
+    # ------------------------------------------------------------------
+
+    async def handle_auth_register(request: web.Request) -> web.StreamResponse:
+        """Register a new user with email/password."""
+        if not auth_mgr:
+            return web.json_response(
+                {"error": "Authentication not enabled"}, status=404,
+            )
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        try:
+            user, token = auth_mgr.register(
+                email=data.get("email", ""),
+                password=data.get("password", ""),
+                display_name=data.get("display_name", ""),
+            )
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+
+        resp = web.json_response({"user": user.to_dict(), "token": token})
+        resp.set_cookie(
+            AUTH_COOKIE, token,
+            max_age=86400 * 30, httponly=True,
+            samesite="Lax", secure=bool(allowed_origins),
+        )
+        return resp
+
+    async def handle_auth_login(request: web.Request) -> web.StreamResponse:
+        """Authenticate with email/password."""
+        if not auth_mgr:
+            return web.json_response(
+                {"error": "Authentication not enabled"}, status=404,
+            )
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        try:
+            user, token = auth_mgr.login(
+                email=data.get("email", ""),
+                password=data.get("password", ""),
+            )
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=401)
+
+        resp = web.json_response({"user": user.to_dict(), "token": token})
+        resp.set_cookie(
+            AUTH_COOKIE, token,
+            max_age=86400 * 30, httponly=True,
+            samesite="Lax", secure=bool(allowed_origins),
+        )
+        return resp
+
+    async def handle_auth_logout(request: web.Request) -> web.StreamResponse:
+        """Revoke the current auth token."""
+        if not auth_mgr:
+            return web.json_response({"ok": True})
+
+        token = ""
+        auth_header = request.headers.get(AUTH_HEADER, "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        if not token:
+            token = request.cookies.get(AUTH_COOKIE, "")
+
+        if token:
+            auth_mgr.logout(token)
+
+        resp = web.json_response({"ok": True})
+        resp.del_cookie(AUTH_COOKIE)
+        return resp
+
+    async def handle_auth_status(request: web.Request) -> web.StreamResponse:
+        """Check current auth status. Returns user info if authenticated."""
+        if not auth_mgr:
+            # Auth not enabled: report as not required
+            return web.json_response({
+                "auth_required": False,
+                "authenticated": False,
+                "user": None,
+            })
+
+        token = ""
+        auth_header = request.headers.get(AUTH_HEADER, "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        if not token:
+            token = request.cookies.get(AUTH_COOKIE, "")
+
+        user = auth_mgr.get_current_user(token) if token else None
+        return web.json_response({
+            "auth_required": True,
+            "authenticated": user is not None,
+            "user": user.to_dict() if user else None,
+            "oauth_providers": get_available_oauth_providers(),
+        })
+
+    async def handle_auth_me(request: web.Request) -> web.StreamResponse:
+        """Get current user profile (requires auth)."""
+        user = request.get("auth_user")
+        if not user:
+            return web.json_response({"error": "Not authenticated"}, status=401)
+        return web.json_response({"user": user.to_dict()})
+
+    async def handle_auth_update_profile(request: web.Request) -> web.StreamResponse:
+        """Update the current user's profile."""
+        if not auth_mgr:
+            return web.json_response({"error": "Auth not enabled"}, status=404)
+
+        user = request.get("auth_user")
+        if not user:
+            return web.json_response({"error": "Not authenticated"}, status=401)
+
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        auth_mgr.db.update_user(user.id, **data)
+        updated = auth_mgr.db.get_user_by_id(user.id)
+        return web.json_response({"user": updated.to_dict() if updated else None})
+
+    # -- OAuth endpoints ---------------------------------------------------
+
+    async def handle_oauth_providers(request: web.Request) -> web.StreamResponse:
+        """List available OAuth providers."""
+        return web.json_response({
+            "providers": get_available_oauth_providers(),
+        })
+
+    async def handle_oauth_authorize(request: web.Request) -> web.StreamResponse:
+        """Initiate OAuth flow — redirect user to provider."""
+        if not auth_mgr:
+            return web.json_response({"error": "Auth not enabled"}, status=404)
+
+        provider = request.match_info["provider"]
+        # Build redirect URI from request
+        scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
+        host_header = request.headers.get("X-Forwarded-Host", request.host)
+        redirect_uri = f"{scheme}://{host_header}/auth/oauth/callback/{provider}"
+
+        state = secrets.token_urlsafe(32)
+        auth_mgr.db.store_oauth_state(state, provider, redirect_uri)
+
+        url = build_oauth_authorize_url(provider, redirect_uri, state)
+        if not url:
+            return web.json_response(
+                {"error": f"OAuth provider '{provider}' not configured"},
+                status=400,
+            )
+
+        raise web.HTTPFound(location=url)
+
+    async def handle_oauth_callback(request: web.Request) -> web.StreamResponse:
+        """Handle OAuth callback from provider."""
+        if not auth_mgr:
+            return web.json_response({"error": "Auth not enabled"}, status=404)
+
+        provider = request.match_info["provider"]
+
+        # Get code and state from query params (GET) or form body (POST, e.g. Apple)
+        if request.method == "POST":
+            post_data = await request.post()
+            code = post_data.get("code", "")
+            state = post_data.get("state", "")
+        else:
+            code = request.query.get("code", "")
+            state = request.query.get("state", "")
+
+        if not code or not state:
+            error = request.query.get("error", "unknown_error")
+            return web.Response(
+                status=400,
+                content_type="text/html",
+                text=f"<html><body><h2>OAuth Error</h2><p>{error}</p>"
+                     f"<p><a href='/'>Return to app</a></p></body></html>",
+            )
+
+        # Validate state
+        state_info = auth_mgr.db.consume_oauth_state(state)
+        if not state_info or state_info["provider"] != provider:
+            return web.Response(
+                status=400,
+                content_type="text/html",
+                text="<html><body><h2>Invalid OAuth State</h2>"
+                     "<p>The OAuth session has expired. Please try again.</p>"
+                     "<p><a href='/'>Return to app</a></p></body></html>",
+            )
+
+        redirect_uri = state_info.get("redirect_uri", "")
+        try:
+            user, token = await auth_mgr.oauth_callback(
+                provider, code, redirect_uri,
+            )
+        except ValueError as e:
+            return web.Response(
+                status=400,
+                content_type="text/html",
+                text=f"<html><body><h2>OAuth Error</h2><p>{e}</p>"
+                     f"<p><a href='/'>Return to app</a></p></body></html>",
+            )
+
+        # Redirect to app with auth cookie set
+        resp = web.HTTPFound(location="/")
+        resp.set_cookie(
+            AUTH_COOKIE, token,
+            max_age=86400 * 30, httponly=True,
+            samesite="Lax", secure=bool(allowed_origins),
+        )
+        return resp
+
+    # ------------------------------------------------------------------
     # Health endpoint
     # ------------------------------------------------------------------
 
@@ -367,10 +650,31 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     # App setup
     # ------------------------------------------------------------------
 
-    middlewares = [security_headers_middleware, cors_middleware, rate_limit_middleware]
+    middlewares = [
+        security_headers_middleware, cors_middleware,
+        rate_limit_middleware, auth_middleware,
+    ]
     webapp = web.Application(middlewares=middlewares)
+
+    # Health
     webapp.router.add_get("/health", handle_health)
+
+    # Auth routes
+    webapp.router.add_post("/auth/register", handle_auth_register)
+    webapp.router.add_post("/auth/login", handle_auth_login)
+    webapp.router.add_post("/auth/logout", handle_auth_logout)
+    webapp.router.add_get("/auth/status", handle_auth_status)
+    webapp.router.add_get("/auth/me", handle_auth_me)
+    webapp.router.add_post("/auth/me", handle_auth_update_profile)
+    webapp.router.add_get("/auth/oauth/providers", handle_oauth_providers)
+    webapp.router.add_get("/auth/oauth/authorize/{provider}", handle_oauth_authorize)
+    webapp.router.add_get("/auth/oauth/callback/{provider}", handle_oauth_callback)
+    webapp.router.add_post("/auth/oauth/callback/{provider}", handle_oauth_callback)
+
+    # API
     webapp.router.add_post("/api/{method}", handle_api)
+
+    # Static / SPA
     async def serve_index(request: web.Request) -> web.StreamResponse:
         return web.FileResponse(os.path.join(static_dir, "index.html"))
 
