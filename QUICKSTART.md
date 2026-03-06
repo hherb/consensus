@@ -53,14 +53,24 @@ consensus --web --port 9090
 
 Then open http://127.0.0.1:8080 (or your chosen port) in your browser.
 
+### Multi-user mode (public deployment)
+
+```bash
+consensus --web --multi-user
+consensus --web --multi-user --host 0.0.0.0 --port 8080
+```
+
+Each browser session gets its own isolated app instance and database. Users provide their own API keys via the browser UI (BYOK).
+
 **Options:**
 
-| Flag        | Default       | Description                    |
-|-------------|---------------|--------------------------------|
-| `--web`     | off           | Run as web server              |
-| `--host`    | `127.0.0.1`   | Bind address for web mode      |
-| `--port`    | `8080`        | Port for web mode              |
-| `--debug`   | off           | Enable debug logging           |
+| Flag            | Default       | Description                                    |
+|-----------------|---------------|------------------------------------------------|
+| `--web`         | off           | Run as web server                              |
+| `--host`        | `127.0.0.1`  | Bind address for web mode                      |
+| `--port`        | `8080`        | Port for web mode                              |
+| `--multi-user`  | off           | Per-session isolation for public deployment    |
+| `--debug`       | off           | Enable debug logging                           |
 
 ## First-time setup
 
@@ -108,15 +118,20 @@ Go to **New Discussion** tab:
 - **AI participants** generate responses automatically when it's their turn
 - **Human participants** type messages when prompted
 - The **moderator** summarizes after each turn and can mediate conflicts
+- **Pause** the discussion at any time and **resume** it later
+- **Add or remove participants** mid-discussion
 - Click **Conclude** to end the discussion and generate a final synthesis
+- **Resume** a concluded discussion to continue the conversation
 
 ## Tips
 
 - The moderator can be either human or AI. An AI moderator generates summaries automatically; a human moderator is prompted to type summaries.
 - Check the **Storyboard** panel (right side) for a running summary of the discussion.
 - You can **reassign turns** to any participant at any time.
+- **Export** discussions as JSON or HTML from the discussion view.
 - The **Prompts** tab lets you customize the system prompts and instructions for AI moderators and participants.
 - Past discussions are saved and can be reviewed from the **History** tab.
+- In **multi-user mode**, enter your API keys in the Provider Keys section of the UI — they stay in your browser and are never stored on the server.
 
 ## Troubleshooting
 

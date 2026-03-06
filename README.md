@@ -3,7 +3,7 @@
 A moderated discussion platform where two or more entities (humans and/or AI via OpenAI-compatible APIs) can discuss topics with a designated moderator who arbitrates, summarizes, and synthesizes conclusions. The moderator can be AI or human and may participate in the discussion.
 
 <p align="center">
-  <img src="assets/consensus.png" alt="Consensus">
+  <img src="assets/screenshot.png" alt="Consensus screenshot">
 </p>
 
 ## Features
@@ -15,6 +15,9 @@ A moderated discussion platform where two or more entities (humans and/or AI via
 - **Storyboard panel** showing running summaries and conclusions alongside the conversation
 - **AI-to-AI conversations** run automatically without manual intervention
 - **Context-aware AI responses** with configurable context window (last N messages)
+- **Pause & resume** — pause discussions and resume them later, even after conclusion
+- **Dynamic participation** — add or remove participants mid-discussion
+- **Export** — save discussions as JSON or HTML (desktop mode uses native save dialog)
 
 ### Multi-Provider AI Support
 - **OpenAI-compatible API** support — works with OpenAI, Anthropic, Ollama, DeepSeek, LMStudio, vLLM, and any compatible endpoint
@@ -52,7 +55,17 @@ A moderated discussion platform where two or more entities (humans and/or AI via
 ### Dual-Mode Application
 - **Desktop mode** via pywebview — lightweight native window (1280x800 default, 900x600 minimum)
 - **Web mode** via aiohttp — accessible from any browser or mobile device
+- **Multi-user mode** — per-session isolation with individual SQLite databases for public deployments
 - Both modes share the same backend and feature set
+
+### Multi-User Deployment
+- **Session isolation** — each browser session gets its own `ConsensusApp` instance and SQLite database
+- **BYOK (Bring Your Own Key)** — users provide their own LLM API keys via the browser UI; keys are stored in `sessionStorage` and never persisted server-side
+- **Rate limiting** — per-session/IP rate limiting (120 requests/minute default)
+- **Security headers** — CSP, X-Frame-Options, X-Content-Type-Options
+- **CORS controls** — configurable allowed origins via `CONSENSUS_ALLOWED_ORIGINS`
+- **Health endpoint** — `GET /health` for load balancer health checks
+- **TTL-based session expiry** — sessions auto-expire after 24h of inactivity (configurable)
 
 ## Installation
 
@@ -87,6 +100,10 @@ consensus
 consensus --web
 consensus --web --host 0.0.0.0 --port 8080
 
+# Multi-user mode (public deployment with per-session isolation)
+consensus --web --multi-user
+consensus --web --multi-user --host 0.0.0.0 --port 8080
+
 # Debug mode
 consensus --web --debug
 ```
@@ -103,6 +120,18 @@ export DEEPSEEK_API_KEY="sk-..."
 
 For local providers like Ollama, no API key is needed — just ensure the service is running.
 
+In **multi-user mode**, users provide their own API keys via the browser UI (stored in `sessionStorage`, never persisted on the server). Environment-based keys serve as a fallback.
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | OpenAI API key |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `DEEPSEEK_API_KEY` | DeepSeek API key |
+| `CONSENSUS_ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (multi-user mode) |
+| `CONSENSUS_SESSION_DIR` | Custom directory for per-session SQLite databases |
+
 ## Architecture
 
 ```
@@ -112,12 +141,20 @@ ConsensusApp — orchestrator, state management
     ├── Moderator — turn flow, AI generation, summaries
     ├── AIClient — async OpenAI-compatible HTTP client (httpx)
     └── Database — thread-safe SQLite persistence
+
+Multi-user mode:
+    SessionManager (session.py)
+        ├── Session A → ConsensusApp A → SQLite A
+        ├── Session B → ConsensusApp B → SQLite B
+        └── ...TTL-based expiry, max session cap
 ```
 
 **Key dependencies:**
 - **httpx** — async HTTP client for OpenAI-compatible API calls
 - **pywebview** — lightweight cross-platform desktop webview (optional)
 - **aiohttp** — web server for browser/mobile access (optional)
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for production deployment instructions (Oracle Cloud Free Tier).
 
 ## License
 

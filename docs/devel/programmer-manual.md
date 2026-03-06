@@ -18,8 +18,9 @@
    - 5.5 [moderator.py -- Discussion Logic](#55-moderatorpy--discussion-logic)
    - 5.6 [app.py -- The Orchestrator](#56-apppy--the-orchestrator)
    - 5.7 [server.py -- Web Mode (aiohttp)](#57-serverpy--web-mode-aiohttp)
-   - 5.8 [desktop.py -- Desktop Mode (pywebview)](#58-desktoppy--desktop-mode-pywebview)
-   - 5.9 [\_\_main\_\_.py -- Entry Point](#59-__main__py--entry-point)
+   - 5.8 [session.py -- Multi-User Session Management](#58-sessionpy--multi-user-session-management)
+   - 5.9 [desktop.py -- Desktop Mode (pywebview)](#59-desktoppy--desktop-mode-pywebview)
+   - 5.10 [\_\_main\_\_.py -- Entry Point](#510-__main__py--entry-point)
 6. [Frontend (HTML / CSS / JS)](#6-frontend-html--css--js)
    - 6.1 [index.html -- Page Structure](#61-indexhtml--page-structure)
    - 6.2 [style.css -- Theming and Layout](#62-stylecss--theming-and-layout)
@@ -47,12 +48,13 @@ multi-party dialogues between humans and AI entities. A designated moderator
 each turn, mediating conflicts, and producing a final synthesis when the
 discussion concludes.
 
-The application runs in two modes sharing a single backend:
+The application runs in three modes sharing a single backend:
 
 - **Desktop mode** -- a native window via pywebview
-- **Web mode** -- an aiohttp HTTP server accessible from any browser
+- **Web mode** -- an aiohttp HTTP server accessible from any browser (single-user)
+- **Multi-user mode** -- web mode with per-session isolation, BYOK API keys, rate limiting, and security hardening (for public deployment)
 
-Both modes serve the same vanilla HTML/CSS/JS frontend and route all logic
+All modes serve the same vanilla HTML/CSS/JS frontend and route all logic
 through the same `ConsensusApp` orchestrator class.
 
 ---
@@ -62,7 +64,7 @@ through the same `ConsensusApp` orchestrator class.
 ### Prerequisites
 
 - Python 3.11 or later
-- (Optional) [uv](https://docs.astral.sh/uv/) for faster package management
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip for package management
 - (Optional) A local Ollama instance for zero-cost AI testing
 
 ### Installation
@@ -71,18 +73,18 @@ through the same `ConsensusApp` orchestrator class.
 git clone https://github.com/hherb/consensus.git
 cd consensus
 
-# Editable install with all optional dependencies
-pip install -e ".[all]"
+# Editable install with all optional dependencies (recommended)
+uv pip install -e ".[all]"
 
 # Or pick just the mode you need:
-pip install -e ".[desktop]"   # pywebview only
-pip install -e ".[web]"       # aiohttp only
-pip install -e "."            # base (httpx only, no UI server)
+uv pip install -e ".[desktop]"   # pywebview only
+uv pip install -e ".[web]"       # aiohttp only
+uv pip install -e "."            # base (httpx only, no UI server)
 ```
 
-The base install (`pip install -e "."`) pulls in only `httpx` and
-`python-dotenv`. The `desktop` extra adds `pywebview>=5.0`; the `web` extra
-adds `aiohttp>=3.9`; `all` includes both.
+The base install pulls in only `httpx` and `python-dotenv`. The `desktop`
+extra adds `pywebview>=5.0`; the `web` extra adds `aiohttp>=3.9`; `all`
+includes both.
 
 ### Running
 
@@ -94,9 +96,14 @@ python -m consensus
 python -m consensus --web
 python -m consensus --web --port 9090 --debug
 
+# Multi-user mode (public deployment)
+python -m consensus --web --multi-user
+python -m consensus --web --multi-user --host 0.0.0.0 --port 8080
+
 # Via the installed entry point
 consensus
 consensus --web
+consensus --web --multi-user
 ```
 
 ### Setting up an AI provider for testing
@@ -132,7 +139,8 @@ consensus/
   ai_client.py         Async OpenAI-compatible HTTP client (httpx)
   moderator.py         Turn flow, AI generation, prompt resolution
   app.py               ConsensusApp orchestrator (all business logic)
-  server.py            aiohttp web server (REST routes, static files)
+  server.py            aiohttp web server (REST routes, middleware, static files)
+  session.py           Multi-user session manager (per-session app + SQLite)
   desktop.py           pywebview launcher and JS-Python bridge
   static/
     index.html         Single-page HTML (setup + discussion views)
@@ -145,6 +153,7 @@ pyproject.toml         Build config, dependencies, entry points
 CLAUDE.md              Instructions for AI coding assistants
 README.md              User-facing project overview
 QUICKSTART.md          Quick start guide for end users
+DEPLOYMENT.md          Oracle Cloud Free Tier deployment plan
 ```
 
 ---
@@ -426,7 +435,8 @@ def get_state(self):
 | **Entity management** | `save_entity`, `delete_entity`, `reactivate_entity`, `get_entities`, `get_inactive_entities` |
 | **Prompt management** | `save_prompt`, `delete_prompt`, `get_prompts` |
 | **Discussion setup** | `add_to_discussion`, `remove_from_discussion`, `set_moderator`, `set_topic` |
-| **Discussion lifecycle** | `start_discussion`, `submit_human_message`, `submit_moderator_message`, `generate_ai_turn`, `complete_turn`, `reassign_turn`, `mediate`, `conclude_discussion` |
+| **Discussion lifecycle** | `start_discussion`, `submit_human_message`, `submit_moderator_message`, `generate_ai_turn`, `complete_turn`, `reassign_turn`, `mediate`, `conclude_discussion`, `pause_discussion`, `resume_discussion` |
+| **Dynamic participation** | `add_participant`, `remove_participant` |
 | **History** | `load_discussion`, `get_export_data`, `reset` |
 
 **Security:** The `_provider_for_frontend()` static method strips the
@@ -435,13 +445,34 @@ replacing it with a boolean `has_key` flag.
 
 ### 5.7 `server.py` -- Web Mode (aiohttp)
 
-The web server is a single async function `launch_web()` that:
+The web server is a single async function `launch_web(host, port, multi_user)`
+that:
 
-1. Creates a `ConsensusApp` instance
-2. Sets up a CORS middleware (restricts API calls to same-origin)
+1. Creates either a shared `ConsensusApp` (single-user) or a `SessionManager`
+   (multi-user)
+2. Sets up middleware: security headers, CORS, rate limiting
 3. Defines a dispatch-style `handle_api()` handler
 4. Serves static files with path traversal protection
-5. Blocks until interrupted
+5. Provides a `GET /health` endpoint for load balancer checks
+6. Blocks until interrupted
+
+**Single-user vs multi-user:** When `multi_user=False` (default), a single
+`ConsensusApp` is shared by all clients (suitable for local/desktop use). When
+`multi_user=True`, each browser session gets its own `ConsensusApp` via
+`SessionManager`, identified by a `consensus_sid` cookie.
+
+**Middleware stack (applied in order):**
+
+| Middleware | Purpose |
+|------------|---------|
+| `security_headers_middleware` | Adds `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` |
+| `cors_middleware` | Rejects API requests from unknown origins. Allows local origin in single-user mode; checks `CONSENSUS_ALLOWED_ORIGINS` in multi-user mode |
+| `rate_limit_middleware` | Per-session/IP rate limiting (120 requests per 60s window) on `/api/` routes |
+
+**BYOK (Bring Your Own Key):** In multi-user mode, the frontend sends API keys
+via an `X-API-Keys` header (JSON-encoded map of `provider_id → key`). The
+server extracts these per-request and passes them to `ConsensusApp` methods
+that trigger AI calls. Keys are never logged or persisted.
 
 **API routing:** All API calls are `POST /api/{method}` where `{method}` maps
 to a key in a `handlers` dict. The handler dict maps method names to lambdas
@@ -465,7 +496,36 @@ If a handler returns a coroutine (e.g., `generate_ai_turn`), it is awaited.
 
 This means the frontend always receives the latest state after any mutation.
 
-### 5.8 `desktop.py` -- Desktop Mode (pywebview)
+**Session cookies:** In multi-user mode, responses include a `consensus_sid`
+cookie (httponly, SameSite=Lax). The cookie is validated against a regex
+pattern and refreshed on each request.
+
+### 5.8 `session.py` -- Multi-User Session Management
+
+`SessionManager` manages per-user `ConsensusApp` instances for multi-user
+deployments.
+
+**Key design:**
+- Each session gets its own `ConsensusApp` and SQLite database file stored in a
+  configurable directory (`CONSENSUS_SESSION_DIR` env var or
+  `<data_dir>/sessions/`)
+- Sessions are identified by cryptographically random URL-safe tokens
+  (validated by regex: `^[A-Za-z0-9_-]{20,64}$`)
+- Sessions expire after `DEFAULT_SESSION_TTL` (24 hours) of inactivity
+- Maximum concurrent sessions capped at `DEFAULT_MAX_SESSIONS` (100)
+- A background asyncio task runs cleanup every 5 minutes, removing expired
+  sessions and their SQLite files
+
+**Key methods:**
+
+| Method | Purpose |
+|--------|---------|
+| `get_app(session_id)` | Returns the `ConsensusApp` for a session (creates if new), or `None` if at capacity |
+| `is_valid_session_id(sid)` | Validates session ID format |
+| `start_cleanup_loop()` | Starts the periodic background cleanup task |
+| `close_all()` | Closes all sessions and stops the cleanup loop |
+
+### 5.9 `desktop.py` -- Desktop Mode (pywebview)
 
 The desktop mode uses pywebview to render the same HTML/CSS/JS in a native
 window. The key challenge is bridging pywebview's synchronous JS-to-Python
@@ -492,11 +552,12 @@ invoke `onStateUpdate(state)` in the frontend whenever state changes.
 pointing at `static/index.html`, wires up the bridge, and starts the webview
 event loop.
 
-### 5.9 `__main__.py` -- Entry Point
+### 5.10 `__main__.py` -- Entry Point
 
-Parses command-line arguments (`--web`, `--host`, `--port`, `--debug`),
-calls `load_env()` to load `~/.consensus/.env`, and dispatches to either
-`launch_web()` or `launch_desktop()`. Prints a helpful error if the required
+Parses command-line arguments (`--web`, `--host`, `--port`, `--multi-user`,
+`--debug`), calls `load_env()` to load `~/.consensus/.env`, and dispatches to
+either `launch_web(host, port, multi_user)` or `launch_desktop()`. Prints a
+helpful error if the required
 optional dependency is not installed.
 
 ---
@@ -756,10 +817,16 @@ HTTP, but the `ConsensusApp` logic is identical.
 
 ## 9. The Discussion Lifecycle
 
-A discussion moves through three states:
+A discussion moves through these states:
 
 ```
    setup  -->  active  -->  concluded
+                 ^  |           |
+                 |  v           |
+               paused      (resume)
+                               |
+                               v
+                            active
 ```
 
 ### Setup Phase
@@ -792,6 +859,9 @@ Special actions during the active phase:
 - **Reassign turn** -- jump to a different speaker
 - **Mediate** -- moderator intervenes (AI generates mediation text, or human
   types)
+- **Pause** -- temporarily pause the discussion (can be resumed later)
+- **Add/remove participants** -- dynamically modify the participant list
+  mid-discussion
 - **Conclude** -- end the discussion
 
 ### Concluded Phase
@@ -801,6 +871,12 @@ Special actions during the active phase:
 - Stores the conclusion as a message and storyboard entry
 - Sets `discussion.is_active = False`
 - Updates the DB record to `status='concluded'`, sets `ended_at`
+
+### Resuming a Discussion
+
+A concluded discussion can be **resumed** to continue the conversation. This
+transitions the discussion back to the active phase, allowing further turns,
+summaries, and a new conclusion.
 
 ### Loading Past Discussions
 
@@ -852,10 +928,20 @@ All endpoints: `POST /api/{method}` with JSON body.
 | `reassign_turn` | `entity_id` | `{reassigned_to, state}` |
 | `mediate` | `context?` | Message dict |
 | `conclude` | *(none)* | Full state |
+| `pause_discussion` | *(none)* | Full state |
+| `resume_discussion` | *(none)* | Full state |
+| `add_participant` | `entity_id` | Full state |
+| `remove_participant` | `entity_id` | Full state |
 | **History / Export** | | |
 | `get_export_data` | `discussion_id` | Discussion dict (read-only) |
 | `load_discussion` | `discussion_id` | Full state |
 | `reset` | *(none)* | `true` |
+
+**Additional endpoints (non-API):**
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/health` | GET | Health check (returns `{"status": "ok"}`) |
 
 Every response is wrapped: `{"result": <value>, "state": <full state>}`
 
@@ -979,11 +1065,27 @@ maintain these invariants:
 - **Keys are never sent to the frontend.** `_provider_for_frontend()` strips
   the `api_key_env` field and replaces it with a boolean `has_key`.
 
+- **BYOK keys are never persisted server-side.** In multi-user mode, API keys
+  sent via `X-API-Keys` headers are used for the duration of the request and
+  never logged, cached, or written to disk.
+
 - **Path traversal protection:** `server.py` resolves static file paths with
   `os.path.realpath()` and checks they start with the static directory prefix.
 
+- **Security headers:** All responses include `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, and `Referrer-Policy: strict-origin-when-cross-origin`.
+
 - **CORS origin checking:** The web server middleware rejects API requests from
-  non-matching `Origin` headers.
+  non-matching `Origin` headers. In multi-user mode, allowed origins must be
+  explicitly configured via `CONSENSUS_ALLOWED_ORIGINS`.
+
+- **Rate limiting:** Per-session/IP rate limiting prevents abuse (120
+  requests per 60-second window by default).
+
+- **Session security:** Session IDs are cryptographically random
+  (`secrets.token_urlsafe(32)`), validated against a strict regex, and set as
+  httponly cookies with `SameSite=Lax`. Sessions expire after 24h of
+  inactivity.
 
 - **HTML escaping:** `renderMarkdown()` in `app.js` escapes HTML entities
   before applying Markdown formatting, preventing XSS from message content.
@@ -1095,14 +1197,12 @@ These are known gaps that represent good contribution opportunities:
 - **No CI/CD pipeline.** No GitHub Actions or similar.
 - **No streaming responses.** `AIClient.stream()` exists but is unused. The
   frontend doesn't handle streaming display.
-- **Single-user only.** The web server holds a single `ConsensusApp` instance
-  in memory. Multiple browser tabs share state, and there's no concept of
-  user sessions.
 - **No WebSocket for real-time updates.** In web mode, the frontend only
   receives state updates via HTTP response bodies. There's no push channel
   (the desktop mode does have push via `evaluate_js`).
-- **No authentication or authorisation.** The web server is intended for local
-  use or trusted networks only.
+- **No authentication or authorisation.** Multi-user mode provides session
+  isolation and rate limiting, but there is no user login, account system,
+  or role-based access control.
 - **Markdown rendering is basic.** The `renderMarkdown()` function handles
   common cases but doesn't cover the full CommonMark spec.
 - **No internationalisation.** All UI text is hardcoded in English.
