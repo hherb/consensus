@@ -765,6 +765,10 @@ async function deleteSelectedDiscussions() {
     if (!confirm(`Delete ${ids.length} discussion(s)? They will be recoverable for 7 days.`)) return;
     const result = await api.deleteDiscussions(ids);
     if (result?.error) return showToast(result.error);
+    // Update local state from result and re-render
+    if (result?.state) onStateUpdate(result.state);
+    else { const s = await api.getState(); if (s) onStateUpdate(s); }
+    renderHistory();
     showUndoToast(ids.length, ids);
 }
 
@@ -777,8 +781,11 @@ function showUndoToast(count, ids) {
     document.body.appendChild(toast);
     const undoBtn = toast.querySelector('.toast-undo-btn');
     undoBtn.addEventListener('click', async () => {
-        for (const id of ids) await api.restoreDiscussion(id);
+        let lastResult;
+        for (const id of ids) lastResult = await api.restoreDiscussion(id);
         toast.remove();
+        if (lastResult?.state) onStateUpdate(lastResult.state);
+        else { const s = await api.getState(); if (s) onStateUpdate(s); }
         renderHistory();
     });
     setTimeout(() => { toast.classList.add('toast-fade-out'); setTimeout(() => toast.remove(), 300); }, 6000);

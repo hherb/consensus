@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import threading
 from typing import Optional
 
@@ -269,10 +270,30 @@ def launch_desktop(debug: bool = False) -> None:
     static_dir = os.path.join(pkg_dir, "static")
     html_path = os.path.join(static_dir, "index.html")
 
-    # App icon — relative to package dir, up one level to repo assets/
+    # App icon — resolve from assets/ relative to repo root
     icon_path = os.path.normpath(
         os.path.join(pkg_dir, "..", "assets", "consensus_icon.png"))
-    icon_kwarg = {"icon": icon_path} if os.path.exists(icon_path) else {}
+    if not os.path.exists(icon_path):
+        icon_path = None
+
+    # macOS: set dock icon via AppKit (pywebview doesn't support this natively)
+    if icon_path and sys.platform == "darwin":
+        try:
+            from AppKit import NSApplication, NSImage
+            ns_app = NSApplication.sharedApplication()
+            ns_app.setApplicationIconImage_(
+                NSImage.alloc().initWithContentsOfFile_(icon_path))
+        except Exception:
+            logger.debug("Could not set macOS dock icon", exc_info=True)
+
+    # Windows: set taskbar icon via ctypes
+    if icon_path and sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "consensus.discussion.moderator")
+        except Exception:
+            logger.debug("Could not set Windows app ID", exc_info=True)
 
     window = webview.create_window(
         WINDOW_TITLE,
@@ -281,8 +302,11 @@ def launch_desktop(debug: bool = False) -> None:
         width=WINDOW_WIDTH,
         height=WINDOW_HEIGHT,
         min_size=(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT),
-        **icon_kwarg,
     )
     bridge._window = window
 
-    webview.start(debug=debug)
+    # icon param in webview.start() works on Linux (GTK/QT)
+    start_kwargs = {"debug": debug}
+    if icon_path and sys.platform.startswith("linux"):
+        start_kwargs["icon"] = icon_path
+    webview.start(**start_kwargs)
