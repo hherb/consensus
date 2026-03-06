@@ -9,6 +9,7 @@ from typing import Optional
 from .models import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_AVATAR_COLOR
 
 SCHEMA_VERSION = 1
+MAX_DAYS_KEEP_DELETED = 7
 
 _VALID_TABLES = frozenset({
     "providers", "entities", "prompts", "discussions",
@@ -929,10 +930,12 @@ class Database:
         return cur.lastrowid
 
     def get_discussions(self) -> list[dict]:
-        """Return all discussions ordered by start time (newest first)."""
+        """Return non-deleted discussions ordered by start time (newest first)."""
         return [dict(r) for r in
                 self.conn.execute(
-                    "SELECT * FROM discussions ORDER BY started_at DESC"
+                    "SELECT * FROM discussions "
+                    "WHERE deleted_at IS NULL "
+                    "ORDER BY started_at DESC"
                 ).fetchall()]
 
     def get_discussion(self, discussion_id: int) -> Optional[dict]:
@@ -949,6 +952,51 @@ class Database:
             allowed={"topic", "moderator_id", "status", "ended_at", "started_at"},
             **kwargs,
         )
+
+    def soft_delete_discussions(self, discussion_ids: list[int]) -> int:
+        """Soft-delete discussions by setting deleted_at. Returns count deleted."""
+        if not discussion_ids:
+            return 0
+        placeholders = ",".join("?" * len(discussion_ids))
+        with self._lock:
+            cur = self.conn.execute(
+                f"UPDATE discussions SET deleted_at = ? "
+                f"WHERE id IN ({placeholders}) AND deleted_at IS NULL",
+                (time.time(), *discussion_ids),
+            )
+            self.conn.commit()
+        return cur.rowcount
+
+    def restore_discussion(self, discussion_id: int) -> bool:
+        """Restore a soft-deleted discussion."""
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE discussions SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL",
+                (discussion_id,),
+            )
+            self.conn.commit()
+        return cur.rowcount > 0
+
+    def purge_deleted_discussions(self, max_days: int = MAX_DAYS_KEEP_DELETED) -> int:
+        """Hard-delete discussions soft-deleted more than max_days ago.
+        Cascades to messages, discussion_members, and storyboard_entries.
+        Returns count of discussions purged.
+        """
+        cutoff = time.time() - (max_days * 86400)
+        with self._lock:
+            ids = [r[0] for r in self.conn.execute(
+                "SELECT id FROM discussions WHERE deleted_at IS NOT NULL AND deleted_at < ?",
+                (cutoff,),
+            ).fetchall()]
+            if not ids:
+                return 0
+            placeholders = ",".join("?" * len(ids))
+            self.conn.execute(f"DELETE FROM storyboard_entries WHERE discussion_id IN ({placeholders})", ids)
+            self.conn.execute(f"DELETE FROM messages WHERE discussion_id IN ({placeholders})", ids)
+            self.conn.execute(f"DELETE FROM discussion_members WHERE discussion_id IN ({placeholders})", ids)
+            self.conn.execute(f"DELETE FROM discussions WHERE id IN ({placeholders})", ids)
+            self.conn.commit()
+        return len(ids)
 
     def add_discussion_member(self, discussion_id: int, entity_id: int,
                               is_moderator: bool = False,
