@@ -40,6 +40,7 @@ class Database:
         self._migrate_entity_active()
         self._migrate_discussion_paused()
         self._migrate_tools()
+        self._migrate_discussion_deleted_at()
 
     def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         """Execute a single write statement under the lock and commit."""
@@ -601,6 +602,16 @@ class Database:
             with self._lock:
                 self.conn.execute(
                     "ALTER TABLE messages ADD COLUMN tool_calls_json TEXT"
+                )
+                self.conn.commit()
+
+    def _migrate_discussion_deleted_at(self) -> None:
+        """Add deleted_at column to discussions for soft-delete support."""
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(discussions)")}
+        if "deleted_at" not in cols:
+            with self._lock:
+                self.conn.execute(
+                    "ALTER TABLE discussions ADD COLUMN deleted_at REAL"
                 )
                 self.conn.commit()
 
