@@ -378,6 +378,11 @@ class ConsensusApp:
             if not self.db.get_entity(e.id):
                 return {"error": f"Entity '{e.name}' (id={e.id}) no longer exists"}
 
+        # Clear any stale state from a previous discussion
+        self.discussion.messages.clear()
+        self.discussion.storyboard.clear()
+        self.discussion.turn_order.clear()
+
         # Create DB record
         did = self.db.create_discussion(
             self.discussion.topic, self.discussion.moderator_id,

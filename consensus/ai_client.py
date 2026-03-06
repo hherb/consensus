@@ -14,6 +14,27 @@ logger = logging.getLogger(__name__)
 DEFAULT_API_TIMEOUT = 120.0
 
 
+def _normalize_content(raw: object) -> str:
+    """Ensure content is a plain string.
+
+    Some APIs return content as a list of content blocks
+    (e.g. [{"type": "text", "text": "..."}]) instead of a string.
+    """
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        parts = []
+        for item in raw:
+            if isinstance(item, dict):
+                parts.append(item.get("text", str(item)))
+            else:
+                parts.append(str(item))
+        return "\n".join(parts)
+    if raw is None:
+        return ""
+    return str(raw)
+
+
 @dataclass
 class AIResponse:
     """Response from an AI completion, including usage metadata."""
@@ -135,8 +156,10 @@ class AIClient:
         elapsed = int((time.monotonic() - start) * 1000)
 
         usage = data.get("usage", {})
+        raw_content = data["choices"][0]["message"]["content"]
+        content = _normalize_content(raw_content)
         return AIResponse(
-            content=data["choices"][0]["message"]["content"],
+            content=content,
             model=data.get("model", model),
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
@@ -179,6 +202,7 @@ class AIClient:
 
         choice = data["choices"][0]
         message = choice.get("message", {})
+        message["content"] = _normalize_content(message.get("content"))
         usage = data.get("usage", {})
 
         return {
