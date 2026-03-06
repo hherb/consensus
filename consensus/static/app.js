@@ -39,6 +39,11 @@ class DesktopAPI {
     // History
     async loadDiscussion(id) { return await window.pywebview.api.load_discussion(id); }
     async reset() { return await window.pywebview.api.reset(); }
+    // Tools
+    async listTools() { return await window.pywebview.api.list_tools(); }
+    async getEntityTools(eid) { return await window.pywebview.api.get_entity_tools(eid); }
+    async assignTool(eid, toolName, mode) { return await window.pywebview.api.assign_tool(eid, toolName, mode || 'private'); }
+    async removeTool(eid, toolName) { return await window.pywebview.api.remove_tool(eid, toolName); }
 }
 
 class WebAPI {
@@ -91,6 +96,11 @@ class WebAPI {
     async reopenDiscussion() { return await this._post('reopen_discussion'); }
     async loadDiscussion(id) { return await this._post('load_discussion', { discussion_id: id }); }
     async reset() { return await this._post('reset'); }
+    // Tools
+    async listTools() { return await this._post('list_tools'); }
+    async getEntityTools(eid) { return await this._post('get_entity_tools', { entity_id: eid }); }
+    async assignTool(eid, toolName, mode) { return await this._post('assign_tool', { entity_id: eid, tool_name: toolName, access_mode: mode || 'private' }); }
+    async removeTool(eid, toolName) { return await this._post('remove_tool', { entity_id: eid, tool_name: toolName }); }
 }
 
 // ============================================================
@@ -434,6 +444,8 @@ function openEntityDialog(entity) {
         if (entity?.provider_id) {
             loadModelsForProvider(entity.provider_id, entity.model || '');
         }
+        // Load tools
+        loadEntityTools(entity?.id);
     } else {
         hide('#ai-config');
     }
@@ -463,12 +475,90 @@ async function confirmEntity() {
         params.system_prompt = $('#ai-system-prompt').value;
     }
 
-    await api.saveEntity(params);
+    const result = await api.saveEntity(params);
+    // Save tool assignments (need entity ID for new entities)
+    const savedId = params.entity_id || (result && result.id);
+    if (savedId && params.entity_type === 'ai') {
+        await saveEntityTools(savedId);
+    }
     const s = await api.getState();
     onStateUpdate(s);
     hide('#entity-dialog');
     renderProfiles();
     renderSetupTab();
+}
+
+// Tool assignment state for the entity dialog
+let _availableTools = [];
+let _entityToolAssignments = {};  // { tool_name: access_mode } for current entity
+
+async function loadEntityTools(entityId) {
+    const container = $('#entity-tools-list');
+    try {
+        _availableTools = (await api.listTools()) || [];
+        const assigned = entityId ? ((await api.getEntityTools(entityId)) || []) : [];
+        _entityToolAssignments = {};
+        for (const a of assigned) {
+            _entityToolAssignments[a.tool_name] = a.access_mode;
+        }
+    } catch {
+        _availableTools = [];
+        _entityToolAssignments = {};
+    }
+
+    if (!_availableTools.length) {
+        container.innerHTML = '<span class="text-muted">No tools available</span>';
+        return;
+    }
+
+    container.innerHTML = _availableTools.map(t => {
+        const checked = t.name in _entityToolAssignments;
+        const mode = _entityToolAssignments[t.name] || 'private';
+        return `<div class="tool-assignment">
+            <label class="tool-checkbox">
+                <input type="checkbox" data-tool="${escHtml(t.name)}" ${checked ? 'checked' : ''}>
+                <strong>${escHtml(t.name)}</strong>
+                <span class="text-muted" style="font-size:0.75rem"> — ${escHtml(t.description)}</span>
+            </label>
+            <select class="tool-access-mode" data-tool="${escHtml(t.name)}" ${!checked ? 'disabled' : ''}>
+                <option value="private" ${mode === 'private' ? 'selected' : ''}>Private</option>
+                <option value="shared" ${mode === 'shared' ? 'selected' : ''}>Shared</option>
+                <option value="moderator_only" ${mode === 'moderator_only' ? 'selected' : ''}>Moderator Only</option>
+            </select>
+        </div>`;
+    }).join('');
+
+    // Enable/disable access mode select based on checkbox
+    container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', () => {
+            const sel = container.querySelector(`select[data-tool="${cb.dataset.tool}"]`);
+            if (sel) sel.disabled = !cb.checked;
+        });
+    });
+}
+
+async function saveEntityTools(entityId) {
+    if (!entityId || !_availableTools.length) return;
+    const container = $('#entity-tools-list');
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+
+    for (const cb of checkboxes) {
+        const toolName = cb.dataset.tool;
+        const wasAssigned = toolName in _entityToolAssignments;
+        const isAssigned = cb.checked;
+        const modeSelect = container.querySelector(`select[data-tool="${toolName}"]`);
+        const mode = modeSelect ? modeSelect.value : 'private';
+
+        if (isAssigned && !wasAssigned) {
+            await api.assignTool(entityId, toolName, mode);
+        } else if (!isAssigned && wasAssigned) {
+            await api.removeTool(entityId, toolName);
+        } else if (isAssigned && wasAssigned && mode !== _entityToolAssignments[toolName]) {
+            // Access mode changed — remove and re-assign
+            await api.removeTool(entityId, toolName);
+            await api.assignTool(entityId, toolName, mode);
+        }
+    }
 }
 
 async function editProfile(id) {
@@ -881,6 +971,19 @@ function renderNewMessages() {
             metaHtml = `<span class="text-muted" style="font-size:0.7rem;margin-left:0.5rem">${msg.model_used} | ${msg.total_tokens}tok | ${msg.latency_ms}ms</span>`;
         }
 
+        let toolCallsHtml = '';
+        if (msg.tool_calls && msg.tool_calls.length > 0) {
+            toolCallsHtml = msg.tool_calls.map(tc => {
+                const argsStr = typeof tc.arguments === 'object' ? JSON.stringify(tc.arguments) : tc.arguments;
+                const statusIcon = tc.is_error ? '&#x26A0;' : '&#x2705;';
+                const statusClass = tc.is_error ? 'tool-error' : 'tool-success';
+                return `<details class="tool-call ${statusClass}">
+                    <summary>${statusIcon} <strong>${escHtml(tc.tool_name)}</strong>(${escHtml(argsStr)})${tc.latency_ms ? ` <span class="text-muted">${tc.latency_ms}ms</span>` : ''}</summary>
+                    <pre class="tool-result">${escHtml(tc.result)}</pre>
+                </details>`;
+            }).join('');
+        }
+
         div.innerHTML = `
             <div class="message-header">
                 <div class="entity-avatar" style="background:${color};width:24px;height:24px;font-size:0.65rem">${getInitials(msg.entity_name)}</div>
@@ -888,6 +991,7 @@ function renderNewMessages() {
                 ${metaHtml}
                 <span class="message-time">${formatTime(msg.timestamp)}</span>
             </div>
+            ${toolCallsHtml}
             <div class="message-content">${renderMarkdown(msg.content)}</div>`;
         container.appendChild(div);
     }

@@ -178,6 +178,31 @@ class DesktopBridge:
         """End the discussion and generate a conclusion."""
         return self._run_async(self.app.conclude_discussion())
 
+    # -- Tools --
+    def list_tools(self) -> list:
+        """List all available tools from all providers."""
+        return self._run_async(self.app.list_available_tools())
+
+    def get_entity_tools(self, entity_id: int) -> list:
+        """Get tool assignments for an entity."""
+        return self.app.get_entity_tools(entity_id)
+
+    def assign_tool(self, entity_id: int, tool_name: str,
+                    access_mode: str = "private") -> bool:
+        """Assign a tool to an entity."""
+        return self.app.assign_tool_to_entity(entity_id, tool_name, access_mode)
+
+    def remove_tool(self, entity_id: int, tool_name: str) -> bool:
+        """Remove a tool assignment from an entity."""
+        return self.app.remove_entity_tool(entity_id, tool_name)
+
+    def set_tool_override(self, discussion_id: int, entity_id: int,
+                          tool_name: str, enabled: bool) -> bool:
+        """Set a per-discussion tool override."""
+        return self.app.set_discussion_tool_override(
+            discussion_id, entity_id, tool_name, enabled,
+        )
+
     # -- Export --
     def get_export_data(self, discussion_id: int) -> dict:
         """Get discussion data for export without mutating current state."""

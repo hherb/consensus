@@ -39,6 +39,7 @@ class Database:
         self._migrate_providers()
         self._migrate_entity_active()
         self._migrate_discussion_paused()
+        self._migrate_tools()
 
     def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         """Execute a single write statement under the lock and commit."""
@@ -450,6 +451,151 @@ class Database:
                 self.conn.execute("PRAGMA foreign_keys=ON")
                 self.conn.commit()
 
+    def _migrate_tools(self) -> None:
+        """Add tool-related tables and columns if not present."""
+        with self._lock:
+            self.conn.executescript("""
+                CREATE TABLE IF NOT EXISTS tool_providers (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name        TEXT NOT NULL UNIQUE,
+                    type        TEXT NOT NULL CHECK(type IN ('python', 'mcp')),
+                    config_json TEXT NOT NULL DEFAULT '{}',
+                    enabled     INTEGER NOT NULL DEFAULT 1,
+                    created_at  REAL NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS entity_tools (
+                    entity_id       INTEGER NOT NULL,
+                    tool_name       TEXT NOT NULL,
+                    access_mode     TEXT NOT NULL DEFAULT 'private'
+                        CHECK(access_mode IN ('private', 'shared', 'moderator_only')),
+                    enabled         INTEGER NOT NULL DEFAULT 1,
+                    PRIMARY KEY (entity_id, tool_name),
+                    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS discussion_tool_overrides (
+                    discussion_id   INTEGER NOT NULL,
+                    entity_id       INTEGER NOT NULL,
+                    tool_name       TEXT NOT NULL,
+                    enabled         INTEGER NOT NULL,
+                    PRIMARY KEY (discussion_id, entity_id, tool_name),
+                    FOREIGN KEY (discussion_id) REFERENCES discussions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
+                );
+            """)
+            self.conn.commit()
+
+        # Add tool_calls_json column to messages if not present
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(messages)")}
+        if "tool_calls_json" not in cols:
+            with self._lock:
+                self.conn.execute(
+                    "ALTER TABLE messages ADD COLUMN tool_calls_json TEXT"
+                )
+                self.conn.commit()
+
+    # ------------------------------------------------------------------
+    # Tool Providers
+    # ------------------------------------------------------------------
+
+    def add_tool_provider(self, name: str, provider_type: str,
+                          config_json: str = "{}") -> int:
+        """Register a tool provider. Returns the provider ID."""
+        cur = self._execute_write(
+            "INSERT OR IGNORE INTO tool_providers "
+            "(name, type, config_json, created_at) VALUES (?,?,?,?)",
+            (name, provider_type, config_json, time.time()),
+        )
+        if cur.lastrowid:
+            return cur.lastrowid
+        row = self.conn.execute(
+            "SELECT id FROM tool_providers WHERE name=?", (name,)
+        ).fetchone()
+        return row[0] if row else 0
+
+    def get_tool_providers(self) -> list[dict]:
+        """Return all registered tool providers."""
+        return [dict(r) for r in
+                self.conn.execute(
+                    "SELECT * FROM tool_providers ORDER BY name"
+                ).fetchall()]
+
+    def delete_tool_provider(self, provider_id: int) -> None:
+        """Delete a tool provider."""
+        self._execute_write(
+            "DELETE FROM tool_providers WHERE id=?", (provider_id,))
+
+    # ------------------------------------------------------------------
+    # Entity-Tool Assignments
+    # ------------------------------------------------------------------
+
+    def add_entity_tool(self, entity_id: int, tool_name: str,
+                        access_mode: str = "private") -> None:
+        """Assign a tool to an entity."""
+        self._execute_write(
+            "INSERT OR REPLACE INTO entity_tools "
+            "(entity_id, tool_name, access_mode, enabled) VALUES (?,?,?,1)",
+            (entity_id, tool_name, access_mode),
+        )
+
+    def remove_entity_tool(self, entity_id: int, tool_name: str) -> None:
+        """Remove a tool assignment from an entity."""
+        self._execute_write(
+            "DELETE FROM entity_tools WHERE entity_id=? AND tool_name=?",
+            (entity_id, tool_name),
+        )
+
+    def get_entity_tools(self, entity_id: int) -> list[dict]:
+        """Return all tool assignments for an entity."""
+        return [dict(r) for r in
+                self.conn.execute(
+                    "SELECT * FROM entity_tools WHERE entity_id=? AND enabled=1",
+                    (entity_id,),
+                ).fetchall()]
+
+    def get_entity_tool(self, entity_id: int, tool_name: str) -> Optional[dict]:
+        """Get a specific tool assignment for an entity."""
+        row = self.conn.execute(
+            "SELECT * FROM entity_tools WHERE entity_id=? AND tool_name=?",
+            (entity_id, tool_name),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_shared_tools_for_discussion(self, discussion_id: int) -> list[dict]:
+        """Return all shared-mode tool assignments for entities in a discussion."""
+        return [dict(r) for r in
+                self.conn.execute(
+                    "SELECT et.* FROM entity_tools et "
+                    "JOIN discussion_members dm ON et.entity_id = dm.entity_id "
+                    "WHERE dm.discussion_id=? AND et.access_mode='shared' "
+                    "AND et.enabled=1",
+                    (discussion_id,),
+                ).fetchall()]
+
+    # ------------------------------------------------------------------
+    # Discussion Tool Overrides
+    # ------------------------------------------------------------------
+
+    def set_discussion_tool_override(self, discussion_id: int, entity_id: int,
+                                     tool_name: str, enabled: bool) -> None:
+        """Set a per-discussion tool override."""
+        self._execute_write(
+            "INSERT OR REPLACE INTO discussion_tool_overrides "
+            "(discussion_id, entity_id, tool_name, enabled) VALUES (?,?,?,?)",
+            (discussion_id, entity_id, tool_name, int(enabled)),
+        )
+
+    def get_discussion_tool_overrides(self, discussion_id: int,
+                                       entity_id: int) -> list[dict]:
+        """Get tool overrides for an entity in a specific discussion."""
+        return [dict(r) for r in
+                self.conn.execute(
+                    "SELECT * FROM discussion_tool_overrides "
+                    "WHERE discussion_id=? AND entity_id=?",
+                    (discussion_id, entity_id),
+                ).fetchall()]
+
     def get_prompts(self, role: str = "", target: str = "",
                     task: str = "") -> list[dict]:
         """Retrieve prompts, optionally filtered by role, target, and/or task."""
@@ -738,19 +884,21 @@ class Database:
                     model_used: str = "", prompt_tokens: int = 0,
                     completion_tokens: int = 0, total_tokens: int = 0,
                     latency_ms: int = 0, temperature_used: float = 0,
-                    prompt_id: int = 0) -> int:
+                    prompt_id: int = 0,
+                    tool_calls_json: str = "") -> int:
         """Store a message and return its generated ID."""
         cur = self._execute_write(
             "INSERT INTO messages "
             "(discussion_id,entity_id,content,role,turn_number,"
             "timestamp,model_used,prompt_tokens,completion_tokens,"
-            "total_tokens,latency_ms,temperature_used,prompt_id) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "total_tokens,latency_ms,temperature_used,prompt_id,"
+            "tool_calls_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (discussion_id, entity_id, content, role, turn_number,
              time.time(), model_used or None, prompt_tokens or None,
              completion_tokens or None, total_tokens or None,
              latency_ms or None, temperature_used or None,
-             prompt_id or None),
+             prompt_id or None, tool_calls_json or None),
         )
         return cur.lastrowid
 

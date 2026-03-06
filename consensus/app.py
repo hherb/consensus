@@ -1,6 +1,7 @@
 """Application state and API for the discussion system."""
 
 import contextvars
+import json
 import logging
 import time
 from typing import Optional, Callable
@@ -13,6 +14,7 @@ from .models import (
 from .moderator import Moderator
 from .database import Database
 from .config import get_db_path, save_api_key, remove_api_key, has_api_key
+from .tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +30,24 @@ class ConsensusApp:
     def __init__(self, db_path: str = "") -> None:
         self.db = Database(db_path or get_db_path())
         self.discussion = Discussion()
+        self.tool_registry = ToolRegistry(db=self.db)
         self.moderator = Moderator(
             self.discussion, self.db,
             key_resolver=self._resolve_key_for_moderator,
+            tool_registry=self.tool_registry,
         )
         self._on_update: Optional[Callable] = None
+        self._init_builtin_tools()
+
+    def _init_builtin_tools(self) -> None:
+        """Register built-in tool providers."""
+        try:
+            from .tools_builtin import create_web_search_provider
+            provider = create_web_search_provider()
+            self.tool_registry.register_provider(provider)
+            self.db.add_tool_provider("builtin", "python")
+        except ImportError:
+            logger.debug("Built-in tools not available")
 
     @staticmethod
     def set_request_api_keys(keys: dict[str, str]) -> None:
@@ -89,6 +104,7 @@ class ConsensusApp:
         state["saved_entities"] = self.db.get_entities()
         state["prompts"] = self.db.get_prompts()
         state["discussions_history"] = self.db.get_discussions()
+        state["tool_providers"] = self.db.get_tool_providers()
         return state
 
     # ------------------------------------------------------------------
@@ -463,6 +479,14 @@ class ConsensusApp:
 
         try:
             resp = await self.moderator.generate_turn(current)
+
+            # Serialize tool call records if any
+            tool_calls_json = ""
+            if resp.tool_calls:
+                tool_calls_json = json.dumps(
+                    [tc.to_dict() for tc in resp.tool_calls]
+                )
+
             msg = Message(
                 entity_id=current.id, entity_name=current.name,
                 content=resp.content, role=MessageRole.PARTICIPANT,
@@ -471,6 +495,7 @@ class ConsensusApp:
                 completion_tokens=resp.completion_tokens,
                 total_tokens=resp.total_tokens,
                 latency_ms=resp.latency_ms,
+                tool_calls_json=tool_calls_json,
             )
             self.discussion.messages.append(msg)
 
@@ -485,6 +510,7 @@ class ConsensusApp:
                 latency_ms=resp.latency_ms,
                 temperature_used=current.ai_config.temperature if current.ai_config else 0,
                 prompt_id=prompt_id,
+                tool_calls_json=tool_calls_json,
             )
             self._notify()
             return msg.to_dict()
@@ -753,6 +779,7 @@ class ConsensusApp:
         self.moderator = Moderator(
             self.discussion, self.db,
             key_resolver=self._resolve_key_for_moderator,
+            tool_registry=self.tool_registry,
         )
         self._notify()
         return self.get_state()
@@ -850,6 +877,43 @@ class ConsensusApp:
         self.moderator = Moderator(
             self.discussion, self.db,
             key_resolver=self._resolve_key_for_moderator,
+            tool_registry=self.tool_registry,
         )
         self._notify()
+        return True
+
+    # ------------------------------------------------------------------
+    # Tool management
+    # ------------------------------------------------------------------
+
+    async def list_available_tools(self) -> list[dict]:
+        """Return all tools from all registered providers."""
+        tools = await self.tool_registry.list_all_tools()
+        return [
+            {"name": t.name, "description": t.description,
+             "parameters": t.parameters, "provider": t.provider_name}
+            for t in tools
+        ]
+
+    def get_entity_tools(self, entity_id: int) -> list[dict]:
+        """Return tool assignments for an entity."""
+        return self.db.get_entity_tools(entity_id)
+
+    def assign_tool_to_entity(self, entity_id: int, tool_name: str,
+                               access_mode: str = "private") -> bool:
+        """Assign a tool to an entity with the specified access mode."""
+        self.db.add_entity_tool(entity_id, tool_name, access_mode)
+        return True
+
+    def remove_entity_tool(self, entity_id: int, tool_name: str) -> bool:
+        """Remove a tool assignment from an entity."""
+        self.db.remove_entity_tool(entity_id, tool_name)
+        return True
+
+    def set_discussion_tool_override(self, discussion_id: int, entity_id: int,
+                                      tool_name: str, enabled: bool) -> bool:
+        """Set a per-discussion tool override."""
+        self.db.set_discussion_tool_override(
+            discussion_id, entity_id, tool_name, enabled,
+        )
         return True

@@ -297,6 +297,18 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             "load_discussion": lambda: app.load_discussion(
                 data["discussion_id"]),
             "reset": lambda: app.reset(),
+            # Tools
+            "list_tools": lambda: app.list_available_tools(),
+            "get_entity_tools": lambda: app.get_entity_tools(
+                data["entity_id"]),
+            "assign_tool": lambda: app.assign_tool_to_entity(
+                data["entity_id"], data["tool_name"],
+                data.get("access_mode", "private")),
+            "remove_tool": lambda: app.remove_entity_tool(
+                data["entity_id"], data["tool_name"]),
+            "set_tool_override": lambda: app.set_discussion_tool_override(
+                data["discussion_id"], data["entity_id"],
+                data["tool_name"], data["enabled"]),
         }
 
         handler = handlers.get(method)

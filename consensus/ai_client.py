@@ -3,7 +3,7 @@
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
 
 import httpx
@@ -23,6 +23,7 @@ class AIResponse:
     completion_tokens: int = 0
     total_tokens: int = 0
     latency_ms: int = 0
+    tool_calls: list = field(default_factory=list)  # list[ToolCallRecord]
 
 
 class AIClient:
@@ -141,6 +142,53 @@ class AIClient:
             total_tokens=usage.get("total_tokens", 0),
             latency_ms=elapsed,
         )
+
+    async def complete_with_tools(
+        self,
+        messages: list[dict],
+        model: str,
+        tools: Optional[list[dict]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+    ) -> dict:
+        """Send a chat completion with tools and return the full message dict.
+
+        Unlike complete(), this returns the raw choices[0].message dict
+        which may contain tool_calls in addition to content.
+        """
+        payload: dict = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        if tools:
+            payload["tools"] = tools
+
+        client = self._get_client()
+        start = time.monotonic()
+        response = await client.post(
+            f"{self.base_url}/chat/completions",
+            json=payload,
+        )
+        response.raise_for_status()
+        data = response.json()
+        elapsed = int((time.monotonic() - start) * 1000)
+
+        choice = data["choices"][0]
+        message = choice.get("message", {})
+        usage = data.get("usage", {})
+
+        return {
+            "message": message,
+            "finish_reason": choice.get("finish_reason", "stop"),
+            "model": data.get("model", model),
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+            "latency_ms": elapsed,
+        }
 
     async def stream(
         self,

@@ -1,5 +1,6 @@
 """Core data models for the consensus discussion system."""
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -132,6 +133,8 @@ class Message:
     completion_tokens: int = 0
     total_tokens: int = 0
     latency_ms: int = 0
+    # Tool call records (JSON-serialized list of ToolCallRecord dicts)
+    tool_calls_json: str = ""
 
     def to_dict(self) -> dict:
         """Serialize message to a dictionary."""
@@ -149,6 +152,11 @@ class Message:
             d["completion_tokens"] = self.completion_tokens
             d["total_tokens"] = self.total_tokens
             d["latency_ms"] = self.latency_ms
+        if self.tool_calls_json:
+            try:
+                d["tool_calls"] = json.loads(self.tool_calls_json)
+            except json.JSONDecodeError:
+                d["tool_calls"] = []
         return d
 
     @classmethod
@@ -166,6 +174,7 @@ class Message:
             completion_tokens=row.get("completion_tokens") or 0,
             total_tokens=row.get("total_tokens") or 0,
             latency_ms=row.get("latency_ms") or 0,
+            tool_calls_json=row.get("tool_calls_json") or "",
         )
 
 

@@ -450,6 +450,56 @@ input[type="checkbox"] { width: auto; }
 .message-content h2 { font-size: 1.1rem; margin: 0.5em 0 0.3em; }
 .message-content h3 { font-size: 1rem; margin: 0.4em 0 0.2em; }
 
+/* Tool call display in messages */
+.tool-call {
+    margin: 0.4rem 0;
+    padding: 0.3rem 0.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 0.8rem;
+}
+.tool-call summary {
+    cursor: pointer;
+    padding: 0.2rem 0;
+    user-select: none;
+}
+.tool-call summary strong { color: var(--primary); }
+.tool-call.tool-error summary strong { color: var(--error); }
+.tool-result {
+    margin: 0.3rem 0 0;
+    padding: 0.4rem;
+    background: var(--bg);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+}
+
+/* Tool assignment in entity dialog */
+.entity-tools-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.tool-assignment {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.3rem 0.4rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+.tool-checkbox { display: flex; align-items: center; gap: 0.4rem; flex: 1; cursor: pointer; }
+.tool-checkbox input[type="checkbox"] { margin: 0; }
+.tool-access-mode {
+    font-size: 0.75rem;
+    padding: 0.15rem 0.3rem;
+    min-width: 100px;
+}
+.tool-access-mode:disabled { opacity: 0.4; }
+
 .message.moderator {
     background: var(--moderator-bg);
     border-left-color: var(--moderator-border);
