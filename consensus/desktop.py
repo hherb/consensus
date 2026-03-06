@@ -265,8 +265,14 @@ def launch_desktop(debug: bool = False) -> None:
     app = ConsensusApp()
     bridge = DesktopBridge(app)
 
-    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    pkg_dir = os.path.dirname(__file__)
+    static_dir = os.path.join(pkg_dir, "static")
     html_path = os.path.join(static_dir, "index.html")
+
+    # App icon — relative to package dir, up one level to repo assets/
+    icon_path = os.path.normpath(
+        os.path.join(pkg_dir, "..", "assets", "consensus_icon.png"))
+    icon_kwarg = {"icon": icon_path} if os.path.exists(icon_path) else {}
 
     window = webview.create_window(
         WINDOW_TITLE,
@@ -275,6 +281,7 @@ def launch_desktop(debug: bool = False) -> None:
         width=WINDOW_WIDTH,
         height=WINDOW_HEIGHT,
         min_size=(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT),
+        **icon_kwarg,
     )
     bridge._window = window
 
