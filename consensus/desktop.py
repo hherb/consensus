@@ -243,6 +243,14 @@ class DesktopBridge:
         """Load a past discussion for review."""
         return self.app.load_discussion(discussion_id)
 
+    def delete_discussions(self, discussion_ids: list) -> dict:
+        """Soft-delete discussions by IDs."""
+        return self.app.delete_discussions([int(i) for i in discussion_ids])
+
+    def restore_discussion(self, discussion_id: int) -> dict:
+        """Restore a soft-deleted discussion."""
+        return self.app.restore_discussion(int(discussion_id))
+
     def reset(self) -> bool:
         """Reset to a clean state."""
         return self.app.reset()

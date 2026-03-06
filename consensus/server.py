@@ -296,6 +296,10 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             # History
             "load_discussion": lambda: app.load_discussion(
                 data["discussion_id"]),
+            "delete_discussions": lambda: app.delete_discussions(
+                data["discussion_ids"]),
+            "restore_discussion": lambda: app.restore_discussion(
+                data["discussion_id"]),
             "reset": lambda: app.reset(),
             # Tools
             "list_tools": lambda: app.list_available_tools(),
