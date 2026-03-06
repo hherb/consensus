@@ -216,6 +216,11 @@ function showAppPhase() {
     if (authUser) {
         show('#user-bar');
         $('#user-bar-name').textContent = authUser.display_name || authUser.email;
+        // Ensure logout listener is attached (guard prevents stacking)
+        if (!_authListenersAttached) {
+            _authListenersAttached = true;
+            $('#logout-btn').addEventListener('click', doLogout);
+        }
     }
 }
 
@@ -2080,11 +2085,9 @@ async function bootstrap() {
 
     init();
 
-    // Show user bar if authenticated
+    // Show user bar if authenticated (logout listener attached via showAuthPhase)
     if (authUser) {
-        show('#user-bar');
-        $('#user-bar-name').textContent = authUser.display_name || authUser.email;
-        $('#logout-btn').addEventListener('click', doLogout);
+        showAppPhase();
     }
 }
 

@@ -215,6 +215,20 @@ class AuthDatabase:
                 CREATE INDEX IF NOT EXISTS idx_auth_tokens_hash
                     ON auth_tokens(token_hash);
 
+                CREATE TABLE IF NOT EXISTS user_oauth_identities (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id     INTEGER NOT NULL,
+                    provider    TEXT NOT NULL,
+                    oauth_id    TEXT NOT NULL,
+                    avatar_url  TEXT NOT NULL DEFAULT '',
+                    created_at  REAL NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    UNIQUE(provider, oauth_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_user_oauth_identities_user
+                    ON user_oauth_identities(user_id);
+
                 CREATE TABLE IF NOT EXISTS oauth_states (
                     state       TEXT PRIMARY KEY,
                     provider    TEXT NOT NULL,
@@ -269,6 +283,16 @@ class AuthDatabase:
         return User.from_db_row(row) if row else None
 
     def get_user_by_oauth(self, provider: str, oauth_id: str) -> Optional[User]:
+        # Check the multi-identity table first
+        row = self.conn.execute(
+            """SELECT u.* FROM user_oauth_identities oi
+               JOIN users u ON u.id = oi.user_id
+               WHERE oi.provider = ? AND oi.oauth_id = ?""",
+            (provider, oauth_id),
+        ).fetchone()
+        if row:
+            return User.from_db_row(row)
+        # Fall back to legacy single-identity columns
         row = self.conn.execute(
             "SELECT * FROM users WHERE oauth_provider = ? AND oauth_id = ?",
             (provider, oauth_id),
@@ -302,7 +326,24 @@ class AuthDatabase:
 
     def link_oauth(self, user_id: int, provider: str, oauth_id: str,
                    avatar_url: str = "") -> None:
-        """Link an OAuth identity to an existing user."""
+        """Link an OAuth identity to an existing user.
+
+        Supports multiple OAuth identities per user via the
+        user_oauth_identities table. Also updates legacy columns
+        on the users table for backwards compatibility.
+        """
+        now = time.time()
+        try:
+            self._execute_write(
+                """INSERT INTO user_oauth_identities
+                   (user_id, provider, oauth_id, avatar_url, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (user_id, provider, oauth_id, avatar_url, now),
+            )
+        except sqlite3.IntegrityError:
+            # Identity already linked (possibly to this user)
+            pass
+        # Update legacy columns to most recent OAuth identity
         sql = "UPDATE users SET oauth_provider = ?, oauth_id = ?"
         params: list = [provider, oauth_id]
         if avatar_url:
@@ -508,15 +549,13 @@ async def _extract_user_info(provider: str, userinfo: dict,
         Normalized dict with keys: email, name, avatar_url, oauth_id.
         None if the provider is unrecognized.
     """
-    import httpx
-
     if provider == "github":
         email = userinfo.get("email") or ""
         # GitHub may not return email in profile; fetch from emails endpoint
         if not email:
             cfg = OAUTH_PROVIDERS["github"]
             email_url = cfg.get("userinfo_email_url", "")
-            if email_url and isinstance(client, httpx.AsyncClient):
+            if email_url:
                 try:
                     resp = await client.get(email_url, headers=auth_headers)
                     if resp.status_code == 200:
@@ -560,6 +599,9 @@ def _parse_apple_id_token(token_resp: dict) -> Optional[dict]:
 
     We only decode the payload (base64) without full JWT verification here,
     since we received this token directly from Apple's token endpoint over HTTPS.
+
+    TODO: For production use, verify the JWT signature against Apple's public
+    keys (https://appleid.apple.com/auth/keys) per Apple's documentation.
     """
     import base64
 

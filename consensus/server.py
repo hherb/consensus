@@ -35,6 +35,10 @@ DEFAULT_PORT = 8080
 RATE_LIMIT_WINDOW = 60  # seconds
 RATE_LIMIT_MAX = 120  # requests per window
 
+# Login brute-force protection
+LOGIN_RATE_LIMIT_MAX = 5  # max login attempts per email per window
+LOGIN_RATE_LIMIT_WINDOW = 300  # 5-minute window
+
 # Session cookie name
 SESSION_COOKIE = "consensus_sid"
 
@@ -42,12 +46,6 @@ SESSION_COOKIE = "consensus_sid"
 AUTH_COOKIE = "consensus_auth"
 AUTH_HEADER = "Authorization"
 
-# Paths exempt from authentication.
-# Note: Only /api/* paths require auth; /auth/* and /health are outside /api/
-# and therefore exempt by default in the auth middleware.
-AUTH_EXEMPT_API_PREFIXES: tuple[str, ...] = (
-    # Extend this tuple if any /api/ routes should be public.
-)
 
 
 def _generate_session_id() -> str:
@@ -83,6 +81,9 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     # Rate limiting state: {client_key: [timestamps]}
     rate_limits: dict[str, list[float]] = {}
     rate_limit_last_cleanup: float = 0.0
+
+    # Login brute-force tracking: {email: [timestamps]}
+    login_attempts: dict[str, list[float]] = {}
 
     # Allowed CORS origins (configurable via env)
     allowed_origins_env = os.environ.get("CONSENSUS_ALLOWED_ORIGINS", "")
@@ -188,6 +189,29 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         return await handler(request)
 
     @web.middleware
+    async def csrf_middleware(request: web.Request,
+                              handler: RequestHandler) -> web.StreamResponse:
+        """Reject non-JSON POST requests to /api/ and /auth/ endpoints.
+
+        Browsers cannot send Content-Type: application/json from a plain
+        HTML form, so requiring it acts as lightweight CSRF protection.
+        OAuth callbacks (form_post from Apple) are excluded.
+        """
+        if request.method == "POST" and (
+            request.path.startswith("/api/")
+            or request.path.startswith("/auth/")
+        ):
+            # Exclude OAuth callbacks which may use form_post (e.g. Apple)
+            if not request.path.startswith("/auth/oauth/callback/"):
+                content_type = request.content_type or ""
+                if "application/json" not in content_type:
+                    return web.json_response(
+                        {"error": "Content-Type must be application/json"},
+                        status=415,
+                    )
+        return await handler(request)
+
+    @web.middleware
     async def auth_middleware(request: web.Request,
                               handler: RequestHandler) -> web.StreamResponse:
         """Enforce authentication in multi-user mode.
@@ -203,12 +227,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
         # Only /api/* routes require authentication; everything else
         # (static files, /auth/*, /health, OAuth callbacks) is exempt.
-        path = request.path
-        if not path.startswith("/api/"):
-            return await handler(request)
-
-        # Allow any explicitly exempted /api/ routes (currently none)
-        if any(path.startswith(p) for p in AUTH_EXEMPT_API_PREFIXES):
+        if not request.path.startswith("/api/"):
             return await handler(request)
 
         token = _extract_auth_token(request)
@@ -439,7 +458,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
 
-        resp = web.json_response({"user": user.to_dict(), "token": token})
+        resp = web.json_response({"user": user.to_dict()})
         resp.set_cookie(
             AUTH_COOKIE, token,
             max_age=AUTH_TOKEN_TTL, httponly=True,
@@ -458,15 +477,33 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         except Exception:
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
+        email = data.get("email", "").strip().lower()
+
+        # Per-email brute-force protection
+        now = time.time()
+        window_start = now - LOGIN_RATE_LIMIT_WINDOW
+        if email:
+            attempts = login_attempts.get(email, [])
+            attempts = [t for t in attempts if t > window_start]
+            login_attempts[email] = attempts
+            if len(attempts) >= LOGIN_RATE_LIMIT_MAX:
+                return web.json_response(
+                    {"error": "Too many login attempts. Please try again later."},
+                    status=429,
+                )
+
         try:
             user, token = auth_mgr.login(
-                email=data.get("email", ""),
+                email=email,
                 password=data.get("password", ""),
             )
         except ValueError as e:
+            # Record failed attempt
+            if email:
+                login_attempts.setdefault(email, []).append(now)
             return web.json_response({"error": str(e)}, status=401)
 
-        resp = web.json_response({"user": user.to_dict(), "token": token})
+        resp = web.json_response({"user": user.to_dict()})
         resp.set_cookie(
             AUTH_COOKIE, token,
             max_age=AUTH_TOKEN_TTL, httponly=True,
@@ -527,7 +564,12 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         except Exception:
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
-        auth_mgr.db.update_user(user.id, **data)
+        update_fields = {}
+        for field in ("display_name", "avatar_url", "email"):
+            if field in data:
+                update_fields[field] = data[field]
+        if update_fields:
+            auth_mgr.db.update_user(user.id, **update_fields)
         updated = auth_mgr.db.get_user_by_id(user.id)
         return web.json_response({"user": updated.to_dict() if updated else None})
 
@@ -546,10 +588,16 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
         provider = request.match_info["provider"]
 
-        # Validate provider before persisting state
-        scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
-        host_header = request.headers.get("X-Forwarded-Host", request.host)
-        redirect_uri = f"{scheme}://{host_header}/auth/oauth/callback/{provider}"
+        # Build redirect URI from CONSENSUS_BASE_URL (required for OAuth)
+        # to prevent host header injection attacks.
+        base_url = os.environ.get("CONSENSUS_BASE_URL", "").rstrip("/")
+        if not base_url:
+            base_url = f"{request.scheme}://{request.host}"
+            logger.warning(
+                "CONSENSUS_BASE_URL not set; falling back to request host "
+                "for OAuth redirect. Set CONSENSUS_BASE_URL for production."
+            )
+        redirect_uri = f"{base_url}/auth/oauth/callback/{provider}"
 
         state = secrets.token_urlsafe(32)
         url = build_oauth_authorize_url(provider, redirect_uri, state)
@@ -573,8 +621,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         # Get code and state from query params (GET) or form body (POST, e.g. Apple)
         if request.method == "POST":
             post_data = await request.post()
-            code = post_data.get("code", "")
-            state = post_data.get("state", "")
+            code = str(post_data.get("code", ""))
+            state = str(post_data.get("state", ""))
         else:
             code = request.query.get("code", "")
             state = request.query.get("state", "")
@@ -654,7 +702,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
     middlewares = [
         security_headers_middleware, cors_middleware,
-        rate_limit_middleware, auth_middleware,
+        rate_limit_middleware, csrf_middleware, auth_middleware,
     ]
     webapp = web.Application(middlewares=middlewares)
 
