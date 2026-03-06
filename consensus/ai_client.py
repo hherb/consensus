@@ -24,6 +24,7 @@ class AIResponse:
     total_tokens: int = 0
     latency_ms: int = 0
     tool_calls: list = field(default_factory=list)  # list[ToolCallRecord]
+    warning: str = ""
 
 
 class AIClient:

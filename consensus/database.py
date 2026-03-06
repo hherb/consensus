@@ -426,30 +426,139 @@ class Database:
                 self.conn.commit()
 
     def _migrate_discussion_paused(self) -> None:
-        """Widen the discussions.status CHECK constraint to include 'paused'."""
-        row = self.conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='discussions'"
+        """Widen the discussions.status CHECK constraint to include 'paused'.
+
+        Also repairs discussion_members FK references if a prior migration
+        left them pointing at 'discussions_old' instead of 'discussions'.
+        """
+        # Repair: if discussions_old still exists, the prior migration was
+        # incomplete — discussion_members FKs point to the wrong table.
+        has_old = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='discussions_old'"
         ).fetchone()
-        if row and "paused" not in row[0]:
-            with self._lock:
-                self.conn.execute("PRAGMA foreign_keys=OFF")
-                self.conn.executescript("""
-                    ALTER TABLE discussions RENAME TO discussions_old;
-                    CREATE TABLE discussions (
+        needs_migrate = False
+        if not has_old:
+            row = self.conn.execute(
+                "SELECT sql FROM sqlite_master "
+                "WHERE type='table' AND name='discussions'"
+            ).fetchone()
+            needs_migrate = bool(row and "paused" not in row[0])
+
+        if not has_old and not needs_migrate:
+            return
+
+        with self._lock:
+            # Use execute() within an explicit transaction so FK-OFF applies
+            # (executescript auto-commits and can leave partial state).
+            self.conn.execute("PRAGMA foreign_keys=OFF")
+            try:
+                if needs_migrate:
+                    # Rename current discussions table
+                    self.conn.execute(
+                        "ALTER TABLE discussions RENAME TO discussions_old")
+
+                # (Re)create discussions with the widened CHECK
+                self.conn.execute("""
+                    CREATE TABLE IF NOT EXISTS discussions_new (
                         id              INTEGER PRIMARY KEY AUTOINCREMENT,
                         topic           TEXT NOT NULL,
                         moderator_id    INTEGER,
                         started_at      REAL,
                         ended_at        REAL,
                         status          TEXT NOT NULL DEFAULT 'setup'
-                            CHECK(status IN ('setup','active','paused','concluded')),
+                            CHECK(status IN
+                                 ('setup','active','paused','concluded')),
                         FOREIGN KEY (moderator_id) REFERENCES entities(id)
-                    );
-                    INSERT INTO discussions SELECT * FROM discussions_old;
-                    DROP TABLE discussions_old;
-                """)
-                self.conn.execute("PRAGMA foreign_keys=ON")
+                    )""")
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO discussions_new "
+                    "SELECT * FROM discussions_old")
+                self.conn.execute("DROP TABLE IF EXISTS discussions")
+                self.conn.execute(
+                    "ALTER TABLE discussions_new RENAME TO discussions")
+                self.conn.execute("DROP TABLE IF EXISTS discussions_old")
+
+                # Rebuild discussion_members so its FKs reference the
+                # correct 'discussions' table (not 'discussions_old').
+                self.conn.execute("""
+                    CREATE TABLE IF NOT EXISTS discussion_members_new (
+                        discussion_id       INTEGER NOT NULL,
+                        entity_id           INTEGER NOT NULL,
+                        is_moderator        INTEGER NOT NULL DEFAULT 0,
+                        also_participant    INTEGER NOT NULL DEFAULT 0,
+                        turn_position       INTEGER,
+                        PRIMARY KEY (discussion_id, entity_id),
+                        FOREIGN KEY (discussion_id)
+                            REFERENCES discussions(id),
+                        FOREIGN KEY (entity_id)
+                            REFERENCES entities(id)
+                    )""")
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO discussion_members_new "
+                    "SELECT * FROM discussion_members")
+                self.conn.execute("DROP TABLE discussion_members")
+                self.conn.execute(
+                    "ALTER TABLE discussion_members_new "
+                    "RENAME TO discussion_members")
+
+                # Rebuild messages table (FK may point to discussions_old)
+                self.conn.execute("""
+                    CREATE TABLE IF NOT EXISTS messages_new (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        discussion_id   INTEGER NOT NULL,
+                        entity_id       INTEGER NOT NULL,
+                        content         TEXT NOT NULL,
+                        role            TEXT NOT NULL
+                            CHECK(role IN
+                                 ('participant','moderator','system')),
+                        turn_number     INTEGER,
+                        timestamp       REAL NOT NULL,
+                        model_used      TEXT,
+                        prompt_tokens   INTEGER,
+                        completion_tokens INTEGER,
+                        total_tokens    INTEGER,
+                        latency_ms      INTEGER,
+                        temperature_used REAL,
+                        prompt_id       INTEGER,
+                        tool_calls_json TEXT,
+                        FOREIGN KEY (discussion_id)
+                            REFERENCES discussions(id),
+                        FOREIGN KEY (entity_id)
+                            REFERENCES entities(id)
+                    )""")
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO messages_new "
+                    "SELECT * FROM messages")
+                self.conn.execute("DROP TABLE messages")
+                self.conn.execute(
+                    "ALTER TABLE messages_new RENAME TO messages")
+
+                # Rebuild storyboard_entries table
+                self.conn.execute("""
+                    CREATE TABLE IF NOT EXISTS storyboard_entries_new (
+                        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                        discussion_id       INTEGER NOT NULL,
+                        turn_number         INTEGER NOT NULL,
+                        summary             TEXT NOT NULL,
+                        speaker_entity_id   INTEGER,
+                        timestamp           REAL NOT NULL,
+                        FOREIGN KEY (discussion_id)
+                            REFERENCES discussions(id),
+                        FOREIGN KEY (speaker_entity_id)
+                            REFERENCES entities(id)
+                    )""")
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO storyboard_entries_new "
+                    "SELECT * FROM storyboard_entries")
+                self.conn.execute("DROP TABLE storyboard_entries")
+                self.conn.execute(
+                    "ALTER TABLE storyboard_entries_new "
+                    "RENAME TO storyboard_entries")
+
                 self.conn.commit()
+            finally:
+                self.conn.execute("PRAGMA foreign_keys=ON")
 
     def _migrate_tools(self) -> None:
         """Add tool-related tables and columns if not present."""

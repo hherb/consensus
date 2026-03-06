@@ -206,13 +206,36 @@ class Moderator:
                     "content": "Tool use limit reached. Provide your final response now.",
                 })
 
-            result = await client.complete_with_tools(
-                messages=messages,
-                model=cfg.model,
-                tools=current_tools,
-                temperature=cfg.temperature,
-                max_tokens=cfg.max_tokens,
-            )
+            try:
+                result = await client.complete_with_tools(
+                    messages=messages,
+                    model=cfg.model,
+                    tools=current_tools,
+                    temperature=cfg.temperature,
+                    max_tokens=cfg.max_tokens,
+                )
+            except Exception as exc:
+                if iteration == 0 and current_tools:
+                    # Model likely doesn't support tool calling — fall
+                    # back to a plain completion and warn the user.
+                    warning = (
+                        f"{cfg.model} does not support tool use — "
+                        f"tools are disabled for this response"
+                    )
+                    logger.warning(
+                        "Tool-enabled request failed for %s (%s): %s. "
+                        "Falling back to plain completion.",
+                        entity.name, cfg.model, exc,
+                    )
+                    resp = await client.complete(
+                        messages=messages,
+                        model=cfg.model,
+                        temperature=cfg.temperature,
+                        max_tokens=cfg.max_tokens,
+                    )
+                    resp.warning = warning
+                    return resp
+                raise
 
             total_prompt_tokens += result["prompt_tokens"]
             total_completion_tokens += result["completion_tokens"]

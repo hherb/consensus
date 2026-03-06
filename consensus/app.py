@@ -373,6 +373,11 @@ class ConsensusApp:
         if not mod:
             return {"error": "Moderator entity not found"}
 
+        # Validate all entities still exist in the database
+        for e in self.discussion.entities:
+            if not self.db.get_entity(e.id):
+                return {"error": f"Entity '{e.name}' (id={e.id}) no longer exists"}
+
         # Create DB record
         did = self.db.create_discussion(
             self.discussion.topic, self.discussion.moderator_id,
@@ -513,7 +518,10 @@ class ConsensusApp:
                 tool_calls_json=tool_calls_json,
             )
             self._notify()
-            return msg.to_dict()
+            result = msg.to_dict()
+            if resp.warning:
+                result["warning"] = resp.warning
+            return result
         except Exception as e:
             logger.exception("AI generation failed for %s", current.name)
             return {"error": f"AI generation failed: {e}"}

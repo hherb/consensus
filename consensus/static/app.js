@@ -1530,6 +1530,7 @@ async function processCurrentTurn() {
             renderDiscussion();
             const result = await api.generateAiTurn();
             if (result?.error) { showToast(result.error); break; }
+            if (result?.warning) showToast(result.warning, 5000, 'info');
             onStateUpdate(await api.getState());
             renderDiscussion();
             const turnCompleted = await completeTurnFlow();
