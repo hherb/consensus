@@ -167,36 +167,47 @@ function renderOAuthButtons(providers) {
     }
 }
 
+let _authListenersAttached = false;
+
 function showAuthPhase() {
     show('#auth-phase');
     hide('#setup-phase');
     hide('#discussion-phase');
     hide('#user-bar');
 
-    // Login form handlers
-    $('#login-btn').addEventListener('click', doLogin);
-    $('#login-password').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') doLogin();
-    });
-    $('#show-register-link').addEventListener('click', (e) => {
-        e.preventDefault();
-        hide('#auth-login-form');
-        show('#auth-register-form');
-    });
+    // Reset to login form each time
+    show('#auth-login-form');
+    hide('#auth-register-form');
 
-    // Register form handlers
-    $('#register-btn').addEventListener('click', doRegister);
-    $('#register-password').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') doRegister();
-    });
-    $('#show-login-link').addEventListener('click', (e) => {
-        e.preventDefault();
-        hide('#auth-register-form');
-        show('#auth-login-form');
-    });
+    // Attach listeners only once to avoid stacking on repeated calls
+    if (!_authListenersAttached) {
+        _authListenersAttached = true;
 
-    // Logout handler
-    $('#logout-btn').addEventListener('click', doLogout);
+        // Login form handlers
+        $('#login-btn').addEventListener('click', doLogin);
+        $('#login-password').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') doLogin();
+        });
+        $('#show-register-link').addEventListener('click', (e) => {
+            e.preventDefault();
+            hide('#auth-login-form');
+            show('#auth-register-form');
+        });
+
+        // Register form handlers
+        $('#register-btn').addEventListener('click', doRegister);
+        $('#register-password').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') doRegister();
+        });
+        $('#show-login-link').addEventListener('click', (e) => {
+            e.preventDefault();
+            hide('#auth-register-form');
+            show('#auth-login-form');
+        });
+
+        // Logout handler
+        $('#logout-btn').addEventListener('click', doLogout);
+    }
 }
 
 function showAppPhase() {

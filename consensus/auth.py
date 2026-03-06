@@ -18,7 +18,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlencode
 
@@ -32,6 +32,7 @@ AUTH_TOKEN_BYTES = 32
 AUTH_TOKEN_TTL = 86400 * 30  # 30 days
 PASSWORD_SALT_BYTES = 32
 PASSWORD_HASH_ITERATIONS = 600_000  # OWASP 2023 recommendation for PBKDF2-SHA256
+OAUTH_STATE_TTL = 600  # 10 minutes: max time for user to complete OAuth flow
 
 # OAuth provider definitions (client IDs/secrets come from env vars)
 OAUTH_PROVIDERS = {
@@ -371,15 +372,15 @@ class AuthDatabase:
         if not row:
             return None
         self._execute_write("DELETE FROM oauth_states WHERE state = ?", (state,))
-        # Expire states older than 10 minutes
-        if time.time() - row["created_at"] > 600:
+        if time.time() - row["created_at"] > OAUTH_STATE_TTL:
             return None
         return {"provider": row["provider"], "redirect_uri": row["redirect_uri"]}
 
     def cleanup_expired_states(self) -> None:
+        """Remove OAuth state tokens older than OAUTH_STATE_TTL."""
         self._execute_write(
             "DELETE FROM oauth_states WHERE created_at < ?",
-            (time.time() - 600,),
+            (time.time() - OAUTH_STATE_TTL,),
         )
 
 
@@ -489,13 +490,24 @@ async def exchange_oauth_code(provider: str, code: str,
             logger.error("OAuth %s userinfo failed: %s", provider, e)
             return None
 
-        return _extract_user_info(provider, userinfo, client, auth_headers)
+        return await _extract_user_info(provider, userinfo, client, auth_headers)
 
 
 async def _extract_user_info(provider: str, userinfo: dict,
-                              client: object,
-                              auth_headers: dict) -> Optional[dict]:
-    """Extract normalized user info from provider-specific responses."""
+                              client: "httpx.AsyncClient",
+                              auth_headers: dict[str, str]) -> Optional[dict]:
+    """Extract normalized user info from provider-specific responses.
+
+    Args:
+        provider: OAuth provider name (e.g. "github", "google").
+        userinfo: Raw user info dict from the provider's API.
+        client: Active httpx client for follow-up requests (e.g. GitHub emails).
+        auth_headers: Authorization headers with Bearer token.
+
+    Returns:
+        Normalized dict with keys: email, name, avatar_url, oauth_id.
+        None if the provider is unrecognized.
+    """
     import httpx
 
     if provider == "github":
@@ -560,8 +572,8 @@ def _parse_apple_id_token(token_resp: dict) -> Optional[dict]:
         parts = id_token.split(".")
         if len(parts) < 2:
             return None
-        # Add padding
-        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        # Add base64 padding (0–2 '=' chars as needed)
+        payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
         return {
             "email": payload.get("email", ""),

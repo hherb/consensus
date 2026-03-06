@@ -1,6 +1,7 @@
 """Web server mode using aiohttp."""
 
 import asyncio
+import html as html_mod
 import inspect
 import json
 import logging
@@ -15,7 +16,13 @@ from aiohttp import web
 RequestHandler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
 from .app import ConsensusApp
-from .auth import AuthDatabase, AuthManager, get_available_oauth_providers, build_oauth_authorize_url
+from .auth import (
+    AUTH_TOKEN_TTL,
+    AuthDatabase,
+    AuthManager,
+    build_oauth_authorize_url,
+    get_available_oauth_providers,
+)
 from .session import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -35,14 +42,12 @@ SESSION_COOKIE = "consensus_sid"
 AUTH_COOKIE = "consensus_auth"
 AUTH_HEADER = "Authorization"
 
-# Paths that don't require authentication (even in multi-user mode)
-AUTH_EXEMPT_PATHS = frozenset({
-    "/health",
-    "/auth/register",
-    "/auth/login",
-    "/auth/oauth/providers",
-    "/auth/status",
-})
+# Paths exempt from authentication.
+# Note: Only /api/* paths require auth; /auth/* and /health are outside /api/
+# and therefore exempt by default in the auth middleware.
+AUTH_EXEMPT_API_PREFIXES: tuple[str, ...] = (
+    # Extend this tuple if any /api/ routes should be public.
+)
 
 
 def _generate_session_id() -> str:
@@ -196,21 +201,17 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         if not auth_required or not auth_mgr:
             return await handler(request)
 
-        # Allow auth endpoints, static files, health checks, and OAuth callbacks
+        # Only /api/* routes require authentication; everything else
+        # (static files, /auth/*, /health, OAuth callbacks) is exempt.
         path = request.path
-        if (path in AUTH_EXEMPT_PATHS
-                or path.startswith("/auth/oauth/")
-                or not path.startswith("/api/")):
+        if not path.startswith("/api/"):
             return await handler(request)
 
-        # Extract token from Authorization header or cookie
-        token = ""
-        auth_header = request.headers.get(AUTH_HEADER, "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-        if not token:
-            token = request.cookies.get(AUTH_COOKIE, "")
+        # Allow any explicitly exempted /api/ routes (currently none)
+        if any(path.startswith(p) for p in AUTH_EXEMPT_API_PREFIXES):
+            return await handler(request)
 
+        token = _extract_auth_token(request)
         if token:
             user = auth_mgr.get_current_user(token)
             if user:
@@ -258,8 +259,19 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         return response
 
     # ------------------------------------------------------------------
-    # BYOK: extract API keys from request
+    # Request helpers
     # ------------------------------------------------------------------
+
+    def _extract_auth_token(request: web.Request) -> str:
+        """Extract auth token from Authorization header or cookie.
+
+        Checks the Authorization header for a Bearer token first,
+        then falls back to the auth cookie.
+        """
+        auth_header = request.headers.get(AUTH_HEADER, "")
+        if auth_header.startswith("Bearer "):
+            return auth_header[len("Bearer "):]
+        return request.cookies.get(AUTH_COOKIE, "")
 
     def _extract_api_keys(request: web.Request) -> dict[str, str]:
         """Extract per-provider API keys from the X-API-Keys header.
@@ -430,7 +442,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         resp = web.json_response({"user": user.to_dict(), "token": token})
         resp.set_cookie(
             AUTH_COOKIE, token,
-            max_age=86400 * 30, httponly=True,
+            max_age=AUTH_TOKEN_TTL, httponly=True,
             samesite="Lax", secure=bool(allowed_origins),
         )
         return resp
@@ -457,7 +469,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         resp = web.json_response({"user": user.to_dict(), "token": token})
         resp.set_cookie(
             AUTH_COOKIE, token,
-            max_age=86400 * 30, httponly=True,
+            max_age=AUTH_TOKEN_TTL, httponly=True,
             samesite="Lax", secure=bool(allowed_origins),
         )
         return resp
@@ -467,13 +479,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         if not auth_mgr:
             return web.json_response({"ok": True})
 
-        token = ""
-        auth_header = request.headers.get(AUTH_HEADER, "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-        if not token:
-            token = request.cookies.get(AUTH_COOKIE, "")
-
+        token = _extract_auth_token(request)
         if token:
             auth_mgr.logout(token)
 
@@ -491,13 +497,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                 "user": None,
             })
 
-        token = ""
-        auth_header = request.headers.get(AUTH_HEADER, "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-        if not token:
-            token = request.cookies.get(AUTH_COOKIE, "")
-
+        token = _extract_auth_token(request)
         user = auth_mgr.get_current_user(token) if token else None
         return web.json_response({
             "auth_required": True,
@@ -545,14 +545,13 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"error": "Auth not enabled"}, status=404)
 
         provider = request.match_info["provider"]
-        # Build redirect URI from request
+
+        # Validate provider before persisting state
         scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
         host_header = request.headers.get("X-Forwarded-Host", request.host)
         redirect_uri = f"{scheme}://{host_header}/auth/oauth/callback/{provider}"
 
         state = secrets.token_urlsafe(32)
-        auth_mgr.db.store_oauth_state(state, provider, redirect_uri)
-
         url = build_oauth_authorize_url(provider, redirect_uri, state)
         if not url:
             return web.json_response(
@@ -560,6 +559,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                 status=400,
             )
 
+        # Only persist state after confirming provider is valid
+        auth_mgr.db.store_oauth_state(state, provider, redirect_uri)
         raise web.HTTPFound(location=url)
 
     async def handle_oauth_callback(request: web.Request) -> web.StreamResponse:
@@ -579,7 +580,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             state = request.query.get("state", "")
 
         if not code or not state:
-            error = request.query.get("error", "unknown_error")
+            error = html_mod.escape(request.query.get("error", "unknown_error"))
             return web.Response(
                 status=400,
                 content_type="text/html",
@@ -604,10 +605,11 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                 provider, code, redirect_uri,
             )
         except ValueError as e:
+            safe_msg = html_mod.escape(str(e))
             return web.Response(
                 status=400,
                 content_type="text/html",
-                text=f"<html><body><h2>OAuth Error</h2><p>{e}</p>"
+                text=f"<html><body><h2>OAuth Error</h2><p>{safe_msg}</p>"
                      f"<p><a href='/'>Return to app</a></p></body></html>",
             )
 
@@ -615,7 +617,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         resp = web.HTTPFound(location="/")
         resp.set_cookie(
             AUTH_COOKIE, token,
-            max_age=86400 * 30, httponly=True,
+            max_age=AUTH_TOKEN_TTL, httponly=True,
             samesite="Lax", secure=bool(allowed_origins),
         )
         return resp
