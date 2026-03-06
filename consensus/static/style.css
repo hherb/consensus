@@ -267,6 +267,42 @@ label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-s
 .history-status.concluded { background: var(--success); color: #fff; }
 .history-status.active { background: var(--warning); color: #000; }
 .history-status.paused { background: #f59e0b; color: #000; }
+.history-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 0.5rem 0.5rem 0.3rem;
+    border-bottom: 1px solid var(--border);
+}
+.history-select-all {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.history-checkbox {
+    flex-shrink: 0;
+    cursor: pointer;
+}
+.btn-danger {
+    background: var(--error);
+    color: #fff;
+    border: none;
+}
+.btn-danger:hover { opacity: 0.85; }
+.toast-undo-btn {
+    background: none;
+    border: 1px solid currentColor;
+    color: inherit;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    margin-left: 0.6rem;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+.toast-undo-btn:hover { opacity: 0.8; }
 
 /* Checkbox label */
 label:has(input[type="checkbox"]) {
