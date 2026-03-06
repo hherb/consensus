@@ -38,6 +38,8 @@ class DesktopAPI {
     async reopenDiscussion() { return await window.pywebview.api.reopen_discussion(); }
     // History
     async loadDiscussion(id) { return await window.pywebview.api.load_discussion(id); }
+    async deleteDiscussions(ids) { return await window.pywebview.api.delete_discussions(ids); }
+    async restoreDiscussion(id) { return await window.pywebview.api.restore_discussion(id); }
     async reset() { return await window.pywebview.api.reset(); }
     // Tools
     async listTools() { return await window.pywebview.api.list_tools(); }
@@ -95,6 +97,8 @@ class WebAPI {
     async resumeDiscussion() { return await this._post('resume_discussion'); }
     async reopenDiscussion() { return await this._post('reopen_discussion'); }
     async loadDiscussion(id) { return await this._post('load_discussion', { discussion_id: id }); }
+    async deleteDiscussions(ids) { return await this._post('delete_discussions', { discussion_ids: ids }); }
+    async restoreDiscussion(id) { return await this._post('restore_discussion', { discussion_id: id }); }
     async reset() { return await this._post('reset'); }
     // Tools
     async listTools() { return await this._post('list_tools'); }
