@@ -21,6 +21,7 @@ document for detailed coverage.
 | 8 | [Tool Use](08-tool-use.md) | Pluggable tool framework, tool registry, built-in web search, access control |
 | 9 | [Prompts, Providers, and Security](09-prompts-providers-security.md) | Prompt template system, AI provider integration, BYOK, security measures |
 | 10 | [Contributing](10-contributing.md) | Common tasks, conventions, patterns, debugging, known limitations |
+| 11 | [Authentication](11-authentication.md) | Email/password auth, OAuth (GitHub/Google/LinkedIn/Apple), tokens, CSRF, brute-force protection |
 
 ## Quick Architecture Diagram
 

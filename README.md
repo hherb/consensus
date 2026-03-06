@@ -58,6 +58,15 @@ A moderated discussion platform where two or more entities (humans and/or AI via
 - **Multi-user mode** — per-session isolation with individual SQLite databases for public deployments
 - Both modes share the same backend and feature set
 
+### Authentication (Multi-User Mode)
+- **Email/password registration** with PBKDF2-SHA256 hashing (600k iterations, OWASP 2023)
+- **OAuth sign-in** via GitHub, Google, LinkedIn, and Apple (Authorization Code flow)
+- **Multiple OAuth identities** per user account (link GitHub + Google to the same account)
+- **Secure token management** — SHA-256 hashed token storage, httpOnly cookies, 30-day TTL
+- **CSRF protection** — Content-Type enforcement on all POST endpoints
+- **Brute-force protection** — per-email rate limiting (5 attempts per 5-minute window)
+- **Login/register UI** with OAuth provider buttons and form validation
+
 ### Multi-User Deployment
 - **Session isolation** — each browser session gets its own `ConsensusApp` instance and SQLite database
 - **BYOK (Bring Your Own Key)** — users provide their own LLM API keys via the browser UI; keys are stored in `sessionStorage` and never persisted server-side
@@ -131,6 +140,15 @@ In **multi-user mode**, users provide their own API keys via the browser UI (sto
 | `DEEPSEEK_API_KEY` | DeepSeek API key |
 | `CONSENSUS_ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (multi-user mode) |
 | `CONSENSUS_SESSION_DIR` | Custom directory for per-session SQLite databases |
+| `CONSENSUS_BASE_URL` | Public base URL for OAuth redirects (e.g. `https://yourdomain.com`) |
+| `CONSENSUS_GITHUB_CLIENT_ID` | GitHub OAuth app client ID |
+| `CONSENSUS_GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret |
+| `CONSENSUS_GOOGLE_CLIENT_ID` | Google OAuth client ID |
+| `CONSENSUS_GOOGLE_CLIENT_SECRET` | Google OAuth client secret |
+| `CONSENSUS_LINKEDIN_CLIENT_ID` | LinkedIn OAuth client ID |
+| `CONSENSUS_LINKEDIN_CLIENT_SECRET` | LinkedIn OAuth client secret |
+| `CONSENSUS_APPLE_CLIENT_ID` | Apple OAuth client ID |
+| `CONSENSUS_APPLE_CLIENT_SECRET` | Apple OAuth client secret |
 
 ## Architecture
 

@@ -26,8 +26,12 @@ ConsensusApp (app.py)
     |     Async HTTP via httpx to any OpenAI-compatible endpoint
     |
     +-- Database (database.py)
-          Thread-safe SQLite: providers, entities, prompts,
-          discussions, members, messages, storyboard, tools
+    |     Thread-safe SQLite: providers, entities, prompts,
+    |     discussions, members, messages, storyboard, tools
+    |
+    +-- AuthManager (auth.py) [multi-user mode only]
+          Email/password + OAuth auth, token management,
+          AuthDatabase (separate auth.db)
 ```
 
 **Key principle:** Both UI modes (desktop and web) funnel everything through
