@@ -209,3 +209,8 @@ __marimo__/
 #generated and saved documents (testing)
 docs/discussions
 docs/discussions/*
+
+#automated testing related
+.playwright-mcp
+.playwright-mcp/*
+.gitignore
