@@ -34,6 +34,12 @@ class Database:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
+        # Load sqlite_vec extension if available (required for memory/embedding features)
+        try:
+            import sqlite_vec
+            sqlite_vec.load(self.conn)
+        except Exception:
+            pass
         self._create_tables()
         self._seed_default_prompts()
         self._seed_default_providers()
@@ -630,13 +636,8 @@ class Database:
     def _migrate_memory(self) -> None:
         """Add institutional memory tables if not present (requires sqlite_vec)."""
         try:
-            import sqlite_vec
+            import sqlite_vec  # noqa: F401
         except ImportError:
-            return
-
-        try:
-            sqlite_vec.load(self.conn)
-        except Exception:
             return
 
         with self._lock:

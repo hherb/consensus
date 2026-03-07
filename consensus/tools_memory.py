@@ -10,10 +10,9 @@ Requires: ollama running locally with an embedding model (default: nomic-embed-t
 """
 
 import asyncio
-import json
 import logging
+import math
 import struct
-import time
 import uuid
 from typing import Optional
 
@@ -24,9 +23,7 @@ from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolResult
 logger = logging.getLogger(__name__)
 
 EMBED_TIMEOUT = 10.0
-EMBED_DIM = 768  # nomic-embed-text default
 SEARCH_DEFAULT_LIMIT = 5
-INDEX_BATCH_SIZE = 32
 
 
 class MemoryUnavailableError(Exception):
@@ -96,7 +93,6 @@ def _unpack_embedding(blob: bytes) -> list[float]:
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    import math
     dot = sum(x * y for x, y in zip(a, b))
     mag_a = math.sqrt(sum(x * x for x in a))
     mag_b = math.sqrt(sum(x * x for x in b))
@@ -236,6 +232,9 @@ _KG_QUERY_SCHEMA = {
 # Tool handlers
 # ---------------------------------------------------------------------------
 
+# Tracks discussion IDs currently being indexed to prevent duplicate tasks
+_indexing_discussions: set[int] = set()
+
 async def _memory_store_handler(
     arguments: dict, context: ToolContext,
     db, embed_client: EmbeddingClient,
@@ -338,13 +337,16 @@ async def _discussion_search_handler(
     limit = int(arguments.get("limit", SEARCH_DEFAULT_LIMIT))
     topic_filter: Optional[str] = arguments.get("topic_filter")
 
-    # Lazy-index the current discussion's messages if needed
-    try:
-        unindexed = db.get_unindexed_message_ids(context.discussion_id)
-        if unindexed:
-            asyncio.create_task(_index_messages(unindexed, db, embed_client))
-    except Exception as e:
-        logger.warning("Could not check unindexed messages: %s", e)
+    # Lazy-index the current discussion's messages if needed (one task at a time per discussion)
+    disc_id = context.discussion_id
+    if disc_id not in _indexing_discussions:
+        try:
+            unindexed = db.get_unindexed_message_ids(disc_id)
+            if unindexed:
+                _indexing_discussions.add(disc_id)
+                asyncio.create_task(_index_messages(unindexed, db, embed_client, disc_id))
+        except Exception as e:
+            logger.warning("Could not check unindexed messages: %s", e)
 
     try:
         query_vec = await embed_client.embed(query)
@@ -373,20 +375,24 @@ async def _index_messages(
     message_ids: list[str],
     db,
     embed_client: EmbeddingClient,
+    discussion_id: int,
 ) -> None:
     """Background task: embed and store message embeddings."""
-    for msg_id in message_ids:
-        try:
-            content = db.get_message_content(msg_id)
-            if not content:
-                continue
-            vec = await embed_client.embed(content[:1000])
-            blob = _pack_embedding(vec)
-            db.set_message_embedding(msg_id, blob)
-        except MemoryUnavailableError:
-            break  # Stop if service is down
-        except Exception as e:
-            logger.warning("Failed to index message %s: %s", msg_id, e)
+    try:
+        for msg_id in message_ids:
+            try:
+                content = db.get_message_content(msg_id)
+                if not content:
+                    continue
+                vec = await embed_client.embed(content[:1000])
+                blob = _pack_embedding(vec)
+                db.set_message_embedding(msg_id, blob)
+            except MemoryUnavailableError:
+                break  # Stop if service is down
+            except Exception as e:
+                logger.warning("Failed to index message %s: %s", msg_id, e)
+    finally:
+        _indexing_discussions.discard(discussion_id)
 
 
 async def _kg_assert_handler(

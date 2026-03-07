@@ -25,7 +25,7 @@ def _is_pass(content: str) -> bool:
     if stripped.upper() in ("[PASS]", "PASS"):
         return True
     # Also match the formatted version: *Name passed this round.*
-    return content.strip().endswith("passed this round.*")
+    return "passed this round." in content.lower()
 
 # Per-request BYOK API keys, isolated via contextvars (no cross-request leakage)
 _request_api_keys_var: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(

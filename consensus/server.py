@@ -83,6 +83,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     rate_limit_last_cleanup: float = 0.0
 
     # Login brute-force tracking: {email: [timestamps]}
+    # Note: in-process only — does not apply across multiple workers/processes.
     login_attempts: dict[str, list[float]] = {}
 
     # Allowed CORS origins (configurable via env)
@@ -687,6 +688,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
     async def handle_memory_config_get(request: web.Request) -> web.StreamResponse:
         """Return current memory configuration."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
         app_inst, _sid = await _get_app_for_request(request)
         if app_inst is None:
             return web.json_response({"error": "Server at capacity"}, status=503)
@@ -703,6 +706,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
     async def handle_memory_config_put(request: web.Request) -> web.StreamResponse:
         """Update memory configuration keys."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
         app_inst, _sid = await _get_app_for_request(request)
         if app_inst is None:
             return web.json_response({"error": "Server at capacity"}, status=503)
@@ -726,6 +731,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
     async def handle_memory_test(request: web.Request) -> web.StreamResponse:
         """Test the embedding connection."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
         app_inst, _sid = await _get_app_for_request(request)
         if app_inst is None:
             return web.json_response({"error": "Server at capacity"}, status=503)
