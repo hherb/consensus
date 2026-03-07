@@ -21,6 +21,12 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | **Public Service** | | |
 | ✅ Done | Security hardening | `server.py`: rate limiting, security headers, CORS, CSRF, path traversal protection, auth middleware; `session.py`: per-session isolated app + SQLite with TTL expiry (`--multi-user`) |
 | ⬜ Planned | Free hosted instance | Public deployment once hosting costs are resolved |
+| **Code Quality & Maintainability** | | |
+| ⬜ Planned | Database migration system | Versioned migration files replacing hardcoded schema in `database.py` |
+| ⬜ Planned | Refactor large modules | Target < 500 lines per file for maintainability |
+| **Specialist Plugins** | | |
+| ⬜ Planned | Plugin system for specialists | Domain-expert LLM plugins (e.g. a medical specialist that searches Medline to ground discussions in verifiable facts) |
+| ⬜ Planned | Specialist consultation tool | Allow any participant to request opinion, verification, or input from a specialist during a discussion |
 | **Training Data & Model Development** | | |
 | ⬜ Planned | Open-source reasoning datasets | Harvest high-quality discussion outcomes as open datasets for reasoning AI research |
 | ⬜ Planned | Small moderator models | Train lightweight moderator models from collected data, targeting local consumer hardware |
