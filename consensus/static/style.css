@@ -665,8 +665,10 @@ input[type="checkbox"] { width: auto; }
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     padding: 1.5rem;
-    width: 90%;
-    max-width: 460px;
+    width: 90vw;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
     box-shadow: var(--shadow-lg);
 }
 .dialog h3 { margin-bottom: 1rem; }
