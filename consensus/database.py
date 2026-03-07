@@ -272,7 +272,11 @@ class Database:
                     "Contribute thoughtfully and constructively. Be concise but "
                     "substantive. Address points raised by other participants when "
                     "relevant. Present well-reasoned arguments and be open to "
-                    "other perspectives."
+                    "other perspectives.\n\n"
+                    "If you have nothing meaningful to add at this stage — for example, "
+                    "if your views have already been well represented or you agree with "
+                    "what has been said — it is perfectly acceptable to pass. "
+                    "To pass, respond with exactly: [PASS]"
                 ),
             },
             {
@@ -282,7 +286,9 @@ class Database:
                     "It is your turn to speak as {entity_name}.\n"
                     "Provide your contribution to the discussion.\n"
                     "Be concise (2-4 paragraphs max). "
-                    "Respond only with your contribution, no meta-commentary."
+                    "Respond only with your contribution, no meta-commentary.\n\n"
+                    "If you have nothing new or meaningful to contribute this round, "
+                    "you may pass by responding with exactly: [PASS]"
                 ),
             },
             # Human guidance prompts
