@@ -253,12 +253,11 @@ class Moderator:
             total_latency_ms += result["latency_ms"]
 
             msg_dict = result["message"]
-            finish_reason = result["finish_reason"]
 
             # Check for tool calls
             api_tool_calls = msg_dict.get("tool_calls", [])
-            if not api_tool_calls or finish_reason == "stop":
-                # No tool calls or model is done — return final response
+            if not api_tool_calls:
+                # No tool calls — return final response
                 content = msg_dict.get("content") or ""
                 return AIResponse(
                     content=content,
