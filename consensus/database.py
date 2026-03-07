@@ -696,7 +696,7 @@ class Database:
             # Seed default config values
             defaults = [
                 ("embedding_backend", "ollama"),
-                ("embedding_model", "nomic-embed-text"),
+                ("embedding_model", "nomic-embed-text-v2-moe:latest"),
                 ("embedding_endpoint", "http://localhost:11434"),
             ]
             for key, value in defaults:

@@ -6,7 +6,7 @@ Provides AI participants with persistent memory across discussions:
 - Knowledge graph (assert and query concept/relationship triples)
 
 Requires: sqlite-vec, numpy (optional dep group [memory])
-Requires: ollama running locally with an embedding model (default: nomic-embed-text)
+Requires: ollama running locally with an embedding model (default: nomic-embed-text-v2-moe:latest)
 """
 
 import asyncio
@@ -42,14 +42,14 @@ class EmbeddingClient:
         except Exception:
             return {
                 "embedding_endpoint": "http://localhost:11434",
-                "embedding_model": "nomic-embed-text",
+                "embedding_model": "nomic-embed-text-v2-moe:latest",
             }
 
     async def embed(self, text: str) -> list[float]:
         """Return a float embedding vector for the given text."""
         config = self._get_config()
         endpoint = config.get("embedding_endpoint", "http://localhost:11434")
-        model = config.get("embedding_model", "nomic-embed-text")
+        model = config.get("embedding_model", "nomic-embed-text-v2-moe:latest")
         url = endpoint.rstrip("/") + "/api/embeddings"
 
         try:
