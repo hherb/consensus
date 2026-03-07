@@ -163,6 +163,35 @@ maintain these invariants:
   and a maximum of 5 iterations per turn. Tool results are treated as untrusted
   content.
 
+### Authentication security (multi-user mode)
+
+- **Password hashing:** PBKDF2-SHA256 with 600,000 iterations (OWASP 2023
+  recommendation) and 32-byte random salts. Verification uses
+  `hmac.compare_digest()` for timing-safe comparison.
+
+- **Token storage:** Auth tokens are generated with `secrets.token_urlsafe(32)`
+  (256 bits of entropy) and stored as SHA-256 hashes — never plaintext.
+  Tokens are set as httpOnly cookies only, never in response bodies.
+
+- **CSRF protection:** A middleware rejects POST requests to `/api/` and
+  `/auth/` that lack `Content-Type: application/json`. OAuth callbacks are
+  exempt (Apple uses `response_mode=form_post`).
+
+- **Login brute-force protection:** Maximum 5 failed login attempts per email
+  per 5-minute window. State is in-memory (resets on server restart).
+
+- **OAuth state tokens:** Cryptographically random, stored in the database
+  with a 10-minute TTL, consumed on use (single-use).
+
+- **OAuth redirect URI:** Derived from the `CONSENSUS_BASE_URL` environment
+  variable (not request headers) to prevent host header injection attacks.
+
+- **Profile update allowlist:** `POST /auth/me` only accepts `display_name`,
+  `avatar_url`, and `email` — all other fields are silently ignored.
+
+- **XSS in OAuth errors:** OAuth error pages use `html.escape()` on
+  user-controlled input.
+
 ---
 
 [Next: Contributing](10-contributing.md)

@@ -44,10 +44,11 @@ ConsensusApp (app.py) — orchestrator, state management, callbacks
 - `models.py` — dataclasses: `Entity`, `AIConfig`, `Message`, `Discussion`, `StoryboardEntry`
 - `config.py` — platform-aware data dirs (macOS: `~/Library/Application Support/consensus`)
 - `desktop.py` — `DesktopBridge` exposes async Python to JS via pywebview; runs background event loop
-- `server.py` — aiohttp routes mapping to `ConsensusApp` methods; serves static files with path traversal protection; includes rate limiting, security headers, CORS, health endpoint
+- `server.py` — aiohttp routes mapping to `ConsensusApp` methods; serves static files with path traversal protection; includes rate limiting, security headers, CORS, CSRF protection, auth middleware, health endpoint
 - `session.py` — `SessionManager` for multi-user deployments; per-session `ConsensusApp` + SQLite with TTL-based expiry
+- `auth.py` — `AuthManager`, `AuthDatabase`, `User` model, PBKDF2-SHA256 password hashing, OAuth Authorization Code flow (GitHub, Google, LinkedIn, Apple), bearer token management
 
-**Database schema (SQLite, 7 tables):** `providers`, `entities`, `prompts`, `discussions`, `discussion_members`, `messages`, `storyboard_entries`. Seeded with default moderator/participant prompt templates on first run.
+**Database schema (SQLite, 7 tables + auth):** `providers`, `entities`, `prompts`, `discussions`, `discussion_members`, `messages`, `storyboard_entries`. Auth tables (in separate `auth.db` for multi-user): `users`, `auth_tokens`, `user_oauth_identities`, `oauth_states`. Seeded with default moderator/participant prompt templates on first run.
 
 **Frontend:** Vanilla JS in `consensus/static/app.js`. Tabbed setup UI (New Discussion, Providers, Profiles, Prompts, History) and live discussion view. Uses CSS custom properties for light/dark mode.
 
@@ -60,6 +61,7 @@ ConsensusApp (app.py) — orchestrator, state management, callbacks
 - `Discussion` object held in memory as current session state; historical data persisted to SQLite.
 - BYOK (Bring Your Own Key): In web mode, users can provide API keys via the browser UI (stored in `sessionStorage`). Keys are sent per-request and never persisted on the server. Environment-based keys remain the default fallback.
 - Multi-user mode (`--multi-user`): Each browser session gets its own `ConsensusApp` instance and SQLite database, isolated by session cookie. Sessions expire after 24h of inactivity.
+- Authentication (multi-user only): Email/password registration with PBKDF2-SHA256 hashing (600k iterations). OAuth via GitHub, Google, LinkedIn, Apple. Auth tokens are SHA-256 hashed in storage, set as httpOnly cookies (never returned in response body). CSRF protection via Content-Type enforcement. Per-email brute-force rate limiting (5 attempts/5min). OAuth redirect URIs derived from `CONSENSUS_BASE_URL` env var (not request headers). Multiple OAuth identities per user supported via `user_oauth_identities` table.
 
 ## License
 

@@ -114,6 +114,8 @@ session gets its own `ConsensusApp` via `SessionManager`, identified by a
 | `security_headers_middleware` | Adds `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` |
 | `cors_middleware` | Rejects API requests from unknown origins. Allows local origin in single-user mode; checks `CONSENSUS_ALLOWED_ORIGINS` in multi-user mode |
 | `rate_limit_middleware` | Per-session/IP rate limiting (120 requests per 60s window) on `/api/` routes |
+| `csrf_middleware` | Rejects POST requests to `/api/` and `/auth/` without `Content-Type: application/json`. Excludes OAuth callbacks (`/auth/oauth/callback/`) for Apple's `form_post` |
+| `auth_middleware` | In multi-user mode, enforces authentication on `/api/*` routes. Extracts token from `Authorization: Bearer` header or `consensus_auth` cookie, attaches `User` to `request["auth_user"]` |
 
 ### BYOK request flow
 
@@ -155,11 +157,51 @@ In multi-user mode, responses include a `consensus_sid` cookie (httponly,
 SameSite=Lax). The cookie is validated against a regex pattern and refreshed
 on each request.
 
+### Authentication (multi-user mode)
+
+When `multi_user=True`, `launch_web()` creates an `AuthManager` with a
+dedicated `auth.db` database. Auth endpoints are registered under `/auth/*`
+(separate from `/api/*`).
+
+- **Login rate limiting:** Per-email brute-force protection (5 failed attempts
+  per 5-minute window). State is in-memory, resets on restart.
+- **Token handling:** Auth tokens are set as httpOnly cookies only — never
+  returned in JSON response bodies.
+- **Profile updates:** `handle_auth_update_profile` explicitly extracts only
+  `display_name`, `avatar_url`, and `email` from request data.
+- **OAuth redirect URI:** Derived from `CONSENSUS_BASE_URL` env var (not
+  request headers) to prevent host header injection.
+
+For full auth endpoint reference, see [Authentication](11-authentication.md).
+
 ### Non-API endpoints
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/health` | GET | Health check (returns `{"status": "ok"}` or `{"status": "ok", "active_sessions": N}` in multi-user mode) |
+| `/auth/*` | Various | Authentication endpoints (register, login, logout, OAuth). See [Authentication](11-authentication.md) |
+
+---
+
+## `auth.py` -- Authentication
+
+The auth module provides email/password registration and OAuth sign-in
+(GitHub, Google, LinkedIn, Apple). It is only used in multi-user web mode.
+
+**Key classes:**
+- `AuthDatabase` — SQLite persistence for users, tokens, OAuth state, and
+  OAuth identities (separate `auth.db` file)
+- `AuthManager` — high-level API: register, login, logout, OAuth callback
+- `User` — dataclass with `to_dict()` (excludes `password_hash`)
+
+**Security highlights:**
+- PBKDF2-SHA256 with 600k iterations for password hashing
+- `hmac.compare_digest()` for timing-safe password verification
+- `secrets.token_urlsafe(32)` for token generation
+- SHA-256 hashed token storage
+- Multiple OAuth identities per user via `user_oauth_identities` table
+
+For full details, see [Authentication](11-authentication.md).
 
 ---
 

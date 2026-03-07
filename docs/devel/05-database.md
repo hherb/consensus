@@ -142,6 +142,58 @@ discussion_tool_overrides (
 
 All timestamps are Unix epoch floats (`time.time()`).
 
+## Auth Tables (multi-user mode)
+
+In multi-user mode (`--web --multi-user`), authentication data lives in a
+**separate** `auth.db` file, managed by `AuthDatabase` in `auth.py`. This
+keeps auth data isolated from per-session discussion databases.
+
+```sql
+-- User accounts
+users (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    email           TEXT NOT NULL UNIQUE,
+    password_hash   TEXT,            -- NULL for OAuth-only users
+    display_name    TEXT NOT NULL DEFAULT '',
+    avatar_url      TEXT NOT NULL DEFAULT '',
+    oauth_provider  TEXT,            -- legacy; see user_oauth_identities
+    oauth_id        TEXT,            -- legacy; see user_oauth_identities
+    created_at      REAL NOT NULL,
+    updated_at      REAL NOT NULL
+)
+
+-- Hashed auth tokens
+auth_tokens (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  TEXT NOT NULL UNIQUE,  -- SHA-256 of the raw token
+    expires_at  REAL NOT NULL,
+    created_at  REAL NOT NULL
+)
+
+-- Multiple OAuth identities per user
+user_oauth_identities (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider    TEXT NOT NULL,
+    oauth_id    TEXT NOT NULL,
+    avatar_url  TEXT NOT NULL DEFAULT '',
+    created_at  REAL NOT NULL,
+    UNIQUE(provider, oauth_id)
+)
+
+-- CSRF state tokens for OAuth flow (10-minute TTL, single-use)
+oauth_states (
+    state       TEXT PRIMARY KEY,
+    provider    TEXT NOT NULL,
+    created_at  REAL NOT NULL
+)
+```
+
+The `users` table retains legacy `oauth_provider` and `oauth_id` columns for
+backwards compatibility. `user_oauth_identities` is the canonical source for
+OAuth identity lookups and supports linking multiple providers to one account.
+
 ---
 
 ## Seeding

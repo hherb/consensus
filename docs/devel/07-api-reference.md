@@ -83,6 +83,28 @@ All endpoints: `POST /api/{method}` with JSON body.
 | `load_discussion` | `discussion_id` | Full state |
 | `reset` | *(none)* | `true` |
 
+### Authentication Endpoints (multi-user mode)
+
+Auth endpoints live under `/auth/` (not `/api/`), bypassing the auth
+middleware. They are protected by the CSRF middleware (except OAuth callbacks).
+
+| Endpoint | Method | Body / Params | Returns |
+|----------|--------|--------------|---------|
+| `/auth/register` | POST | `email`, `password`, `display_name?` | `{"user": {...}}` + sets cookie |
+| `/auth/login` | POST | `email`, `password` | `{"user": {...}}` + sets cookie |
+| `/auth/logout` | POST | *(none)* | `{"ok": true}` + clears cookie |
+| `/auth/status` | GET | *(none)* | `{"auth_required", "authenticated", "user", "oauth_providers"}` |
+| `/auth/me` | GET | *(none)* | `{"user": {...}}` |
+| `/auth/me` | POST | `display_name?`, `avatar_url?`, `email?` | `{"user": {...}}` |
+| `/auth/oauth/providers` | GET | *(none)* | List of configured OAuth provider names |
+| `/auth/oauth/authorize/{provider}` | GET | *(none)* | Redirect to OAuth provider |
+| `/auth/oauth/callback/{provider}` | GET/POST | `code`, `state` | Sets cookie, redirects to `/` |
+
+**Notes:**
+- Auth tokens are set as httpOnly cookies only — never in response bodies
+- Login is rate-limited: 5 failed attempts per email per 5-minute window
+- Profile updates (`POST /auth/me`) use an explicit field allowlist
+
 ### Non-API Endpoints
 
 | Endpoint | Method | Purpose |
