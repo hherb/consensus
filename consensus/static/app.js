@@ -425,6 +425,7 @@ function switchTab(tabName) {
     else if (tabName === 'settings-entities') { renderProfiles(); renderInactiveProfiles(); }
     else if (tabName === 'settings-prompts') renderPrompts();
     else if (tabName === 'history') renderHistory();
+    else if (tabName === 'settings-memory') loadMemoryConfig();
     else if (tabName === 'new-discussion') renderSetupTab();
 }
 
@@ -2059,11 +2060,72 @@ function init() {
         }
     });
 
+    // Memory config
+    const memorySaveBtn = $('#memory-save-btn');
+    if (memorySaveBtn) memorySaveBtn.addEventListener('click', saveMemoryConfig);
+    const memoryTestBtn = $('#memory-test-btn');
+    if (memoryTestBtn) memoryTestBtn.addEventListener('click', testMemoryConnection);
+
     // Load initial state
     api.getState().then(s => {
         onStateUpdate(s);
         renderSetupTab();
     });
+}
+
+// ============================================================
+// Memory Config UI (web mode only; desktop uses pywebview bridge)
+// ============================================================
+
+async function loadMemoryConfig() {
+    if (window.pywebview) return; // desktop mode: not yet wired
+    try {
+        const resp = await fetch('/api/memory/config');
+        if (resp.status === 404) {
+            show('#memory-unavailable-msg');
+            hide('#memory-config-form');
+            return;
+        }
+        hide('#memory-unavailable-msg');
+        show('#memory-config-form');
+        if (resp.ok) {
+            const cfg = await resp.json();
+            $('#memory-endpoint').value = cfg.embedding_endpoint || '';
+            $('#memory-model').value = cfg.embedding_model || '';
+        }
+    } catch (e) {
+        // server may not be running; silently ignore
+    }
+}
+
+async function saveMemoryConfig() {
+    const endpoint = $('#memory-endpoint').value.trim();
+    const model = $('#memory-model').value.trim();
+    try {
+        const resp = await fetch('/api/memory/config', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ embedding_endpoint: endpoint, embedding_model: model }),
+        });
+        if (resp.ok) showToast('Memory config saved');
+        else showToast('Failed to save memory config');
+    } catch (e) {
+        showToast('Error: ' + e.message);
+    }
+}
+
+async function testMemoryConnection() {
+    const resultEl = $('#memory-test-result');
+    resultEl.textContent = 'Testing…';
+    try {
+        const resp = await fetch('/api/memory/test', { method: 'POST' });
+        const data = await resp.json();
+        resultEl.textContent = data.message || (data.ok ? 'Connected' : 'Failed');
+        resultEl.style.color = data.ok ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)';
+    } catch (e) {
+        resultEl.textContent = 'Connection error: ' + e.message;
+        resultEl.style.color = 'var(--color-error, #ef4444)';
+    }
 }
 
 // ============================================================

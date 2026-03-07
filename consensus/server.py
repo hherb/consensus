@@ -682,6 +682,67 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         return web.json_response(info)
 
     # ------------------------------------------------------------------
+    # Memory config endpoints
+    # ------------------------------------------------------------------
+
+    async def handle_memory_config_get(request: web.Request) -> web.StreamResponse:
+        """Return current memory configuration."""
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+        if not app_inst.memory_available:
+            return web.json_response(
+                {"error": "Memory feature not installed (pip install consensus[memory])"},
+                status=404,
+            )
+        try:
+            config = app_inst.db.get_memory_config()
+            return web.json_response(config)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_memory_config_put(request: web.Request) -> web.StreamResponse:
+        """Update memory configuration keys."""
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+        if not app_inst.memory_available:
+            return web.json_response(
+                {"error": "Memory feature not installed (pip install consensus[memory])"},
+                status=404,
+            )
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+        allowed_keys = {"embedding_backend", "embedding_model", "embedding_endpoint"}
+        for key, value in data.items():
+            if key not in allowed_keys:
+                continue
+            app_inst.db.set_memory_config(key, str(value))
+
+        return web.json_response({"ok": True})
+
+    async def handle_memory_test(request: web.Request) -> web.StreamResponse:
+        """Test the embedding connection."""
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+        if not app_inst.memory_available:
+            return web.json_response(
+                {"error": "Memory feature not installed (pip install consensus[memory])"},
+                status=404,
+            )
+        try:
+            from .tools_memory import EmbeddingClient
+            client = EmbeddingClient(app_inst.db)
+            ok, message = await client.test_connection()
+            return web.json_response({"ok": ok, "message": message})
+        except Exception as e:
+            return web.json_response({"ok": False, "message": str(e)})
+
+    # ------------------------------------------------------------------
     # Static file serving
     # ------------------------------------------------------------------
 
@@ -720,6 +781,11 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     webapp.router.add_get("/auth/oauth/authorize/{provider}", handle_oauth_authorize)
     webapp.router.add_get("/auth/oauth/callback/{provider}", handle_oauth_callback)
     webapp.router.add_post("/auth/oauth/callback/{provider}", handle_oauth_callback)
+
+    # Memory config
+    webapp.router.add_get("/api/memory/config", handle_memory_config_get)
+    webapp.router.add_put("/api/memory/config", handle_memory_config_put)
+    webapp.router.add_post("/api/memory/test", handle_memory_test)
 
     # API
     webapp.router.add_post("/api/{method}", handle_api)

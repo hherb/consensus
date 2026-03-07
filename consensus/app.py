@@ -47,7 +47,9 @@ class ConsensusApp:
             tool_registry=self.tool_registry,
         )
         self._on_update: Optional[Callable] = None
+        self.memory_available = False
         self._init_builtin_tools()
+        self._init_memory_tools()
 
     def _init_builtin_tools(self) -> None:
         """Register built-in tool providers."""
@@ -58,6 +60,19 @@ class ConsensusApp:
             self.db.add_tool_provider("builtin", "python")
         except ImportError:
             logger.debug("Built-in tools not available")
+
+    def _init_memory_tools(self) -> None:
+        """Register institutional memory tool provider (requires [memory] extras)."""
+        try:
+            import sqlite_vec  # noqa: F401
+            from .tools_memory import create_memory_provider
+            provider = create_memory_provider(self.db)
+            self.tool_registry.register_provider(provider)
+            self.db.add_tool_provider("memory", "python")
+            self.memory_available = True
+            logger.debug("Institutional memory tools registered")
+        except ImportError:
+            logger.debug("Memory tools not available (install consensus[memory])")
 
     @staticmethod
     def set_request_api_keys(keys: dict[str, str]) -> None:
