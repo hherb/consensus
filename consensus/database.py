@@ -222,7 +222,12 @@ class Database:
                     "4. Synthesize emerging consensus\n"
                     "5. Maintain a neutral, balanced perspective\n\n"
                     "You do NOT take sides. You acknowledge all perspectives "
-                    "fairly and guide the discussion constructively."
+                    "fairly and guide the discussion constructively.\n\n"
+                    "If you have access to memory tools, use them actively:\n"
+                    "- Use discussion_search to recall relevant points from past discussions on similar topics\n"
+                    "- Use kg_query to check for established concept relationships\n"
+                    "- Use memory_store to save important moderator observations for future reference\n"
+                    "- Use kg_assert to record key relationships that emerge during the discussion"
                 ),
             },
             {
@@ -253,11 +258,16 @@ class Database:
                 "role": "moderator", "target": "ai", "task": "conclude",
                 "content": (
                     "The discussion on '{topic}' is concluding.\n\n"
+                    "Before writing your synthesis, use discussion_search and kg_query "
+                    "to review relevant prior discussions and established relationships.\n\n"
                     "Provide a final synthesis that:\n"
                     "1. Summarizes the main positions expressed\n"
                     "2. Identifies areas of consensus\n"
                     "3. Notes remaining points of disagreement\n"
                     "4. Offers a balanced conclusion or recommendation\n\n"
+                    "After concluding, use kg_assert to record the key relationships "
+                    "and conclusions that emerged, and memory_store to save a summary "
+                    "of outcomes for future reference.\n\n"
                     "Be thorough but concise (3-5 paragraphs)."
                 ),
             },
@@ -287,6 +297,17 @@ class Database:
                     "use them actively whenever the topic involves current events, "
                     "recent data, specific facts, or claims worth verifying. "
                     "Do not just mention that a search could be done — perform it.\n\n"
+                    "If you have access to memory tools, use them proactively:\n"
+                    "- Before responding, use memory_recall to check whether you have "
+                    "relevant memories from past discussions on this topic\n"
+                    "- Use discussion_search to find prior arguments or evidence from "
+                    "earlier discussions that are relevant to the current point\n"
+                    "- Use memory_store to save your key positions, insights, or "
+                    "observations so you can recall them in future discussions\n"
+                    "- Use kg_assert to record important conceptual relationships you "
+                    "identify (e.g. 'free will' contradicts 'hard determinism')\n"
+                    "- Use kg_query to check what is already known about concepts "
+                    "being discussed\n\n"
                     "If you have nothing meaningful to add at this stage — for example, "
                     "if your views have already been well represented or you agree with "
                     "what has been said — it is perfectly acceptable to pass. "
@@ -298,9 +319,13 @@ class Database:
                 "role": "participant", "target": "ai", "task": "turn",
                 "content": (
                     "It is your turn to speak as {entity_name}.\n"
+                    "Before responding, consider using memory_recall and discussion_search "
+                    "to check for relevant context from past discussions.\n"
                     "Provide your contribution to the discussion.\n"
                     "Be concise (2-4 paragraphs max). "
-                    "Respond only with your contribution, no meta-commentary.\n\n"
+                    "Respond only with your contribution, no meta-commentary.\n"
+                    "After contributing, use memory_store to save any key insights or "
+                    "positions you want to remember for future discussions.\n\n"
                     "If you have nothing new or meaningful to contribute this round, "
                     "you may pass by responding with exactly: [PASS]"
                 ),

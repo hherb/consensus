@@ -20,6 +20,7 @@ class ConsensusApp:
         self.tool_registry = ToolRegistry(self.db)
         self._on_update = None  # callback for push-based state updates
         self._init_builtin_tools()  # registers web search, etc.
+        self._init_memory_tools()   # registers memory tools (if sqlite-vec installed)
 ```
 
 **Update callback:** `set_update_callback(callback)` registers a function

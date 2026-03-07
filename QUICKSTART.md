@@ -123,6 +123,42 @@ Go to **New Discussion** tab:
 - Click **Conclude** to end the discussion and generate a final synthesis
 - **Resume** a concluded discussion to continue the conversation
 
+## Enabling Institutional Memory (Optional)
+
+AI participants can remember insights across discussions using persistent memory, semantic search, and a knowledge graph. This requires an embedding model.
+
+### 1. Install memory extras
+
+```bash
+uv tool install -e ".[all]"       # includes memory deps
+# or just the memory extras:
+uv pip install -e ".[memory]"
+```
+
+### 2. Set up an embedding model
+
+Memory uses [Ollama](https://ollama.com) for text embeddings. Install Ollama and pull an embedding model:
+
+```bash
+ollama pull nomic-embed-text-v2-moe
+```
+
+### 3. Assign memory tools to entities
+
+Go to the **Profiles** tab, select an AI entity, and enable the memory tools in the Tools section:
+- **memory_store** / **memory_recall** / **memory_forget** — personal long-term memory
+- **discussion_search** — semantic search across all past discussions
+- **kg_assert** / **kg_query** — knowledge graph (concept relationships)
+
+### 4. How models use memory
+
+Models **choose autonomously** when to use memory tools — no manual prompting needed. The default prompt templates encourage proactive memory use:
+- Before responding, models check for relevant memories from past discussions
+- After contributing, they store key insights for future reference
+- They build a knowledge graph of conceptual relationships as they discuss
+
+You can configure the embedding endpoint and model in the **Settings** tab under "Memory Configuration".
+
 ## Tips
 
 - The moderator can be either human or AI. An AI moderator generates summaries automatically; a human moderator is prompted to type summaries.

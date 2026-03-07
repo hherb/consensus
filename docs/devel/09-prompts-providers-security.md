@@ -41,6 +41,22 @@ Replaced by `Moderator.resolve_prompt()`:
 | `{turn_number}` | Current turn number |
 | `{context}` | Additional context (for mediation) |
 
+### Memory tool guidance in prompts
+
+The default AI Participant and AI Moderator system prompts include instructions
+for proactive memory tool use (when memory tools are assigned):
+
+- **Before responding:** Use `memory_recall` and `discussion_search` to check
+  for relevant context from past discussions
+- **After contributing:** Use `memory_store` to save key insights and positions
+- **During discussion:** Use `kg_assert` to record conceptual relationships
+  and `kg_query` to check established knowledge
+
+The AI Participant turn prompt and AI Moderator conclude prompt also reference
+memory tools. Since tools are only available when assigned to the entity, the
+memory-related instructions are harmless for entities without memory tools —
+the LLM simply has no tools to call.
+
 ### Prompt priority
 
 If an entity has a custom `system_prompt` set in its profile, that overrides

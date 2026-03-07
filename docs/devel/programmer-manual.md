@@ -63,6 +63,9 @@ ConsensusApp (app.py)
   per-request via the browser. Keys are never persisted server-side.
 - **Soft-delete for referential integrity.** Entities referenced in past
   discussions are soft-deleted (marked inactive) rather than hard-deleted.
+- **Institutional memory (optional).** AI entities can persist observations,
+  search past discussions semantically, and maintain a knowledge graph across
+  sessions. Implemented as tool providers requiring `[memory]` extras + Ollama.
 
 ---
 

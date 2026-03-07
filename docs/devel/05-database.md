@@ -142,6 +142,68 @@ discussion_tool_overrides (
 
 All timestamps are Unix epoch floats (`time.time()`).
 
+## Memory Tables (Optional)
+
+These tables support the institutional memory system. Created via the
+`_migrate_memory()` migration, which only runs when `sqlite-vec` is installed
+(the `[memory]` optional dependency group).
+
+```sql
+-- Per-entity long-term memories (observations, positions, reflections)
+entity_memories (
+    id            TEXT PRIMARY KEY,
+    entity_id     TEXT NOT NULL REFERENCES entities(id),
+    content       TEXT NOT NULL,
+    discussion_id TEXT REFERENCES discussions(id),  -- provenance; NULL = manual
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+)
+
+-- Embedding vectors stored separately from content
+entity_memory_embeddings (
+    memory_id     TEXT PRIMARY KEY REFERENCES entity_memories(id),
+    embedding     BLOB NOT NULL    -- packed float32 array
+)
+
+-- Index of which messages have been embedded (for lazy indexing)
+message_embeddings (
+    message_id    TEXT PRIMARY KEY REFERENCES messages(id),
+    embedding     BLOB NOT NULL,
+    indexed_at    TEXT NOT NULL DEFAULT (datetime('now'))
+)
+
+-- Knowledge graph nodes
+kg_nodes (
+    id            TEXT PRIMARY KEY,
+    label         TEXT NOT NULL UNIQUE,
+    node_type     TEXT NOT NULL DEFAULT 'concept',  -- concept|position|claim|entity_ref
+    description   TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+)
+
+-- Knowledge graph node embeddings
+kg_node_embeddings (
+    node_id       TEXT PRIMARY KEY REFERENCES kg_nodes(id),
+    embedding     BLOB NOT NULL
+)
+
+-- Knowledge graph edges (relationships between concepts)
+kg_edges (
+    id            TEXT PRIMARY KEY,
+    source_id     TEXT NOT NULL REFERENCES kg_nodes(id),
+    target_id     TEXT NOT NULL REFERENCES kg_nodes(id),
+    relation      TEXT NOT NULL,  -- supports|contradicts|implies|is_a|relates_to|etc.
+    weight        REAL NOT NULL DEFAULT 1.0,
+    discussion_id TEXT REFERENCES discussions(id),
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+)
+
+-- Memory subsystem configuration (embedding endpoint, model, etc.)
+memory_config (
+    key           TEXT PRIMARY KEY,
+    value         TEXT NOT NULL
+)
+```
+
 ## Auth Tables (multi-user mode)
 
 In multi-user mode (`--web --multi-user`), authentication data lives in a
@@ -239,6 +301,7 @@ construction:
 | `_migrate_entity_active()` | Adds the `active` column for entity soft-delete |
 | `_migrate_discussion_paused()` | Expands the `discussions.status` CHECK constraint to include `'paused'` |
 | `_migrate_tools()` | Creates `tool_providers`, `entity_tools`, `discussion_tool_overrides` tables; adds `tool_calls_json` column to `messages` |
+| `_migrate_memory()` | Creates `entity_memories`, `entity_memory_embeddings`, `message_embeddings`, `kg_nodes`, `kg_node_embeddings`, `kg_edges`, `memory_config` tables (requires `sqlite-vec`) |
 
 Migrations are idempotent -- they check for the existence of columns/tables
 before making changes.

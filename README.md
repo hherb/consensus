@@ -26,6 +26,16 @@ A moderated discussion platform where two or more entities (humans and/or AI via
 - **Per-entity configuration** — temperature, max tokens, and custom system prompts per participant
 - **Secure API key handling** — keys referenced by environment variable name, never stored on disk
 
+### Institutional Memory (Optional)
+- **Long-term personal memory** — AI entities store and recall observations, positions, and insights across discussions
+- **Semantic discussion search** — search past discussion messages by meaning, not just keywords
+- **Knowledge graph** — AI entities assert and query structured concept/relationship triples (e.g. "free will contradicts hard determinism")
+- **Proactive memory use** — default prompts encourage AI participants to recall past context before responding and store key insights after contributing
+- **Per-entity memory** — each AI entity maintains its own private memory, scoped by entity ID
+- **Graceful degradation** — if the embedding service (Ollama) is unavailable, discussions continue without memory; tools return informative errors
+- **Opt-in per entity** — memory tools are assigned via the Profiles tab, keeping them invisible to entities that don't need them
+- Requires: `pip install -e ".[memory]"` + [Ollama](https://ollama.com) running with an embedding model
+
 ### Prompt Template System
 - **Customizable prompt templates** for every AI task (turn generation, summarization, mediation, conclusion, opening)
 - **Role-aware templates** — separate templates for moderator vs participant, AI vs human
@@ -140,6 +150,8 @@ In **multi-user mode**, users provide their own API keys via the browser UI (sto
 | `DEEPSEEK_API_KEY` | DeepSeek API key |
 | `CONSENSUS_ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (multi-user mode) |
 | `CONSENSUS_SESSION_DIR` | Custom directory for per-session SQLite databases |
+| `CONSENSUS_EMBEDDING_ENDPOINT` | Ollama endpoint for embeddings (default: `http://localhost:11434`) |
+| `CONSENSUS_EMBEDDING_MODEL` | Embedding model name (default: `nomic-embed-text-v2-moe:latest`) |
 | `CONSENSUS_BASE_URL` | Public base URL for OAuth redirects (e.g. `https://yourdomain.com`) |
 | `CONSENSUS_GITHUB_CLIENT_ID` | GitHub OAuth app client ID |
 | `CONSENSUS_GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret |
@@ -171,6 +183,7 @@ Multi-user mode:
 - **httpx** — async HTTP client for OpenAI-compatible API calls
 - **pywebview** — lightweight cross-platform desktop webview (optional)
 - **aiohttp** — web server for browser/mobile access (optional)
+- **sqlite-vec** + **numpy** — vector similarity search for institutional memory (optional)
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for production deployment instructions (Oracle Cloud Free Tier).
 

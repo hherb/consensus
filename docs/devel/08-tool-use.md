@@ -19,6 +19,12 @@ ConsensusApp
     |     |     |
     |     |     +-- web_search (tools_builtin.py)
     |     |
+    |     +-- PythonToolProvider ("memory")   [optional, requires sqlite-vec]
+    |     |     |
+    |     |     +-- memory_store, memory_recall, memory_forget
+    |     |     +-- discussion_search
+    |     |     +-- kg_assert, kg_query
+    |     |
     |     +-- (future: MCPToolProvider, etc.)
     |
     +-- Moderator (moderator.py)
@@ -242,6 +248,81 @@ Tool data is stored in three tables:
 - `discussion_tool_overrides` -- per-discussion enable/disable overrides
 
 See [Database](05-database.md) for full schema.
+
+---
+
+## Institutional Memory Tools
+
+Defined in `tools_memory.py`. Created via `create_memory_provider(db)` and
+registered in `ConsensusApp._init_memory_tools()`. Requires the `[memory]`
+optional dependency group (`sqlite-vec`, `numpy`) and an Ollama embedding
+service.
+
+### Architecture
+
+```
+ConsensusApp._init_memory_tools()
+    |
+    +-- create_memory_provider(db)
+          |
+          +-- EmbeddingClient (async httpx to Ollama /api/embeddings)
+          +-- 6 tool handlers (memory_store, memory_recall, memory_forget,
+          |                     discussion_search, kg_assert, kg_query)
+          +-- PythonToolProvider("memory")
+```
+
+### Tools
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `memory_store` | Store an observation/position to entity's long-term memory | `content: str` |
+| `memory_recall` | Semantic search over entity's personal memories | `query: str`, `limit?: int` |
+| `memory_forget` | Delete a specific memory by ID | `memory_id: str` |
+| `discussion_search` | Semantic search across all past discussion messages | `query: str`, `limit?: int`, `topic_filter?: str` |
+| `kg_assert` | Assert a knowledge triple (subject→relation→object) | `subject: str`, `relation: str`, `object: str`, `description?: str` |
+| `kg_query` | Query the knowledge graph | `query: str`, `mode: "search"\|"neighbors"\|"path"` |
+
+### How models use memory
+
+Memory tools are **not prompted by the system at invocation time** — they are
+presented to the LLM as standard OpenAI function definitions via
+`complete_with_tools()`. The LLM autonomously decides when to call them based
+on the tool descriptions and conversation context.
+
+However, the **default prompt templates** actively encourage memory use. The
+AI Participant system prompt instructs models to:
+- Use `memory_recall` and `discussion_search` before responding
+- Use `memory_store` to save key insights after contributing
+- Use `kg_assert` to record conceptual relationships
+- Use `kg_query` to check established knowledge
+
+The AI Moderator system prompt similarly encourages memory use for synthesis
+and cross-discussion context.
+
+### Embedding pipeline
+
+- **Backend:** Ollama HTTP API (`/api/embeddings`)
+- **Default model:** `nomic-embed-text-v2-moe:latest`
+- **Configurable:** Endpoint and model are stored in the `memory_config` DB
+  table and editable via the Settings tab in the UI
+- **Embedding storage:** Binary blobs in `entity_memory_embeddings`,
+  `message_embeddings`, and `kg_node_embeddings` tables
+- **Similarity search:** Cosine similarity over packed float vectors
+- **Lazy indexing:** Past discussion messages are embedded on first
+  `discussion_search` call via a background `asyncio.create_task()`
+
+### Graceful degradation
+
+If the embedding service is unreachable:
+- Tool handlers return `ToolResult(is_error=True)` with an informative message
+- The entity's turn continues without memory access
+- The discussion never crashes due to memory unavailability
+
+### Entity scoping
+
+`memory_store`, `memory_recall`, and `memory_forget` are automatically scoped
+to the calling entity via `ToolContext.caller_entity_id`. An entity can only
+access its own memories — no cross-entity memory leakage.
 
 ---
 
