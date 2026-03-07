@@ -191,6 +191,17 @@ class Moderator:
                 max_tokens=cfg.max_tokens,
             )
 
+        # Augment system prompt with tool-use encouragement
+        tool_names = ", ".join(t["function"]["name"] for t in tool_schemas)
+        messages[0]["content"] += (
+            f"\n\nYou have access to the following tools: {tool_names}. "
+            "Use them proactively whenever they would strengthen your contribution. "
+            "If the topic involves current events, recent data, specific facts, "
+            "or claims that could be verified or enriched by external information, "
+            "call the appropriate tool NOW — do not merely suggest that a search "
+            "should be done. Act, don't narrate."
+        )
+
         # Tool execution loop
         all_tool_records: list[ToolCallRecord] = []
         total_prompt_tokens = 0
