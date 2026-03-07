@@ -204,6 +204,35 @@ class DesktopBridge:
             discussion_id, entity_id, tool_name, enabled,
         )
 
+    # -- Memory config --
+    def get_memory_config(self) -> dict:
+        """Return memory configuration."""
+        if not self.app.memory_available:
+            return {"error": "Memory feature not available"}
+        return self.app.db.get_memory_config()
+
+    def save_memory_config(self, data: dict) -> dict:
+        """Update memory configuration keys."""
+        if not self.app.memory_available:
+            return {"error": "Memory feature not available"}
+        allowed_keys = {"embedding_backend", "embedding_model", "embedding_endpoint"}
+        for key, value in data.items():
+            if key in allowed_keys:
+                self.app.db.set_memory_config(key, str(value))
+        return {"ok": True}
+
+    def test_memory_connection(self) -> dict:
+        """Test the embedding connection."""
+        if not self.app.memory_available:
+            return {"ok": False, "message": "Memory feature not available"}
+        try:
+            from .tools_memory import EmbeddingClient
+            client = EmbeddingClient(self.app.db)
+            ok, message = self._run_async(client.test_connection())
+            return {"ok": ok, "message": message}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+
     # -- Export --
     def get_export_data(self, discussion_id: int) -> dict:
         """Get discussion data for export without mutating current state."""

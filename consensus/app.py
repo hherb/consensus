@@ -71,8 +71,8 @@ class ConsensusApp:
             self.db.add_tool_provider("memory", "python")
             self.memory_available = True
             logger.debug("Institutional memory tools registered")
-        except ImportError:
-            logger.debug("Memory tools not available (install consensus[memory])")
+        except ImportError as e:
+            logger.info("Memory tools not available: %s", e)
 
     @staticmethod
     def set_request_api_keys(keys: dict[str, str]) -> None:

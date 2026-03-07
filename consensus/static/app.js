@@ -46,6 +46,10 @@ class DesktopAPI {
     async getEntityTools(eid) { return await window.pywebview.api.get_entity_tools(eid); }
     async assignTool(eid, toolName, mode) { return await window.pywebview.api.assign_tool(eid, toolName, mode || 'private'); }
     async removeTool(eid, toolName) { return await window.pywebview.api.remove_tool(eid, toolName); }
+    // Memory
+    async getMemoryConfig() { return await window.pywebview.api.get_memory_config(); }
+    async saveMemoryConfig(data) { return await window.pywebview.api.save_memory_config(data); }
+    async testMemoryConnection() { return await window.pywebview.api.test_memory_connection(); }
 }
 
 class WebAPI {
@@ -111,6 +115,24 @@ class WebAPI {
     async getEntityTools(eid) { return await this._post('get_entity_tools', { entity_id: eid }); }
     async assignTool(eid, toolName, mode) { return await this._post('assign_tool', { entity_id: eid, tool_name: toolName, access_mode: mode || 'private' }); }
     async removeTool(eid, toolName) { return await this._post('remove_tool', { entity_id: eid, tool_name: toolName }); }
+    // Memory
+    async getMemoryConfig() {
+        const resp = await fetch('/api/memory/config');
+        if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Server error (${resp.status})` }; }
+        return await resp.json();
+    }
+    async saveMemoryConfig(data) {
+        const resp = await fetch('/api/memory/config', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Server error (${resp.status})` }; }
+        return await resp.json();
+    }
+    async testMemoryConnection() {
+        const resp = await fetch('/api/memory/test', { method: 'POST' });
+        return await resp.json();
+    }
 }
 
 // ============================================================
@@ -2074,27 +2096,28 @@ function init() {
 }
 
 // ============================================================
-// Memory Config UI (web mode only; desktop uses pywebview bridge)
+// Memory Config UI
 // ============================================================
 
 async function loadMemoryConfig() {
-    if (window.pywebview) return; // desktop mode: not yet wired
     try {
-        const resp = await fetch('/api/memory/config');
-        if (resp.status === 404) {
+        const result = await api.getMemoryConfig();
+        if (result && result.error) {
             show('#memory-unavailable-msg');
             hide('#memory-config-form');
+            const msgEl = $('#memory-unavailable-msg');
+            if (msgEl) msgEl.textContent = result.error;
             return;
         }
         hide('#memory-unavailable-msg');
         show('#memory-config-form');
-        if (resp.ok) {
-            const cfg = await resp.json();
-            $('#memory-endpoint').value = cfg.embedding_endpoint || '';
-            $('#memory-model').value = cfg.embedding_model || '';
+        if (result) {
+            $('#memory-endpoint').value = result.embedding_endpoint || '';
+            $('#memory-model').value = result.embedding_model || '';
         }
     } catch (e) {
-        // server may not be running; silently ignore
+        show('#memory-unavailable-msg');
+        hide('#memory-config-form');
     }
 }
 
@@ -2102,12 +2125,9 @@ async function saveMemoryConfig() {
     const endpoint = $('#memory-endpoint').value.trim();
     const model = $('#memory-model').value.trim();
     try {
-        const resp = await fetch('/api/memory/config', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ embedding_endpoint: endpoint, embedding_model: model }),
-        });
-        if (resp.ok) showToast('Memory config saved');
+        const result = await api.saveMemoryConfig({ embedding_endpoint: endpoint, embedding_model: model });
+        if (result && result.error) showToast(result.error);
+        else if (result && result.ok) showToast('Memory config saved');
         else showToast('Failed to save memory config');
     } catch (e) {
         showToast('Error: ' + e.message);
@@ -2118,8 +2138,7 @@ async function testMemoryConnection() {
     const resultEl = $('#memory-test-result');
     resultEl.textContent = 'Testing…';
     try {
-        const resp = await fetch('/api/memory/test', { method: 'POST' });
-        const data = await resp.json();
+        const data = await api.testMemoryConnection();
         resultEl.textContent = data.message || (data.ok ? 'Connected' : 'Failed');
         resultEl.style.color = data.ok ? 'var(--color-success, #22c55e)' : 'var(--color-error, #ef4444)';
     } catch (e) {
