@@ -225,6 +225,7 @@ class Discussion:
     turn_number: int = 0
     is_active: bool = False
     status: str = "setup"
+    member_roles: dict[int, str] = field(default_factory=dict)
 
     @property
     def moderator(self) -> Optional[Entity]:
@@ -268,4 +269,7 @@ class Discussion:
             "current_speaker_id": (
                 self.current_speaker.id if self.current_speaker else None
             ),
+            "member_roles": {
+                str(k): v for k, v in self.member_roles.items()
+            },
         }

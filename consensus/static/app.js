@@ -20,9 +20,10 @@ class DesktopAPI {
     async savePrompt(p) { return await window.pywebview.api.save_prompt(p.prompt_id||'', p.name, p.role, p.target, p.task, p.content); }
     async deletePrompt(id) { return await window.pywebview.api.delete_prompt(id); }
     // Discussion setup
-    async addToDiscussion(eid, isMod, alsoPart) { return await window.pywebview.api.add_to_discussion(eid, !!isMod, !!alsoPart); }
+    async addToDiscussion(eid, isMod, alsoPart, role='standard') { return await window.pywebview.api.add_to_discussion(eid, !!isMod, !!alsoPart, role); }
     async removeFromDiscussion(eid) { return await window.pywebview.api.remove_from_discussion(eid); }
     async setModerator(id, alsoPart) { return await window.pywebview.api.set_moderator(id, !!alsoPart); }
+    async setParticipantRole(eid, role) { return await window.pywebview.api.set_participant_role(eid, role); }
     async setTopic(t) { return await window.pywebview.api.set_topic(t); }
     async startDiscussion(modPart) { return await window.pywebview.api.start_discussion(!!modPart); }
     // Discussion lifecycle
@@ -91,9 +92,10 @@ class WebAPI {
     async getInactiveEntities() { return await this._post('get_inactive_entities'); }
     async savePrompt(p) { return await this._post('save_prompt', p); }
     async deletePrompt(id) { return await this._post('delete_prompt', { prompt_id: id }); }
-    async addToDiscussion(eid, isMod, alsoPart) { return await this._post('add_to_discussion', { entity_id: eid, is_moderator: !!isMod, also_participant: !!alsoPart }); }
+    async addToDiscussion(eid, isMod, alsoPart, role='standard') { return await this._post('add_to_discussion', { entity_id: eid, is_moderator: !!isMod, also_participant: !!alsoPart, participant_role: role }); }
     async removeFromDiscussion(eid) { return await this._post('remove_from_discussion', { entity_id: eid }); }
     async setModerator(id, alsoPart) { return await this._post('set_moderator', { entity_id: id, also_participant: !!alsoPart }); }
+    async setParticipantRole(eid, role) { return await this._post('set_participant_role', { entity_id: eid, participant_role: role }); }
     async setTopic(t) { return await this._post('set_topic', { topic: t }); }
     async startDiscussion(modPart) { return await this._post('start_discussion', { moderator_participates: !!modPart }); }
     async submitMessage(eid, content) { return await this._post('submit_human_message', { entity_id: eid, content }); }
@@ -1095,22 +1097,28 @@ function renderDiscussionRoster() {
         container.innerHTML = '<div class="empty-state">No participants added yet</div>';
         return;
     }
-    container.innerHTML = state.entities.map(e => `
+    const roles = state.member_roles || {};
+    container.innerHTML = state.entities.map(e => {
+        const isMod = e.id === state.moderator_id;
+        const isDA = roles[String(e.id)] === 'devils_advocate';
+        return `
         <div class="entity-item">
             <div class="entity-avatar" style="background:${e.avatar_color}">${getInitials(e.name)}</div>
             <div class="entity-info">
                 <span class="entity-name">${escHtml(e.name)}</span>
-                ${e.id === state.moderator_id ? '<span class="moderator-badge">MOD</span>' : ''}
+                ${isMod ? '<span class="moderator-badge">MOD</span>' : ''}
+                ${isDA ? '<span class="da-badge">DA</span>' : ''}
                 <div class="entity-type">${e.entity_type === 'ai' ? 'AI - ' + (e.ai_config?.model || 'LLM') : 'Human'}</div>
             </div>
             <div class="entity-actions">
-                ${e.id !== state.moderator_id
-                    ? `<button class="btn btn-ghost btn-sm" data-action="set-moderator" data-id="${e.id}">Set Mod</button>`
+                ${!isMod ? `<button class="btn btn-ghost btn-sm" data-action="set-moderator" data-id="${e.id}">Set Mod</button>` : ''}
+                ${!isMod && e.entity_type === 'ai'
+                    ? `<button class="btn btn-ghost btn-sm" data-action="set-devils-advocate" data-id="${e.id}">${isDA ? 'Unset DA' : 'Set DA'}</button>`
                     : ''}
                 <button class="btn btn-ghost btn-sm" data-action="remove-from-discussion" data-id="${e.id}">Remove</button>
             </div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
 }
 
 function updateStartButton() {
@@ -1151,6 +1159,16 @@ async function removeFromDiscussion(entityId) {
 
 async function setModerator(entityId) {
     await api.setModerator(entityId);
+    const s = await api.getState();
+    onStateUpdate(s);
+    renderSetupTab();
+}
+
+async function setDevilsAdvocate(entityId) {
+    const currentRole = (state.member_roles || {})[String(entityId)];
+    const newRole = currentRole === 'devils_advocate' ? 'standard' : 'devils_advocate';
+    const result = await api.setParticipantRole(entityId, newRole);
+    if (result?.error) return showToast(result.error);
     const s = await api.getState();
     onStateUpdate(s);
     renderSetupTab();
@@ -1197,15 +1215,17 @@ function renderDiscussion() {
 }
 
 function renderSidebarEntities() {
+    const roles = state.member_roles || {};
     $('#discussion-entities').innerHTML = state.entities.map(e => {
         const isSpeaking = e.id === state.current_speaker_id && state.is_active;
         const isMod = e.id === state.moderator_id;
+        const isDA = roles[String(e.id)] === 'devils_advocate';
         const canRemove = state.status === 'paused' && !isMod;
         return `
             <div class="entity-sidebar-item ${isSpeaking ? 'speaking' : ''}">
                 <div class="entity-avatar" style="background:${e.avatar_color}">${getInitials(e.name)}</div>
                 <div style="flex:1">
-                    <div class="entity-name">${escHtml(e.name)}${isMod ? ' <span class="moderator-badge">MOD</span>' : ''}</div>
+                    <div class="entity-name">${escHtml(e.name)}${isMod ? ' <span class="moderator-badge">MOD</span>' : ''}${isDA ? ' <span class="da-badge">DA</span>' : ''}</div>
                     <div class="entity-type">${e.entity_type === 'ai' ? e.ai_config?.model || 'AI' : 'Human'}</div>
                 </div>
                 ${isSpeaking ? '<div class="speaking-indicator"></div>' : ''}
@@ -2070,6 +2090,7 @@ function init() {
             case 'delete-selected': deleteSelectedDiscussions(); break;
             case 'add-to-discussion': addToDiscussion(id); break;
             case 'set-moderator': setModerator(id); break;
+            case 'set-devils-advocate': setDevilsAdvocate(id); break;
             case 'remove-from-discussion': removeFromDiscussion(id); break;
             case 'do-reassign': doReassign(id); break;
             case 'export-json': closeExportMenu(); exportAsJson(); break;

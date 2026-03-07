@@ -348,6 +348,15 @@ input[type="checkbox"] { width: auto; }
     border-radius: 999px;
     margin-left: 0.3rem;
 }
+.da-badge {
+    font-size: 0.65rem;
+    background: var(--warning-color, #f59e0b);
+    color: #fff;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    margin-left: 0.3rem;
+    font-weight: 600;
+}
 
 /* === Discussion Phase === */
 #discussion-phase {

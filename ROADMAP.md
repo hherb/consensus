@@ -8,9 +8,9 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ✅ Done | Resume previous discussions | `app.load_discussion()`, `app.resume_discussion()`, `app.reopen_discussion()`; exposed via desktop bridge and REST API |
 | ✅ Done | Dynamic participation | Entities can be added or removed from an ongoing discussion mid-session |
 | **Institutional Memory** | | |
-| ⬜ Planned | Long-term memory for AI participants | Persistent memory across discussions so AIs can build on prior reasoning and positions |
-| ⬜ Planned | Semantic search over past discussions | Embedding-based retrieval of relevant passages from the corpus of past discussions |
-| ⬜ Planned | Knowledge graph | Extract and query concepts, positions, and relationships from discussion history |
+| ✅ Done | Long-term memory for AI participants | Persistent memory across discussions so AIs can build on prior reasoning and positions |
+| ✅ Done  | Semantic search over past discussions | Embedding-based retrieval of relevant passages from the corpus of past discussions |
+| ✅ Done  | Knowledge graph | Extract and query concepts, positions, and relationships from discussion history |
 | **Research-Grade Argumentation** | | |
 | ✅ Done | Web search and tool access | `tools.py` (ToolProvider ABC, ToolRegistry), `tools_builtin.py` (Brave Search + DuckDuckGo fallback), native function calling in `ai_client.py`, tool execution loop in `moderator.py` |
 | **Democratic Moderation** | | |

@@ -270,7 +270,8 @@ class ConsensusApp:
 
     def add_to_discussion(self, entity_id: int,
                           is_moderator: bool = False,
-                          also_participant: bool = False) -> dict:
+                          also_participant: bool = False,
+                          participant_role: str = "standard") -> dict:
         """Add a saved entity to the current discussion."""
         row = self.db.get_entity(entity_id)
         if not row:
@@ -282,9 +283,17 @@ class ConsensusApp:
             return {"error": f"{entity.name} is already in the discussion"}
 
         self.discussion.entities.append(entity)
+        self.discussion.member_roles[entity_id] = participant_role
 
         if is_moderator:
             self.discussion.moderator_id = entity_id
+
+        # Single-DA enforcement: revert any existing DA
+        if participant_role == "devils_advocate":
+            for eid, role in list(self.discussion.member_roles.items()):
+                if role == "devils_advocate" and eid != entity_id:
+                    self.discussion.member_roles[eid] = "standard"
+            self._auto_assign_da_tools(entity_id)
 
         # Persist to DB if discussion is already started
         if self.discussion.id and self.discussion.status in ("active", "paused"):
@@ -294,6 +303,7 @@ class ConsensusApp:
                 is_moderator=is_moderator,
                 also_participant=True,
                 turn_position=next_pos,
+                participant_role=participant_role,
             )
             self.discussion.turn_order.append(entity_id)
 
@@ -343,6 +353,7 @@ class ConsensusApp:
         self.discussion.entities = [
             e for e in self.discussion.entities if e.id != entity_id
         ]
+        self.discussion.member_roles.pop(entity_id, None)
         if self.discussion.moderator_id == entity_id:
             self.discussion.moderator_id = None
 
@@ -381,6 +392,78 @@ class ConsensusApp:
         self._notify()
         return True
 
+    def set_participant_role(self, entity_id: int,
+                             participant_role: str = "standard") -> dict:
+        """Set or change a participant's role (e.g. devils_advocate).
+
+        Only one devil's advocate is allowed per discussion. Setting a new
+        DA reverts the previous one to standard. The DA is always moved to
+        the end of the turn order.
+        """
+        entity = self.discussion.get_entity(entity_id)
+        if not entity:
+            return {"error": "Entity not in discussion"}
+        if entity_id == self.discussion.moderator_id:
+            return {"error": "Cannot assign a role to the moderator"}
+
+        # Single-DA enforcement: revert any existing DA
+        if participant_role == "devils_advocate":
+            for eid, role in list(self.discussion.member_roles.items()):
+                if role == "devils_advocate" and eid != entity_id:
+                    self.discussion.member_roles[eid] = "standard"
+                    if self.discussion.id:
+                        self.db.update_member_role(
+                            self.discussion.id, eid, "standard")
+
+        self.discussion.member_roles[entity_id] = participant_role
+
+        # Auto-assign tools for DA
+        if participant_role == "devils_advocate":
+            self._auto_assign_da_tools(entity_id)
+
+        # Move DA to end of turn order (or restore normal position)
+        if entity_id in self.discussion.turn_order:
+            self._reorder_da_in_turn_order()
+
+        # Persist role to DB if discussion is active
+        if self.discussion.id:
+            self.db.update_member_role(
+                self.discussion.id, entity_id, participant_role)
+
+        self._notify()
+        return entity.to_dict()
+
+    def _auto_assign_da_tools(self, entity_id: int) -> None:
+        """Assign web search and memory tools to a devil's advocate entity."""
+        da_tools = [
+            "web_search", "fetch_webpage",
+            "memory_store", "memory_recall", "memory_forget",
+            "discussion_search", "kg_assert", "kg_query",
+        ]
+        for tool_name in da_tools:
+            existing = self.db.get_entity_tool(entity_id, tool_name)
+            if not existing:
+                self.db.add_entity_tool(entity_id, tool_name, "private")
+
+    def _reorder_da_in_turn_order(self) -> None:
+        """Ensure devil's advocate entity is last in turn order."""
+        da_id = None
+        for eid, role in self.discussion.member_roles.items():
+            if role == "devils_advocate" and eid in self.discussion.turn_order:
+                da_id = eid
+                break
+        if da_id is None:
+            return
+        if da_id in self.discussion.turn_order:
+            self.discussion.turn_order.remove(da_id)
+            self.discussion.turn_order.append(da_id)
+            # Keep current_turn_index valid
+            if self.discussion.turn_order:
+                self.discussion.current_turn_index = (
+                    self.discussion.current_turn_index
+                    % len(self.discussion.turn_order)
+                )
+
     # ------------------------------------------------------------------
     # Discussion lifecycle
     # ------------------------------------------------------------------
@@ -415,19 +498,40 @@ class ConsensusApp:
         self.discussion.id = did
         self.db.update_discussion(did, status="active", started_at=time.time())
 
-        # Build turn order
+        # Build turn order — DA goes last
+        da_entity = None
         turn_pos = 0
         for e in self.discussion.entities:
             is_mod = e.id == self.discussion.moderator_id
             in_rotation = not is_mod or moderator_participates
+            role = self.discussion.member_roles.get(e.id, "standard")
+            if role == "devils_advocate" and in_rotation:
+                da_entity = e  # defer to end
+                continue
             self.db.add_discussion_member(
                 did, e.id,
                 is_moderator=is_mod,
                 also_participant=moderator_participates if is_mod else True,
                 turn_position=turn_pos if in_rotation else None,
+                participant_role=role,
             )
             if in_rotation:
                 self.discussion.turn_order.append(e.id)
+                turn_pos += 1
+        # Append DA last
+        if da_entity:
+            is_mod = da_entity.id == self.discussion.moderator_id
+            in_rotation = not is_mod or moderator_participates
+            role = self.discussion.member_roles.get(da_entity.id, "standard")
+            self.db.add_discussion_member(
+                did, da_entity.id,
+                is_moderator=is_mod,
+                also_participant=moderator_participates if is_mod else True,
+                turn_position=turn_pos if in_rotation else None,
+                participant_role=role,
+            )
+            if in_rotation:
+                self.discussion.turn_order.append(da_entity.id)
                 turn_pos += 1
 
         self.discussion.current_turn_index = 0
@@ -513,7 +617,10 @@ class ConsensusApp:
             return {"error": f"{current.name} is human - waiting for input"}
 
         try:
-            resp = await self.moderator.generate_turn(current)
+            participant_role = self.discussion.member_roles.get(
+                current.id, "standard")
+            resp = await self.moderator.generate_turn(
+                current, participant_role=participant_role)
 
             # Detect if the participant chose to pass
             is_pass = _is_pass(resp.content)
@@ -820,6 +927,12 @@ class ConsensusApp:
                 current_turn_index = (last_idx + 1) % len(turn_order)
             turn_number = max(turn_number, 1)
 
+        # Restore member roles from DB
+        member_roles = {
+            m["entity_id"]: m.get("participant_role", "standard")
+            for m in members
+        }
+
         self.discussion = Discussion(
             id=discussion_id,
             topic=disc["topic"],
@@ -832,6 +945,7 @@ class ConsensusApp:
             turn_number=turn_number,
             is_active=is_active,
             status=status,
+            member_roles=member_roles,
         )
         self.moderator = Moderator(
             self.discussion, self.db,

@@ -127,10 +127,11 @@ class DesktopBridge:
 
     # -- Discussion setup --
     def add_to_discussion(self, entity_id: int, is_moderator: bool = False,
-                          also_participant: bool = False) -> dict:
+                          also_participant: bool = False,
+                          participant_role: str = "standard") -> dict:
         """Add a saved entity to the current discussion."""
         return self.app.add_to_discussion(
-            entity_id, is_moderator, also_participant,
+            entity_id, is_moderator, also_participant, participant_role,
         )
 
     def remove_from_discussion(self, entity_id: int) -> bool:
@@ -141,6 +142,11 @@ class DesktopBridge:
                       also_participant: bool = False) -> bool:
         """Designate a moderator for the discussion."""
         return self.app.set_moderator(entity_id, also_participant)
+
+    def set_participant_role(self, entity_id: int,
+                             participant_role: str = "standard") -> dict:
+        """Set or change a participant's role."""
+        return self.app.set_participant_role(entity_id, participant_role)
 
     def set_topic(self, topic: str) -> bool:
         """Set the discussion topic."""

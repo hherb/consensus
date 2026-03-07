@@ -139,7 +139,8 @@ class Moderator:
                 logger.debug("Error closing AI client", exc_info=True)
         self._clients.clear()
 
-    async def generate_turn(self, entity: Entity) -> AIResponse:
+    async def generate_turn(self, entity: Entity,
+                            participant_role: str = "standard") -> AIResponse:
         """Generate an AI entity's contribution to the discussion.
 
         If the entity has tools assigned and the tool_registry is available,
@@ -151,18 +152,25 @@ class Moderator:
         cfg = entity.ai_config
         participants = self._participant_names()
 
+        # Select prompt task variants based on participant role
+        system_task = "system"
+        turn_task = "turn"
+        if participant_role == "devils_advocate":
+            system_task = "system_devils_advocate"
+            turn_task = "turn_devils_advocate"
+
         if cfg.system_prompt:
             system_prompt = cfg.system_prompt
         else:
             system_prompt = self.resolve_prompt(
-                "participant", "ai", "system",
+                "participant", "ai", system_task,
                 entity_name=entity.name,
                 topic=self.discussion.topic,
                 participants=participants,
             )
 
         task = self.resolve_prompt(
-            "participant", "ai", "turn",
+            "participant", "ai", turn_task,
             entity_name=entity.name,
             topic=self.discussion.topic,
             participants=participants,
