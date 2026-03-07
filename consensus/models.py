@@ -14,6 +14,11 @@ DEFAULT_TEMPERATURE = 0.7
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_AVATAR_COLOR = "#3b82f6"
 
+# Embedding / institutional memory defaults
+DEFAULT_EMBEDDING_BACKEND = "ollama"
+DEFAULT_EMBEDDING_MODEL = "nomic-embed-text-v2-moe:latest"
+DEFAULT_EMBEDDING_ENDPOINT = "http://localhost:11434"
+
 ENTITY_COLORS = [
     "#3b82f6", "#ef4444", "#22c55e", "#f59e0b",
     "#8b5cf6", "#ec4899", "#06b6d4", "#f97316",

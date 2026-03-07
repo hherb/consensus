@@ -6,7 +6,10 @@ import threading
 import time
 from typing import Optional
 
-from .models import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_AVATAR_COLOR
+from .models import (
+    DEFAULT_BASE_URL, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_AVATAR_COLOR,
+    DEFAULT_EMBEDDING_BACKEND, DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_ENDPOINT,
+)
 
 SCHEMA_VERSION = 1
 MAX_DAYS_KEEP_DELETED = 7
@@ -349,7 +352,7 @@ class Database:
         defaults = [
             {
                 "name": "Ollama (Local)",
-                "base_url": "http://localhost:11434/v1",
+                "base_url": DEFAULT_BASE_URL,
                 "api_key_env": "",
             },
             {
@@ -695,9 +698,9 @@ class Database:
 
             # Seed default config values
             defaults = [
-                ("embedding_backend", "ollama"),
-                ("embedding_model", "nomic-embed-text-v2-moe:latest"),
-                ("embedding_endpoint", "http://localhost:11434"),
+                ("embedding_backend", DEFAULT_EMBEDDING_BACKEND),
+                ("embedding_model", DEFAULT_EMBEDDING_MODEL),
+                ("embedding_endpoint", DEFAULT_EMBEDDING_ENDPOINT),
             ]
             for key, value in defaults:
                 self.conn.execute(
