@@ -18,6 +18,15 @@ from .tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+
+def _is_pass(content: str) -> bool:
+    """Check if a participant's response is a pass (raw AI output or formatted)."""
+    stripped = content.strip().strip("*_").strip()
+    if stripped.upper() in ("[PASS]", "PASS"):
+        return True
+    # Also match the formatted version: *Name passed this round.*
+    return content.strip().endswith("passed this round.*")
+
 # Per-request BYOK API keys, isolated via contextvars (no cross-request leakage)
 _request_api_keys_var: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
     "_request_api_keys_var", default={},
@@ -38,7 +47,9 @@ class ConsensusApp:
             tool_registry=self.tool_registry,
         )
         self._on_update: Optional[Callable] = None
+        self.memory_available = False
         self._init_builtin_tools()
+        self._init_memory_tools()
 
     def _init_builtin_tools(self) -> None:
         """Register built-in tool providers."""
@@ -49,6 +60,19 @@ class ConsensusApp:
             self.db.add_tool_provider("builtin", "python")
         except ImportError:
             logger.debug("Built-in tools not available")
+
+    def _init_memory_tools(self) -> None:
+        """Register institutional memory tool provider (requires [memory] extras)."""
+        try:
+            import sqlite_vec  # noqa: F401
+            from .tools_memory import create_memory_provider
+            provider = create_memory_provider(self.db)
+            self.tool_registry.register_provider(provider)
+            self.db.add_tool_provider("memory", "python")
+            self.memory_available = True
+            logger.debug("Institutional memory tools registered")
+        except ImportError:
+            logger.debug("Memory tools not available (install consensus[memory])")
 
     @staticmethod
     def set_request_api_keys(keys: dict[str, str]) -> None:
@@ -491,6 +515,11 @@ class ConsensusApp:
         try:
             resp = await self.moderator.generate_turn(current)
 
+            # Detect if the participant chose to pass
+            is_pass = _is_pass(resp.content)
+            content = (f"*{current.name} passed this round.*"
+                       if is_pass else resp.content)
+
             # Serialize tool call records if any
             tool_calls_json = ""
             if resp.tool_calls:
@@ -500,7 +529,7 @@ class ConsensusApp:
 
             msg = Message(
                 entity_id=current.id, entity_name=current.name,
-                content=resp.content, role=MessageRole.PARTICIPANT,
+                content=content, role=MessageRole.PARTICIPANT,
                 model_used=resp.model,
                 prompt_tokens=resp.prompt_tokens,
                 completion_tokens=resp.completion_tokens,
@@ -512,7 +541,7 @@ class ConsensusApp:
 
             prompt_id = self.moderator.prompt_id("participant", "ai", "turn")
             self.db.add_message(
-                self.discussion.id, current.id, resp.content, "participant",
+                self.discussion.id, current.id, content, "participant",
                 turn_number=self.discussion.turn_number,
                 model_used=resp.model,
                 prompt_tokens=resp.prompt_tokens,
@@ -525,6 +554,8 @@ class ConsensusApp:
             )
             self._notify()
             result = msg.to_dict()
+            if is_pass:
+                result["passed"] = True
             if resp.warning:
                 result["warning"] = resp.warning
             return result
@@ -542,7 +573,19 @@ class ConsensusApp:
         speaker_name = current.name if current else "Unknown"
         speaker_id = current.id if current else 0
 
-        if mod and mod.entity_type == EntityType.AI:
+        # Check if the last participant message was a pass
+        last_msg = self.discussion.messages[-1] if self.discussion.messages else None
+        participant_passed = (last_msg and last_msg.role == MessageRole.PARTICIPANT
+                              and _is_pass(last_msg.content))
+
+        if participant_passed and mod:
+            # No AI summary needed — just note the pass
+            summary_text = f"{speaker_name} passed this round."
+            self.db.add_message(
+                self.discussion.id, mod.id, summary_text, "moderator",
+                turn_number=self.discussion.turn_number,
+            )
+        elif mod and mod.entity_type == EntityType.AI and not participant_passed:
             try:
                 resp = await self.moderator.generate_summary()
                 summary_text = resp.content

@@ -136,6 +136,33 @@ The Profiles tab shows dimmed styling for inactive (soft-deleted) profiles with
 a Reactivate button. Delete confirmation dialogs include informative toast
 messages explaining whether the entity was hard-deleted or deactivated.
 
+### Authentication UI (multi-user mode)
+
+In multi-user web mode, the frontend manages authentication state through two
+globals:
+
+- `authUser` — the current authenticated user object, or `null`
+- `authRequired` — whether the server requires authentication
+
+**Bootstrap flow:**
+1. `bootstrap()` creates the API adapter
+2. In web mode, calls `checkAuthStatus()` which fetches `/auth/status`
+3. If `authRequired && !authUser`, shows the login screen
+4. Otherwise, initialises the app normally
+
+**UI elements:**
+- **`#auth-phase`** — login/register forms with a toggle between them
+- **`#user-bar`** — top bar showing the authenticated user's display name and a
+  sign-out button
+- **OAuth buttons** — rendered dynamically based on configured providers
+  returned from `/auth/status`
+
+**401 handling:** `WebAPI._post()` intercepts HTTP 401 responses and redirects
+to the login screen automatically.
+
+**Listener guard:** A `_authListenersAttached` flag prevents duplicate event
+listeners when toggling between `showAuthPhase()` and `showAppPhase()`.
+
 ---
 
 [Next: Database](05-database.md)

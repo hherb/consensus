@@ -2,6 +2,7 @@
 
 Currently provides:
 - WebSearchProvider: Web search via Brave Search API (with DuckDuckGo fallback)
+- fetch_webpage: Fetch and extract readable text from a URL using trafilatura
 """
 
 import logging
@@ -13,6 +14,27 @@ import httpx
 from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
+
+# Web fetch configuration
+WEB_FETCH_TIMEOUT = 15.0
+WEB_FETCH_MAX_CHARS = 8000
+WEB_FETCH_USER_AGENT = "Mozilla/5.0 (compatible; ConsensusBot/1.0)"
+
+WEB_FETCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "url": {
+            "type": "string",
+            "description": "The URL of the web page to fetch and read",
+        },
+        "max_chars": {
+            "type": "integer",
+            "description": f"Maximum characters to return (default {WEB_FETCH_MAX_CHARS})",
+            "default": WEB_FETCH_MAX_CHARS,
+        },
+    },
+    "required": ["url"],
+}
 
 # Brave Search API configuration
 BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
@@ -154,6 +176,67 @@ async def web_search_handler(arguments: dict,
     return ToolResult(content=result, metadata={"engine": "duckduckgo"})
 
 
+async def fetch_webpage_handler(arguments: dict,
+                                context: ToolContext) -> ToolResult:
+    """Fetch a URL and extract its readable text content."""
+    url = arguments.get("url", "").strip()
+    if not url:
+        return ToolResult(content="No URL provided.", is_error=True)
+
+    max_chars = int(arguments.get("max_chars", WEB_FETCH_MAX_CHARS))
+
+    try:
+        import trafilatura
+    except ImportError:
+        return ToolResult(
+            content="trafilatura is not installed. Run: pip install trafilatura",
+            is_error=True,
+        )
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=WEB_FETCH_TIMEOUT,
+            follow_redirects=True,
+            headers={"User-Agent": WEB_FETCH_USER_AGENT},
+        ) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            html = response.text
+
+        text = trafilatura.extract(
+            html, include_comments=False, include_tables=True,
+        )
+
+        if not text:
+            # Fallback: strip HTML tags
+            import re
+            text = re.sub(r"<[^>]+>", " ", html)
+            text = re.sub(r"\s+", " ", text).strip()
+
+        if not text:
+            return ToolResult(
+                content=f"No readable content found at {url}",
+                is_error=True,
+            )
+
+        if len(text) > max_chars:
+            text = text[:max_chars] + f"\n\n[Content truncated at {max_chars} characters]"
+
+        return ToolResult(
+            content=text,
+            metadata={"url": url, "length": len(text)},
+        )
+
+    except httpx.HTTPStatusError as e:
+        return ToolResult(
+            content=f"HTTP {e.response.status_code} error fetching {url}",
+            is_error=True,
+        )
+    except Exception as e:
+        logger.warning("fetch_webpage failed for %s: %s", url, e)
+        return ToolResult(content=f"Failed to fetch {url}: {e}", is_error=True)
+
+
 def create_web_search_provider() -> PythonToolProvider:
     """Create and return the built-in web search tool provider."""
     provider = PythonToolProvider(name="builtin")
@@ -168,5 +251,16 @@ def create_web_search_provider() -> PythonToolProvider:
             parameters=WEB_SEARCH_SCHEMA,
         ),
         web_search_handler,
+    )
+    provider.register(
+        ToolDefinition(
+            name="fetch_webpage",
+            description=(
+                "Fetch and extract the readable text content from a web page URL. "
+                "Use after web_search to read the full content of a found page."
+            ),
+            parameters=WEB_FETCH_SCHEMA,
+        ),
+        fetch_webpage_handler,
     )
     return provider

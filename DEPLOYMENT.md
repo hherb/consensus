@@ -201,7 +201,13 @@ User=ubuntu
 WorkingDirectory=/opt/consensus
 Environment=CONSENSUS_ENV=production
 Environment=CONSENSUS_ALLOWED_ORIGINS=https://your-domain.com
+Environment=CONSENSUS_BASE_URL=https://your-domain.com
 Environment=CONSENSUS_SESSION_DIR=/opt/consensus/data/sessions
+# OAuth (optional — set client ID + secret for each provider you want)
+# Environment=CONSENSUS_GITHUB_CLIENT_ID=...
+# Environment=CONSENSUS_GITHUB_CLIENT_SECRET=...
+# Environment=CONSENSUS_GOOGLE_CLIENT_ID=...
+# Environment=CONSENSUS_GOOGLE_CLIENT_SECRET=...
 ExecStart=/opt/consensus/venv/bin/python -m consensus --web --multi-user --host 127.0.0.1 --port 8080
 Restart=always
 RestartSec=5

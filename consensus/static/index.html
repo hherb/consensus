@@ -9,6 +9,78 @@
 <body>
 <div id="app">
 
+    <!-- ===== AUTH / LOGIN PHASE (hidden when auth not required) ===== -->
+    <section id="auth-phase" class="hidden">
+        <header class="setup-header">
+            <h1>Consensus</h1>
+            <p class="subtitle">Moderated Discussion Platform</p>
+        </header>
+
+        <div class="auth-container">
+            <!-- Login form -->
+            <div id="auth-login-form" class="card auth-card">
+                <h2>Sign In</h2>
+                <div id="auth-error" class="auth-error hidden"></div>
+
+                <div class="form-group">
+                    <label for="login-email">Email</label>
+                    <input id="login-email" type="email" placeholder="you@example.com" autocomplete="email">
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input id="login-password" type="password" placeholder="Password" autocomplete="current-password">
+                </div>
+                <button id="login-btn" class="btn btn-primary btn-large" style="width:100%">Sign In</button>
+
+                <div id="oauth-providers" class="auth-oauth-section hidden">
+                    <div class="auth-divider"><span>or continue with</span></div>
+                    <div id="oauth-buttons" class="oauth-buttons"></div>
+                </div>
+
+                <p class="auth-switch">
+                    Don't have an account?
+                    <a href="#" id="show-register-link">Create one</a>
+                </p>
+            </div>
+
+            <!-- Register form -->
+            <div id="auth-register-form" class="card auth-card hidden">
+                <h2>Create Account</h2>
+                <div id="register-error" class="auth-error hidden"></div>
+
+                <div class="form-group">
+                    <label for="register-name">Display Name</label>
+                    <input id="register-name" type="text" placeholder="Your name" autocomplete="name">
+                </div>
+                <div class="form-group">
+                    <label for="register-email">Email</label>
+                    <input id="register-email" type="email" placeholder="you@example.com" autocomplete="email">
+                </div>
+                <div class="form-group">
+                    <label for="register-password">Password</label>
+                    <input id="register-password" type="password" placeholder="At least 8 characters" autocomplete="new-password">
+                </div>
+                <button id="register-btn" class="btn btn-primary btn-large" style="width:100%">Create Account</button>
+
+                <div id="oauth-providers-register" class="auth-oauth-section hidden">
+                    <div class="auth-divider"><span>or continue with</span></div>
+                    <div id="oauth-buttons-register" class="oauth-buttons"></div>
+                </div>
+
+                <p class="auth-switch">
+                    Already have an account?
+                    <a href="#" id="show-login-link">Sign in</a>
+                </p>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===== USER BAR (shown when authenticated in multi-user mode) ===== -->
+    <div id="user-bar" class="user-bar hidden">
+        <span id="user-bar-name"></span>
+        <button id="logout-btn" class="btn btn-ghost btn-sm">Sign Out</button>
+    </div>
+
     <!-- ===== MAIN / SETUP PHASE ===== -->
     <section id="setup-phase">
         <header class="setup-header">
@@ -22,6 +94,7 @@
             <button class="tab" data-tab="settings-providers">Providers</button>
             <button class="tab" data-tab="settings-entities">Profiles</button>
             <button class="tab" data-tab="settings-prompts">Prompts</button>
+            <button class="tab" data-tab="settings-memory">Memory</button>
             <button class="tab" data-tab="history">History</button>
         </div>
 
@@ -107,6 +180,38 @@
                     <button id="add-prompt-btn" class="btn btn-outline" style="margin-top:0.75rem">
                         + Add Prompt
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- === Tab: Memory === -->
+        <div id="tab-settings-memory" class="tab-content hidden">
+            <div class="settings-panel">
+                <div class="card" id="memory-config-card">
+                    <h2>Institutional Memory</h2>
+                    <p class="text-muted" id="memory-unavailable-msg" class="hidden">
+                        Memory tools are not installed.
+                        Run <code>pip install consensus[memory]</code> to enable.
+                    </p>
+                    <div id="memory-config-form">
+                        <div class="form-group">
+                            <label for="memory-endpoint">Embedding Endpoint</label>
+                            <input type="text" id="memory-endpoint"
+                                   placeholder="http://localhost:11434"
+                                   class="form-control" />
+                        </div>
+                        <div class="form-group">
+                            <label for="memory-model">Embedding Model</label>
+                            <input type="text" id="memory-model"
+                                   placeholder="nomic-embed-text"
+                                   class="form-control" />
+                        </div>
+                        <div class="form-row" style="gap:0.5rem;display:flex;flex-wrap:wrap">
+                            <button id="memory-save-btn" class="btn btn-primary">Save</button>
+                            <button id="memory-test-btn" class="btn btn-outline">Test Connection</button>
+                        </div>
+                        <p id="memory-test-result" class="text-muted" style="margin-top:0.5rem"></p>
+                    </div>
                 </div>
             </div>
         </div>
