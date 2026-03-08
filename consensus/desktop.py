@@ -291,6 +291,40 @@ class DesktopBridge:
         """Reset to a clean state."""
         return self.app.reset()
 
+    # -- Evaluation --
+    def open_evaluation(self) -> dict:
+        """Start the evaluation server (if needed) and open in browser."""
+        return self._run_async(self._open_evaluation_async())
+
+    async def _open_evaluation_async(self) -> dict:
+        if not hasattr(self, '_eval_server_url'):
+            try:
+                from evaluation.eval_db import EvalDatabase
+                from evaluation.eval_routes import register_eval_routes
+                from aiohttp import web
+
+                eval_db = EvalDatabase()
+                eval_app = web.Application()
+                register_eval_routes(eval_app, eval_db)
+
+                runner = web.AppRunner(eval_app)
+                await runner.setup()
+                site = web.TCPSite(runner, "127.0.0.1", 0)
+                await site.start()
+                # Get the actual port assigned
+                port = site._server.sockets[0].getsockname()[1]
+                self._eval_server_url = f"http://127.0.0.1:{port}/eval/"
+                self._eval_runner = runner
+                logger.info("Evaluation server started at %s",
+                            self._eval_server_url)
+            except Exception:
+                logger.exception("Failed to start evaluation server")
+                return {"error": "Evaluation module not available"}
+
+        import webbrowser
+        webbrowser.open(self._eval_server_url)
+        return {"url": self._eval_server_url}
+
 
 def launch_desktop(debug: bool = False) -> None:
     """Launch the desktop application using pywebview."""

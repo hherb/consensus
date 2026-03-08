@@ -1988,6 +1988,21 @@ function init() {
         tab.addEventListener('click', () => switchTab(tab.dataset.tab));
     });
 
+    // Evaluation link — in desktop mode, use bridge to launch eval server
+    const evalLink = $('#eval-link');
+    if (evalLink && window.pywebview) {
+        evalLink.addEventListener('click', async (e) => {
+            e.preventDefault();
+            evalLink.textContent = 'Opening…';
+            try {
+                await window.pywebview.api.open_evaluation();
+            } catch (err) {
+                console.error('Failed to open evaluation:', err);
+            }
+            evalLink.textContent = 'Evaluation';
+        });
+    }
+
     // Provider dialog
     $('#add-provider-btn').addEventListener('click', () => openProviderDialog(null));
     $('#confirm-provider-btn').addEventListener('click', confirmProvider);

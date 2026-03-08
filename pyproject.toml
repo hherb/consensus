@@ -31,7 +31,8 @@ all = [
 consensus = "consensus.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["consensus*"]
+include = ["consensus*", "evaluation*"]
 
 [tool.setuptools.package-data]
 consensus = ["static/*", "migrations/*.sql"]
+evaluation = ["static/*", "migrations/*.sql"]
