@@ -1741,8 +1741,18 @@ async function onSendMessage() {
     const content = input.value.trim();
     if (!content) return;
 
-    // When paused, Send submits a moderator message (guidance for resumption)
+    // When paused, check if a human participant's turn — submit as their message
     if (state.status === 'paused') {
+        const speaker = getEntity(state.current_speaker_id);
+        if (speaker && speaker.entity_type === 'human' && speaker.id !== state.moderator_id) {
+            // Human participant typing while paused — treat as their contribution
+            input.value = '';
+            const result = await api.submitMessage(speaker.id, content);
+            if (result?.error) return showToast(result.error);
+            renderDiscussion();
+            return;
+        }
+        // Otherwise, send as moderator guidance for resumption
         input.value = '';
         const result = await api.submitModeratorMessage(content);
         if (result?.error) return showToast(result.error);

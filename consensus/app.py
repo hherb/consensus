@@ -694,7 +694,10 @@ class ConsensusApp:
             )
         elif mod and mod.entity_type == EntityType.AI and not participant_passed:
             try:
-                resp = await self.moderator.generate_summary()
+                next_entity = self.moderator.peek_next_speaker()
+                next_name = next_entity.name if next_entity else ""
+                resp = await self.moderator.generate_summary(
+                    next_speaker_name=next_name)
                 summary_text = resp.content
                 if summary_text:
                     prompt_id = self.moderator.prompt_id(

@@ -123,10 +123,12 @@ class Database:
                 "name": "AI Moderator – Summarize",
                 "role": "moderator", "target": "ai", "task": "summarize",
                 "content": (
-                    "Turn {turn_number} has just completed. {speaker_name} spoke.\n\n"
+                    "Turn {turn_number} has just completed. {speaker_name} spoke.\n"
+                    "The next speaker is {next_speaker_name}.\n\n"
                     "Provide a brief synthesis (2-3 sentences) of the key point(s) "
                     "made and how they relate to the overall discussion so far. "
-                    "Note any agreements, disagreements, or new perspectives introduced."
+                    "Note any agreements, disagreements, or new perspectives introduced.\n\n"
+                    "When handing off, address {next_speaker_name} by name."
                 ),
             },
             {

@@ -807,8 +807,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         eval_db = EvalDatabase()
         register_eval_routes(webapp, eval_db)
         logger.info("Evaluation UI available at /eval/")
-    except ImportError:
-        logger.debug("Evaluation module not available")
+    except Exception:
+        logger.exception("Failed to load evaluation module")
 
     # Static / SPA
     async def serve_index(request: web.Request) -> web.StreamResponse:

@@ -360,7 +360,8 @@ class Moderator:
             tool_calls=all_tool_records,
         )
 
-    async def generate_summary(self) -> AIResponse:
+    async def generate_summary(self,
+                               next_speaker_name: str = "") -> AIResponse:
         """Generate a moderator summary after a participant's turn."""
         mod = self.discussion.moderator
         if not mod or mod.entity_type != EntityType.AI or not mod.ai_config:
@@ -385,6 +386,7 @@ class Moderator:
             speaker_name=speaker,
             turn_number=str(self.discussion.turn_number),
             participants=participants,
+            next_speaker_name=next_speaker_name,
         )
         if not task:
             task = f"Summarize turn {self.discussion.turn_number} by {speaker}."
@@ -469,6 +471,17 @@ class Moderator:
             topic=self.discussion.topic,
             participants=self._participant_names(),
         )
+
+    def peek_next_speaker(self) -> Optional[Entity]:
+        """Return the next speaker without advancing the turn index."""
+        if not self.discussion.turn_order:
+            return None
+        next_idx = (
+            (self.discussion.current_turn_index + 1)
+            % len(self.discussion.turn_order)
+        )
+        next_id = self.discussion.turn_order[next_idx]
+        return self.discussion.get_entity(next_id)
 
     def advance_turn(self) -> Optional[Entity]:
         """Advance to the next speaker in the turn order."""

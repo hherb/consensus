@@ -264,6 +264,10 @@ def register_eval_routes(webapp: web.Application,
     webapp.router.add_get("/eval/api/runs/{id}", get_run)
     webapp.router.add_post("/eval/api/runs/{id}/score", score_run)
 
+    async def redirect_eval(request: web.Request) -> web.Response:
+        raise web.HTTPFound("/eval/")
+
+    webapp.router.add_get("/eval", redirect_eval)
     webapp.router.add_get("/eval/", serve_eval_index)
     webapp.router.add_get("/eval/{path:.*}", serve_eval_static)
 
