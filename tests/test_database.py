@@ -26,10 +26,11 @@ class TestDatabaseInit:
                    "messages", "storyboard_entries", "discussion_members"]:
             assert t in tables, f"Missing table: {t}"
 
-    def test_schema_version_set(self, tmp_db):
-        row = tmp_db.conn.execute("SELECT version FROM schema_version").fetchone()
-        assert row is not None
-        assert row[0] == 1
+    def test_migrations_tracked(self, tmp_db):
+        row = tmp_db.conn.execute(
+            "SELECT MAX(version) FROM migrations"
+        ).fetchone()
+        assert row[0] >= 1
 
     def test_default_prompts_seeded(self, tmp_db):
         prompts = tmp_db.get_prompts()

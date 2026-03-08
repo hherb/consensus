@@ -6,12 +6,12 @@ import threading
 import time
 from typing import Optional
 
+from .migrator import run_migrations
 from .models import (
     DEFAULT_BASE_URL, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_AVATAR_COLOR,
     DEFAULT_EMBEDDING_BACKEND, DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_ENDPOINT,
 )
 
-SCHEMA_VERSION = 1
 MAX_DAYS_KEEP_DELETED = 7
 
 _VALID_TABLES = frozenset({
@@ -43,16 +43,11 @@ class Database:
             sqlite_vec.load(self.conn)
         except Exception:
             pass
-        self._create_tables()
+        run_migrations(self.conn, self._lock, self.db_path)
         self._seed_default_prompts()
         self._seed_default_providers()
         self._migrate_providers()
-        self._migrate_entity_active()
-        self._migrate_discussion_paused()
-        self._migrate_tools()
-        self._migrate_discussion_deleted_at()
-        self._migrate_memory()
-        self._migrate_participant_role()
+        self._seed_default_memory_config()
         self._seed_devils_advocate_prompts()
 
     def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
@@ -61,114 +56,6 @@ class Database:
             cur = self.conn.execute(sql, params)
             self.conn.commit()
             return cur
-
-    def _create_tables(self) -> None:
-        """Create all required tables if they don't already exist."""
-        with self._lock:
-            self.conn.executescript("""
-                CREATE TABLE IF NOT EXISTS schema_version (
-                    version INTEGER NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS providers (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name        TEXT NOT NULL,
-                    base_url    TEXT NOT NULL,
-                    api_key_env TEXT NOT NULL DEFAULT '',
-                    created_at  REAL NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS entities (
-                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name            TEXT NOT NULL,
-                    entity_type     TEXT NOT NULL CHECK(entity_type IN ('human','ai')),
-                    avatar_color    TEXT NOT NULL DEFAULT '#3b82f6',
-                    provider_id     INTEGER,
-                    model           TEXT,
-                    temperature     REAL DEFAULT 0.7,
-                    max_tokens      INTEGER DEFAULT 1024,
-                    system_prompt   TEXT DEFAULT '',
-                    created_at      REAL NOT NULL,
-                    updated_at      REAL NOT NULL,
-                    FOREIGN KEY (provider_id) REFERENCES providers(id)
-                        ON DELETE SET NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS prompts (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name        TEXT NOT NULL,
-                    role        TEXT NOT NULL CHECK(role IN ('moderator','participant')),
-                    target      TEXT NOT NULL CHECK(target IN ('ai','human')),
-                    task        TEXT NOT NULL,
-                    content     TEXT NOT NULL,
-                    is_default  INTEGER NOT NULL DEFAULT 0,
-                    created_at  REAL NOT NULL,
-                    updated_at  REAL NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS discussions (
-                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                    topic           TEXT NOT NULL,
-                    moderator_id    INTEGER,
-                    started_at      REAL,
-                    ended_at        REAL,
-                    status          TEXT NOT NULL DEFAULT 'setup'
-                        CHECK(status IN ('setup','active','paused','concluded')),
-                    FOREIGN KEY (moderator_id) REFERENCES entities(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS discussion_members (
-                    discussion_id       INTEGER NOT NULL,
-                    entity_id           INTEGER NOT NULL,
-                    is_moderator        INTEGER NOT NULL DEFAULT 0,
-                    also_participant    INTEGER NOT NULL DEFAULT 0,
-                    turn_position       INTEGER,
-                    PRIMARY KEY (discussion_id, entity_id),
-                    FOREIGN KEY (discussion_id) REFERENCES discussions(id),
-                    FOREIGN KEY (entity_id)     REFERENCES entities(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS messages (
-                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                    discussion_id   INTEGER NOT NULL,
-                    entity_id       INTEGER NOT NULL,
-                    content         TEXT NOT NULL,
-                    role            TEXT NOT NULL
-                        CHECK(role IN ('participant','moderator','system')),
-                    turn_number     INTEGER,
-                    timestamp       REAL NOT NULL,
-                    model_used      TEXT,
-                    prompt_tokens   INTEGER,
-                    completion_tokens INTEGER,
-                    total_tokens    INTEGER,
-                    latency_ms      INTEGER,
-                    temperature_used REAL,
-                    prompt_id       INTEGER,
-                    FOREIGN KEY (discussion_id) REFERENCES discussions(id),
-                    FOREIGN KEY (entity_id)     REFERENCES entities(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS storyboard_entries (
-                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                    discussion_id       INTEGER NOT NULL,
-                    turn_number         INTEGER NOT NULL,
-                    summary             TEXT NOT NULL,
-                    speaker_entity_id   INTEGER,
-                    timestamp           REAL NOT NULL,
-                    FOREIGN KEY (discussion_id)     REFERENCES discussions(id),
-                    FOREIGN KEY (speaker_entity_id) REFERENCES entities(id)
-                );
-            """)
-            # Initialize schema version if not present
-            row = self.conn.execute(
-                "SELECT version FROM schema_version LIMIT 1"
-            ).fetchone()
-            if not row:
-                self.conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)",
-                    (SCHEMA_VERSION,),
-                )
-            self.conn.commit()
 
     # ------------------------------------------------------------------
     # Generic helpers
@@ -530,290 +417,26 @@ class Database:
 
             self.conn.commit()
 
-    def _migrate_entity_active(self) -> None:
-        """Add 'active' column to entities if not present."""
-        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(entities)")}
-        if "active" not in cols:
-            with self._lock:
-                self.conn.execute(
-                    "ALTER TABLE entities ADD COLUMN active INTEGER NOT NULL DEFAULT 1"
-                )
-                self.conn.commit()
-
-    def _migrate_discussion_paused(self) -> None:
-        """Widen the discussions.status CHECK constraint to include 'paused'.
-
-        Also repairs discussion_members FK references if a prior migration
-        left them pointing at 'discussions_old' instead of 'discussions'.
-        """
-        # Repair: if discussions_old still exists, the prior migration was
-        # incomplete — discussion_members FKs point to the wrong table.
-        has_old = self.conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' "
-            "AND name='discussions_old'"
+    def _seed_default_memory_config(self) -> None:
+        """Seed default memory_config values if the table exists."""
+        # Check if memory_config table exists (created by baseline migration)
+        has_table = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_config'"
         ).fetchone()
-        needs_migrate = False
-        if not has_old:
-            row = self.conn.execute(
-                "SELECT sql FROM sqlite_master "
-                "WHERE type='table' AND name='discussions'"
-            ).fetchone()
-            needs_migrate = bool(row and "paused" not in row[0])
-
-        if not has_old and not needs_migrate:
+        if not has_table:
             return
-
+        defaults = [
+            ("embedding_backend", DEFAULT_EMBEDDING_BACKEND),
+            ("embedding_model", DEFAULT_EMBEDDING_MODEL),
+            ("embedding_endpoint", DEFAULT_EMBEDDING_ENDPOINT),
+        ]
         with self._lock:
-            # Use execute() within an explicit transaction so FK-OFF applies
-            # (executescript auto-commits and can leave partial state).
-            self.conn.execute("PRAGMA foreign_keys=OFF")
-            try:
-                if needs_migrate:
-                    # Rename current discussions table
-                    self.conn.execute(
-                        "ALTER TABLE discussions RENAME TO discussions_old")
-
-                # (Re)create discussions with the widened CHECK
-                self.conn.execute("""
-                    CREATE TABLE IF NOT EXISTS discussions_new (
-                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                        topic           TEXT NOT NULL,
-                        moderator_id    INTEGER,
-                        started_at      REAL,
-                        ended_at        REAL,
-                        status          TEXT NOT NULL DEFAULT 'setup'
-                            CHECK(status IN
-                                 ('setup','active','paused','concluded')),
-                        FOREIGN KEY (moderator_id) REFERENCES entities(id)
-                    )""")
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO discussions_new "
-                    "SELECT * FROM discussions_old")
-                self.conn.execute("DROP TABLE IF EXISTS discussions")
-                self.conn.execute(
-                    "ALTER TABLE discussions_new RENAME TO discussions")
-                self.conn.execute("DROP TABLE IF EXISTS discussions_old")
-
-                # Rebuild discussion_members so its FKs reference the
-                # correct 'discussions' table (not 'discussions_old').
-                self.conn.execute("""
-                    CREATE TABLE IF NOT EXISTS discussion_members_new (
-                        discussion_id       INTEGER NOT NULL,
-                        entity_id           INTEGER NOT NULL,
-                        is_moderator        INTEGER NOT NULL DEFAULT 0,
-                        also_participant    INTEGER NOT NULL DEFAULT 0,
-                        turn_position       INTEGER,
-                        PRIMARY KEY (discussion_id, entity_id),
-                        FOREIGN KEY (discussion_id)
-                            REFERENCES discussions(id),
-                        FOREIGN KEY (entity_id)
-                            REFERENCES entities(id)
-                    )""")
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO discussion_members_new "
-                    "SELECT * FROM discussion_members")
-                self.conn.execute("DROP TABLE discussion_members")
-                self.conn.execute(
-                    "ALTER TABLE discussion_members_new "
-                    "RENAME TO discussion_members")
-
-                # Rebuild messages table (FK may point to discussions_old)
-                self.conn.execute("""
-                    CREATE TABLE IF NOT EXISTS messages_new (
-                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                        discussion_id   INTEGER NOT NULL,
-                        entity_id       INTEGER NOT NULL,
-                        content         TEXT NOT NULL,
-                        role            TEXT NOT NULL
-                            CHECK(role IN
-                                 ('participant','moderator','system')),
-                        turn_number     INTEGER,
-                        timestamp       REAL NOT NULL,
-                        model_used      TEXT,
-                        prompt_tokens   INTEGER,
-                        completion_tokens INTEGER,
-                        total_tokens    INTEGER,
-                        latency_ms      INTEGER,
-                        temperature_used REAL,
-                        prompt_id       INTEGER,
-                        tool_calls_json TEXT,
-                        FOREIGN KEY (discussion_id)
-                            REFERENCES discussions(id),
-                        FOREIGN KEY (entity_id)
-                            REFERENCES entities(id)
-                    )""")
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO messages_new "
-                    "SELECT * FROM messages")
-                self.conn.execute("DROP TABLE messages")
-                self.conn.execute(
-                    "ALTER TABLE messages_new RENAME TO messages")
-
-                # Rebuild storyboard_entries table
-                self.conn.execute("""
-                    CREATE TABLE IF NOT EXISTS storyboard_entries_new (
-                        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                        discussion_id       INTEGER NOT NULL,
-                        turn_number         INTEGER NOT NULL,
-                        summary             TEXT NOT NULL,
-                        speaker_entity_id   INTEGER,
-                        timestamp           REAL NOT NULL,
-                        FOREIGN KEY (discussion_id)
-                            REFERENCES discussions(id),
-                        FOREIGN KEY (speaker_entity_id)
-                            REFERENCES entities(id)
-                    )""")
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO storyboard_entries_new "
-                    "SELECT * FROM storyboard_entries")
-                self.conn.execute("DROP TABLE storyboard_entries")
-                self.conn.execute(
-                    "ALTER TABLE storyboard_entries_new "
-                    "RENAME TO storyboard_entries")
-
-                self.conn.commit()
-            finally:
-                self.conn.execute("PRAGMA foreign_keys=ON")
-
-    def _migrate_tools(self) -> None:
-        """Add tool-related tables and columns if not present."""
-        with self._lock:
-            self.conn.executescript("""
-                CREATE TABLE IF NOT EXISTS tool_providers (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name        TEXT NOT NULL UNIQUE,
-                    type        TEXT NOT NULL CHECK(type IN ('python', 'mcp')),
-                    config_json TEXT NOT NULL DEFAULT '{}',
-                    enabled     INTEGER NOT NULL DEFAULT 1,
-                    created_at  REAL NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS entity_tools (
-                    entity_id       INTEGER NOT NULL,
-                    tool_name       TEXT NOT NULL,
-                    access_mode     TEXT NOT NULL DEFAULT 'private'
-                        CHECK(access_mode IN ('private', 'shared', 'moderator_only')),
-                    enabled         INTEGER NOT NULL DEFAULT 1,
-                    PRIMARY KEY (entity_id, tool_name),
-                    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
-                );
-
-                CREATE TABLE IF NOT EXISTS discussion_tool_overrides (
-                    discussion_id   INTEGER NOT NULL,
-                    entity_id       INTEGER NOT NULL,
-                    tool_name       TEXT NOT NULL,
-                    enabled         INTEGER NOT NULL,
-                    PRIMARY KEY (discussion_id, entity_id, tool_name),
-                    FOREIGN KEY (discussion_id) REFERENCES discussions(id) ON DELETE CASCADE,
-                    FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
-                );
-            """)
-            self.conn.commit()
-
-        # Add tool_calls_json column to messages if not present
-        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(messages)")}
-        if "tool_calls_json" not in cols:
-            with self._lock:
-                self.conn.execute(
-                    "ALTER TABLE messages ADD COLUMN tool_calls_json TEXT"
-                )
-                self.conn.commit()
-
-    def _migrate_discussion_deleted_at(self) -> None:
-        """Add deleted_at column to discussions for soft-delete support."""
-        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(discussions)")}
-        if "deleted_at" not in cols:
-            with self._lock:
-                self.conn.execute(
-                    "ALTER TABLE discussions ADD COLUMN deleted_at REAL"
-                )
-                self.conn.commit()
-
-    def _migrate_memory(self) -> None:
-        """Add institutional memory tables if not present (requires sqlite_vec)."""
-        try:
-            import sqlite_vec  # noqa: F401
-        except ImportError:
-            return
-
-        with self._lock:
-            self.conn.executescript("""
-                CREATE TABLE IF NOT EXISTS entity_memories (
-                    id            TEXT PRIMARY KEY,
-                    entity_id     INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-                    content       TEXT NOT NULL,
-                    discussion_id INTEGER REFERENCES discussions(id),
-                    created_at    REAL NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS entity_memory_embeddings (
-                    memory_id  TEXT PRIMARY KEY
-                        REFERENCES entity_memories(id) ON DELETE CASCADE,
-                    embedding  BLOB NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS message_embeddings (
-                    message_id TEXT PRIMARY KEY
-                        REFERENCES messages(id) ON DELETE CASCADE,
-                    embedding  BLOB NOT NULL,
-                    indexed_at REAL NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS kg_nodes (
-                    id          TEXT PRIMARY KEY,
-                    label       TEXT NOT NULL UNIQUE,
-                    node_type   TEXT NOT NULL DEFAULT 'concept',
-                    description TEXT,
-                    created_at  REAL NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS kg_node_embeddings (
-                    node_id   TEXT PRIMARY KEY
-                        REFERENCES kg_nodes(id) ON DELETE CASCADE,
-                    embedding BLOB NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS kg_edges (
-                    id            TEXT PRIMARY KEY,
-                    source_id     TEXT NOT NULL REFERENCES kg_nodes(id),
-                    target_id     TEXT NOT NULL REFERENCES kg_nodes(id),
-                    relation      TEXT NOT NULL,
-                    weight        REAL NOT NULL DEFAULT 1.0,
-                    discussion_id INTEGER REFERENCES discussions(id),
-                    created_at    REAL NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS memory_config (
-                    key   TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-            """)
-
-            # Seed default config values
-            defaults = [
-                ("embedding_backend", DEFAULT_EMBEDDING_BACKEND),
-                ("embedding_model", DEFAULT_EMBEDDING_MODEL),
-                ("embedding_endpoint", DEFAULT_EMBEDDING_ENDPOINT),
-            ]
             for key, value in defaults:
                 self.conn.execute(
                     "INSERT OR IGNORE INTO memory_config (key, value) VALUES (?,?)",
                     (key, value),
                 )
             self.conn.commit()
-
-    def _migrate_participant_role(self) -> None:
-        """Add participant_role column to discussion_members if not present."""
-        cols = {row[1] for row in self.conn.execute(
-            "PRAGMA table_info(discussion_members)"
-        )}
-        if "participant_role" not in cols:
-            with self._lock:
-                self.conn.execute(
-                    "ALTER TABLE discussion_members ADD COLUMN "
-                    "participant_role TEXT NOT NULL DEFAULT 'standard'"
-                )
-                self.conn.commit()
 
     def _seed_devils_advocate_prompts(self) -> None:
         """Add devil's advocate prompt templates if not already present."""

@@ -34,4 +34,4 @@ consensus = "consensus.__main__:main"
 include = ["consensus*"]
 
 [tool.setuptools.package-data]
-consensus = ["static/*"]
+consensus = ["static/*", "migrations/*.sql"]
