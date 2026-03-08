@@ -15,6 +15,7 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ✅ Done | Web search and tool access | `tools.py` (ToolProvider ABC, ToolRegistry), `tools_builtin.py` (Brave Search + DuckDuckGo fallback), native function calling in `ai_client.py`, tool execution loop in `moderator.py` |
 | ✅ Done | Devil's Advocate role | Constructive-critic participant role with dedicated prompt templates (`system_devils_advocate`, `turn_devils_advocate`) that challenge assumptions and identify weaknesses |
 | **Democratic Moderation** | | |
+| ⬜ Planned | Participant voting system | Any participant (human or AI) can propose a poll during discussion. Vote types: early conclusion (consensus reached, no further turns needed), extend discussion (max rounds hit but issues unresolved), invoke expert consultation, change topic focus, or custom motions. Moderator presents the motion, collects votes with optional rationale, and announces the outcome. Configurable thresholds (simple majority, supermajority, unanimous). Results logged as structured messages for audit trail |
 | ⬜ Planned | Moderation challenges | Entities formally challenge moderator summaries/decisions; reviewed by participant consensus |
 | ⬜ Planned | Moderator elections | Participants vote to replace or change moderator during a discussion |
 | **Authentication & Identity** | | |
