@@ -214,3 +214,6 @@ docs/discussions/*
 .playwright-mcp
 .playwright-mcp/*
 .gitignore
+
+# Git worktrees
+.worktrees/
