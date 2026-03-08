@@ -345,6 +345,8 @@ class ConsensusApp:
         state["prompts"] = self.db.get_prompts()
         state["discussions_history"] = self.db.get_discussions()
         state["tool_providers"] = self.db.get_tool_providers()
+        state["mcp_servers"] = self.db.get_mcp_servers()
+        state["experts"] = self.db.get_expert_definitions()
         return state
 
     # ------------------------------------------------------------------
