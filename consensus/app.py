@@ -1,10 +1,11 @@
 """Application state and API for the discussion system."""
 
+import asyncio
 import contextvars
 import json
 import logging
 import time
-from typing import Optional, Callable
+from typing import Any, Optional, Callable
 
 from .ai_client import AIClient
 from .models import (
@@ -14,7 +15,7 @@ from .models import (
 from .moderator import Moderator
 from .database import Database
 from .config import get_db_path, save_api_key, remove_api_key, has_api_key
-from .tools import ToolRegistry
+from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolRegistry, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ class ConsensusApp:
         )
         self._on_update: Optional[Callable] = None
         self._event_listeners: dict[str, list[Callable]] = {}
+        self._mcp_providers: dict[int, Any] = {}
         self.memory_available = False
         self._init_builtin_tools()
         self._init_memory_tools()
@@ -70,6 +72,23 @@ class ConsensusApp:
             self.db.add_tool_provider("builtin", "python")
         except ImportError:
             logger.debug("Built-in tools not available")
+
+        # Register consult_expert meta-tool
+        expert_provider = PythonToolProvider(name="experts")
+        expert_tool_def = ToolDefinition(
+            name="consult_expert",
+            description="Consult a specialist expert for authoritative analysis.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "expert_name": {"type": "string", "description": "Name of the expert to consult"},
+                    "query": {"type": "string", "description": "The question or claim to present"},
+                },
+                "required": ["expert_name", "query"],
+            },
+        )
+        expert_provider.register(expert_tool_def, self._handle_consult_expert)
+        self.tool_registry.register_provider(expert_provider)
 
     def _init_memory_tools(self) -> None:
         """Register institutional memory tool provider (requires [memory] extras)."""
@@ -149,6 +168,170 @@ class ConsensusApp:
                 cb(data)
             except Exception:
                 logger.exception("Event listener error for %s", event_type)
+
+    # ------------------------------------------------------------------
+    # MCP Server Management
+    # ------------------------------------------------------------------
+
+    def add_mcp_server(self, name: str, description: str, command: str,
+                       args: list | None = None, env: dict | None = None) -> dict | None:
+        """Register an MCP server and return its record."""
+        server_id = self.db.add_mcp_server(name, description, command, args, env)
+        self._notify()
+        return self.db.get_mcp_server(server_id)
+
+    def get_mcp_servers(self) -> list[dict]:
+        """Return all registered MCP servers."""
+        return self.db.get_mcp_servers()
+
+    def update_mcp_server(self, server_id: int, **kwargs) -> None:
+        """Update an MCP server's configuration."""
+        self.db.update_mcp_server(server_id, **kwargs)
+        self._notify()
+
+    def delete_mcp_server(self, server_id: int) -> None:
+        """Delete an MCP server, closing any active connection."""
+        if server_id in self._mcp_providers:
+            asyncio.create_task(self._mcp_providers[server_id].close())
+            del self._mcp_providers[server_id]
+        self.db.delete_mcp_server(server_id)
+        self._notify()
+
+    async def test_mcp_connection(self, server_id: int) -> dict:
+        """Test connectivity to an MCP server and list its tools."""
+        from .mcp_client import MCPToolProvider
+        server = self.db.get_mcp_server(server_id)
+        if not server:
+            return {"success": False, "error": "Server not found"}
+        provider = MCPToolProvider(
+            name=server["name"], command=server["command"],
+            args=server["args"], env=server["env"],
+        )
+        try:
+            connected = await provider.connect()
+            if not connected:
+                return {"success": False, "error": "Failed to connect"}
+            tools = await provider.list_tools()
+            tool_info = [{"name": t.name, "description": t.description} for t in tools]
+            return {"success": True, "tools": tool_info}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        finally:
+            await provider.close()
+
+    async def connect_mcp_server(self, server_id: int) -> bool:
+        """Connect to an MCP server and register it as a tool provider."""
+        from .mcp_client import MCPToolProvider
+        server = self.db.get_mcp_server(server_id)
+        if not server or not server["enabled"]:
+            return False
+        provider = MCPToolProvider(
+            name=server["name"], command=server["command"],
+            args=server["args"], env=server["env"],
+        )
+        connected = await provider.connect()
+        if connected:
+            self._mcp_providers[server_id] = provider
+            self.tool_registry.register_provider(provider)
+        return connected
+
+    # ------------------------------------------------------------------
+    # Expert Definitions
+    # ------------------------------------------------------------------
+
+    def save_expert_definition(self, entity_id: int, mcp_server_id: int, tool_name: str,
+                               description: str = "", default_arguments: dict | None = None,
+                               timeout_seconds: int = 300) -> dict | None:
+        """Save an expert definition linking an entity to an MCP tool."""
+        self.db.add_expert_definition(entity_id, mcp_server_id, tool_name,
+                                       description, default_arguments, timeout_seconds)
+        self._notify()
+        return self.db.get_expert_definition(entity_id)
+
+    def get_expert_definitions(self) -> list[dict]:
+        """Return all expert definitions."""
+        return self.db.get_expert_definitions()
+
+    # ------------------------------------------------------------------
+    # Consult Expert
+    # ------------------------------------------------------------------
+
+    async def _handle_consult_expert(self, args: dict, context: ToolContext) -> ToolResult:
+        """Tool handler: consult a specialist expert via its MCP server."""
+        expert_name = args.get("expert_name", "")
+        query = args.get("query", "")
+
+        # Find expert entity by name
+        entities = self.db.get_entities()
+        expert_entity = None
+        for e in entities:
+            if e["name"].lower() == expert_name.lower() and e.get("entity_type") == "expert":
+                expert_entity = e
+                break
+
+        if not expert_entity:
+            available = [e["name"] for e in entities if e.get("entity_type") == "expert"]
+            return ToolResult(
+                content=f"Expert '{expert_name}' not found. Available: {', '.join(available) or 'none'}",
+                is_error=True,
+            )
+
+        defn = self.db.get_expert_definition(expert_entity["id"])
+        if not defn:
+            return ToolResult(content=f"Expert '{expert_name}' has no MCP configuration", is_error=True)
+
+        provider = self._mcp_providers.get(defn["mcp_server_id"])
+        if not provider:
+            return ToolResult(content=f"MCP server for '{expert_name}' is not available", is_error=True)
+
+        # Build arguments
+        tool_args = dict(defn["default_arguments"])
+        tool_args.update({"claim": query})
+
+        def on_progress(progress, total, message):
+            self.emit("tool_progress", {
+                "discussion_id": context.discussion_id,
+                "entity_name": expert_entity["name"],
+                "tool_name": defn["tool_name"],
+                "progress": progress,
+                "total": total,
+                "message": message,
+            })
+
+        timeout = defn.get("timeout_seconds", 300)
+        try:
+            result = await asyncio.wait_for(
+                provider.execute(defn["tool_name"], tool_args, context, progress_callback=on_progress),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            return ToolResult(content=f"Expert '{expert_name}' timed out after {timeout}s", is_error=True)
+
+        # Add expert message to discussion
+        if self.discussion and self.discussion.id and not result.is_error:
+            msg = Message(
+                entity_id=expert_entity["id"],
+                entity_name=expert_entity["name"],
+                content=result.content,
+                role=MessageRole.PARTICIPANT,
+                timestamp=time.time(),
+            )
+            self.discussion.messages.append(msg)
+            self.db.save_message(self.discussion.id, msg)
+            self._notify()
+
+        return result
+
+    async def consult_expert(self, expert_name: str, query: str) -> dict:
+        """Public method: consult an expert by name with a query."""
+        ctx = ToolContext(
+            caller_entity_id=0,
+            discussion_id=self.discussion.id if self.discussion else 0,
+        )
+        result = await self._handle_consult_expert(
+            {"expert_name": expert_name, "query": query}, ctx,
+        )
+        return {"content": result.content, "is_error": result.is_error}
 
     # ------------------------------------------------------------------
     # State for the frontend

@@ -393,3 +393,100 @@ class TestProviderManagement:
                 assert "api_key_env" not in p
                 assert "has_key" in p
                 break
+
+
+# --- MCP Server Management ---
+
+class TestMCPServerManagement:
+    def test_add_mcp_server(self, app):
+        result = app.add_mcp_server("Test Server", "Desc", "echo", ["hello"])
+        assert result is not None
+        assert result["name"] == "Test Server"
+        assert result["command"] == "echo"
+        assert result["args"] == ["hello"]
+
+    def test_get_mcp_servers(self, app):
+        app.add_mcp_server("S1", "D1", "cmd1")
+        app.add_mcp_server("S2", "D2", "cmd2")
+        assert len(app.get_mcp_servers()) == 2
+
+    def test_update_mcp_server(self, app):
+        result = app.add_mcp_server("Original", "Desc", "cmd")
+        app.update_mcp_server(result["id"], name="Updated")
+        servers = app.get_mcp_servers()
+        assert any(s["name"] == "Updated" for s in servers)
+
+    def test_delete_mcp_server(self, app):
+        result = app.add_mcp_server("ToDelete", "Desc", "cmd")
+        app.delete_mcp_server(result["id"])
+        assert len(app.get_mcp_servers()) == 0
+
+    def test_save_expert_definition(self, app):
+        pid = app.db.add_provider("P", "http://x", "")
+        eid = app.db.add_entity("Expert1", "expert", "#000", pid, "m")
+        srv = app.add_mcp_server("MCP1", "Desc", "cmd")
+        result = app.save_expert_definition(eid, srv["id"], "analyze",
+                                            "Expert analysis", {"depth": "deep"}, 120)
+        assert result is not None
+        assert result["tool_name"] == "analyze"
+        assert result["default_arguments"] == {"depth": "deep"}
+
+    def test_get_expert_definitions(self, app):
+        pid = app.db.add_provider("P", "http://x", "")
+        eid = app.db.add_entity("Expert1", "expert", "#000", pid, "m")
+        srv = app.add_mcp_server("MCP1", "Desc", "cmd")
+        app.save_expert_definition(eid, srv["id"], "analyze")
+        defs = app.get_expert_definitions()
+        assert len(defs) == 1
+
+
+# --- Consult Expert ---
+
+class TestConsultExpert:
+    @pytest.mark.asyncio
+    async def test_consult_expert_tool_registered(self, app):
+        tools = await app.tool_registry.list_all_tools()
+        names = [t.name for t in tools]
+        assert "consult_expert" in names
+
+    @pytest.mark.asyncio
+    async def test_consult_expert_unknown_expert(self, app):
+        result = await app.consult_expert("nonexistent", "test query")
+        assert result["is_error"] is True
+        assert "not found" in result["content"].lower()
+
+    @pytest.mark.asyncio
+    async def test_consult_expert_no_mcp_config(self, app):
+        pid = app.db.add_provider("P", "http://x", "")
+        app.db.add_entity("DrSmith", "expert", "#000", pid, "m")
+        result = await app.consult_expert("DrSmith", "test query")
+        assert result["is_error"] is True
+        assert "no mcp configuration" in result["content"].lower()
+
+    @pytest.mark.asyncio
+    async def test_consult_expert_server_not_connected(self, app):
+        pid = app.db.add_provider("P", "http://x", "")
+        eid = app.db.add_entity("DrSmith", "expert", "#000", pid, "m")
+        srv = app.add_mcp_server("MCP1", "Desc", "cmd")
+        app.save_expert_definition(eid, srv["id"], "analyze")
+        result = await app.consult_expert("DrSmith", "test query")
+        assert result["is_error"] is True
+        assert "not available" in result["content"].lower()
+
+    @pytest.mark.asyncio
+    async def test_consult_expert_success(self, app):
+        pid = app.db.add_provider("P", "http://x", "")
+        eid = app.db.add_entity("DrSmith", "expert", "#000", pid, "m")
+        srv = app.add_mcp_server("MCP1", "Desc", "cmd")
+        app.save_expert_definition(eid, srv["id"], "analyze", default_arguments={"depth": "deep"})
+
+        # Mock the MCP provider
+        from consensus.tools import ToolResult
+        mock_provider = AsyncMock()
+        mock_provider.execute = AsyncMock(return_value=ToolResult(content="Expert analysis result"))
+        app._mcp_providers[srv["id"]] = mock_provider
+
+        result = await app.consult_expert("DrSmith", "Is the sky blue?")
+        assert result["is_error"] is False
+        assert "Expert analysis result" in result["content"]
+        mock_provider.execute.assert_called_once()
