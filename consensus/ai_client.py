@@ -120,12 +120,23 @@ class AIClient:
     manager.
     """
 
+    # Hosts that require max_completion_tokens instead of max_tokens
+    _MAX_COMPLETION_TOKENS_HOSTS = ("api.openai.com",)
+
     def __init__(self, base_url: str, api_key: str = "",
                  timeout: float = DEFAULT_API_TIMEOUT) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
         self._client: Optional[httpx.AsyncClient] = None
+
+    def _max_tokens_param(self, max_tokens: int) -> dict:
+        """Return the appropriate max-tokens payload key for this API."""
+        from urllib.parse import urlparse
+        host = urlparse(self.base_url).hostname or ""
+        if any(h in host for h in self._MAX_COMPLETION_TOKENS_HOSTS):
+            return {"max_completion_tokens": max_tokens}
+        return {"max_tokens": max_tokens}
 
     def _get_client(self) -> httpx.AsyncClient:
         """Return the shared AsyncClient, creating it lazily."""
@@ -205,8 +216,8 @@ class AIClient:
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
             "stream": False,
+            **self._max_tokens_param(max_tokens),
         }
 
         client = self._get_client()
@@ -215,6 +226,11 @@ class AIClient:
             f"{self.base_url}/chat/completions",
             json=payload,
         )
+        if response.status_code >= 400:
+            logger.error(
+                "API error %s for model %s: %s",
+                response.status_code, model, response.text,
+            )
         response.raise_for_status()
         data = response.json()
         elapsed = int((time.monotonic() - start) * 1000)
@@ -248,8 +264,8 @@ class AIClient:
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
             "stream": False,
+            **self._max_tokens_param(max_tokens),
         }
         if tools:
             payload["tools"] = tools
@@ -260,6 +276,11 @@ class AIClient:
             f"{self.base_url}/chat/completions",
             json=payload,
         )
+        if response.status_code >= 400:
+            logger.error(
+                "API error %s for model %s: %s",
+                response.status_code, model, response.text,
+            )
         response.raise_for_status()
         data = response.json()
         elapsed = int((time.monotonic() - start) * 1000)
@@ -301,8 +322,8 @@ class AIClient:
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
             "stream": True,
+            **self._max_tokens_param(max_tokens),
         }
 
         client = self._get_client()
