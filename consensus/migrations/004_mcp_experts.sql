@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS expert_definitions (
 CREATE TABLE entities_new (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT NOT NULL,
-    entity_type     TEXT NOT NULL CHECK(entity_type IN ('human','ai','expert')),
+    entity_type     TEXT NOT NULL DEFAULT 'ai' CHECK(entity_type IN ('human','ai','expert')),
     avatar_color    TEXT NOT NULL DEFAULT '#3b82f6',
     provider_id     INTEGER,
     model           TEXT,

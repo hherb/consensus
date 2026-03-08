@@ -888,30 +888,41 @@ class Database:
         )
         return cur.lastrowid
 
-    def get_expert_definition(self, entity_id: int) -> Optional[dict]:
-        """Retrieve the expert definition for an entity."""
+    def _parse_expert_row(self, row: sqlite3.Row) -> dict:
+        """Convert an expert_definitions JOIN row to a dict with parsed JSON."""
         import json
+        d = dict(row)
+        d["default_arguments"] = json.loads(d["default_arguments"])
+        if "server_args" in d:
+            d["server_args"] = json.loads(d["server_args"])
+        if "server_env" in d:
+            d["server_env"] = json.loads(d["server_env"])
+        return d
+
+    _EXPERT_JOIN_SQL = (
+        "SELECT ed.*, ms.name AS server_name, ms.command, "
+        "ms.args AS server_args, ms.env AS server_env, "
+        "ms.enabled AS server_enabled "
+        "FROM expert_definitions ed "
+        "JOIN mcp_servers ms ON ed.mcp_server_id = ms.id"
+    )
+
+    def get_expert_definition(self, entity_id: int) -> Optional[dict]:
+        """Retrieve the expert definition for an entity, including server info."""
         row = self.conn.execute(
-            "SELECT * FROM expert_definitions WHERE entity_id=?",
+            self._EXPERT_JOIN_SQL + " WHERE ed.entity_id=?",
             (entity_id,),
         ).fetchone()
         if not row:
             return None
-        d = dict(row)
-        d["default_arguments"] = json.loads(d["default_arguments"])
-        return d
+        return self._parse_expert_row(row)
 
     def get_expert_definitions(self) -> list[dict]:
-        """Return all expert definitions."""
-        import json
-        results = []
-        for row in self.conn.execute(
-            "SELECT * FROM expert_definitions"
-        ).fetchall():
-            d = dict(row)
-            d["default_arguments"] = json.loads(d["default_arguments"])
-            results.append(d)
-        return results
+        """Return all expert definitions with server info."""
+        return [
+            self._parse_expert_row(row)
+            for row in self.conn.execute(self._EXPERT_JOIN_SQL).fetchall()
+        ]
 
     def delete_expert_definition(self, entity_id: int) -> None:
         """Delete the expert definition for an entity."""

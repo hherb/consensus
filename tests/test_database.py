@@ -767,11 +767,27 @@ class TestExpertDefinitions:
         assert defn["timeout_seconds"] == 300
         assert defn["default_arguments"] == {"search_provider": "both"}
 
+    def test_get_expert_definition_includes_server_info(self, tmp_db, sample_ai_entity):
+        sid = tmp_db.add_mcp_server(
+            "BM Librarian", "Biomedical search", "uvx",
+            args=["bmlibrarian-mcp"], env={"KEY": "val"},
+        )
+        tmp_db.add_expert_definition(sample_ai_entity, sid, "search", "Searcher")
+        defn = tmp_db.get_expert_definition(sample_ai_entity)
+        assert defn["server_name"] == "BM Librarian"
+        assert defn["command"] == "uvx"
+        assert defn["server_args"] == ["bmlibrarian-mcp"]
+        assert defn["server_env"] == {"KEY": "val"}
+        assert defn["server_enabled"] == 1
+
     def test_get_expert_definitions(self, tmp_db, sample_ai_entity):
         sid = tmp_db.add_mcp_server("Server", "Desc", "cmd")
         tmp_db.add_expert_definition(sample_ai_entity, sid, "tool1", "Expert 1")
         experts = tmp_db.get_expert_definitions()
         assert len(experts) >= 1
+        # Verify JOIN data is present in list results too
+        assert "server_name" in experts[0]
+        assert "command" in experts[0]
 
     def test_delete_expert_definition(self, tmp_db, sample_ai_entity):
         sid = tmp_db.add_mcp_server("Server", "Desc", "cmd")
