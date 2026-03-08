@@ -100,7 +100,8 @@ class ToolProvider(ABC):
 
     @abstractmethod
     async def execute(self, tool_name: str, arguments: dict,
-                      context: ToolContext) -> ToolResult:
+                      context: ToolContext,
+                      progress_callback: Callable | None = None) -> ToolResult:
         """Execute a tool and return the result."""
 
     async def close(self) -> None:
@@ -129,7 +130,8 @@ class PythonToolProvider(ToolProvider):
         return [td for _, td in self._tools.values()]
 
     async def execute(self, tool_name: str, arguments: dict,
-                      context: ToolContext) -> ToolResult:
+                      context: ToolContext,
+                      progress_callback: Callable | None = None) -> ToolResult:
         entry = self._tools.get(tool_name)
         if not entry:
             return ToolResult(
@@ -235,6 +237,7 @@ class ToolRegistry:
         self, tool_name: str, arguments: dict,
         caller_entity_id: int, discussion_id: int,
         moderator_id: Optional[int] = None,
+        progress_callback: Callable | None = None,
     ) -> ToolResult:
         """Execute a tool with access control checks."""
         # Find the provider that owns this tool
@@ -287,7 +290,8 @@ class ToolRegistry:
         # Execute with timeout
         try:
             result = await asyncio.wait_for(
-                provider.execute(tool_name, arguments, context),
+                provider.execute(tool_name, arguments, context,
+                                 progress_callback=progress_callback),
                 timeout=TOOL_EXECUTION_TIMEOUT,
             )
             return result

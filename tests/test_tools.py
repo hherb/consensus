@@ -225,6 +225,20 @@ class TestToolRegistry:
             consensus.tools.TOOL_EXECUTION_TIMEOUT = orig
 
     @pytest.mark.asyncio
+    async def test_execute_no_db(self):
+        """Registry without DB skips access control."""
+        registry = ToolRegistry()
+        p = PythonToolProvider("test")
+        td = ToolDefinition(name="echo", description="Echo",
+                            parameters={"type": "object", "properties": {}})
+        p.register(td, lambda args, ctx: ToolResult(content="done"))
+        registry.register_provider(p)
+        result = await registry.execute(
+            "echo", {}, caller_entity_id=1, discussion_id=1,
+        )
+        assert result.content == "done"
+
+    @pytest.mark.asyncio
     async def test_get_tools_for_entity_respects_overrides(self, registry_with_tools, tmp_db):
         eid = tmp_db.add_entity("Bot", "human", "#000")
         did = tmp_db.create_discussion("T", eid)
@@ -237,3 +251,31 @@ class TestToolRegistry:
         names = [t.name for t in tools]
         assert "search" in names
         assert "calc" not in names
+
+
+# --- Progress Callback ---
+
+class TestProgressCallback:
+    @pytest.mark.asyncio
+    async def test_python_provider_ignores_progress_callback(self):
+        p = PythonToolProvider("test")
+        td = ToolDefinition(name="add", description="Add",
+                            parameters={"type": "object", "properties": {}})
+        p.register(td, lambda args, ctx: ToolResult(content="ok"))
+        ctx = ToolContext(caller_entity_id=1, discussion_id=1)
+        result = await p.execute("add", {}, ctx, progress_callback=lambda p, t, m: None)
+        assert result.content == "ok"
+
+    @pytest.mark.asyncio
+    async def test_registry_execute_passes_progress_callback(self):
+        p = PythonToolProvider("test")
+        td = ToolDefinition(name="echo", description="Echo",
+                            parameters={"type": "object", "properties": {}})
+        p.register(td, lambda args, ctx: ToolResult(content="done"))
+        registry = ToolRegistry()
+        registry.register_provider(p)
+        result = await registry.execute(
+            "echo", {}, caller_entity_id=1, discussion_id=1,
+            progress_callback=lambda p, t, m: None,
+        )
+        assert result.content == "done"
