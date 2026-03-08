@@ -38,6 +38,7 @@ class ConsensusApp:
 
     def __init__(self, db_path: str = "") -> None:
         self.db = Database(db_path or get_db_path())
+        self._refresh_pricing_if_needed()
         self.db.purge_deleted_discussions()
         self.discussion = Discussion()
         self.tool_registry = ToolRegistry(db=self.db)
@@ -50,6 +51,14 @@ class ConsensusApp:
         self.memory_available = False
         self._init_builtin_tools()
         self._init_memory_tools()
+
+    def _refresh_pricing_if_needed(self) -> None:
+        """Refresh pricing cache on startup if stale or missing models."""
+        try:
+            if self.db.pricing._needs_refresh():
+                self.db.pricing.refresh()
+        except Exception:
+            logger.warning("Failed to refresh pricing on startup", exc_info=True)
 
     def _init_builtin_tools(self) -> None:
         """Register built-in tool providers."""
@@ -648,6 +657,21 @@ class ConsensusApp:
                     [tc.to_dict() for tc in resp.tool_calls]
                 )
 
+            cost = self.db.pricing.calculate_cost(
+                resp.model,
+                current.ai_config.base_url if current.ai_config else "",
+                resp.prompt_tokens,
+                resp.completion_tokens,
+            )
+            if cost is None and self.db.pricing.needs_refresh_for_model(resp.model):
+                self.db.pricing.refresh()
+                cost = self.db.pricing.calculate_cost(
+                    resp.model,
+                    current.ai_config.base_url if current.ai_config else "",
+                    resp.prompt_tokens,
+                    resp.completion_tokens,
+                )
+
             msg = Message(
                 entity_id=current.id, entity_name=current.name,
                 content=content, role=MessageRole.PARTICIPANT,
@@ -656,6 +680,7 @@ class ConsensusApp:
                 completion_tokens=resp.completion_tokens,
                 total_tokens=resp.total_tokens,
                 latency_ms=resp.latency_ms,
+                cost=cost,
                 tool_calls_json=tool_calls_json,
             )
             self.discussion.messages.append(msg)
@@ -672,6 +697,7 @@ class ConsensusApp:
                 temperature_used=current.ai_config.temperature if current.ai_config else 0,
                 prompt_id=prompt_id,
                 tool_calls_json=tool_calls_json,
+                cost=cost,
             )
             self._notify()
             result = msg.to_dict()
@@ -736,6 +762,20 @@ class ConsensusApp:
                     prompt_id = self.moderator.prompt_id(
                         "moderator", "ai", "summarize",
                     )
+                    cost = self.db.pricing.calculate_cost(
+                        resp.model,
+                        mod.ai_config.base_url if mod.ai_config else "",
+                        resp.prompt_tokens,
+                        resp.completion_tokens,
+                    )
+                    if cost is None and self.db.pricing.needs_refresh_for_model(resp.model):
+                        self.db.pricing.refresh()
+                        cost = self.db.pricing.calculate_cost(
+                            resp.model,
+                            mod.ai_config.base_url if mod.ai_config else "",
+                            resp.prompt_tokens,
+                            resp.completion_tokens,
+                        )
                     self.db.add_message(
                         self.discussion.id, mod.id, summary_text, "moderator",
                         turn_number=self.discussion.turn_number,
@@ -745,6 +785,7 @@ class ConsensusApp:
                         total_tokens=resp.total_tokens,
                         latency_ms=resp.latency_ms,
                         prompt_id=prompt_id,
+                        cost=cost,
                     )
             except Exception as e:
                 logger.exception("AI summary generation failed")
@@ -821,6 +862,20 @@ class ConsensusApp:
         if mod.entity_type == EntityType.AI:
             try:
                 resp = await self.moderator.mediate(context)
+                cost = self.db.pricing.calculate_cost(
+                    resp.model,
+                    mod.ai_config.base_url if mod.ai_config else "",
+                    resp.prompt_tokens,
+                    resp.completion_tokens,
+                )
+                if cost is None and self.db.pricing.needs_refresh_for_model(resp.model):
+                    self.db.pricing.refresh()
+                    cost = self.db.pricing.calculate_cost(
+                        resp.model,
+                        mod.ai_config.base_url if mod.ai_config else "",
+                        resp.prompt_tokens,
+                        resp.completion_tokens,
+                    )
                 msg = Message(
                     entity_id=mod.id, entity_name=mod.name,
                     content=resp.content, role=MessageRole.MODERATOR,
@@ -829,6 +884,7 @@ class ConsensusApp:
                     completion_tokens=resp.completion_tokens,
                     total_tokens=resp.total_tokens,
                     latency_ms=resp.latency_ms,
+                    cost=cost,
                 )
                 self.discussion.messages.append(msg)
                 prompt_id = self.moderator.prompt_id(
@@ -843,6 +899,7 @@ class ConsensusApp:
                     total_tokens=resp.total_tokens,
                     latency_ms=resp.latency_ms,
                     prompt_id=prompt_id,
+                    cost=cost,
                 )
                 self._notify()
                 return msg.to_dict()
@@ -858,11 +915,26 @@ class ConsensusApp:
             try:
                 resp = await self.moderator.generate_conclusion()
                 conclusion = resp.content
+                cost = self.db.pricing.calculate_cost(
+                    resp.model,
+                    mod.ai_config.base_url if mod.ai_config else "",
+                    resp.prompt_tokens,
+                    resp.completion_tokens,
+                )
+                if cost is None and self.db.pricing.needs_refresh_for_model(resp.model):
+                    self.db.pricing.refresh()
+                    cost = self.db.pricing.calculate_cost(
+                        resp.model,
+                        mod.ai_config.base_url if mod.ai_config else "",
+                        resp.prompt_tokens,
+                        resp.completion_tokens,
+                    )
                 msg = Message(
                     entity_id=mod.id, entity_name=mod.name,
                     content=f"## Final Synthesis\n\n{conclusion}",
                     role=MessageRole.MODERATOR,
                     model_used=resp.model,
+                    cost=cost,
                 )
                 self.discussion.messages.append(msg)
                 self.db.add_message(
@@ -874,6 +946,7 @@ class ConsensusApp:
                     completion_tokens=resp.completion_tokens,
                     total_tokens=resp.total_tokens,
                     latency_ms=resp.latency_ms,
+                    cost=cost,
                 )
 
                 entry = StoryboardEntry(

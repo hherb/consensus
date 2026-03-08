@@ -138,6 +138,7 @@ class Message:
     completion_tokens: int = 0
     total_tokens: int = 0
     latency_ms: int = 0
+    cost: Optional[float] = None
     # Tool call records (JSON-serialized list of ToolCallRecord dicts)
     tool_calls_json: str = ""
 
@@ -157,6 +158,8 @@ class Message:
             d["completion_tokens"] = self.completion_tokens
             d["total_tokens"] = self.total_tokens
             d["latency_ms"] = self.latency_ms
+            if self.cost is not None:
+                d["cost"] = round(self.cost, 6)
         if self.tool_calls_json:
             try:
                 d["tool_calls"] = json.loads(self.tool_calls_json)
@@ -179,6 +182,7 @@ class Message:
             completion_tokens=row.get("completion_tokens") or 0,
             total_tokens=row.get("total_tokens") or 0,
             latency_ms=row.get("latency_ms") or 0,
+            cost=row.get("cost"),
             tool_calls_json=row.get("tool_calls_json") or "",
         )
 

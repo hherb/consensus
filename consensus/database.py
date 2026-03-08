@@ -44,6 +44,8 @@ class Database:
         except Exception:
             pass
         run_migrations(self.conn, self._lock, self.db_path)
+        from .pricing import PricingCache
+        self.pricing = PricingCache(self.conn, self._lock)
         self._seed_default_prompts()
         self._seed_default_providers()
         self._migrate_providers()
@@ -1142,20 +1144,21 @@ class Database:
                     completion_tokens: int = 0, total_tokens: int = 0,
                     latency_ms: int = 0, temperature_used: float = 0,
                     prompt_id: int = 0,
-                    tool_calls_json: str = "") -> int:
+                    tool_calls_json: str = "",
+                    cost: Optional[float] = None) -> int:
         """Store a message and return its generated ID."""
         cur = self._execute_write(
             "INSERT INTO messages "
             "(discussion_id,entity_id,content,role,turn_number,"
             "timestamp,model_used,prompt_tokens,completion_tokens,"
             "total_tokens,latency_ms,temperature_used,prompt_id,"
-            "tool_calls_json) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "tool_calls_json,cost) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (discussion_id, entity_id, content, role, turn_number,
              time.time(), model_used or None, prompt_tokens or None,
              completion_tokens or None, total_tokens or None,
              latency_ms or None, temperature_used or None,
-             prompt_id or None, tool_calls_json or None),
+             prompt_id or None, tool_calls_json or None, cost),
         )
         return cur.lastrowid
 
