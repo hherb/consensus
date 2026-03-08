@@ -6,6 +6,12 @@ import time
 import pytest
 
 from consensus.database import Database
+
+try:
+    import sqlite_vec  # noqa: F401
+    HAS_SQLITE_VEC = True
+except ImportError:
+    HAS_SQLITE_VEC = False
 from consensus.models import DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
 
 
@@ -140,6 +146,30 @@ class TestEntities:
         with pytest.raises(sqlite3.IntegrityError):
             tmp_db.add_entity("Bad", "robot", "#000")
 
+    def test_get_entities_filter_by_type(self, tmp_db, sample_ai_entity, sample_human_entity):
+        ai_entities = tmp_db.get_entities(entity_type="ai")
+        assert all(e["entity_type"] == "ai" for e in ai_entities)
+        human_entities = tmp_db.get_entities(entity_type="human")
+        assert all(e["entity_type"] == "human" for e in human_entities)
+
+    def test_get_entities_include_inactive(self, tmp_db, sample_ai_entity):
+        # Create a reference so delete soft-deletes instead of hard-deletes
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.add_discussion_member(did, sample_ai_entity, True, False)
+        tmp_db.delete_entity(sample_ai_entity)
+        entities = tmp_db.get_entities(include_inactive=True)
+        ids = [e["id"] for e in entities]
+        assert sample_ai_entity in ids
+
+    def test_get_inactive_entities(self, tmp_db, sample_ai_entity):
+        # Force soft-delete by creating a reference first
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.add_discussion_member(did, sample_ai_entity, True, False)
+        tmp_db.delete_entity(sample_ai_entity)
+        inactive = tmp_db.get_inactive_entities()
+        ids = [e["id"] for e in inactive]
+        assert sample_ai_entity in ids
+
 
 # --- Discussions ---
 
@@ -183,6 +213,97 @@ class TestDiscussions:
         tmp_db.remove_discussion_member(did, sample_human_entity)
         members = tmp_db.get_discussion_members(did)
         assert len(members) == 1
+
+    def test_soft_delete_discussion(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("ToDelete", sample_ai_entity)
+        count = tmp_db.soft_delete_discussions([did])
+        assert count == 1
+        d = tmp_db.get_discussion(did)
+        assert d["deleted_at"] is not None
+        # Should not appear in get_discussions list
+        discussions = tmp_db.get_discussions()
+        ids = [d["id"] for d in discussions]
+        assert did not in ids
+
+    def test_soft_delete_multiple(self, tmp_db, sample_ai_entity):
+        d1 = tmp_db.create_discussion("A", sample_ai_entity)
+        d2 = tmp_db.create_discussion("B", sample_ai_entity)
+        count = tmp_db.soft_delete_discussions([d1, d2])
+        assert count == 2
+
+    def test_soft_delete_empty_list(self, tmp_db):
+        assert tmp_db.soft_delete_discussions([]) == 0
+
+    def test_soft_delete_idempotent(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.soft_delete_discussions([did])
+        count = tmp_db.soft_delete_discussions([did])
+        assert count == 0  # already deleted
+
+    def test_restore_discussion(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.soft_delete_discussions([did])
+        result = tmp_db.restore_discussion(did)
+        assert result is True
+        discussions = tmp_db.get_discussions()
+        ids = [d["id"] for d in discussions]
+        assert did in ids
+
+    def test_restore_non_deleted_discussion(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        result = tmp_db.restore_discussion(did)
+        assert result is False
+
+    def test_purge_deleted_discussions(self, tmp_db, sample_ai_entity, sample_human_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.add_discussion_member(did, sample_ai_entity, True, False)
+        tmp_db.add_message(did, sample_ai_entity, "msg", "moderator", 1)
+        tmp_db.add_storyboard_entry(did, 1, "sum", sample_ai_entity)
+        # Soft-delete, then backdate deleted_at
+        tmp_db.soft_delete_discussions([did])
+        tmp_db.conn.execute(
+            "UPDATE discussions SET deleted_at = ? WHERE id = ?",
+            (time.time() - 86400 * 30, did),
+        )
+        tmp_db.conn.commit()
+        count = tmp_db.purge_deleted_discussions(max_days=7)
+        assert count == 1
+        assert tmp_db.get_discussion(did) is None
+        assert tmp_db.get_messages(did) == []
+        assert tmp_db.get_storyboard(did) == []
+        assert tmp_db.get_discussion_members(did) == []
+
+
+# --- Discussion Members ---
+
+class TestDiscussionMembers:
+    def test_add_member_with_role(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.add_discussion_member(did, sample_ai_entity, True, False,
+                                     participant_role="devils_advocate")
+        member = tmp_db.get_discussion_member(did, sample_ai_entity)
+        assert member is not None
+        assert member["participant_role"] == "devils_advocate"
+
+    def test_update_member_role(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.add_discussion_member(did, sample_ai_entity, False, True,
+                                     participant_role="standard")
+        tmp_db.update_member_role(did, sample_ai_entity, "devils_advocate")
+        member = tmp_db.get_discussion_member(did, sample_ai_entity)
+        assert member["participant_role"] == "devils_advocate"
+
+    def test_turn_position_ordering(self, tmp_db, sample_ai_entity, sample_human_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.add_discussion_member(did, sample_human_entity, False, True, turn_position=1)
+        tmp_db.add_discussion_member(did, sample_ai_entity, True, False, turn_position=0)
+        members = tmp_db.get_discussion_members(did)
+        assert members[0]["entity_id"] == sample_ai_entity
+        assert members[1]["entity_id"] == sample_human_entity
+
+    def test_get_nonexistent_member(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        assert tmp_db.get_discussion_member(did, 99999) is None
 
 
 # --- Messages ---
@@ -266,6 +387,96 @@ class TestPrompts:
         row = tmp_db.get_prompt_by_task("participant", "human", "nonexistent_task_xyz")
         assert row is None
 
+    def test_get_prompts_filter_by_role(self, tmp_db):
+        prompts = tmp_db.get_prompts(role="moderator")
+        assert all(p["role"] == "moderator" for p in prompts)
+        assert len(prompts) > 0
+
+    def test_get_prompts_filter_by_target(self, tmp_db):
+        prompts = tmp_db.get_prompts(target="ai")
+        assert all(p["target"] == "ai" for p in prompts)
+
+    def test_get_prompts_filter_by_role_and_task(self, tmp_db):
+        prompts = tmp_db.get_prompts(role="moderator", task="system")
+        assert all(p["role"] == "moderator" and p["task"] == "system" for p in prompts)
+
+
+# --- Tool Providers ---
+
+class TestToolProviders:
+    def test_add_and_get(self, tmp_db):
+        pid = tmp_db.add_tool_provider("web_search", "python")
+        providers = tmp_db.get_tool_providers()
+        names = [p["name"] for p in providers]
+        assert "web_search" in names
+
+    def test_add_duplicate_ignored(self, tmp_db):
+        pid1 = tmp_db.add_tool_provider("web_search", "python")
+        pid2 = tmp_db.add_tool_provider("web_search", "python")
+        assert pid1 == pid2
+
+    def test_delete_tool_provider(self, tmp_db):
+        pid = tmp_db.add_tool_provider("temp", "python")
+        tmp_db.delete_tool_provider(pid)
+        providers = tmp_db.get_tool_providers()
+        ids = [p["id"] for p in providers]
+        assert pid not in ids
+
+
+# --- Entity Tools ---
+
+class TestEntityTools:
+    def test_assign_and_get(self, tmp_db, sample_ai_entity):
+        tmp_db.add_entity_tool(sample_ai_entity, "web_search", "private")
+        tools = tmp_db.get_entity_tools(sample_ai_entity)
+        assert len(tools) == 1
+        assert tools[0]["tool_name"] == "web_search"
+        assert tools[0]["access_mode"] == "private"
+
+    def test_get_specific_tool(self, tmp_db, sample_ai_entity):
+        tmp_db.add_entity_tool(sample_ai_entity, "web_search", "shared")
+        tool = tmp_db.get_entity_tool(sample_ai_entity, "web_search")
+        assert tool is not None
+        assert tool["access_mode"] == "shared"
+
+    def test_get_nonexistent_tool(self, tmp_db, sample_ai_entity):
+        assert tmp_db.get_entity_tool(sample_ai_entity, "nope") is None
+
+    def test_remove_entity_tool(self, tmp_db, sample_ai_entity):
+        tmp_db.add_entity_tool(sample_ai_entity, "web_search")
+        tmp_db.remove_entity_tool(sample_ai_entity, "web_search")
+        assert tmp_db.get_entity_tools(sample_ai_entity) == []
+
+    def test_shared_tools_for_discussion(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.add_discussion_member(did, sample_ai_entity, True, False)
+        tmp_db.add_entity_tool(sample_ai_entity, "shared_tool", "shared")
+        tmp_db.add_entity_tool(sample_ai_entity, "private_tool", "private")
+        shared = tmp_db.get_shared_tools_for_discussion(did)
+        names = [t["tool_name"] for t in shared]
+        assert "shared_tool" in names
+        assert "private_tool" not in names
+
+
+# --- Discussion Tool Overrides ---
+
+class TestDiscussionToolOverrides:
+    def test_set_and_get_override(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.set_discussion_tool_override(did, sample_ai_entity, "web_search", False)
+        overrides = tmp_db.get_discussion_tool_overrides(did, sample_ai_entity)
+        assert len(overrides) == 1
+        assert overrides[0]["tool_name"] == "web_search"
+        assert overrides[0]["enabled"] == 0
+
+    def test_override_upsert(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.set_discussion_tool_override(did, sample_ai_entity, "web_search", False)
+        tmp_db.set_discussion_tool_override(did, sample_ai_entity, "web_search", True)
+        overrides = tmp_db.get_discussion_tool_overrides(did, sample_ai_entity)
+        assert len(overrides) == 1
+        assert overrides[0]["enabled"] == 1
+
 
 # --- _update_row safety ---
 
@@ -273,3 +484,100 @@ class TestUpdateRow:
     def test_rejects_invalid_table(self, tmp_db):
         with pytest.raises(ValueError, match="Invalid table"):
             tmp_db._update_row("users; DROP TABLE providers;--", 1, {"name"})
+
+    def test_update_row_filters_unknown_fields(self, tmp_db, sample_provider):
+        # unknown_field should be silently ignored
+        tmp_db._update_row("providers", sample_provider,
+                           allowed={"name"}, name="X", unknown_field="Y")
+        p = tmp_db.get_provider(sample_provider)
+        assert p["name"] == "X"
+
+
+# --- Memory and Knowledge Graph ---
+
+@pytest.mark.skipif(not HAS_SQLITE_VEC, reason="sqlite_vec not installed")
+class TestMemoryAndKG:
+    def test_memory_config_get_set(self, tmp_db):
+        config = tmp_db.get_memory_config()
+        assert "embedding_backend" in config
+        tmp_db.set_memory_config("test_key", "test_val")
+        config = tmp_db.get_memory_config()
+        assert config["test_key"] == "test_val"
+
+    def test_add_entity_memory(self, tmp_db, sample_ai_entity):
+        tmp_db.add_entity_memory("mem1", sample_ai_entity, "Remember this")
+        tmp_db.set_entity_memory_embedding("mem1", b"\x00" * 16)
+        memories = tmp_db.get_entity_memories_with_embeddings(sample_ai_entity)
+        assert len(memories) == 1
+        assert memories[0]["content"] == "Remember this"
+
+    def test_delete_entity_memory(self, tmp_db, sample_ai_entity):
+        tmp_db.add_entity_memory("mem2", sample_ai_entity, "Forget this")
+        result = tmp_db.delete_entity_memory("mem2", sample_ai_entity)
+        assert result is True
+
+    def test_delete_nonexistent_memory(self, tmp_db, sample_ai_entity):
+        result = tmp_db.delete_entity_memory("nope", sample_ai_entity)
+        assert result is False
+
+    def test_message_embedding(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        mid = tmp_db.add_message(did, sample_ai_entity, "test msg", "participant", 1)
+        unindexed = tmp_db.get_unindexed_message_ids(did)
+        assert str(mid) in unindexed
+        tmp_db.set_message_embedding(str(mid), b"\x00" * 16)
+        unindexed_after = tmp_db.get_unindexed_message_ids(did)
+        assert str(mid) not in unindexed_after
+
+    def test_get_message_content(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        mid = tmp_db.add_message(did, sample_ai_entity, "hello", "participant", 1)
+        assert tmp_db.get_message_content(str(mid)) == "hello"
+        assert tmp_db.get_message_content("99999") is None
+
+    def test_get_messages_with_embeddings(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        mid = tmp_db.add_message(did, sample_ai_entity, "test", "participant", 1)
+        tmp_db.set_message_embedding(str(mid), b"\x00" * 16)
+        results = tmp_db.get_messages_with_embeddings()
+        assert len(results) >= 1
+        assert results[0]["content"] == "test"
+
+    def test_get_messages_with_embeddings_topic_filter(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("Unique Topic XYZ", sample_ai_entity)
+        mid = tmp_db.add_message(did, sample_ai_entity, "test", "participant", 1)
+        tmp_db.set_message_embedding(str(mid), b"\x00" * 16)
+        results = tmp_db.get_messages_with_embeddings(topic_filter="Unique Topic")
+        assert len(results) >= 1
+        results_empty = tmp_db.get_messages_with_embeddings(topic_filter="NoMatch")
+        assert len(results_empty) == 0
+
+    def test_kg_node_upsert_and_get(self, tmp_db):
+        tmp_db.upsert_kg_node("n1", "free will", "concept", "The ability to choose")
+        node = tmp_db.get_kg_node_by_label("free will")
+        assert node is not None
+        assert node["description"] == "The ability to choose"
+
+    def test_kg_node_not_found(self, tmp_db):
+        assert tmp_db.get_kg_node_by_label("nonexistent") is None
+
+    def test_kg_edge_and_neighbors(self, tmp_db):
+        tmp_db.upsert_kg_node("n1", "A", "concept")
+        tmp_db.upsert_kg_node("n2", "B", "concept")
+        tmp_db.add_kg_edge("e1", "n1", "n2", "supports")
+        neighbors = tmp_db.get_kg_neighbors("n1")
+        assert len(neighbors) == 1
+        assert neighbors[0]["label"] == "B"
+        assert neighbors[0]["relation"] == "supports"
+        assert neighbors[0]["direction"] == "out"
+        # Reverse direction
+        neighbors_rev = tmp_db.get_kg_neighbors("n2")
+        assert len(neighbors_rev) == 1
+        assert neighbors_rev[0]["direction"] == "in"
+
+    def test_kg_nodes_with_embeddings(self, tmp_db):
+        tmp_db.upsert_kg_node("n1", "test_node", "concept")
+        tmp_db.set_kg_node_embedding("n1", b"\x00" * 16)
+        nodes = tmp_db.get_kg_nodes_with_embeddings()
+        assert len(nodes) >= 1
+        assert nodes[0]["label"] == "test_node"
