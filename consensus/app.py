@@ -682,7 +682,26 @@ class ConsensusApp:
             return result
         except Exception as e:
             logger.exception("AI generation failed for %s", current.name)
-            return {"error": f"AI generation failed: {e}"}
+            # Post a visible notification so the moderator/participants
+            # know this participant was skipped due to an API error.
+            error_notice = (
+                f"*{current.name} could not respond due to an API error "
+                f"({type(e).__name__}). Skipping to the next participant.*"
+            )
+            msg = Message(
+                entity_id=current.id, entity_name=current.name,
+                content=error_notice, role=MessageRole.PARTICIPANT,
+            )
+            self.discussion.messages.append(msg)
+            self.db.add_message(
+                self.discussion.id, current.id, error_notice, "participant",
+                turn_number=self.discussion.turn_number,
+            )
+            self._notify()
+            result = msg.to_dict()
+            result["error"] = str(e)
+            result["skipped"] = True
+            return result
 
     async def complete_turn(self, moderator_summary: str = "") -> dict:
         """Complete the current turn: generate or accept summary, advance turn order."""

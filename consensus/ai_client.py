@@ -1,5 +1,6 @@
 """OpenAI-compatible API client using httpx."""
 
+import asyncio
 import json
 import logging
 import re
@@ -14,6 +15,11 @@ logger = logging.getLogger(__name__)
 
 # Default timeout for API requests (seconds)
 DEFAULT_API_TIMEOUT = 120.0
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 1.0  # seconds — doubles each retry
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 # Regex patterns for DeepSeek DSML tool-call markup that some models
 # (notably deepseek-reasoner) emit as plain text instead of structured
@@ -138,6 +144,59 @@ class AIClient:
             return {"max_completion_tokens": max_tokens}
         return {"max_tokens": max_tokens}
 
+    async def _post_with_retry(
+        self, url: str, payload: dict, model: str,
+    ) -> httpx.Response:
+        """POST with exponential backoff for retryable errors."""
+        client = self._get_client()
+        last_exc: Optional[Exception] = None
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = await client.post(url, json=payload)
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                last_exc = exc
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    logger.warning(
+                        "Request to %s failed (attempt %d/%d): %s. "
+                        "Retrying in %.1fs...",
+                        model, attempt + 1, MAX_RETRIES, exc, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise
+
+            if response.status_code in RETRYABLE_STATUS_CODES:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                # Respect Retry-After header if present
+                retry_after = response.headers.get("retry-after")
+                if retry_after:
+                    try:
+                        delay = max(delay, float(retry_after))
+                    except ValueError:
+                        pass
+                logger.warning(
+                    "API returned %d for model %s (attempt %d/%d). "
+                    "Retrying in %.1fs...",
+                    response.status_code, model,
+                    attempt + 1, MAX_RETRIES, delay,
+                )
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(delay)
+                    continue
+
+            if response.status_code >= 400:
+                logger.error(
+                    "API error %s for model %s: %s",
+                    response.status_code, model, response.text,
+                )
+            return response
+
+        # All retries exhausted with retryable status — return last response
+        # so caller gets the proper HTTPStatusError
+        return response  # type: ignore[possibly-undefined]
+
     def _get_client(self) -> httpx.AsyncClient:
         """Return the shared AsyncClient, creating it lazily."""
         if self._client is None or self._client.is_closed:
@@ -220,17 +279,10 @@ class AIClient:
             **self._max_tokens_param(max_tokens),
         }
 
-        client = self._get_client()
         start = time.monotonic()
-        response = await client.post(
-            f"{self.base_url}/chat/completions",
-            json=payload,
+        response = await self._post_with_retry(
+            f"{self.base_url}/chat/completions", payload, model,
         )
-        if response.status_code >= 400:
-            logger.error(
-                "API error %s for model %s: %s",
-                response.status_code, model, response.text,
-            )
         response.raise_for_status()
         data = response.json()
         elapsed = int((time.monotonic() - start) * 1000)
@@ -270,17 +322,10 @@ class AIClient:
         if tools:
             payload["tools"] = tools
 
-        client = self._get_client()
         start = time.monotonic()
-        response = await client.post(
-            f"{self.base_url}/chat/completions",
-            json=payload,
+        response = await self._post_with_retry(
+            f"{self.base_url}/chat/completions", payload, model,
         )
-        if response.status_code >= 400:
-            logger.error(
-                "API error %s for model %s: %s",
-                response.status_code, model, response.text,
-            )
         response.raise_for_status()
         data = response.json()
         elapsed = int((time.monotonic() - start) * 1000)

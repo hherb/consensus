@@ -1858,7 +1858,8 @@ async function processCurrentTurn() {
             showTypingIndicator(speaker.name);
             renderDiscussion();
             const result = await api.generateAiTurn();
-            if (result?.error) { showToast(result.error); break; }
+            if (result?.error && !result?.skipped) { showToast(result.error); break; }
+            if (result?.skipped) showToast(`${speaker.name} skipped due to API error`, 5000, 'warning');
             if (result?.warning) showToast(result.warning, 5000, 'info');
             onStateUpdate(await api.getState());
             renderDiscussion();
