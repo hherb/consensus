@@ -37,6 +37,7 @@ class DesktopBridge:
         self._loop = asyncio.new_event_loop()
         threading.Thread(target=self._loop.run_forever, daemon=True).start()
         app.set_update_callback(self._push_state)
+        app.on("tool_progress", self._push_progress)
 
     def _push_state(self, state: dict) -> None:
         """Push state updates to the frontend via evaluate_js."""
@@ -49,6 +50,16 @@ class DesktopBridge:
                 self._window.evaluate_js(js)
             except Exception:
                 logger.debug("Failed to push state to webview", exc_info=True)
+
+    def _push_progress(self, data: dict) -> None:
+        """Forward tool progress events to the JS frontend."""
+        if self._window is None:
+            return
+        try:
+            payload = json.dumps(data)
+            self._window.evaluate_js(f"if(window.onToolProgress) onToolProgress({payload})")
+        except Exception:
+            logger.debug("Failed to push progress event")
 
     def _run_async(self, coro: object) -> object:
         """Run an async coroutine on the background event loop and block for result."""
@@ -210,6 +221,42 @@ class DesktopBridge:
         return self.app.set_discussion_tool_override(
             discussion_id, entity_id, tool_name, enabled,
         )
+
+    # -- MCP servers --
+    def get_mcp_servers(self) -> list:
+        """List all configured MCP servers."""
+        return self.app.get_mcp_servers()
+
+    def add_mcp_server(self, name, description, command, args=None, env=None) -> dict:
+        """Add a new MCP server configuration."""
+        return self.app.add_mcp_server(name, description, command, args, env)
+
+    def update_mcp_server(self, server_id, **kwargs) -> bool:
+        """Update an existing MCP server configuration."""
+        return self.app.update_mcp_server(server_id, **kwargs)
+
+    def delete_mcp_server(self, server_id) -> bool:
+        """Delete an MCP server configuration."""
+        return self.app.delete_mcp_server(server_id)
+
+    def test_mcp_connection(self, server_id) -> dict:
+        """Test connectivity to an MCP server."""
+        return self._run_async(self.app.test_mcp_connection(server_id))
+
+    # -- Experts --
+    def save_expert_definition(self, entity_id, mcp_server_id, tool_name,
+                               description="", default_arguments=None, timeout_seconds=300) -> dict:
+        """Save an expert definition linking an entity to an MCP tool."""
+        return self.app.save_expert_definition(entity_id, mcp_server_id, tool_name,
+                                                description, default_arguments, timeout_seconds)
+
+    def get_expert_definitions(self) -> list:
+        """List all expert definitions."""
+        return self.app.get_expert_definitions()
+
+    def consult_expert(self, expert_name, query) -> dict:
+        """Consult an expert by name with a query."""
+        return self._run_async(self.app.consult_expert(expert_name, query))
 
     # -- Memory config --
     def get_memory_config(self) -> dict:
