@@ -14,6 +14,18 @@ logger = logging.getLogger(__name__)
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 PRICING_MAX_AGE_SECONDS = 7 * 24 * 3600  # 1 week
 
+# Aliases: provider model names that differ from OpenRouter's naming
+# Format: "provider-model-name" → "openrouter/model-id"
+_MODEL_ALIASES = {
+    "deepseek-reasoner": "deepseek/deepseek-r1",
+    "deepseek-chat": "deepseek/deepseek-chat",
+    "mistral-large-latest": "mistralai/mistral-large",
+    "mistral-medium-latest": "mistralai/mistral-medium-3",
+    "mistral-small-latest": "mistralai/mistral-small-3.2-24b-instruct",
+    "codestral-latest": "mistralai/codestral-2508",
+    "open-mistral-nemo": "mistralai/mistral-nemo",
+}
+
 # Map base_url hostnames to OpenRouter provider prefixes for disambiguation
 _HOST_TO_PROVIDER = {
     "api.openai.com": "openai",
@@ -109,6 +121,18 @@ class PricingCache:
         """
         # Strip date suffixes (e.g. "claude-opus-4-6-20250605" → "claude-opus-4-6")
         model_name = _strip_date_suffix(model_name)
+
+        # Check alias table (e.g. "deepseek-reasoner" → "deepseek/deepseek-r1")
+        alias = _MODEL_ALIASES.get(model_name)
+        if alias:
+            cur = self._conn.execute(
+                "SELECT prompt_cost, completion_cost FROM model_pricing "
+                "WHERE model_id = ?",
+                (alias,),
+            )
+            row = cur.fetchone()
+            if row:
+                return (row[0], row[1])
 
         # Try exact match first (user might use full OpenRouter ID)
         cur = self._conn.execute(
