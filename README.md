@@ -12,6 +12,8 @@ A moderated discussion platform where two or more entities (humans and/or AI via
 - **Turn-based discussions** between any mix of human and AI participants
 - **Designated moderator** (human or AI) that summarizes after each turn, mediates conflicts, and produces final synthesis
 - **Automatic turn rotation** with manual reassignment option
+- **Max rounds limit** — set a maximum number of rounds (auto-concludes when reached, 0 = unlimited)
+- **Devil's Advocate role** — assign participants a constructive-critic role with dedicated prompt templates that challenge assumptions and identify weaknesses
 - **Storyboard panel** showing running summaries and conclusions alongside the conversation
 - **AI-to-AI conversations** run automatically without manual intervention
 - **Context-aware AI responses** with configurable context window (last N messages)
@@ -25,6 +27,7 @@ A moderated discussion platform where two or more entities (humans and/or AI via
 - **Dynamic model discovery** — automatically fetches available models from each provider
 - **Per-entity configuration** — temperature, max tokens, and custom system prompts per participant
 - **Secure API key handling** — keys referenced by environment variable name, never stored on disk
+- **Retry with exponential backoff** — transient API failures (429, 5xx, timeouts) retry up to 3 times with backoff; failed participants are skipped gracefully
 
 ### Institutional Memory (Optional)
 - **Long-term personal memory** — AI entities store and recall observations, positions, and insights across discussions
@@ -49,6 +52,7 @@ A moderated discussion platform where two or more entities (humans and/or AI via
 
 ### Persistence & History
 - **SQLite database** with thread-safe concurrent access (WAL mode)
+- **File-based migration system** — versioned SQL migrations in `consensus/migrations/`, tracked in a `migrations` table, run idempotently on startup
 - **Platform-aware storage** — macOS: `~/Library/Application Support/consensus/`, Linux: `~/.local/share/consensus/`, Windows: `%APPDATA%/consensus/`
 - **Full discussion history** — browse, load, and review past discussions
 - **Message metadata** — model name, token counts, latency tracking per AI response
@@ -76,6 +80,15 @@ A moderated discussion platform where two or more entities (humans and/or AI via
 - **CSRF protection** — Content-Type enforcement on all POST endpoints
 - **Brute-force protection** — per-email rate limiting (5 attempts per 5-minute window)
 - **Login/register UI** with OAuth provider buttons and form validation
+
+### Evaluation Framework
+- **Ablation study platform** for testing multi-agent discussion configurations against medical case vignettes
+- **10 seed cases** with gold diagnoses, key findings, and differential diagnoses
+- **5 ablation conditions** — progressively complex setups from baseline single-agent to full multi-agent with Devil's Advocate, memory, and tools
+- **Batch runner** with automated scoring (string-match + optional LLM-judge)
+- **Per-participant provider/model overrides** — mix different AI backends within a single evaluation run
+- **Web UI** at `/eval/` for case management, condition editing, batch execution, and results analysis
+- Accessible from both desktop mode (opens in browser) and web mode
 
 ### Multi-User Deployment
 - **Session isolation** — each browser session gets its own `ConsensusApp` instance and SQLite database
@@ -170,7 +183,9 @@ Frontend (static HTML/CSS/JS)
 ConsensusApp — orchestrator, state management
     ├── Moderator — turn flow, AI generation, summaries
     ├── AIClient — async OpenAI-compatible HTTP client (httpx)
-    └── Database — thread-safe SQLite persistence
+    ├── Database — thread-safe SQLite persistence
+    ├── Migrator — file-based SQL migration runner
+    └── Evaluation — ablation study framework (cases, runner, scorer)
 
 Multi-user mode:
     SessionManager (session.py)
