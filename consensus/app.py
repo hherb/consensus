@@ -48,6 +48,7 @@ class ConsensusApp:
             tool_registry=self.tool_registry,
         )
         self._on_update: Optional[Callable] = None
+        self._event_listeners: dict[str, list[Callable]] = {}
         self.memory_available = False
         self._init_builtin_tools()
         self._init_memory_tools()
@@ -126,6 +127,28 @@ class ConsensusApp:
         """Push current state to the registered update callback."""
         if self._on_update:
             self._on_update(self.get_state())
+
+    # ------------------------------------------------------------------
+    # Event emitter
+    # ------------------------------------------------------------------
+
+    def on(self, event_type: str, callback: Callable) -> None:
+        """Subscribe to an event type."""
+        self._event_listeners.setdefault(event_type, []).append(callback)
+
+    def off(self, event_type: str, callback: Callable) -> None:
+        """Unsubscribe from an event type."""
+        listeners = self._event_listeners.get(event_type, [])
+        if callback in listeners:
+            listeners.remove(callback)
+
+    def emit(self, event_type: str, data: dict) -> None:
+        """Emit an event to all subscribers."""
+        for cb in self._event_listeners.get(event_type, []):
+            try:
+                cb(data)
+            except Exception:
+                logger.exception("Event listener error for %s", event_type)
 
     # ------------------------------------------------------------------
     # State for the frontend

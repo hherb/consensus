@@ -353,6 +353,37 @@ class TestUpdateCallback:
 
 # --- Provider management ---
 
+# --- Event emitter ---
+
+class TestEventEmitter:
+    def test_emit_calls_subscriber(self, app):
+        received = []
+        app.on("tool_progress", lambda data: received.append(data))
+        app.emit("tool_progress", {"message": "Searching..."})
+        assert len(received) == 1
+        assert received[0]["message"] == "Searching..."
+
+    def test_multiple_subscribers(self, app):
+        a, b = [], []
+        app.on("tool_progress", lambda d: a.append(d))
+        app.on("tool_progress", lambda d: b.append(d))
+        app.emit("tool_progress", {"x": 1})
+        assert len(a) == 1 and len(b) == 1
+
+    def test_off_removes_subscriber(self, app):
+        received = []
+        cb = lambda d: received.append(d)
+        app.on("tool_progress", cb)
+        app.off("tool_progress", cb)
+        app.emit("tool_progress", {"x": 1})
+        assert len(received) == 0
+
+    def test_emit_unknown_event_no_error(self, app):
+        app.emit("nonexistent", {})  # should not raise
+
+
+# --- Provider management ---
+
 class TestProviderManagement:
     def test_provider_redacts_api_key_env(self, app):
         pid = app.db.add_provider("P", "http://x", "SECRET_KEY")
