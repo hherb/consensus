@@ -1178,6 +1178,14 @@ async function setDevilsAdvocate(entityId) {
 // Discussion Phase Rendering
 // ============================================================
 
+function calculateDiscussionCost(messages) {
+    let total = 0;
+    for (const m of messages) {
+        if (m.cost != null) total += m.cost;
+    }
+    return total;
+}
+
 function renderDiscussion() {
     $('#discussion-topic').textContent = state.topic;
     const speaker = getEntity(state.current_speaker_id);
@@ -1196,6 +1204,12 @@ function renderDiscussion() {
         badge.className = 'badge';
     } else {
         badge.textContent = '';
+    }
+    // Update discussion cost total
+    const costEl = $('#cost-badge');
+    if (costEl) {
+        const totalCost = calculateDiscussionCost(state.messages);
+        costEl.textContent = totalCost > 0 ? `Cost: $${totalCost.toFixed(2)}` : '';
     }
     // Show/hide pause/resume and other controls based on status
     if (state.status === 'active') {
@@ -1279,7 +1293,8 @@ function renderNewMessages() {
 
         let metaHtml = '';
         if (msg.model_used) {
-            metaHtml = `<span class="text-muted" style="font-size:0.7rem;margin-left:0.5rem">${msg.model_used} | ${msg.total_tokens}tok | ${msg.latency_ms}ms</span>`;
+            const costStr = msg.cost != null ? ` | $${msg.cost.toFixed(4)}` : '';
+            metaHtml = `<span class="text-muted" style="font-size:0.7rem;margin-left:0.5rem">${msg.model_used} | ${msg.total_tokens}tok | ${msg.latency_ms}ms${costStr}</span>`;
         }
 
         let toolCallsHtml = '';
@@ -1426,6 +1441,7 @@ function buildExportData(exportState) {
                     prompt_tokens: m.prompt_tokens,
                     completion_tokens: m.completion_tokens,
                     latency_ms: m.latency_ms,
+                    cost: m.cost,
                 };
             } else {
                 msg.ai_metadata = null;
@@ -1494,7 +1510,8 @@ function buildExportHtml(exportState) {
         const initials = getInitials(m.entity_name);
         let metaHtml = '';
         if (m.model_used) {
-            metaHtml = `<span class="meta">${escHtml(m.model_used)} | ${m.total_tokens}tok | ${m.latency_ms}ms</span>`;
+            const costStr = m.cost != null ? ` | $${m.cost.toFixed(4)}` : '';
+            metaHtml = `<span class="meta">${escHtml(m.model_used)} | ${m.total_tokens}tok | ${m.latency_ms}ms${costStr}</span>`;
         }
         const cls = isMod ? 'message moderator' : isSystem ? 'message system' : 'message';
         const borderStyle = !isMod && !isSystem ? `border-left-color:${color};` : '';
@@ -1602,7 +1619,7 @@ section > h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; padding
 <body>
 <div class="export-header">
     <h1>${escHtml(s.topic)}<span class="status ${statusText.toLowerCase()}">${statusText}</span></h1>
-    <div class="subtitle">Exported from Consensus on ${exportDate}</div>
+    <div class="subtitle">Exported from Consensus on ${exportDate}${(() => { const tc = calculateDiscussionCost(s.messages); return tc > 0 ? ` | Total cost: $${tc.toFixed(2)}` : ''; })()}</div>
 </div>
 
 <section>
