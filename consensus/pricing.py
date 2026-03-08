@@ -107,6 +107,9 @@ class PricingCache:
         If base_url is provided, uses it to disambiguate.
         Returns None if no match found.
         """
+        # Strip date suffixes (e.g. "claude-opus-4-6-20250605" → "claude-opus-4-6")
+        model_name = _strip_date_suffix(model_name)
+
         # Try exact match first (user might use full OpenRouter ID)
         cur = self._conn.execute(
             "SELECT prompt_cost, completion_cost FROM model_pricing "
@@ -117,23 +120,32 @@ class PricingCache:
         if row:
             return (row[0], row[1])
 
-        # Fuzzy match: find all entries ending with /model_name
-        cur = self._conn.execute(
-            "SELECT model_id, prompt_cost, completion_cost "
-            "FROM model_pricing WHERE model_id LIKE ?",
-            (f"%/{model_name}",),
-        )
-        matches = cur.fetchall()
+        # Build list of name variants to try (handles hyphen vs dot in
+        # version suffixes, e.g. "claude-opus-4-6" → "claude-opus-4.6")
+        variants = [model_name] + _version_variants(model_name)
 
-        if not matches:
-            # Try matching just the model part (strip version suffixes etc)
-            # e.g. "gpt-4o" should match "openai/gpt-4o-2024-08-06"
+        matches = []
+        for name in variants:
             cur = self._conn.execute(
                 "SELECT model_id, prompt_cost, completion_cost "
                 "FROM model_pricing WHERE model_id LIKE ?",
-                (f"%/{model_name}%",),
+                (f"%/{name}",),
             )
             matches = cur.fetchall()
+            if matches:
+                break
+
+        if not matches:
+            # Try prefix matching (e.g. "gpt-4o" matches "openai/gpt-4o-2024-08-06")
+            for name in variants:
+                cur = self._conn.execute(
+                    "SELECT model_id, prompt_cost, completion_cost "
+                    "FROM model_pricing WHERE model_id LIKE ?",
+                    (f"%/{name}%",),
+                )
+                matches = cur.fetchall()
+                if matches:
+                    break
 
         if not matches:
             return None
@@ -165,6 +177,31 @@ class PricingCache:
         prompt_cost, completion_cost = pricing
         return (prompt_tokens * prompt_cost) + \
                (completion_tokens * completion_cost)
+
+
+def _strip_date_suffix(model_name: str) -> str:
+    """Strip trailing date suffixes like -20250605 from model names."""
+    import re
+    return re.sub(r'-\d{8}$', '', model_name)
+
+
+def _version_variants(model_name: str) -> list[str]:
+    """Generate naming variants for version suffixes.
+
+    Anthropic's API returns hyphens (claude-opus-4-6) while OpenRouter
+    uses dots (claude-opus-4.6). Generate the alternate form.
+    """
+    import re
+    # "claude-opus-4-6" → "claude-opus-4.6"
+    dot_variant = re.sub(r'-(\d+)$', r'.\1', model_name)
+    # "claude-opus-4.6" → "claude-opus-4-6"
+    hyphen_variant = re.sub(r'\.(\d+)$', r'-\1', model_name)
+    variants = []
+    if dot_variant != model_name:
+        variants.append(dot_variant)
+    if hyphen_variant != model_name:
+        variants.append(hyphen_variant)
+    return variants
 
 
 def _parse_cost(value: object) -> float:
