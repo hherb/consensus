@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Consensus Evaluation</title>
+    <link rel="stylesheet" href="eval_style.css">
+</head>
+<body>
+<div id="app">
+
+    <!-- Header -->
+    <div class="header">
+        <h1>Consensus Evaluation</h1>
+        <a href="/">&larr; Back to Consensus</a>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="tab-bar">
+        <button class="tab active" data-tab="cases">Cases</button>
+        <button class="tab" data-tab="conditions">Conditions</button>
+        <button class="tab" data-tab="dashboard">Dashboard</button>
+        <button class="tab" data-tab="results">Results</button>
+    </div>
+
+    <!-- Tab: Cases -->
+    <div id="tab-cases" class="tab-content">
+        <div class="toolbar">
+            <h2>Case Vignettes</h2>
+            <button class="btn btn-primary" data-action="add-case">+ Add Case</button>
+        </div>
+        <div id="cases-list"></div>
+    </div>
+
+    <!-- Tab: Conditions -->
+    <div id="tab-conditions" class="tab-content hidden">
+        <div class="toolbar">
+            <h2>Evaluation Conditions</h2>
+            <button class="btn btn-primary" data-action="add-condition">+ Add Condition</button>
+        </div>
+        <div id="conditions-list"></div>
+    </div>
+
+    <!-- Tab: Dashboard -->
+    <div id="tab-dashboard" class="tab-content hidden">
+        <h2>Run Evaluation</h2>
+        <div class="card" style="margin-bottom: 1rem;">
+            <h3>Provider Configuration</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="dash-provider-url">Provider URL</label>
+                    <input type="text" id="dash-provider-url" value="http://localhost:11434/v1"
+                           placeholder="OpenAI-compatible API base URL">
+                </div>
+                <div class="form-group">
+                    <label for="dash-model">Model</label>
+                    <input type="text" id="dash-model" value="llama3" placeholder="Model name">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="dash-api-key">API Key</label>
+                <input type="password" id="dash-api-key" placeholder="Optional — stored in session only, never persisted">
+                <div class="hint">Stored in browser sessionStorage only. Never sent to the server for storage.</div>
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+            <div class="card" style="flex: 1;">
+                <h3>Select Cases</h3>
+                <div class="checklist-actions">
+                    <button class="btn btn-sm btn-ghost" data-action="select-all-cases">All</button>
+                    <button class="btn btn-sm btn-ghost" data-action="select-no-cases">None</button>
+                </div>
+                <div id="dash-cases-checklist" class="checklist"></div>
+            </div>
+            <div class="card" style="flex: 1;">
+                <h3>Select Conditions</h3>
+                <div class="checklist-actions">
+                    <button class="btn btn-sm btn-ghost" data-action="select-all-conditions">All</button>
+                    <button class="btn btn-sm btn-ghost" data-action="select-no-conditions">None</button>
+                </div>
+                <div id="dash-conditions-checklist" class="checklist"></div>
+            </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+            <button id="run-eval-btn" class="btn btn-primary btn-large" data-action="run-evaluation">
+                Run Evaluation
+            </button>
+            <button id="cancel-eval-btn" class="btn btn-danger hidden" data-action="cancel-evaluation">
+                Cancel
+            </button>
+            <span id="dash-status" class="text-muted"></span>
+        </div>
+
+        <div id="dash-progress" class="hidden">
+            <div class="progress-bar"><div class="progress-fill" id="dash-progress-fill" style="width: 0%"></div></div>
+            <div id="dash-progress-text" class="text-muted"></div>
+        </div>
+    </div>
+
+    <!-- Tab: Results -->
+    <div id="tab-results" class="tab-content hidden">
+        <div class="toolbar">
+            <h2>Results</h2>
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <label for="results-batch-select" class="text-secondary" style="font-size: 0.85rem;">Batch:</label>
+                <select id="results-batch-select" style="width: auto; min-width: 15rem;"></select>
+            </div>
+        </div>
+        <div id="results-summary"></div>
+        <div id="results-detail" style="margin-top: 1.5rem;"></div>
+    </div>
+
+</div><!-- /app -->
+
+<!-- Case Dialog -->
+<div id="case-dialog" class="dialog-overlay hidden">
+    <div class="dialog">
+        <h3 id="case-dialog-title">Add Case</h3>
+        <input type="hidden" id="case-edit-id" value="">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="case-key">Case Key</label>
+                <input type="text" id="case-key" placeholder="e.g. eval-011">
+            </div>
+            <div class="form-group">
+                <label for="case-difficulty">Difficulty</label>
+                <select id="case-difficulty">
+                    <option value="easy">Easy</option>
+                    <option value="moderate" selected>Moderate</option>
+                    <option value="hard">Hard</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="case-title">Title</label>
+            <input type="text" id="case-title" placeholder="Short descriptive title">
+        </div>
+        <div class="form-group">
+            <label for="case-presentation">Clinical Presentation</label>
+            <textarea id="case-presentation" rows="8" placeholder="Full case vignette..."></textarea>
+        </div>
+        <div class="form-group">
+            <label for="case-gold">Gold Standard Diagnosis</label>
+            <input type="text" id="case-gold" placeholder="Confirmed correct diagnosis">
+        </div>
+        <div class="form-group">
+            <label for="case-aliases">Acceptable Aliases (one per line)</label>
+            <textarea id="case-aliases" rows="3" placeholder="SLE&#10;lupus&#10;systemic lupus"></textarea>
+        </div>
+        <div class="form-group">
+            <label for="case-findings">Key Findings (one per line)</label>
+            <textarea id="case-findings" rows="4" placeholder="Malar rash&#10;Positive ANA&#10;..."></textarea>
+        </div>
+        <div class="form-group">
+            <label for="case-differentials">Differential Diagnoses (one per line)</label>
+            <textarea id="case-differentials" rows="3" placeholder="Rheumatoid arthritis&#10;Mixed connective tissue disease&#10;..."></textarea>
+        </div>
+        <div class="form-group">
+            <label for="case-source">Source</label>
+            <input type="text" id="case-source" placeholder="e.g. NEJM Case Records, Classic teaching case">
+        </div>
+        <div class="dialog-actions">
+            <button class="btn btn-ghost" data-action="cancel-case-dialog">Cancel</button>
+            <button class="btn btn-primary" data-action="confirm-case">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- Condition Dialog -->
+<div id="condition-dialog" class="dialog-overlay hidden">
+    <div class="dialog">
+        <h3 id="condition-dialog-title">Add Condition</h3>
+        <input type="hidden" id="cond-edit-id" value="">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="cond-name">Name</label>
+                <input type="text" id="cond-name" placeholder="e.g. multi_agent_da">
+            </div>
+            <div class="form-group">
+                <label for="cond-rounds">Rounds</label>
+                <input type="number" id="cond-rounds" value="2" min="1" max="10">
+            </div>
+        </div>
+        <div class="form-group">
+            <label for="cond-description">Description</label>
+            <input type="text" id="cond-description" placeholder="Brief description of this condition">
+        </div>
+        <div class="form-group" style="display: flex; gap: 1.5rem;">
+            <label class="checkbox-label">
+                <input type="checkbox" id="cond-da"> Devil's Advocate
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="cond-memory"> Memory Tools
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="cond-tools"> Web Search
+            </label>
+        </div>
+        <div class="form-group">
+            <label>Participants</label>
+            <div id="cond-participants"></div>
+            <button class="btn btn-sm btn-outline" data-action="add-participant" style="margin-top: 0.5rem;">
+                + Add Participant
+            </button>
+        </div>
+        <div class="dialog-actions">
+            <button class="btn btn-ghost" data-action="cancel-condition-dialog">Cancel</button>
+            <button class="btn btn-primary" data-action="confirm-condition">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- Run Detail Dialog -->
+<div id="run-dialog" class="dialog-overlay hidden">
+    <div class="dialog">
+        <h3 id="run-dialog-title">Run Detail</h3>
+        <div id="run-dialog-content"></div>
+        <div class="dialog-actions">
+            <button class="btn btn-ghost" data-action="close-run-dialog">Close</button>
+        </div>
+    </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="eval.js"></script>
+</body>
+</html>
