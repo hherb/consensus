@@ -68,12 +68,17 @@ def _discover_migrations(migrations_dir: str) -> list[tuple[int, str, str]]:
 
 def run_migrations(conn: sqlite3.Connection,
                    lock: threading.Lock,
-                   db_path: str) -> None:
-    """Apply any pending SQL migrations from consensus/migrations/.
+                   db_path: str,
+                   migrations_dir: str = "") -> None:
+    """Apply any pending SQL migrations.
 
     Idempotent: tracks applied versions in a `migrations` table.
     Single-execution guard: skips if already run for this db_path
     in the current process.
+
+    Args:
+        migrations_dir: Directory containing .sql migration files.
+            Defaults to consensus/migrations/ if not provided.
 
     For existing databases with the legacy `schema_version` table,
     stamps baseline version 001 as applied and drops the old table.
@@ -88,7 +93,8 @@ def run_migrations(conn: sqlite3.Connection,
         _stamp_baseline(conn, lock)
 
     applied = _get_applied_versions(conn)
-    migrations_dir = _get_migrations_dir()
+    if not migrations_dir:
+        migrations_dir = _get_migrations_dir()
     pending = [
         (v, name, path)
         for v, name, path in _discover_migrations(migrations_dir)

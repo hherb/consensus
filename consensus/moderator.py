@@ -277,10 +277,25 @@ class Moderator:
                     tool_calls=all_tool_records,
                 )
 
-            # Append assistant message with tool_calls to context
-            messages.append(msg_dict)
+            # Detect whether tool calls came from DSML parsing (flag set
+            # by ai_client when it promotes DSML markup to tool_calls).
+            is_dsml = msg_dict.pop("_dsml_tool_calls", False)
+
+            # Append assistant message to context.  For DSML models we
+            # must NOT include the synthetic tool_calls field — the model
+            # doesn't understand OpenAI-format tool_calls in its history.
+            if is_dsml:
+                # Keep only content (already DSML-stripped) for the
+                # assistant turn; drop the synthetic tool_calls.
+                messages.append({
+                    "role": "assistant",
+                    "content": msg_dict.get("content", ""),
+                })
+            else:
+                messages.append(msg_dict)
 
             # Execute each tool call
+            tool_results_for_dsml: list[str] = []
             for tc in api_tool_calls:
                 func = tc.get("function", {})
                 tool_name = func.get("name", "")
@@ -308,11 +323,30 @@ class Moderator:
                     latency_ms=tool_latency,
                 ))
 
-                # Append tool result message to context
+                if is_dsml:
+                    # Collect results to send as a single user message
+                    status = "ERROR" if tool_result.is_error else "OK"
+                    tool_results_for_dsml.append(
+                        f"[Tool: {tool_name}] ({status})\n{tool_result.content}"
+                    )
+                else:
+                    # Standard OpenAI tool result message
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": tool_result.content,
+                    })
+
+            # For DSML models, deliver all tool results as a user message
+            # since they don't understand role:"tool" messages.
+            if is_dsml and tool_results_for_dsml:
                 messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.get("id", ""),
-                    "content": tool_result.content,
+                    "role": "user",
+                    "content": (
+                        "Here are the results of the tool calls you requested. "
+                        "Use this information to formulate your response:\n\n"
+                        + "\n\n".join(tool_results_for_dsml)
+                    ),
                 })
 
         # Should not reach here, but return what we have

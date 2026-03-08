@@ -800,6 +800,16 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     # API
     webapp.router.add_post("/api/{method}", handle_api)
 
+    # Evaluation UI routes (before catch-all)
+    try:
+        from evaluation.eval_db import EvalDatabase
+        from evaluation.eval_routes import register_eval_routes
+        eval_db = EvalDatabase()
+        register_eval_routes(webapp, eval_db)
+        logger.info("Evaluation UI available at /eval/")
+    except ImportError:
+        logger.debug("Evaluation module not available")
+
     # Static / SPA
     async def serve_index(request: web.Request) -> web.StreamResponse:
         return web.FileResponse(os.path.join(static_dir, "index.html"))

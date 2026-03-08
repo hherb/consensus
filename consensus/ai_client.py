@@ -2,7 +2,9 @@
 
 import json
 import logging
+import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
 
@@ -12,6 +14,68 @@ logger = logging.getLogger(__name__)
 
 # Default timeout for API requests (seconds)
 DEFAULT_API_TIMEOUT = 120.0
+
+# Regex patterns for DeepSeek DSML tool-call markup that some models
+# (notably deepseek-reasoner) emit as plain text instead of structured
+# tool_calls in the JSON response.
+_DSML_INVOKE_RE = re.compile(
+    r'<\uff5cDSML\uff5cinvoke\s+name="([^"]+)"\s*>(.*?)</\uff5cDSML\uff5cinvoke>',
+    re.DOTALL,
+)
+_DSML_PARAM_RE = re.compile(
+    r'<\uff5cDSML\uff5cparameter\s+name="([^"]+)"(?:\s+string="[^"]*")?\s*>'
+    r'(.*?)'
+    r'</\uff5cDSML\uff5cparameter>',
+    re.DOTALL,
+)
+_DSML_BLOCK_RE = re.compile(
+    r'<\uff5cDSML\uff5cfunction_calls>.*?</\uff5cDSML\uff5cfunction_calls>',
+    re.DOTALL,
+)
+
+
+def _parse_dsml_tool_calls(content: str) -> tuple[list[dict], str]:
+    """Extract DSML-formatted tool calls from content text.
+
+    Returns (tool_calls, remaining_content) where tool_calls is in OpenAI
+    format and remaining_content is the text with DSML blocks removed.
+    """
+    if '\uff5cDSML\uff5c' not in content:
+        return [], content
+
+    tool_calls = []
+    for match in _DSML_INVOKE_RE.finditer(content):
+        func_name = match.group(1)
+        body = match.group(2)
+        arguments = {}
+        for param_match in _DSML_PARAM_RE.finditer(body):
+            param_name = param_match.group(1)
+            param_value = param_match.group(2).strip()
+            # Try to parse as JSON value (numbers, booleans, etc.)
+            try:
+                arguments[param_name] = json.loads(param_value)
+            except (json.JSONDecodeError, ValueError):
+                arguments[param_name] = param_value
+
+        tool_calls.append({
+            "id": f"dsml_{uuid.uuid4().hex[:8]}",
+            "type": "function",
+            "function": {
+                "name": func_name,
+                "arguments": json.dumps(arguments),
+            },
+        })
+
+    if tool_calls:
+        logger.info(
+            "Parsed %d DSML tool call(s) from content: %s",
+            len(tool_calls),
+            [tc["function"]["name"] for tc in tool_calls],  # type: ignore[index]
+        )
+
+    # Remove DSML blocks from content
+    remaining = _DSML_BLOCK_RE.sub('', content).strip()
+    return tool_calls, remaining
 
 
 def _normalize_content(raw: object) -> str:
@@ -204,6 +268,16 @@ class AIClient:
         message = choice.get("message", {})
         message["content"] = _normalize_content(message.get("content"))
         usage = data.get("usage", {})
+
+        # Some models (e.g. deepseek-reasoner) emit tool calls as DSML
+        # markup in content instead of structured tool_calls.  Parse
+        # these and promote them so the caller's tool-execution loop works.
+        if not message.get("tool_calls") and message.get("content"):
+            dsml_calls, remaining = _parse_dsml_tool_calls(message["content"])
+            if dsml_calls:
+                message["tool_calls"] = dsml_calls
+                message["_dsml_tool_calls"] = True  # flag for caller
+                message["content"] = remaining
 
         return {
             "message": message,
