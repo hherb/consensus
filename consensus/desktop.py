@@ -153,9 +153,10 @@ class DesktopBridge:
         return self.app.set_topic(topic)
 
     # -- Discussion lifecycle --
-    def start_discussion(self, moderator_participates: bool = False) -> dict:
+    def start_discussion(self, moderator_participates: bool = False,
+                         max_rounds: int = 0) -> dict:
         """Start the discussion."""
-        return self.app.start_discussion(moderator_participates)
+        return self.app.start_discussion(moderator_participates, max_rounds)
 
     def submit_human_message(self, entity_id: int, content: str) -> dict:
         """Submit a message from a human participant."""

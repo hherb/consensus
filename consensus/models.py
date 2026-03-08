@@ -223,9 +223,17 @@ class Discussion:
     turn_order: list[int] = field(default_factory=list)
     current_turn_index: int = 0
     turn_number: int = 0
+    max_rounds: int = 0  # 0 = unlimited
     is_active: bool = False
     status: str = "setup"
     member_roles: dict[int, str] = field(default_factory=dict)
+
+    @property
+    def current_round(self) -> int:
+        """Current round number (1-based). A round = all participants speak once."""
+        if not self.turn_order:
+            return 0
+        return (self.turn_number - 1) // len(self.turn_order) + 1
 
     @property
     def moderator(self) -> Optional[Entity]:
@@ -263,6 +271,8 @@ class Discussion:
             "turn_order": self.turn_order,
             "current_turn_index": self.current_turn_index,
             "turn_number": self.turn_number,
+            "max_rounds": self.max_rounds,
+            "current_round": self.current_round,
             "is_active": self.is_active,
             "status": self.status,
             "is_paused": self.status == "paused",

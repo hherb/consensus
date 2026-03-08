@@ -468,7 +468,8 @@ class ConsensusApp:
     # Discussion lifecycle
     # ------------------------------------------------------------------
 
-    def start_discussion(self, moderator_participates: bool = False) -> dict:
+    def start_discussion(self, moderator_participates: bool = False,
+                         max_rounds: int = 0) -> dict:
         """Start a new discussion with the configured entities and topic."""
         if not self.discussion.topic:
             return {"error": "No topic set"}
@@ -536,8 +537,13 @@ class ConsensusApp:
 
         self.discussion.current_turn_index = 0
         self.discussion.turn_number = 1
+        self.discussion.max_rounds = max_rounds
         self.discussion.is_active = True
         self.discussion.status = "active"
+
+        # Persist max_rounds
+        if max_rounds > 0:
+            self.db.update_discussion(did, max_rounds=max_rounds)
 
         # Opening message from moderator
         target_type = "ai" if mod.entity_type == EntityType.AI else "human"
@@ -553,6 +559,14 @@ class ConsensusApp:
             open_prompt = (
                 f"Welcome to this discussion on: **{self.discussion.topic}**\n\n"
                 f"Let's begin."
+            )
+
+        if max_rounds > 0:
+            open_prompt += (
+                f"\n\n**Note:** This discussion is limited to "
+                f"**{max_rounds} round{'s' if max_rounds != 1 else ''}**. "
+                f"Please make your contributions count — be thorough and "
+                f"concise. A conclusion will be drawn after the final round."
             )
 
         opening = Message(
@@ -750,11 +764,24 @@ class ConsensusApp:
             self.discussion.messages.append(summary_msg)
 
         next_speaker = self.moderator.advance_turn()
+
+        # Check if max_rounds has been reached
+        max_r = self.discussion.max_rounds
+        if max_r > 0 and self.discussion.current_round > max_r:
+            self._notify()
+            return {
+                "max_rounds_reached": True,
+                "turn_number": self.discussion.turn_number,
+                "current_round": self.discussion.current_round,
+                "state": self.get_state(),
+            }
+
         self._notify()
 
         return {
             "next_speaker": next_speaker.to_dict() if next_speaker else None,
             "turn_number": self.discussion.turn_number,
+            "current_round": self.discussion.current_round,
             "state": self.get_state(),
         }
 
@@ -946,6 +973,7 @@ class ConsensusApp:
             turn_order=turn_order,
             current_turn_index=current_turn_index,
             turn_number=turn_number,
+            max_rounds=disc.get("max_rounds", 0),
             is_active=is_active,
             status=status,
             member_roles=member_roles,

@@ -123,9 +123,15 @@
                     <div id="discussion-roster"></div>
                 </div>
 
-                <div class="card">
+                <div class="card" style="display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap;">
                     <label>
                         <input type="checkbox" id="mod-participates"> Moderator also participates in discussion turns
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem;">
+                        Max rounds:
+                        <input type="number" id="max-rounds" min="0" max="50" value="0"
+                               style="width: 4rem;" title="0 = unlimited">
+                        <span class="text-muted" style="font-size: 0.8rem;">(0 = unlimited)</span>
                     </label>
                 </div>
 

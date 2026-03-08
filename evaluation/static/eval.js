@@ -208,13 +208,13 @@ function openConditionDialog(c = null) {
     // Participants
     const container = $('#cond-participants');
     container.innerHTML = '';
-    const participants = c ? c.participants : [{ name: '', system_prompt: '', role: 'standard' }];
+    const participants = c ? c.participants : [{ name: '', system_prompt: '', role: 'standard', provider_url: '', model: '' }];
     participants.forEach(p => addParticipantRow(p));
     show('#condition-dialog');
     $('#cond-name').focus();
 }
 
-function addParticipantRow(p = { name: '', system_prompt: '', role: 'standard' }) {
+function addParticipantRow(p = { name: '', system_prompt: '', role: 'standard', provider_url: '', model: '' }) {
     const container = $('#cond-participants');
     const row = document.createElement('div');
     row.className = 'participant-row';
@@ -226,6 +226,10 @@ function addParticipantRow(p = { name: '', system_prompt: '', role: 'standard' }
                     <option value="standard" ${p.role === 'standard' ? 'selected' : ''}>Standard</option>
                     <option value="devils_advocate" ${p.role === 'devils_advocate' ? 'selected' : ''}>Devil's Advocate</option>
                 </select>
+            </div>
+            <div class="form-row">
+                <input type="text" class="p-provider-url" value="${esc(p.provider_url || '')}" placeholder="Provider URL (blank = batch default)">
+                <input type="text" class="p-model" value="${esc(p.model || '')}" placeholder="Model (blank = batch default)">
             </div>
             <textarea class="p-prompt" rows="2" placeholder="System prompt...">${esc(p.system_prompt)}</textarea>
         </div>
@@ -240,6 +244,8 @@ function getParticipantsFromDialog() {
         name: row.querySelector('.p-name').value.trim(),
         system_prompt: row.querySelector('.p-prompt').value.trim(),
         role: row.querySelector('.p-role').value,
+        provider_url: row.querySelector('.p-provider-url').value.trim(),
+        model: row.querySelector('.p-model').value.trim(),
     })).filter(p => p.name);
 }
 

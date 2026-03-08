@@ -244,9 +244,11 @@ class EvalDatabase:
             for p in (participants or []):
                 self.conn.execute(
                     "INSERT INTO condition_participants "
-                    "(condition_id, name, system_prompt, role) VALUES (?,?,?,?)",
+                    "(condition_id, name, system_prompt, role, provider_url, model) "
+                    "VALUES (?,?,?,?,?,?)",
                     (cond_id, p["name"], p.get("system_prompt", ""),
-                     p.get("role", "standard")),
+                     p.get("role", "standard"), p.get("provider_url", ""),
+                     p.get("model", "")),
                 )
             self.conn.commit()
         return cond_id
@@ -577,9 +579,11 @@ class EvalDatabase:
                 for p in cond.participants:
                     self.conn.execute(
                         "INSERT INTO condition_participants "
-                        "(condition_id, name, system_prompt, role) "
-                        "VALUES (?,?,?,?)",
-                        (cond_id, p.name, p.system_prompt, p.role),
+                        "(condition_id, name, system_prompt, role, "
+                        "provider_url, model) VALUES (?,?,?,?,?,?)",
+                        (cond_id, p.name, p.system_prompt, p.role,
+                         getattr(p, 'provider_url', ''),
+                         getattr(p, 'model', '')),
                     )
             self.conn.commit()
         logger.info("Seeded %d default evaluation conditions", len(CONDITIONS))

@@ -1017,7 +1017,8 @@ class Database:
         """Update a discussion's mutable fields."""
         self._update_row(
             "discussions", discussion_id,
-            allowed={"topic", "moderator_id", "status", "ended_at", "started_at"},
+            allowed={"topic", "moderator_id", "status", "ended_at", "started_at",
+                     "max_rounds"},
             **kwargs,
         )
 
