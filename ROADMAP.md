@@ -33,8 +33,14 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ✅ Done | Comprehensive test suite | 199 tests across 7 modules covering database, app, config, models, moderator, sessions, and tools |
 | ⬜ Planned | Refactor large modules | Target < 500 lines per file for maintainability |
 | **Specialist Plugins** | | |
-| ⬜ Planned | Plugin system for specialists | Domain-expert LLM plugins (e.g. a medical specialist that searches Medline to ground discussions in verifiable facts) |
-| ⬜ Planned | Specialist consultation tool | Allow any participant to request opinion, verification, or input from a specialist during a discussion |
+| 🔧 In Progress | MCP client (stdio transport) | MCPToolProvider class connecting to external MCP servers via stdio; expert entities that get one turn when invoked then step back |
+| 🔧 In Progress | Expert invocation UI | AI entities invoke experts via tool calls; humans trigger consultation via UI button; progress notifications shown as live typing indicator with stage text and progress count |
+| 🔧 In Progress | MCP server management UI | Register/configure MCP servers in the Providers tab, stored in database |
+| ⬜ Planned | MCP Streamable HTTP transport | Connect to remote MCP servers over HTTP+SSE in addition to stdio |
+| ⬜ Planned | Multiple simultaneous expert consultations | Invoke several experts in parallel during a single turn |
+| ⬜ Planned | Expert-to-expert chaining | Allow one expert to invoke another expert as part of its work |
+| ⬜ Planned | Config file-based MCP server definitions | JSON/TOML config for deployment-managed MCP server defaults |
+| ⬜ Planned | MCP resources and prompts | Support MCP resources and prompt templates beyond tool calls |
 | **Training Data & Model Development** | | |
 | ⬜ Planned | Open-source reasoning datasets | Harvest high-quality discussion outcomes as open datasets for reasoning AI research |
 | ⬜ Planned | Small moderator models | Train lightweight moderator models from collected data, targeting local consumer hardware |
