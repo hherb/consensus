@@ -8,12 +8,14 @@ Consensus is a moderated discussion platform enabling structured multi-party dia
 
 ## Commands
 
+**This project uses `uv` for all Python package installation and environment management. Never use `pip` directly.**
+
 ```bash
 # Install
-pip install -e .              # base (httpx only)
-pip install -e ".[desktop]"   # + pywebview
-pip install -e ".[web]"       # + aiohttp
-pip install -e ".[all]"       # everything
+uv pip install -e .              # base (httpx only)
+uv pip install -e ".[desktop]"   # + pywebview
+uv pip install -e ".[web]"       # + aiohttp
+uv pip install -e ".[all]"       # everything
 
 # Run
 python -m consensus            # desktop mode (default)
@@ -66,6 +68,9 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
 - BYOK (Bring Your Own Key): In web mode, users can provide API keys via the browser UI (stored in `sessionStorage`). Keys are sent per-request and never persisted on the server. Environment-based keys remain the default fallback.
 - Multi-user mode (`--multi-user`): Each browser session gets its own `ConsensusApp` instance and SQLite database, isolated by session cookie. Sessions expire after 24h of inactivity.
 - Authentication (multi-user only): Email/password registration with PBKDF2-SHA256 hashing (600k iterations). OAuth via GitHub, Google, LinkedIn, Apple. Auth tokens are SHA-256 hashed in storage, set as httpOnly cookies (never returned in response body). CSRF protection via Content-Type enforcement. Per-email brute-force rate limiting (5 attempts/5min). OAuth redirect URIs derived from `CONSENSUS_BASE_URL` env var (not request headers). Multiple OAuth identities per user supported via `user_oauth_identities` table.
+
+## General coding rules that must be observed
+docs/llm/golden_rules.md
 
 ## License
 
