@@ -14,20 +14,13 @@ from .models import (
 )
 from .moderator import Moderator
 from .database import Database
-from . import app_entities, app_providers, app_discussion_setup
+from . import app_entities, app_providers, app_discussion_setup, app_discussion_flow
 from .config import get_db_path, save_api_key, remove_api_key, has_api_key
 from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolRegistry, ToolResult
 
 logger = logging.getLogger(__name__)
 
 
-def _is_pass(content: str) -> bool:
-    """Check if a participant's response is a pass (raw AI output or formatted)."""
-    stripped = content.strip().strip("*_").strip()
-    if stripped.upper() in ("[PASS]", "PASS"):
-        return True
-    # Also match the formatted version: *Name passed this round.*
-    return "passed this round." in content.lower()
 
 # Per-request BYOK API keys, isolated via contextvars (no cross-request leakage)
 _request_api_keys_var: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
@@ -529,387 +522,58 @@ class ConsensusApp:
 
     def submit_human_message(self, entity_id: int, content: str) -> dict:
         """Submit a message from a human participant."""
-        entity = self.discussion.get_entity(entity_id)
-        if not entity:
-            return {"error": "Entity not found"}
-
-        current = self.discussion.current_speaker
-        if not current or current.id != entity_id:
-            return {"error": f"It's not {entity.name}'s turn"}
-
-        msg = Message(
-            entity_id=entity_id, entity_name=entity.name,
-            content=content, role=MessageRole.PARTICIPANT,
-        )
-        self.discussion.messages.append(msg)
-        self.db.add_message(
-            self.discussion.id, entity_id, content, "participant",
-            turn_number=self.discussion.turn_number,
+        result = app_discussion_flow.submit_human_message(
+            self.discussion, self.db, entity_id, content,
         )
         self._notify()
-        return msg.to_dict()
+        return result
 
     def submit_moderator_message(self, content: str) -> dict:
         """Submit a message from the human moderator."""
-        mod = self.discussion.moderator
-        if not mod:
-            return {"error": "No moderator"}
-
-        msg = Message(
-            entity_id=mod.id, entity_name=mod.name,
-            content=content, role=MessageRole.MODERATOR,
-        )
-        self.discussion.messages.append(msg)
-        self.db.add_message(
-            self.discussion.id, mod.id, content, "moderator",
-            turn_number=self.discussion.turn_number,
+        result = app_discussion_flow.submit_moderator_message(
+            self.discussion, self.db, content,
         )
         self._notify()
-        return msg.to_dict()
+        return result
 
     async def generate_ai_turn(self) -> dict:
         """Generate an AI participant's contribution for the current turn."""
-        if not self.discussion.is_active or self.discussion.status == "concluded":
-            return {"error": "Discussion is not active"}
-        current = self.discussion.current_speaker
-        if not current:
-            return {"error": "No current speaker"}
-        if current.entity_type != EntityType.AI:
-            return {"error": f"{current.name} is human - waiting for input"}
-
-        try:
-            participant_role = self.discussion.member_roles.get(
-                current.id, "standard")
-            resp = await self.moderator.generate_turn(
-                current, participant_role=participant_role)
-
-            # Detect if the participant chose to pass
-            is_pass = _is_pass(resp.content)
-            content = (f"*{current.name} passed this round.*"
-                       if is_pass else resp.content)
-
-            # Serialize tool call records if any
-            tool_calls_json = ""
-            if resp.tool_calls:
-                tool_calls_json = json.dumps(
-                    [tc.to_dict() for tc in resp.tool_calls]
-                )
-
-            cost = self.db.pricing.calculate_cost(
-                resp.model,
-                current.ai_config.base_url if current.ai_config else "",
-                resp.prompt_tokens,
-                resp.completion_tokens,
-            )
-            if cost is None and self.db.pricing.needs_refresh_for_model(resp.model):
-                self.db.pricing.refresh()
-                cost = self.db.pricing.calculate_cost(
-                    resp.model,
-                    current.ai_config.base_url if current.ai_config else "",
-                    resp.prompt_tokens,
-                    resp.completion_tokens,
-                )
-
-            msg = Message(
-                entity_id=current.id, entity_name=current.name,
-                content=content, role=MessageRole.PARTICIPANT,
-                model_used=resp.model,
-                prompt_tokens=resp.prompt_tokens,
-                completion_tokens=resp.completion_tokens,
-                total_tokens=resp.total_tokens,
-                latency_ms=resp.latency_ms,
-                cost=cost,
-                tool_calls_json=tool_calls_json,
-            )
-            self.discussion.messages.append(msg)
-
-            prompt_id = self.moderator.prompt_id("participant", "ai", "turn")
-            self.db.add_message(
-                self.discussion.id, current.id, content, "participant",
-                turn_number=self.discussion.turn_number,
-                model_used=resp.model,
-                prompt_tokens=resp.prompt_tokens,
-                completion_tokens=resp.completion_tokens,
-                total_tokens=resp.total_tokens,
-                latency_ms=resp.latency_ms,
-                temperature_used=current.ai_config.temperature if current.ai_config else 0,
-                prompt_id=prompt_id,
-                tool_calls_json=tool_calls_json,
-                cost=cost,
-            )
-            self._notify()
-            result = msg.to_dict()
-            if is_pass:
-                result["passed"] = True
-            if resp.warning:
-                result["warning"] = resp.warning
-            return result
-        except Exception as e:
-            logger.exception("AI generation failed for %s", current.name)
-            # Post a visible notification so the moderator/participants
-            # know this participant was skipped due to an API error.
-            error_notice = (
-                f"*{current.name} could not respond due to an API error "
-                f"({type(e).__name__}). Skipping to the next participant.*"
-            )
-            msg = Message(
-                entity_id=current.id, entity_name=current.name,
-                content=error_notice, role=MessageRole.PARTICIPANT,
-            )
-            self.discussion.messages.append(msg)
-            self.db.add_message(
-                self.discussion.id, current.id, error_notice, "participant",
-                turn_number=self.discussion.turn_number,
-            )
-            self._notify()
-            result = msg.to_dict()
-            result["error"] = str(e)
-            result["skipped"] = True
-            return result
+        result = await app_discussion_flow.generate_ai_turn(
+            self.discussion, self.moderator, self.db, self.db.pricing,
+        )
+        self._notify()
+        return result
 
     async def complete_turn(self, moderator_summary: str = "") -> dict:
         """Complete the current turn: generate or accept summary, advance turn order."""
-        if not self.discussion.is_active or self.discussion.status == "concluded":
-            return {"error": "Discussion is not active"}
-        mod = self.discussion.moderator
-        summary_text = ""
-
-        # Capture the current speaker before summary generation changes messages
-        current = self.discussion.current_speaker
-        speaker_name = current.name if current else "Unknown"
-        speaker_id = current.id if current else 0
-
-        # Check if the last participant message was a pass
-        last_msg = self.discussion.messages[-1] if self.discussion.messages else None
-        participant_passed = (last_msg and last_msg.role == MessageRole.PARTICIPANT
-                              and _is_pass(last_msg.content))
-
-        if participant_passed and mod:
-            # No AI summary needed — just note the pass
-            summary_text = f"{speaker_name} passed this round."
-            self.db.add_message(
-                self.discussion.id, mod.id, summary_text, "moderator",
-                turn_number=self.discussion.turn_number,
-            )
-        elif mod and mod.entity_type == EntityType.AI and not participant_passed:
-            try:
-                next_entity = self.moderator.peek_next_speaker()
-                next_name = next_entity.name if next_entity else ""
-                resp = await self.moderator.generate_summary(
-                    next_speaker_name=next_name)
-                summary_text = resp.content
-                if summary_text:
-                    prompt_id = self.moderator.prompt_id(
-                        "moderator", "ai", "summarize",
-                    )
-                    cost = self.db.pricing.calculate_cost(
-                        resp.model,
-                        mod.ai_config.base_url if mod.ai_config else "",
-                        resp.prompt_tokens,
-                        resp.completion_tokens,
-                    )
-                    if cost is None and self.db.pricing.needs_refresh_for_model(resp.model):
-                        self.db.pricing.refresh()
-                        cost = self.db.pricing.calculate_cost(
-                            resp.model,
-                            mod.ai_config.base_url if mod.ai_config else "",
-                            resp.prompt_tokens,
-                            resp.completion_tokens,
-                        )
-                    self.db.add_message(
-                        self.discussion.id, mod.id, summary_text, "moderator",
-                        turn_number=self.discussion.turn_number,
-                        model_used=resp.model,
-                        prompt_tokens=resp.prompt_tokens,
-                        completion_tokens=resp.completion_tokens,
-                        total_tokens=resp.total_tokens,
-                        latency_ms=resp.latency_ms,
-                        prompt_id=prompt_id,
-                        cost=cost,
-                    )
-            except Exception as e:
-                logger.exception("AI summary generation failed")
-                return {"error": f"Summary generation failed: {e}"}
-        elif mod and moderator_summary:
-            summary_text = moderator_summary
-            self.db.add_message(
-                self.discussion.id, mod.id, summary_text, "moderator",
-                turn_number=self.discussion.turn_number,
-            )
-        elif not mod:
-            return {"error": "No moderator designated"}
-        else:
-            return {
-                "awaiting_moderator_summary": True,
-                "state": self.get_state(),
-            }
-
-        if summary_text:
-            entry = StoryboardEntry(
-                turn_number=self.discussion.turn_number,
-                summary=summary_text,
-                speaker_name=speaker_name,
-            )
-            self.discussion.storyboard.append(entry)
-
-            self.db.add_storyboard_entry(
-                self.discussion.id, self.discussion.turn_number,
-                summary_text, speaker_id,
-            )
-
-            summary_msg = Message(
-                entity_id=mod.id, entity_name=mod.name,
-                content=summary_text, role=MessageRole.MODERATOR,
-            )
-            self.discussion.messages.append(summary_msg)
-
-        next_speaker = self.moderator.advance_turn()
-
-        # Check if max_rounds has been reached
-        max_r = self.discussion.max_rounds
-        if max_r > 0 and self.discussion.current_round > max_r:
-            self._notify()
-            return {
-                "max_rounds_reached": True,
-                "turn_number": self.discussion.turn_number,
-                "current_round": self.discussion.current_round,
-                "state": self.get_state(),
-            }
-
+        result = await app_discussion_flow.complete_turn(
+            self.discussion, self.moderator, self.db, self.db.pricing,
+            self.get_state, moderator_summary,
+        )
         self._notify()
-
-        return {
-            "next_speaker": next_speaker.to_dict() if next_speaker else None,
-            "turn_number": self.discussion.turn_number,
-            "current_round": self.discussion.current_round,
-            "state": self.get_state(),
-        }
+        return result
 
     def reassign_turn(self, entity_id: int) -> dict:
         """Reassign the current turn to a different participant."""
-        entity = self.moderator.reassign_turn(entity_id)
-        if entity:
+        result = app_discussion_flow.reassign_turn(self.moderator, entity_id)
+        if "error" not in result:
             self._notify()
-            return {"reassigned_to": entity.to_dict(), "state": self.get_state()}
-        return {"error": "Could not reassign turn"}
+            result["state"] = self.get_state()
+        return result
 
     async def mediate(self, context: str = "") -> dict:
         """Have the moderator intervene to mediate a conflict."""
-        mod = self.discussion.moderator
-        if not mod:
-            return {"error": "No moderator"}
-
-        if mod.entity_type == EntityType.AI:
-            try:
-                resp = await self.moderator.mediate(context)
-                cost = self.db.pricing.calculate_cost(
-                    resp.model,
-                    mod.ai_config.base_url if mod.ai_config else "",
-                    resp.prompt_tokens,
-                    resp.completion_tokens,
-                )
-                if cost is None and self.db.pricing.needs_refresh_for_model(resp.model):
-                    self.db.pricing.refresh()
-                    cost = self.db.pricing.calculate_cost(
-                        resp.model,
-                        mod.ai_config.base_url if mod.ai_config else "",
-                        resp.prompt_tokens,
-                        resp.completion_tokens,
-                    )
-                msg = Message(
-                    entity_id=mod.id, entity_name=mod.name,
-                    content=resp.content, role=MessageRole.MODERATOR,
-                    model_used=resp.model,
-                    prompt_tokens=resp.prompt_tokens,
-                    completion_tokens=resp.completion_tokens,
-                    total_tokens=resp.total_tokens,
-                    latency_ms=resp.latency_ms,
-                    cost=cost,
-                )
-                self.discussion.messages.append(msg)
-                prompt_id = self.moderator.prompt_id(
-                    "moderator", "ai", "mediate",
-                )
-                self.db.add_message(
-                    self.discussion.id, mod.id, resp.content, "moderator",
-                    turn_number=self.discussion.turn_number,
-                    model_used=resp.model,
-                    prompt_tokens=resp.prompt_tokens,
-                    completion_tokens=resp.completion_tokens,
-                    total_tokens=resp.total_tokens,
-                    latency_ms=resp.latency_ms,
-                    prompt_id=prompt_id,
-                    cost=cost,
-                )
-                self._notify()
-                return msg.to_dict()
-            except Exception as e:
-                logger.exception("Mediation failed")
-                return {"error": f"Mediation failed: {e}"}
-        return {"awaiting_human_moderator": True}
+        result = await app_discussion_flow.mediate(
+            self.discussion, self.moderator, self.db, self.db.pricing, context,
+        )
+        self._notify()
+        return result
 
     async def conclude_discussion(self) -> dict:
         """End the discussion, generating a final synthesis if the moderator is AI."""
-        mod = self.discussion.moderator
-        if mod and mod.entity_type == EntityType.AI:
-            try:
-                resp = await self.moderator.generate_conclusion()
-                conclusion = resp.content
-                cost = self.db.pricing.calculate_cost(
-                    resp.model,
-                    mod.ai_config.base_url if mod.ai_config else "",
-                    resp.prompt_tokens,
-                    resp.completion_tokens,
-                )
-                if cost is None and self.db.pricing.needs_refresh_for_model(resp.model):
-                    self.db.pricing.refresh()
-                    cost = self.db.pricing.calculate_cost(
-                        resp.model,
-                        mod.ai_config.base_url if mod.ai_config else "",
-                        resp.prompt_tokens,
-                        resp.completion_tokens,
-                    )
-                msg = Message(
-                    entity_id=mod.id, entity_name=mod.name,
-                    content=f"## Final Synthesis\n\n{conclusion}",
-                    role=MessageRole.MODERATOR,
-                    model_used=resp.model,
-                    cost=cost,
-                )
-                self.discussion.messages.append(msg)
-                self.db.add_message(
-                    self.discussion.id, mod.id,
-                    f"## Final Synthesis\n\n{conclusion}", "moderator",
-                    turn_number=self.discussion.turn_number,
-                    model_used=resp.model,
-                    prompt_tokens=resp.prompt_tokens,
-                    completion_tokens=resp.completion_tokens,
-                    total_tokens=resp.total_tokens,
-                    latency_ms=resp.latency_ms,
-                    cost=cost,
-                )
-
-                entry = StoryboardEntry(
-                    turn_number=self.discussion.turn_number,
-                    summary=f"CONCLUSION: {conclusion}",
-                    speaker_name=mod.name,
-                )
-                self.discussion.storyboard.append(entry)
-                self.db.add_storyboard_entry(
-                    self.discussion.id, self.discussion.turn_number,
-                    f"CONCLUSION: {conclusion}", mod.id,
-                )
-            except Exception as e:
-                logger.exception("Conclusion generation failed")
-                # Continue to mark discussion as concluded even if AI fails
-
-        self.discussion.is_active = False
-        self.discussion.status = "concluded"
-        if self.discussion.id:
-            self.db.update_discussion(
-                self.discussion.id,
-                status="concluded", ended_at=time.time(),
-            )
+        await app_discussion_flow.conclude_discussion(
+            self.discussion, self.moderator, self.db, self.db.pricing,
+        )
         self._notify()
         return self.get_state()
 
