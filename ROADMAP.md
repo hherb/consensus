@@ -42,6 +42,8 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ⬜ Planned | Expert-to-expert chaining | Allow one expert to invoke another expert as part of its work |
 | ⬜ Planned | Config file-based MCP server definitions | JSON/TOML config for deployment-managed MCP server defaults |
 | ⬜ Planned | MCP resources and prompts | Support MCP resources and prompt templates beyond tool calls |
+| **Architecture & Scalability** | | |
+| ⬜ Planned | Participant-driven context loading | Replace centralized in-memory Discussion state with direct DB access per participant. Each participant queries only the context it needs (full history, sliding window, or map-reduce over long context). Eliminates state conflicts since writes are limited to the participant's own new contribution. Enables arbitrarily long discussions without memory pressure, and allows different participants to use different context strategies simultaneously |
 | **Training Data & Model Development** | | |
 | ⬜ Planned | Open-source reasoning datasets | Harvest high-quality discussion outcomes as open datasets for reasoning AI research |
 | ⬜ Planned | Small moderator models | Train lightweight moderator models from collected data, targeting local consumer hardware |
