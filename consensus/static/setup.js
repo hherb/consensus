@@ -192,7 +192,7 @@ export async function loadDiscussionMethods() {
     select.innerHTML = _methodsCache.map(m =>
         `<option value="${m.name}" title="${escHtml(m.description)}">${escHtml(m.display_name)}</option>`
     ).join('');
-    select.value = 'open_discussion';
+    select.value = state.discussion_method || 'open_discussion';
     updateMethodDescription();
 }
 
