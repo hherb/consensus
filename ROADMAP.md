@@ -32,7 +32,7 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | **Code Quality & Maintainability** | | |
 | ✅ Done | Database migration system | File-based SQL migrations in `consensus/migrations/`, tracked in `migrations` table, run idempotently on startup (`migrator.py`) |
 | ✅ Done | Comprehensive test suite | 199 tests across 7 modules covering database, app, config, models, moderator, sessions, and tools |
-| ⬜ Planned | Refactor large modules | Target < 500 lines per file for maintainability |
+| 🔧 In Progress | Refactor large modules | Target < 500 lines per file for maintainability |
 | **Specialist Plugins** | | |
 | 🔧 In Progress | MCP client (stdio transport) | MCPToolProvider class connecting to external MCP servers via stdio; expert entities that get one turn when invoked then step back |
 | 🔧 In Progress | Expert invocation UI | AI entities invoke experts via tool calls; humans trigger consultation via UI button; progress notifications shown as live typing indicator with stage text and progress count |
