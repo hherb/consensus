@@ -14,6 +14,7 @@ from .models import (
 )
 from .moderator import Moderator
 from .database import Database
+from . import app_providers
 from .config import get_db_path, save_api_key, remove_api_key, has_api_key
 from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolRegistry, ToolResult
 
@@ -370,69 +371,37 @@ class ConsensusApp:
 
     def _provider_for_frontend(self, p: Optional[dict]) -> Optional[dict]:
         """Redact secrets before sending provider data to the frontend."""
-        if not p:
-            return None
-        p = dict(p)
-        env_var = p.get("api_key_env") or ""
-        provider_id = p.get("id", 0)
-        # Key is available if set via env OR via BYOK
-        has_env = has_api_key(env_var)
-        has_byok = bool(_request_api_keys_var.get({}).get(str(provider_id), ""))
-        p["has_key"] = has_env or has_byok
-        p.pop("api_key_env", None)
-        return p
+        return app_providers.provider_for_frontend(p, _request_api_keys_var.get({}))
 
     def add_provider(self, name: str, base_url: str,
                      api_key_env: str = "",
                      api_key: str = "") -> Optional[dict]:
-        """Add a new API provider and return its data.
-
-        If *api_key* is provided, save it to ~/.consensus/.env and store
-        only the env var name in the database.
-        """
-        if api_key and api_key_env:
-            save_api_key(api_key_env, api_key)
-        pid = self.db.add_provider(name, base_url, api_key_env)
-        return self._provider_for_frontend(self.db.get_provider(pid))
+        """Add a new API provider and return its data."""
+        return app_providers.add_provider(
+            self.db, name, base_url, api_key_env, api_key,
+            _request_api_keys_var.get({}),
+        )
 
     def update_provider(self, provider_id: int,
                         api_key: str = "", **kwargs: object) -> bool:
-        """Update an existing provider's fields.
-
-        If *api_key* is provided (non-empty string), save it.
-        If *api_key* is the sentinel "__REMOVE__", delete the stored key.
-        """
-        provider = self.db.get_provider(provider_id)
-        if not provider:
-            return False
-        env_var = kwargs.get("api_key_env") or provider["api_key_env"]
-        if api_key == "__REMOVE__" and env_var:
-            remove_api_key(env_var)
-        elif api_key and env_var:
-            save_api_key(env_var, api_key)
-        self.db.update_provider(provider_id, **kwargs)
-        return True
+        """Update an existing provider's fields."""
+        return app_providers.update_provider(
+            self.db, provider_id, api_key, **kwargs,
+        )
 
     def delete_provider(self, provider_id: int) -> bool:
         """Delete a provider by ID."""
-        self.db.delete_provider(provider_id)
-        return True
+        return app_providers.delete_provider(self.db, provider_id)
 
     def get_providers(self) -> list[dict]:
         """Return all configured providers (keys redacted)."""
-        return [self._provider_for_frontend(p)
-                for p in self.db.get_providers()]
+        return app_providers.get_providers(self.db, _request_api_keys_var.get({}))
 
     async def fetch_models(self, provider_id: int) -> list[str]:
         """Fetch available models from a provider's API."""
-        provider = self.db.get_provider(provider_id)
-        if not provider:
-            return []
-        api_key = self.resolve_provider_api_key(
-            provider_id, provider["api_key_env"] or "",
+        return await app_providers.fetch_models(
+            self.db, provider_id, self.resolve_provider_api_key,
         )
-        async with AIClient(provider["base_url"], api_key) as client:
-            return await client.list_models()
 
     # ------------------------------------------------------------------
     # Entity profile management (persistent)
