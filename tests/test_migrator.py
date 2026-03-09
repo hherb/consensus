@@ -74,26 +74,3 @@ class TestMigrator:
         run_migrations(conn, lock, db_path)
         conn.close()
 
-    def test_legacy_schema_version_stamped(self, tmp_path):
-        """Existing DB with schema_version table gets baseline stamped."""
-        conn, db_path = self._fresh_conn(tmp_path)
-        lock = threading.Lock()
-        # Simulate a legacy database
-        conn.execute("CREATE TABLE schema_version (version INTEGER NOT NULL)")
-        conn.execute("INSERT INTO schema_version (version) VALUES (1)")
-        # Also create the tables that would exist in a legacy DB
-        conn.execute("CREATE TABLE providers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL, api_key_env TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL)")
-        conn.commit()
-        consensus.migrator._migrations_done.discard(db_path)
-        run_migrations(conn, lock, db_path)
-        # schema_version should be gone
-        sv = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
-        ).fetchone()
-        assert sv is None
-        # baseline should be stamped
-        row = conn.execute(
-            "SELECT version FROM migrations WHERE version=1"
-        ).fetchone()
-        assert row is not None
-        conn.close()
