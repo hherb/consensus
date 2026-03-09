@@ -210,6 +210,9 @@ __marimo__/
 docs/discussions
 docs/discussions/*
 
+# Local drafts — not tracked in remote
+docs/drafts/
+
 #automated testing related
 .playwright-mcp
 .playwright-mcp/*
