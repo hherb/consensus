@@ -289,6 +289,66 @@ class DesktopBridge:
         except Exception as e:
             return {"ok": False, "message": str(e)}
 
+    # -- Documents --
+    def upload_document(self, discussion_id: int = 0) -> dict:
+        """Open a file picker and upload a document."""
+        import webview
+        if not self._window:
+            return {"error": "No window available"}
+        if not self.app.documents_available:
+            return {"error": "Document tools not available"}
+
+        result = self._window.create_file_dialog(
+            webview.FileDialog.OPEN,
+            file_types=(
+                "Documents (*.pdf;*.html;*.htm;*.txt;*.md)",
+                "PDF files (*.pdf)",
+                "HTML files (*.html;*.htm)",
+                "Text files (*.txt;*.md)",
+                "All files (*.*)",
+            ),
+        )
+        if not result:
+            return {"cancelled": True}
+        filepath = result if isinstance(result, str) else result[0]
+
+        import mimetypes
+        mime_type, _ = mimetypes.guess_type(filepath)
+        if not mime_type:
+            mime_type = "application/octet-stream"
+
+        filename = os.path.basename(filepath)
+        with open(filepath, "rb") as f:
+            content = f.read()
+
+        return self._run_async(self.app.add_document(
+            filename=filename,
+            content_bytes=content,
+            mime_type=mime_type,
+            discussion_id=discussion_id,
+        ))
+
+    def add_document_from_url(self, url: str, discussion_id: int = 0,
+                               title: str = "") -> dict:
+        """Add a document by fetching from a URL."""
+        if not self.app.documents_available:
+            return {"error": "Document tools not available"}
+        return self._run_async(self.app.add_document_from_url(
+            url=url, discussion_id=discussion_id, title=title,
+        ))
+
+    def get_discussion_documents(self, discussion_id: int = 0) -> list:
+        """Return documents attached to a discussion."""
+        return self.app.get_discussion_documents(discussion_id)
+
+    def remove_document(self, document_id: int, discussion_id: int = 0) -> dict:
+        """Remove a document from a discussion."""
+        return self.app.remove_document(document_id, discussion_id)
+
+    def delete_document(self, document_id: int) -> dict:
+        """Permanently delete a document."""
+        return self.app.delete_document(document_id)
+
     # -- Export --
     def get_export_data(self, discussion_id: int) -> dict:
         """Get discussion data for export without mutating current state."""

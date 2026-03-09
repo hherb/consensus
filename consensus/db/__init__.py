@@ -22,6 +22,7 @@ from .messages import MessagesMixin
 from .tools import ToolsMixin
 from .mcp import MCPMixin
 from .memory import MemoryMixin
+from .documents import DocumentsMixin
 
 _VALID_TABLES = frozenset({
     "providers", "entities", "prompts", "discussions",
@@ -30,7 +31,7 @@ _VALID_TABLES = frozenset({
 
 class Database(
     PromptsMixin, ProvidersMixin, EntitiesMixin, DiscussionsMixin,
-    MessagesMixin, ToolsMixin, MCPMixin, MemoryMixin,
+    MessagesMixin, ToolsMixin, MCPMixin, MemoryMixin, DocumentsMixin,
 ):
     """Thread-safe SQLite database for the consensus application.
 

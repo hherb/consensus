@@ -45,8 +45,10 @@ class ConsensusApp:
         self._event_listeners: dict[str, list[Callable]] = {}
         self._mcp_providers: dict[int, Any] = {}
         self.memory_available = False
+        self.documents_available = False
         self._init_builtin_tools()
         self._init_memory_tools()
+        self._init_document_tools()
 
     def _refresh_pricing_if_needed(self) -> None:
         """Refresh pricing cache on startup if stale or missing models."""
@@ -95,6 +97,19 @@ class ConsensusApp:
             logger.debug("Institutional memory tools registered")
         except ImportError as e:
             logger.info("Memory tools not available: %s", e)
+
+    def _init_document_tools(self) -> None:
+        """Register document RAG tool provider (requires [memory] extras)."""
+        try:
+            import sqlite_vec  # noqa: F401
+            from .tools_document import create_document_provider
+            provider = create_document_provider(self.db, app=self)
+            self.tool_registry.register_provider(provider)
+            self.db.add_tool_provider("documents", "python")
+            self.documents_available = True
+            logger.debug("Document RAG tools registered")
+        except ImportError as e:
+            logger.info("Document tools not available: %s", e)
 
     @staticmethod
     def set_request_api_keys(keys: dict[str, str]) -> None:
@@ -672,3 +687,73 @@ class ConsensusApp:
             discussion_id, entity_id, tool_name, enabled,
         )
         return True
+
+    # ------------------------------------------------------------------
+    # Document management
+    # ------------------------------------------------------------------
+
+    async def add_document(self, filename: str, content_bytes: bytes,
+                           mime_type: str, discussion_id: int = 0,
+                           source_url: str = "",
+                           title: str = "") -> dict:
+        """Add a document via file upload or URL fetch."""
+        if not self.documents_available:
+            return {"error": "Document tools not available (missing sqlite-vec)"}
+
+        from .tools_document import ingest_document
+        from .tools_memory import EmbeddingClient
+
+        embed_client = EmbeddingClient(self.db)
+
+        # Create a minimal context for summary generation
+        context = ToolContext(
+            caller_entity_id=0,
+            discussion_id=discussion_id or (self.discussion.id if self.discussion else 0),
+        )
+
+        result = await ingest_document(
+            app=self, db=self.db, embed_client=embed_client,
+            content_bytes=content_bytes,
+            filename=filename,
+            mime_type=mime_type,
+            discussion_id=discussion_id or (self.discussion.id if self.discussion else 0),
+            source_url=source_url or None,
+            title=title or None,
+            source_type="url" if source_url else "upload",
+            context=context,
+        )
+        return result
+
+    async def add_document_from_url(self, url: str, discussion_id: int = 0,
+                                     title: str = "") -> dict:
+        """Add a document by fetching from a URL."""
+        if not self.documents_available:
+            return {"error": "Document tools not available (missing sqlite-vec)"}
+
+        from .tools_document import fetch_url_content
+        try:
+            content_bytes, filename, mime_type = await fetch_url_content(url)
+        except Exception as e:
+            return {"error": f"Failed to fetch URL: {e}"}
+
+        return await self.add_document(
+            filename=filename, content_bytes=content_bytes,
+            mime_type=mime_type, discussion_id=discussion_id,
+            source_url=url, title=title,
+        )
+
+    def get_discussion_documents(self, discussion_id: int = 0) -> list[dict]:
+        """Return documents attached to a discussion."""
+        disc_id = discussion_id or (self.discussion.id if self.discussion else 0)
+        return self.db.get_discussion_documents(disc_id)
+
+    def remove_document(self, document_id: int, discussion_id: int = 0) -> dict:
+        """Remove a document from a discussion."""
+        disc_id = discussion_id or (self.discussion.id if self.discussion else 0)
+        self.db.remove_discussion_document(disc_id, document_id)
+        return {"success": True}
+
+    def delete_document(self, document_id: int) -> dict:
+        """Permanently delete a document and all its data."""
+        deleted = self.db.delete_document(document_id)
+        return {"success": deleted}

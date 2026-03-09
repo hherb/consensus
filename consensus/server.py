@@ -777,6 +777,128 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"ok": False, "message": str(e)})
 
     # ------------------------------------------------------------------
+    # Document management endpoints
+    # ------------------------------------------------------------------
+
+    async def handle_document_upload(request: web.Request) -> web.StreamResponse:
+        """Upload a document file via multipart form data."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+        if not app_inst.documents_available:
+            return web.json_response(
+                {"error": "Document tools not available (install consensus[memory])"},
+                status=404,
+            )
+
+        reader = await request.multipart()
+        file_data = None
+        filename = "document"
+        mime_type = "text/plain"
+        discussion_id = 0
+        title = ""
+
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if part.name == "file":
+                file_data = await part.read()
+                filename = part.filename or "document"
+                mime_type = part.headers.get("Content-Type", "application/octet-stream")
+                if isinstance(mime_type, str):
+                    mime_type = mime_type.split(";")[0].strip()
+            elif part.name == "discussion_id":
+                text = (await part.read()).decode()
+                discussion_id = int(text) if text.isdigit() else 0
+            elif part.name == "title":
+                title = (await part.read()).decode()
+
+        if not file_data:
+            return web.json_response({"error": "No file provided"}, status=400)
+
+        result = await app_inst.add_document(
+            filename=filename,
+            content_bytes=file_data,
+            mime_type=mime_type,
+            discussion_id=discussion_id,
+            title=title,
+        )
+        if "error" in result:
+            return web.json_response(result, status=400)
+        return web.json_response(result)
+
+    async def handle_document_add_url(request: web.Request) -> web.StreamResponse:
+        """Add a document by fetching from a URL."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+        if not app_inst.documents_available:
+            return web.json_response(
+                {"error": "Document tools not available (install consensus[memory])"},
+                status=404,
+            )
+
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+        url = data.get("url", "").strip()
+        if not url:
+            return web.json_response({"error": "url is required"}, status=400)
+
+        result = await app_inst.add_document_from_url(
+            url=url,
+            discussion_id=int(data.get("discussion_id", 0)),
+            title=data.get("title", ""),
+        )
+        if "error" in result:
+            return web.json_response(result, status=400)
+        return web.json_response(result)
+
+    async def handle_document_list(request: web.Request) -> web.StreamResponse:
+        """List documents for a discussion."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+
+        discussion_id = int(request.match_info["discussion_id"])
+        docs = app_inst.get_discussion_documents(discussion_id)
+        return web.json_response({"documents": docs})
+
+    async def handle_document_remove(request: web.Request) -> web.StreamResponse:
+        """Remove a document from a discussion."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+
+        document_id = int(request.match_info["document_id"])
+        discussion_id = int(request.match_info["discussion_id"])
+        result = app_inst.remove_document(document_id, discussion_id)
+        return web.json_response(result)
+
+    async def handle_document_delete(request: web.Request) -> web.StreamResponse:
+        """Permanently delete a document."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+
+        document_id = int(request.match_info["document_id"])
+        result = app_inst.delete_document(document_id)
+        return web.json_response(result)
+
+    # ------------------------------------------------------------------
     # SSE endpoint for real-time events
     # ------------------------------------------------------------------
 
@@ -860,6 +982,13 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     webapp.router.add_get("/api/memory/config", handle_memory_config_get)
     webapp.router.add_put("/api/memory/config", handle_memory_config_put)
     webapp.router.add_post("/api/memory/test", handle_memory_test)
+
+    # Document management
+    webapp.router.add_post("/api/documents/upload", handle_document_upload)
+    webapp.router.add_post("/api/documents/add-url", handle_document_add_url)
+    webapp.router.add_get("/api/documents/{discussion_id}", handle_document_list)
+    webapp.router.add_delete("/api/documents/{document_id}/{discussion_id}", handle_document_remove)
+    webapp.router.add_delete("/api/documents/{document_id}", handle_document_delete)
 
     # SSE events
     webapp.router.add_get("/api/events", handle_events)

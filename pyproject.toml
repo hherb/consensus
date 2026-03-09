@@ -19,12 +19,14 @@ desktop = ["pywebview>=5.0"]
 web = ["aiohttp>=3.9"]
 tools = ["trafilatura>=1.6"]
 memory = ["sqlite-vec>=0.1.0", "numpy>=1.26"]
+documents = ["sqlite-vec>=0.1.0", "numpy>=1.26", "pdfplumber>=0.10"]
 all = [
     "pywebview>=5.0",
     "aiohttp>=3.9",
     "trafilatura>=1.6",
     "sqlite-vec>=0.1.0",
     "numpy>=1.26",
+    "pdfplumber>=0.10",
 ]
 
 [project.scripts]

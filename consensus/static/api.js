@@ -76,6 +76,13 @@ class DesktopAPI {
     async assignTool(eid, toolName, mode) { return await window.pywebview.api.assign_tool(eid, toolName, mode || 'private'); }
     async removeTool(eid, toolName) { return await window.pywebview.api.remove_tool(eid, toolName); }
 
+    // --- Documents ---
+    async uploadDocument(file, discussionId) { return await window.pywebview.api.upload_document(discussionId || 0); }
+    async addDocumentFromUrl(url, discussionId, title) { return await window.pywebview.api.add_document_from_url(url, discussionId || 0, title || ''); }
+    async getDiscussionDocuments(discussionId) { return await window.pywebview.api.get_discussion_documents(discussionId || 0); }
+    async removeDocument(docId, discussionId) { return await window.pywebview.api.remove_document(docId, discussionId || 0); }
+    async deleteDocument(docId) { return await window.pywebview.api.delete_document(docId); }
+
     // --- Memory ---
     async getMemoryConfig() { return await window.pywebview.api.get_memory_config(); }
     async saveMemoryConfig(data) { return await window.pywebview.api.save_memory_config(data); }
@@ -183,6 +190,40 @@ class WebAPI {
     async getEntityTools(eid) { return await this._post('get_entity_tools', { entity_id: eid }); }
     async assignTool(eid, toolName, mode) { return await this._post('assign_tool', { entity_id: eid, tool_name: toolName, access_mode: mode || 'private' }); }
     async removeTool(eid, toolName) { return await this._post('remove_tool', { entity_id: eid, tool_name: toolName }); }
+
+    // --- Documents ---
+    async uploadDocument(file, discussionId) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('discussion_id', String(discussionId || 0));
+        const resp = await fetch('/api/documents/upload', { method: 'POST', body: formData });
+        if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Upload failed (${resp.status})` }; }
+        return await resp.json();
+    }
+    async addDocumentFromUrl(url, discussionId, title) {
+        const resp = await fetch('/api/documents/add-url', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, discussion_id: discussionId || 0, title: title || '' }),
+        });
+        if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Failed (${resp.status})` }; }
+        return await resp.json();
+    }
+    async getDiscussionDocuments(discussionId) {
+        const resp = await fetch(`/api/documents/${discussionId || 0}`);
+        if (!resp.ok) return { documents: [] };
+        const data = await resp.json();
+        return data.documents || [];
+    }
+    async removeDocument(docId, discussionId) {
+        const resp = await fetch(`/api/documents/${docId}/${discussionId}`, { method: 'DELETE' });
+        if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Failed (${resp.status})` }; }
+        return await resp.json();
+    }
+    async deleteDocument(docId) {
+        const resp = await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
+        if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Failed (${resp.status})` }; }
+        return await resp.json();
+    }
 
     async getMemoryConfig() {
         const resp = await fetch('/api/memory/config');

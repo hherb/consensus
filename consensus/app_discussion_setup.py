@@ -17,6 +17,8 @@ _DA_TOOL_NAMES = [
     "web_search", "fetch_webpage",
     "memory_store", "memory_recall", "memory_forget",
     "discussion_search", "kg_assert", "kg_query",
+    "doc_add", "doc_list", "doc_get_length", "doc_get_text",
+    "doc_get_sections", "doc_get_chapter", "doc_ask", "doc_summary",
 ]
 
 

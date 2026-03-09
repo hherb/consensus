@@ -17,6 +17,7 @@ import { exportAsJson, exportAsHtml, exportAsPdf, toggleExportMenu, closeExportM
 import { openMcpServerDialog, confirmMcpServer, toggleMcpServer, deleteMcpServer, testMcpConnection } from './mcp.js';
 import { showConsultExpertDialog, onToolProgress } from './experts.js';
 import { loadMemoryConfig, saveMemoryConfig, testMemoryConnection } from './memory.js';
+import { renderDocumentPanel, uploadDocument, addDocumentByUrl } from './documents.js';
 
 // Register the setup-tab callback so state.js can trigger it without circular imports
 registerSetupCallback(renderSetupTab);
@@ -35,7 +36,7 @@ function switchTab(tabName) {
     else if (tabName === 'settings-prompts') renderPrompts();
     else if (tabName === 'history') renderHistory();
     else if (tabName === 'settings-memory') loadMemoryConfig();
-    else if (tabName === 'new-discussion') renderSetupTab();
+    else if (tabName === 'new-discussion') { renderSetupTab(); renderDocumentPanel(); }
 }
 
 /**
@@ -202,6 +203,16 @@ function init() {
     if (memorySaveBtn) memorySaveBtn.addEventListener('click', saveMemoryConfig);
     const memoryTestBtn = $('#memory-test-btn');
     if (memoryTestBtn) memoryTestBtn.addEventListener('click', testMemoryConnection);
+
+    // Document management
+    const docUploadBtn = $('#doc-upload-btn');
+    if (docUploadBtn) docUploadBtn.addEventListener('click', uploadDocument);
+    const docUrlAddBtn = $('#doc-url-add-btn');
+    if (docUrlAddBtn) docUrlAddBtn.addEventListener('click', addDocumentByUrl);
+    const docUrlInput = $('#doc-url-input');
+    if (docUrlInput) docUrlInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') addDocumentByUrl();
+    });
 
     // Load initial state
     api.getState().then(s => {

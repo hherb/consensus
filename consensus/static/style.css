@@ -981,3 +981,22 @@ input[type="checkbox"] { width: auto; }
     margin-left: 0.3rem;
     vertical-align: middle;
 }
+
+/* === Document Items === */
+.document-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--border);
+}
+.document-item:last-child { border-bottom: none; }
+.document-info { flex: 1; min-width: 0; }
+.document-info strong { font-size: 0.9rem; }
+.document-info span { margin-left: 0.5rem; }
+.document-summary {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin: 0.25rem 0 0;
+    line-height: 1.4;
+}
