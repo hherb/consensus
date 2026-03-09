@@ -5,12 +5,11 @@ directly. They do NOT call _notify(); the ConsensusApp wrapper methods handle
 notification after calling each function.
 """
 
-import json
 import time
 from typing import Optional
 
 from .database import Database
-from .methods import get_method
+from .methods import get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole
 from .moderator import Moderator
 
@@ -250,14 +249,16 @@ def set_discussion_method(
 ) -> dict:
     """Set the discussion method (must be called before starting).
 
-    Returns a dict with method info, or an error dict.
+    Returns a dict with method info.
+    Raises ``ValueError`` if the method is unknown or the discussion
+    has already started.
     """
     if discussion.status != "setup":
-        return {"error": "Cannot change method after discussion has started"}
+        raise ValueError("Cannot change method after discussion has started")
     try:
         method = get_method(method_name)
     except KeyError:
-        return {"error": f"Unknown discussion method: {method_name!r}"}
+        raise ValueError(f"Unknown discussion method: {method_name!r}")
     discussion.discussion_method = method_name
     return method.to_dict()
 
@@ -356,7 +357,7 @@ def start_discussion(
         db.update_discussion(
             did,
             discussion_method=discussion.discussion_method,
-            method_state=json.dumps(discussion.method_state),
+            method_state=serialize_method_state(discussion.method_state),
         )
     except KeyError:
         pass  # open_discussion — no special state needed

@@ -56,7 +56,7 @@ class DiscussionMethod(ABC):
     name: str = ""
     display_name: str = ""
     description: str = ""
-    default_phases: list[Phase] = []
+    default_phases: tuple[Phase, ...] = ()
 
     # ------------------------------------------------------------------
     # Phase management

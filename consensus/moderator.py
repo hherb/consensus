@@ -9,8 +9,7 @@ from typing import Callable, Optional
 from .models import Discussion, Entity, EntityType
 from .ai_client import AIClient, AIResponse
 from .database import Database
-from .methods import get_method
-from .methods.base import DiscussionMethod
+from .methods import get_active_method
 from .tools import ToolCallRecord, ToolRegistry, MAX_TOOL_ITERATIONS
 
 logger = logging.getLogger(__name__)
@@ -138,18 +137,6 @@ class Moderator:
                 logger.debug("Error closing AI client", exc_info=True)
         self._clients.clear()
 
-    def _get_method(self) -> Optional[DiscussionMethod]:
-        """Return the DiscussionMethod for the current discussion, if any."""
-        method_name = self.discussion.discussion_method
-        if not method_name or method_name == "open_discussion":
-            return None  # use standard prompt logic
-        try:
-            return get_method(method_name)
-        except KeyError:
-            logger.warning("Unknown discussion method %r, using default",
-                           method_name)
-            return None
-
     async def generate_turn(self, entity: Entity,
                             participant_role: str = "standard") -> AIResponse:
         """Generate an AI entity's contribution to the discussion.
@@ -164,7 +151,7 @@ class Moderator:
         participants = self._participant_names()
 
         # Check for method-specific prompts first
-        method = self._get_method()
+        method = get_active_method(self.discussion)
         method_system = method.get_system_prompt(entity, self.discussion) if method else ""
         method_turn = method.get_turn_prompt(entity, self.discussion) if method else ""
 
@@ -445,7 +432,7 @@ class Moderator:
         )
 
         # Check for method-specific summary prompt
-        method = self._get_method()
+        method = get_active_method(self.discussion)
         method_summary = (
             method.get_summary_prompt(self.discussion, speaker,
                                       next_speaker_name)
@@ -492,7 +479,7 @@ class Moderator:
         )
 
         # Check for method-specific conclusion prompt
-        method = self._get_method()
+        method = get_active_method(self.discussion)
         method_conclusion = (
             method.get_conclusion_prompt(self.discussion)
             if method else ""

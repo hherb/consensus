@@ -48,7 +48,7 @@ class ACH(DiscussionMethod):
         "evidence.  Hypotheses are ranked by inconsistency count — "
         "the one with the fewest inconsistencies is most likely."
     )
-    default_phases = [
+    default_phases = (
         Phase(
             name="hypothesize",
             display_name="Hypothesis Generation",
@@ -92,7 +92,7 @@ class ACH(DiscussionMethod):
             ),
             rounds=1,
         ),
-    ]
+    )
 
     # ------------------------------------------------------------------
     # State
@@ -409,6 +409,13 @@ class ACH(DiscussionMethod):
         state = discussion.method_state
         evidence_items = self._parse_evidence(content)
 
+        if not evidence_items:
+            logger.warning(
+                "Could not extract evidence from %s's response "
+                "(expected **E1:** or numbered format)",
+                entity.name,
+            )
+
         for item in evidence_items:
             eid = state.get("next_evidence_id", 1)
             item["id"] = eid
@@ -581,8 +588,11 @@ class ACH(DiscussionMethod):
                     r = matrix.get(hkey, {}).get(ekey, "0")
                     if r in votes:
                         votes[r] += 1
-                # Majority vote across evaluators
-                majority = max(votes, key=lambda k: votes[k])
+                # Majority vote across evaluators; ties default to
+                # neutral ("0") since ACH focuses on disconfirmation
+                max_count = max(votes.values())
+                tied = [k for k, v in votes.items() if v == max_count]
+                majority = tied[0] if len(tied) == 1 else "0"
                 row_parts.append(majority)
                 if majority == "-":
                     inc_count += 1

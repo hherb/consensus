@@ -1,29 +1,16 @@
 """Active discussion operations — message submission, turn management, mediation, conclusion."""
 
-import json
 import logging
 import time
 from typing import Callable, Optional
 
 from .database import Database
-from .methods import get_method
-from .methods.base import DiscussionMethod
+from .methods import get_active_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole, StoryboardEntry
 from .moderator import Moderator
 from .pricing import PricingCache
 
 logger = logging.getLogger(__name__)
-
-
-def _get_method(discussion: Discussion) -> Optional[DiscussionMethod]:
-    """Return the DiscussionMethod for a discussion, or None for open."""
-    name = discussion.discussion_method
-    if not name or name == "open_discussion":
-        return None
-    try:
-        return get_method(name)
-    except KeyError:
-        return None
 
 
 def is_pass(content: str) -> bool:
@@ -118,7 +105,7 @@ async def generate_ai_turn(
         passed = is_pass(resp.content)
 
         # Method-specific response post-processing
-        method = _get_method(discussion)
+        method = get_active_method(discussion)
         if method and not passed:
             processed = method.process_response(
                 resp.content, current, discussion)
@@ -127,7 +114,7 @@ async def generate_ai_turn(
             if discussion.id:
                 db.update_discussion(
                     discussion.id,
-                    method_state=json.dumps(discussion.method_state),
+                    method_state=serialize_method_state(discussion.method_state),
                 )
         else:
             content = resp.content
@@ -305,9 +292,12 @@ async def complete_turn(
     next_speaker = moderator.advance_turn()
 
     # Method phase management
-    method = _get_method(discussion)
+    method = get_active_method(discussion)
     if method:
-        # Notify method at end of each full round (turn index wrapped to 0)
+        # Detect full-round completion: advance_turn() above already
+        # incremented current_turn_index and wrapped it modulo turn_order
+        # length.  When it wraps back to 0 (and we're past turn 1), all
+        # participants have spoken this round.
         if (discussion.turn_order
                 and discussion.current_turn_index == 0
                 and discussion.turn_number > 1):
@@ -335,7 +325,7 @@ async def complete_turn(
                 if discussion.id:
                     db.update_discussion(
                         discussion.id,
-                        method_state=json.dumps(discussion.method_state),
+                        method_state=serialize_method_state(discussion.method_state),
                     )
                 return {
                     "method_complete": True,
@@ -348,7 +338,7 @@ async def complete_turn(
             if discussion.id:
                 db.update_discussion(
                     discussion.id,
-                    method_state=json.dumps(discussion.method_state),
+                    method_state=serialize_method_state(discussion.method_state),
                 )
 
     # Check if max_rounds has been reached

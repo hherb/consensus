@@ -57,7 +57,7 @@ class BeliefDiffusion(DiscussionMethod):
         "the most persuasive arguments, and detects inconsistencies between "
         "stated reasoning and actual belief shifts."
     )
-    default_phases = [
+    default_phases = (
         Phase(
             name="frame",
             display_name="Framing",
@@ -96,7 +96,7 @@ class BeliefDiffusion(DiscussionMethod):
             ),
             rounds=1,
         ),
-    ]
+    )
 
     # ------------------------------------------------------------------
     # State initialisation

@@ -26,14 +26,14 @@ class OpenDiscussion(DiscussionMethod):
         "turns in order, with the moderator summarising after each turn.  "
         "An optional devil's advocate provides critical analysis."
     )
-    default_phases = [
+    default_phases = (
         Phase(
             name="discussion",
             display_name="Discussion",
             description="Open-ended round-robin discussion.",
             rounds=0,  # unlimited — controlled by max_rounds
         ),
-    ]
+    )
 
     def get_system_prompt(self, entity: Entity, discussion: Discussion) -> str:
         """Return empty string — use standard prompt templates."""

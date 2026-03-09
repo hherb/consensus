@@ -508,9 +508,12 @@ class ConsensusApp:
 
         Must be called before starting the discussion.
         """
-        result = app_discussion_setup.set_discussion_method(
-            self.discussion, method_name,
-        )
+        try:
+            result = app_discussion_setup.set_discussion_method(
+                self.discussion, method_name,
+            )
+        except ValueError as e:
+            return {"error": str(e)}
         self._notify()
         return result
 
