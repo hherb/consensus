@@ -14,7 +14,7 @@ from .models import (
 )
 from .moderator import Moderator
 from .database import Database
-from . import app_entities, app_providers, app_discussion_setup, app_discussion_flow
+from . import app_entities, app_providers, app_discussion_setup, app_discussion_flow, app_discussion_state
 from .config import get_db_path, save_api_key, remove_api_key, has_api_key
 from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolRegistry, ToolResult
 
@@ -582,210 +582,58 @@ class ConsensusApp:
     # ------------------------------------------------------------------
 
     def get_export_data(self, discussion_id: int) -> dict:
-        """Get discussion data for export without mutating current state."""
-        disc = self.db.get_discussion(discussion_id)
-        if not disc:
-            return {"error": "Discussion not found"}
-
-        members = self.db.get_discussion_members(discussion_id)
-        messages = self.db.get_messages(discussion_id)
-        storyboard = self.db.get_storyboard(discussion_id)
-
-        entities = [Entity.from_db_row(m) for m in members]
-        msgs = [Message.from_db_row(m) for m in messages]
-        sb = [StoryboardEntry.from_db_row(s) for s in storyboard]
-
-        turn_order = [
-            m["entity_id"] for m in members
-            if m.get("turn_position") is not None
-        ]
-
-        status = disc["status"]
-        d = Discussion(
-            id=discussion_id,
-            topic=disc["topic"],
-            entities=entities,
-            moderator_id=disc.get("moderator_id"),
-            messages=msgs,
-            storyboard=sb,
-            turn_order=turn_order,
-            is_active=status == "active",
-            status=status,
-        )
-        return d.to_dict()
+        """Get discussion data for export."""
+        return app_discussion_state.get_export_data(self.db, discussion_id)
 
     def load_discussion(self, discussion_id: int) -> dict:
-        """Load a past discussion, restoring full state including turn position."""
-        disc = self.db.get_discussion(discussion_id)
-        if not disc:
-            return {"error": "Discussion not found"}
-
-        members = self.db.get_discussion_members(discussion_id)
-        messages = self.db.get_messages(discussion_id)
-        storyboard = self.db.get_storyboard(discussion_id)
-
-        entities = [Entity.from_db_row(m) for m in members]
-        msgs = [Message.from_db_row(m) for m in messages]
-        sb = [StoryboardEntry.from_db_row(s) for s in storyboard]
-
-        # Restore turn order from discussion_members.turn_position
-        turn_order: list[int] = [
-            m["entity_id"] for m in members
-            if m.get("turn_position") is not None
-        ]
-
-        status = disc["status"]
-        is_active = status == "active"
-
-        # Recover turn state for resumable discussions
-        current_turn_index = 0
-        turn_number = 0
-        if status in ("active", "paused") and turn_order and msgs:
-            turn_number = self.db.get_max_turn_number(discussion_id)
-            # Find the last participant message to determine next speaker
-            last_participant = next(
-                (m for m in reversed(msgs)
-                 if m.role == MessageRole.PARTICIPANT),
-                None,
-            )
-            if last_participant and last_participant.entity_id in turn_order:
-                last_idx = turn_order.index(last_participant.entity_id)
-                current_turn_index = (last_idx + 1) % len(turn_order)
-            turn_number = max(turn_number, 1)
-
-        # Restore member roles from DB
-        member_roles = {
-            m["entity_id"]: m.get("participant_role", "standard")
-            for m in members
-        }
-
-        self.discussion = Discussion(
-            id=discussion_id,
-            topic=disc["topic"],
-            entities=entities,
-            moderator_id=disc.get("moderator_id"),
-            messages=msgs,
-            storyboard=sb,
-            turn_order=turn_order,
-            current_turn_index=current_turn_index,
-            turn_number=turn_number,
-            max_rounds=disc.get("max_rounds", 0),
-            is_active=is_active,
-            status=status,
-            member_roles=member_roles,
+        """Load a past discussion."""
+        result = app_discussion_state.load_discussion(
+            self.db, discussion_id,
+            self._resolve_key_for_moderator, self.tool_registry,
         )
-        self.moderator = Moderator(
-            self.discussion, self.db,
-            key_resolver=self._resolve_key_for_moderator,
-            tool_registry=self.tool_registry,
-        )
+        if isinstance(result, dict):
+            return result  # error
+        self.discussion, self.moderator = result
         self._notify()
         return self.get_state()
 
     def delete_discussions(self, discussion_ids: list[int]) -> dict:
-        """Soft-delete discussions by IDs."""
-        count = self.db.soft_delete_discussions(discussion_ids)
-        return {"deleted": count, "state": self.get_state()}
+        """Soft-delete discussions."""
+        result = app_discussion_state.delete_discussions(self.db, discussion_ids)
+        result["state"] = self.get_state()
+        return result
 
     def restore_discussion(self, discussion_id: int) -> dict:
         """Restore a soft-deleted discussion."""
-        restored = self.db.restore_discussion(discussion_id)
-        return {"restored": restored, "state": self.get_state()}
+        result = app_discussion_state.restore_discussion(self.db, discussion_id)
+        result["state"] = self.get_state()
+        return result
 
     def pause_discussion(self) -> dict:
         """Pause the current active discussion."""
-        if not self.discussion.id or self.discussion.status != "active":
-            return {"error": "Discussion is not active"}
-
-        self.discussion.status = "paused"
-        self.discussion.is_active = False
-        self.db.update_discussion(self.discussion.id, status="paused")
-
-        mod_id = self.discussion.moderator_id or 0
-        sys_msg = Message(
-            entity_id=mod_id, entity_name="System",
-            content="-- Discussion paused --",
-            role=MessageRole.SYSTEM,
-        )
-        self.discussion.messages.append(sys_msg)
-        self.db.add_message(
-            self.discussion.id, mod_id,
-            "-- Discussion paused --", "system",
-            turn_number=self.discussion.turn_number,
-        )
-        self._notify()
-        return self.get_state()
+        result = app_discussion_state.pause_discussion(self.discussion, self.db)
+        if "error" not in result:
+            self._notify()
+        return result
 
     def resume_discussion(self) -> dict:
         """Resume a paused discussion."""
-        if not self.discussion.id or self.discussion.status != "paused":
-            return {"error": "Discussion is not paused"}
-
-        self.discussion.status = "active"
-        self.discussion.is_active = True
-        self.db.update_discussion(self.discussion.id, status="active")
-
-        mod_id = self.discussion.moderator_id or 0
-        sys_msg = Message(
-            entity_id=mod_id, entity_name="System",
-            content="-- Discussion resumed --",
-            role=MessageRole.SYSTEM,
-        )
-        self.discussion.messages.append(sys_msg)
-        self.db.add_message(
-            self.discussion.id, mod_id,
-            "-- Discussion resumed --", "system",
-            turn_number=self.discussion.turn_number,
-        )
-        self._notify()
-        return self.get_state()
+        result = app_discussion_state.resume_discussion(self.discussion, self.db)
+        if "error" not in result:
+            self._notify()
+        return result
 
     def reopen_discussion(self) -> dict:
-        """Reopen a concluded discussion for continuation.
-
-        Transitions the discussion to 'paused' so the user can manage
-        participants before resuming with a new prompt.
-        """
-        if not self.discussion.id:
-            return {"error": "No discussion loaded"}
-        if self.discussion.status != "concluded":
-            return {"error": "Discussion is not concluded"}
-
-        self.discussion.status = "paused"
-        self.discussion.is_active = False
-        self.db.update_discussion(
-            self.discussion.id, status="paused", ended_at=None,
-        )
-
-        # Restore turn state so the discussion can continue
-        if self.discussion.turn_order:
-            self.discussion.current_turn_index = 0
-        self.discussion.turn_number = (
-            self.db.get_max_turn_number(self.discussion.id) + 1
-        )
-
-        mod_id = self.discussion.moderator_id or 0
-        sys_msg = Message(
-            entity_id=mod_id, entity_name="System",
-            content="-- Discussion reopened --",
-            role=MessageRole.SYSTEM,
-        )
-        self.discussion.messages.append(sys_msg)
-        self.db.add_message(
-            self.discussion.id, mod_id,
-            "-- Discussion reopened --", "system",
-            turn_number=self.discussion.turn_number,
-        )
-        self._notify()
-        return self.get_state()
+        """Reopen a concluded discussion."""
+        result = app_discussion_state.reopen_discussion(self.discussion, self.db)
+        if "error" not in result:
+            self._notify()
+        return result
 
     def reset(self) -> bool:
-        """Reset to a clean state for a new discussion."""
-        self.discussion = Discussion()
-        self.moderator = Moderator(
-            self.discussion, self.db,
-            key_resolver=self._resolve_key_for_moderator,
-            tool_registry=self.tool_registry,
+        """Reset to a clean state."""
+        self.discussion, self.moderator = app_discussion_state.reset_discussion(
+            self.db, self._resolve_key_for_moderator, self.tool_registry,
         )
         self._notify()
         return True
