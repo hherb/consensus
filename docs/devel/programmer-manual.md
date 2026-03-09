@@ -22,6 +22,8 @@ document for detailed coverage.
 | 9 | [Prompts, Providers, and Security](09-prompts-providers-security.md) | Prompt template system, AI provider integration, BYOK, security measures |
 | 10 | [Contributing](10-contributing.md) | Common tasks, conventions, patterns, debugging, known limitations |
 | 11 | [Authentication](11-authentication.md) | Email/password auth, OAuth (GitHub/Google/LinkedIn/Apple), tokens, CSRF, brute-force protection |
+| 12 | [Cost Tracking](12-cost-tracking.md) | PricingCache, OpenRouter integration, per-message cost, model name matching |
+| 13 | [MCP Expert Plugins](13-mcp-expert-plugins.md) | MCPToolProvider, expert entities, consult_expert meta-tool, SSE progress events |
 
 ## Quick Architecture Diagram
 
@@ -33,7 +35,7 @@ Frontend (static/index.html + app.js + style.css)
     |
     v
 ConsensusApp (app.py)
-    |  Central orchestrator: state management, validation, DB writes
+    |  Central orchestrator: state management, validation, DB writes, event emitter
     |
     +-- Moderator (moderator.py)
     |     Turn flow, prompt resolution, AI generation, tool execution loop
@@ -41,12 +43,18 @@ ConsensusApp (app.py)
     +-- ToolRegistry (tools.py)
     |     Pluggable tool providers, access control, execution with timeout
     |
+    +-- MCPToolProvider (mcp_client.py)
+    |     JSON-RPC 2.0 communication with MCP server subprocesses
+    |
+    +-- PricingCache (pricing.py)
+    |     Model cost lookup via OpenRouter, fuzzy name matching
+    |
     +-- AIClient (ai_client.py)
     |     Async HTTP via httpx to any OpenAI-compatible endpoint
     |
     +-- Database (database.py)
           Thread-safe SQLite: providers, entities, prompts,
-          discussions, members, messages, storyboard, tools
+          discussions, members, messages, storyboard, tools, pricing, MCP/experts
 ```
 
 ## Key Design Principles
@@ -66,6 +74,11 @@ ConsensusApp (app.py)
 - **Institutional memory (optional).** AI entities can persist observations,
   search past discussions semantically, and maintain a knowledge graph across
   sessions. Implemented as tool providers requiring `[memory]` extras + Ollama.
+- **MCP expert plugins.** External tools exposed via MCP servers can be wrapped
+  as consultable expert entities, extending capabilities without modifying core
+  code.
+- **Cost tracking.** Per-message cost calculation using OpenRouter pricing data,
+  with fuzzy model name matching and automatic cache refresh.
 
 ---
 

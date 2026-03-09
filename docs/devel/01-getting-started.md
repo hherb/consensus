@@ -85,10 +85,12 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 Or use the UI's Providers tab to enter keys, which are saved to
 `~/.consensus/.env` with `0600` permissions.
 
-### No test suite yet
+### Tests
 
-There is currently no test suite, linter configuration, or CI pipeline. This
-is an area ripe for contribution.
+Initial pytest-based tests exist in the `tests/` directory covering `app.py`,
+`database.py`, `tools.py`, and `mcp_client.py` (including MCP integration
+tests). Coverage is still limited — contributions welcome. No linter
+configuration or CI pipeline exists yet.
 
 ---
 
@@ -109,6 +111,9 @@ consensus/
   desktop.py           pywebview launcher and JS-Python bridge
   tools.py             Pluggable tool framework (ToolProvider, ToolRegistry)
   tools_builtin.py     Built-in web search tool (Brave + DuckDuckGo fallback)
+  mcp_client.py        MCPToolProvider — JSON-RPC 2.0 communication with MCP servers
+  pricing.py           PricingCache — model cost lookup via OpenRouter
+  migrations/          File-based SQL migrations (003_cost_tracking, 004_mcp_experts)
   static/
     index.html         Single-page HTML (setup + discussion views)
     style.css          All styling (dark/light themes via CSS custom properties)

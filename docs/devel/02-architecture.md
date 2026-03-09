@@ -14,7 +14,7 @@ Frontend (static/index.html + app.js + style.css)
     |
     v
 ConsensusApp (app.py)
-    |  Central orchestrator: state management, validation, DB writes
+    |  Central orchestrator: state management, validation, DB writes, event emitter
     |
     +-- Moderator (moderator.py)
     |     Turn flow, prompt resolution, AI generation, tool execution loop
@@ -22,12 +22,18 @@ ConsensusApp (app.py)
     +-- ToolRegistry (tools.py)
     |     Pluggable tool providers, access control, execution with timeout
     |
+    +-- MCPToolProvider (mcp_client.py)
+    |     JSON-RPC 2.0 communication with MCP server subprocesses
+    |
+    +-- PricingCache (pricing.py)
+    |     Model cost lookup via OpenRouter, fuzzy name matching, SQLite cache
+    |
     +-- AIClient (ai_client.py)
     |     Async HTTP via httpx to any OpenAI-compatible endpoint
     |
     +-- Database (database.py)
     |     Thread-safe SQLite: providers, entities, prompts,
-    |     discussions, members, messages, storyboard, tools
+    |     discussions, members, messages, storyboard, tools, pricing, MCP/experts
     |
     +-- AuthManager (auth.py) [multi-user mode only]
           Email/password + OAuth auth, token management,
@@ -65,6 +71,7 @@ dependencies. Every dataclass provides:
 class EntityType(Enum):
     HUMAN = "human"
     AI = "ai"
+    EXPERT = "expert"  # MCP-backed expert entity
 
 class MessageRole(Enum):
     PARTICIPANT = "participant"
@@ -78,7 +85,7 @@ class MessageRole(Enum):
 |-------|---------|------------|
 | `AIConfig` | AI model settings for an entity | `base_url`, `api_key`, `model`, `temperature`, `max_tokens`, `system_prompt`, `provider_id` |
 | `Entity` | A discussion participant | `name`, `entity_type`, `ai_config`, `id`, `avatar_color` |
-| `Message` | A single message in a discussion | `entity_id`, `entity_name`, `content`, `role`, `timestamp`, plus AI metadata (tokens, latency), `tool_calls_json` |
+| `Message` | A single message in a discussion | `entity_id`, `entity_name`, `content`, `role`, `timestamp`, plus AI metadata (tokens, latency, cost), `tool_calls_json` |
 | `StoryboardEntry` | A moderator summary after a turn | `turn_number`, `summary`, `speaker_name`, `timestamp` |
 | `Discussion` | Full in-memory discussion state | `entities`, `messages`, `storyboard`, `turn_order`, `current_turn_index`, `turn_number`, `is_active` |
 

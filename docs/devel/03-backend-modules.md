@@ -18,8 +18,11 @@ class ConsensusApp:
         self.discussion = Discussion()
         self.moderator = Moderator(self.discussion, self.db)
         self.tool_registry = ToolRegistry(self.db)
-        self._on_update = None  # callback for push-based state updates
-        self._init_builtin_tools()  # registers web search, etc.
+        self.pricing = PricingCache(self.db.conn, self.db._lock)
+        self._on_update = None    # callback for push-based state updates
+        self._event_handlers = {}  # lightweight event emitter
+        self._mcp_providers = {}   # active MCP server connections {server_id: MCPToolProvider}
+        self._init_builtin_tools()  # registers web search, consult_expert, etc.
         self._init_memory_tools()   # registers memory tools (if sqlite-vec installed)
 ```
 
@@ -27,6 +30,10 @@ class ConsensusApp:
 that receives the full state dict whenever something changes. The desktop
 bridge uses this to push state to the webview via `evaluate_js`. The web
 server doesn't use it -- it returns state in each HTTP response instead.
+
+**Event emitter:** `on(event, handler)` and `emit(event, data)` provide a
+lightweight pub/sub system for real-time notifications. Used by the SSE
+endpoint to forward `tool_progress` events to connected browsers.
 
 **`get_state()`** assembles the complete frontend state:
 ```python
@@ -36,6 +43,8 @@ def get_state(self):
     state["saved_entities"] = self.db.get_entities()
     state["prompts"] = self.db.get_prompts()
     state["discussions_history"] = self.db.get_discussions()
+    state["mcp_servers"] = self.get_mcp_servers()
+    state["experts"] = self.get_expert_definitions()
     return state
 ```
 
@@ -50,6 +59,10 @@ def get_state(self):
 | **Discussion lifecycle** | `start_discussion`, `submit_human_message`, `submit_moderator_message`, `generate_ai_turn`, `complete_turn`, `reassign_turn`, `mediate`, `conclude_discussion`, `pause_discussion`, `resume_discussion`, `reopen_discussion` |
 | **Dynamic participation** | `add_participant`, `remove_participant` |
 | **Tool management** | `list_available_tools`, `get_entity_tools`, `assign_tool_to_entity`, `remove_entity_tool`, `set_discussion_tool_override` |
+| **MCP server management** | `add_mcp_server`, `get_mcp_servers`, `update_mcp_server`, `delete_mcp_server`, `test_mcp_connection`, `connect_mcp_server` |
+| **Expert definitions** | `save_expert_definition`, `get_expert_definitions`, `consult_expert` |
+| **Cost tracking** | Automatic via `PricingCache` during message generation |
+| **Events** | `on`, `emit` — lightweight pub/sub for real-time updates |
 | **BYOK** | `set_request_api_keys`, `clear_request_api_keys`, `resolve_provider_api_key` |
 | **History / export** | `load_discussion`, `get_export_data`, `reset` |
 
@@ -175,11 +188,24 @@ dedicated `auth.db` database. Auth endpoints are registered under `/auth/*`
 
 For full auth endpoint reference, see [Authentication](11-authentication.md).
 
+### SSE endpoint
+
+`GET /api/events` provides a Server-Sent Events stream for real-time updates:
+- Content-Type: `text/event-stream`
+- Emits `tool_progress` events during MCP tool execution
+- 30-second keepalive comments prevent connection timeout
+- Queue-based event dispatch per connected client
+- Graceful cleanup on client disconnect
+
+The SSE endpoint listens for events via `ConsensusApp.on("tool_progress", ...)`
+and forwards them to all connected SSE clients.
+
 ### Non-API endpoints
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/health` | GET | Health check (returns `{"status": "ok"}` or `{"status": "ok", "active_sessions": N}` in multi-user mode) |
+| `/api/events` | GET | Server-Sent Events stream for real-time progress updates |
 | `/auth/*` | Various | Authentication endpoints (register, login, logout, OAuth). See [Authentication](11-authentication.md) |
 
 ---
@@ -260,6 +286,12 @@ invoke `onStateUpdate(state)` in the frontend whenever state changes.
 `list_available_tools()`, `get_entity_tools()`, `assign_tool()`,
 `remove_entity_tool()`, `set_discussion_tool_override()`. These mirror the
 corresponding `ConsensusApp` methods.
+
+**MCP/Expert bridge methods:** `DesktopBridge` exposes MCP server and expert
+management: `get_mcp_servers()`, `add_mcp_server()`, `update_mcp_server()`,
+`delete_mcp_server()`, `test_mcp_connection()`, `save_expert_definition()`,
+`get_expert_definitions()`, `consult_expert()`. Async methods (delete, test,
+consult) are wrapped in `_run_async()`.
 
 **`launch_desktop()`** creates the pywebview window (1280x800, min 900x600)
 pointing at `static/index.html`, wires up the bridge, and starts the webview

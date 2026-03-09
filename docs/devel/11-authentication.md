@@ -1,6 +1,6 @@
 # 11. Authentication
 
-[Back to index](programmer-manual.md) | [Previous: Contributing](10-contributing.md)
+[Back to index](programmer-manual.md) | [Previous: Contributing](10-contributing.md) | [Next: Cost Tracking](12-cost-tracking.md)
 
 ---
 
@@ -220,4 +220,4 @@ OAuth providers only appear in the UI when both client ID and secret are set.
 
 ---
 
-[Back to index](programmer-manual.md)
+[Next: Cost Tracking](12-cost-tracking.md)

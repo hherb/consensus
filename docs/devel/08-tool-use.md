@@ -18,6 +18,7 @@ ConsensusApp
     |     +-- PythonToolProvider ("builtin")
     |     |     |
     |     |     +-- web_search (tools_builtin.py)
+    |     |     +-- consult_expert (app.py)
     |     |
     |     +-- PythonToolProvider ("memory")   [optional, requires sqlite-vec]
     |     |     |
@@ -25,7 +26,9 @@ ConsensusApp
     |     |     +-- discussion_search
     |     |     +-- kg_assert, kg_query
     |     |
-    |     +-- (future: MCPToolProvider, etc.)
+    |     +-- MCPToolProvider (mcp_client.py)  [per registered MCP server]
+    |           |
+    |           +-- Tools discovered dynamically via MCP tools/list
     |
     +-- Moderator (moderator.py)
           |
@@ -96,9 +99,15 @@ class ToolProvider(ABC):
     name: str
 
     async def list_tools(self) -> list[ToolDefinition]: ...
-    async def execute(self, tool_name, arguments, context) -> ToolResult: ...
+    async def execute(self, tool_name, arguments, context,
+                      progress_callback=None) -> ToolResult: ...
     async def close(self): ...  # optional cleanup
 ```
+
+The `progress_callback` parameter (added for MCP progress support) has the
+signature `callback(progress: int, total: int, message: str)`. It is used by
+`MCPToolProvider` to forward progress notifications from MCP servers. Python
+tool providers can ignore it.
 
 ### PythonToolProvider
 
@@ -114,6 +123,35 @@ provider.register_tool(
 
 Handlers receive `(arguments: dict, context: ToolContext)` and return either a
 `ToolResult` or a plain string (auto-wrapped).
+
+### MCPToolProvider
+
+Communicates with external MCP servers via JSON-RPC 2.0 over stdin/stdout
+subprocesses. Defined in `mcp_client.py`.
+
+```python
+provider = MCPToolProvider(
+    name="my_mcp_server",
+    command="python",
+    args=["-m", "my_mcp_server"],
+    env={"API_KEY": "..."}
+)
+await provider.connect()  # launches subprocess, performs MCP handshake
+tools = await provider.list_tools()  # calls tools/list
+result = await provider.execute("my_tool", {"arg": "val"}, context, progress_callback)
+await provider.close()  # terminates subprocess
+```
+
+**Key design:**
+- Subprocess lifecycle: `connect()` launches the process, performs an
+  `initialize` handshake (MCP protocol version `2024-11-05`), and starts a
+  background read loop for incoming JSON-RPC messages
+- Request/response correlation via sequential integer IDs
+- Progress notifications tied to requests via `progressToken` in `_meta`
+- Default timeout: 30 seconds per request (configurable)
+- `close()` terminates the subprocess and cleans up resources
+
+For full details, see [MCP Expert Plugins](13-mcp-expert-plugins.md).
 
 ---
 

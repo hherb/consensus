@@ -25,7 +25,7 @@ python -m consensus --web --port 8080 --debug
 consensus                      # via pyproject.toml [project.scripts]
 ```
 
-No test suite, linter, or build system is configured yet.
+Initial pytest test suite in `tests/`. No linter or build system configured yet.
 
 ## Architecture
 
@@ -34,9 +34,11 @@ No test suite, linter, or build system is configured yet.
 ```
 Frontend (static HTML/CSS/JS in consensus/static/)
     ↕ pywebview bridge OR aiohttp REST API
-ConsensusApp (app.py) — orchestrator, state management, callbacks
+ConsensusApp (app.py) — orchestrator, state management, event emitter
     ├── Moderator (moderator.py) — turn flow, AI generation, summaries
     ├── AIClient (ai_client.py) — async OpenAI-compatible HTTP client
+    ├── PricingCache (pricing.py) — model cost lookup via OpenRouter
+    ├── MCPToolProvider (mcp_client.py) — MCP server communication (JSON-RPC 2.0)
     └── Database (database.py) — thread-safe SQLite persistence
 ```
 
@@ -47,8 +49,10 @@ ConsensusApp (app.py) — orchestrator, state management, callbacks
 - `server.py` — aiohttp routes mapping to `ConsensusApp` methods; serves static files with path traversal protection; includes rate limiting, security headers, CORS, CSRF protection, auth middleware, health endpoint
 - `session.py` — `SessionManager` for multi-user deployments; per-session `ConsensusApp` + SQLite with TTL-based expiry
 - `auth.py` — `AuthManager`, `AuthDatabase`, `User` model, PBKDF2-SHA256 password hashing, OAuth Authorization Code flow (GitHub, Google, LinkedIn, Apple), bearer token management
+- `pricing.py` — `PricingCache` for per-message cost calculation using OpenRouter pricing data; fuzzy model name matching with aliases and variant generation
+- `mcp_client.py` — `MCPToolProvider` for JSON-RPC 2.0 communication with MCP server subprocesses; expert entity consultation
 
-**Database schema (SQLite, 7 tables + auth):** `providers`, `entities`, `prompts`, `discussions`, `discussion_members`, `messages`, `storyboard_entries`. Auth tables (in separate `auth.db` for multi-user): `users`, `auth_tokens`, `user_oauth_identities`, `oauth_states`. Seeded with default moderator/participant prompt templates on first run.
+**Database schema (SQLite, 7+ tables + auth):** `providers`, `entities` (types: human/ai/expert), `prompts`, `discussions`, `discussion_members`, `messages` (includes `cost` column), `storyboard_entries`, `model_pricing`, `mcp_servers`, `expert_definitions`. Auth tables (in separate `auth.db` for multi-user): `users`, `auth_tokens`, `user_oauth_identities`, `oauth_states`. Seeded with default moderator/participant prompt templates on first run.
 
 **Frontend:** Vanilla JS in `consensus/static/app.js`. Tabbed setup UI (New Discussion, Providers, Profiles, Prompts, History) and live discussion view. Uses CSS custom properties for light/dark mode.
 

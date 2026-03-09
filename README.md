@@ -81,6 +81,21 @@ A moderated discussion platform where two or more entities (humans and/or AI via
 - **Brute-force protection** — per-email rate limiting (5 attempts per 5-minute window)
 - **Login/register UI** with OAuth provider buttons and form validation
 
+### Cost Tracking
+- **Automatic per-message cost calculation** using pricing data from OpenRouter
+- **Model pricing cache** in SQLite with 7-day auto-refresh
+- **Fuzzy model name matching** — handles naming variants (hyphens vs dots, date suffixes, provider prefixes)
+- **Model aliases** for known name mappings (e.g. `deepseek-reasoner` → `deepseek/deepseek-r1`)
+- **Per-message and per-discussion cost display** in the UI
+
+### MCP Expert Plugins
+- **MCP (Model Context Protocol) server integration** — register external MCP servers that communicate via JSON-RPC 2.0 over stdin/stdout
+- **Expert entities** — a new entity type (`expert`) that wraps an MCP tool as a consultable participant
+- **`consult_expert` meta-tool** — AI participants can consult expert entities during turn generation; expert responses are added to the discussion
+- **MCP server management** — add, update, test, and delete MCP server configurations via the UI
+- **Real-time progress** — SSE endpoint (`GET /api/events`) for tool execution progress notifications
+- **Event emitter** — lightweight pub/sub system in `ConsensusApp` for real-time event dispatch
+
 ### Evaluation Framework
 - **Ablation study platform** for testing multi-agent discussion configurations against medical case vignettes
 - **10 seed cases** with gold diagnoses, key findings, and differential diagnoses
@@ -180,10 +195,12 @@ In **multi-user mode**, users provide their own API keys via the browser UI (sto
 ```
 Frontend (static HTML/CSS/JS)
     ↕ pywebview bridge OR aiohttp REST API
-ConsensusApp — orchestrator, state management
+ConsensusApp — orchestrator, state management, event emitter
     ├── Moderator — turn flow, AI generation, summaries
     ├── AIClient — async OpenAI-compatible HTTP client (httpx)
     ├── Database — thread-safe SQLite persistence
+    ├── PricingCache — model cost lookup via OpenRouter
+    ├── MCPToolProvider — MCP server communication (JSON-RPC 2.0)
     ├── Migrator — file-based SQL migration runner
     └── Evaluation — ablation study framework (cases, runner, scorer)
 

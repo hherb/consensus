@@ -110,23 +110,17 @@ application state.
 
 These are known gaps that represent good contribution opportunities:
 
-- **No test suite.** No unit tests, integration tests, or end-to-end tests
-  exist. The project would benefit from pytest-based tests for the backend
-  modules.
+- **Test suite is early-stage.** Initial pytest-based tests exist for `app.py`,
+  `database.py`, `tools.py`, and `mcp_client.py` (including integration tests),
+  but coverage is far from complete.
 - **No linter or formatter configuration.** No ruff, black, flake8, or mypy
   config.
 - **No CI/CD pipeline.** No GitHub Actions or similar.
 - **No streaming responses.** `AIClient.stream()` exists but is unused. The
   frontend doesn't handle streaming display.
-- **No WebSocket for real-time updates.** In web mode, the frontend only
-  receives state updates via HTTP response bodies. There's no push channel
-  (the desktop mode does have push via `evaluate_js`).
-- **No authentication or authorisation.** Multi-user mode provides session
-  isolation and rate limiting, but there is no user login, account system,
-  or role-based access control.
-- **No MCP tool providers yet.** The `ToolProvider` ABC is designed for future
-  MCP (Model Context Protocol) integration, but only `PythonToolProvider` is
-  currently implemented.
+- **SSE for progress only.** The SSE endpoint (`/api/events`) currently only
+  forwards `tool_progress` events. General state push via SSE or WebSocket is
+  not yet implemented (the desktop mode does have push via `evaluate_js`).
 - **Markdown rendering is basic.** The `renderMarkdown()` function handles
   common cases but doesn't cover the full CommonMark spec.
 - **No internationalisation.** All UI text is hardcoded in English.

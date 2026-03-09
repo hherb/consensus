@@ -75,6 +75,24 @@ All endpoints: `POST /api/{method}` with JSON body.
 | `remove_tool` | `entity_id`, `tool_name` | `true` |
 | `set_tool_override` | `discussion_id`, `entity_id`, `tool_name`, `enabled` | `true` |
 
+### MCP Servers
+
+| Method | JSON body fields | Returns |
+|--------|-----------------|---------|
+| `add_mcp_server` | `name`, `description?`, `command`, `args?`, `env?` | MCP server dict |
+| `get_mcp_servers` | *(none)* | List of MCP server dicts |
+| `update_mcp_server` | `server_id`, `name?`, `description?`, `command?`, `args?`, `env?`, `enabled?` | `null` |
+| `delete_mcp_server` | `server_id` | `null` |
+| `test_mcp_connection` | `server_id` | `{"success": true, "tools": [...]}` or `{"success": false, "error": "..."}` |
+
+### Expert Definitions
+
+| Method | JSON body fields | Returns |
+|--------|-----------------|---------|
+| `save_expert_definition` | `entity_id`, `mcp_server_id`, `tool_name`, `description?`, `default_arguments?`, `query_param_name?`, `timeout_seconds?` | Expert definition dict |
+| `get_expert_definitions` | *(none)* | List of expert definition dicts |
+| `consult_expert` | `expert_name`, `query` | `{"response": "...", "expert_name": "..."}` |
+
 ### History / Export
 
 | Method | JSON body fields | Returns |
@@ -105,11 +123,27 @@ middleware. They are protected by the CSRF middleware (except OAuth callbacks).
 - Login is rate-limited: 5 failed attempts per email per 5-minute window
 - Profile updates (`POST /auth/me`) use an explicit field allowlist
 
+### SSE Endpoint
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/events` | GET | Server-Sent Events stream for real-time progress updates |
+
+The SSE endpoint sends events with the following format:
+```
+event: tool_progress
+data: {"progress": 50, "total": 100, "message": "Processing..."}
+```
+
+Keepalive comments (`: keepalive`) are sent every 30 seconds to prevent
+connection timeout.
+
 ### Non-API Endpoints
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/health` | GET | Health check (returns `{"status": "ok"}`) |
+| `/api/events` | GET | Server-Sent Events for real-time updates |
 | `/{path}` | GET | Static file serving (index.html, app.js, style.css) |
 
 ### Response Format

@@ -27,7 +27,7 @@ providers (
 entities (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT NOT NULL,
-    entity_type     TEXT NOT NULL CHECK('human','ai'),
+    entity_type     TEXT NOT NULL CHECK('human','ai','expert'),
     avatar_color    TEXT NOT NULL DEFAULT '#3b82f6',
     provider_id     INTEGER REFERENCES providers(id) ON DELETE SET NULL,
     model           TEXT,
@@ -90,7 +90,8 @@ messages (
     latency_ms        INTEGER,
     temperature_used  REAL,
     prompt_id         INTEGER,
-    tool_calls_json   TEXT DEFAULT ''  -- JSON array of ToolCallRecord dicts
+    tool_calls_json   TEXT DEFAULT '',  -- JSON array of ToolCallRecord dicts
+    cost              REAL             -- USD cost of this message (NULL for human messages)
 )
 
 -- Moderator summaries, indexed by turn
@@ -141,6 +142,59 @@ discussion_tool_overrides (
 ```
 
 All timestamps are Unix epoch floats (`time.time()`).
+
+## Cost Tracking Tables
+
+These tables support per-message cost tracking. Created via migration
+`003_cost_tracking.sql`.
+
+```sql
+-- Cached model pricing from OpenRouter
+model_pricing (
+    model_id        TEXT PRIMARY KEY,
+    prompt_cost     REAL NOT NULL DEFAULT 0,   -- cost per token (prompt)
+    completion_cost REAL NOT NULL DEFAULT 0,   -- cost per token (completion)
+    last_updated    REAL NOT NULL DEFAULT 0    -- Unix epoch of last refresh
+)
+```
+
+The `messages.cost` column (added by the same migration) stores the calculated
+USD cost per AI message.
+
+## MCP Server and Expert Tables
+
+These tables support the MCP expert plugins system. Created via migration
+`004_mcp_experts.sql`.
+
+```sql
+-- Registered MCP server configurations
+mcp_servers (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    command     TEXT NOT NULL,              -- executable path (e.g. "python", "node")
+    args        TEXT NOT NULL DEFAULT '[]', -- JSON array of command-line arguments
+    env         TEXT NOT NULL DEFAULT '{}', -- JSON object of environment variables
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    created_at  REAL NOT NULL,
+    updated_at  REAL NOT NULL
+)
+
+-- Expert definitions: maps entities to MCP tools
+expert_definitions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id           INTEGER NOT NULL UNIQUE REFERENCES entities(id),
+    mcp_server_id       INTEGER NOT NULL REFERENCES mcp_servers(id),
+    tool_name           TEXT NOT NULL,
+    description         TEXT NOT NULL DEFAULT '',
+    default_arguments   TEXT NOT NULL DEFAULT '{}', -- JSON object of default args
+    query_param_name    TEXT NOT NULL DEFAULT 'query',
+    timeout_seconds     INTEGER NOT NULL DEFAULT 30
+)
+```
+
+The `entities.entity_type` CHECK constraint is expanded to include `'expert'`
+in addition to `'human'` and `'ai'`.
 
 ## Memory Tables (Optional)
 
@@ -303,6 +357,13 @@ construction:
 | `_migrate_tools()` | Creates `tool_providers`, `entity_tools`, `discussion_tool_overrides` tables; adds `tool_calls_json` column to `messages` |
 | `_migrate_memory()` | Creates `entity_memories`, `entity_memory_embeddings`, `message_embeddings`, `kg_nodes`, `kg_node_embeddings`, `kg_edges`, `memory_config` tables (requires `sqlite-vec`) |
 
+### File-based migrations (`consensus/migrations/`)
+
+| File | Purpose |
+|------|---------|
+| `003_cost_tracking.sql` | Creates `model_pricing` table; adds `cost` column to `messages` |
+| `004_mcp_experts.sql` | Creates `mcp_servers` and `expert_definitions` tables; expands `entities.entity_type` CHECK to include `'expert'` |
+
 Migrations are idempotent -- they check for the existence of columns/tables
 before making changes.
 
@@ -329,6 +390,23 @@ The `Database` class provides methods grouped by table:
 | `get_entity_tools(entity_id)` | List enabled tools for an entity |
 | `get_entity_tool(entity_id, tool_name)` | Get single assignment |
 | `get_shared_tools_for_discussion(discussion_id)` | List shared-mode tools for all members |
+
+### MCP server CRUD
+
+| Method | Purpose |
+|--------|---------|
+| `add_mcp_server(name, description, command, args, env)` | Register an MCP server, returns dict |
+| `get_mcp_servers()` | List all MCP servers |
+| `update_mcp_server(server_id, **kwargs)` | Update server configuration |
+| `delete_mcp_server(server_id)` | Remove a server and its expert definitions |
+
+### Expert definition CRUD
+
+| Method | Purpose |
+|--------|---------|
+| `save_expert_definition(entity_id, mcp_server_id, tool_name, ...)` | Create/update expert definition, returns dict |
+| `get_expert_definitions()` | List all expert definitions (JOINs with `mcp_servers`) |
+| `get_expert_definition_for_entity(entity_id)` | Get expert config for a specific entity |
 
 ### Discussion tool overrides
 
