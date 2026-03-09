@@ -1,5 +1,6 @@
 """Active discussion operations — message submission, turn management, mediation, conclusion."""
 
+import json
 import logging
 import time
 from typing import Callable, Optional
