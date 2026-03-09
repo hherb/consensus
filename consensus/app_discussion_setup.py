@@ -9,6 +9,7 @@ import time
 from typing import Optional
 
 from .database import Database
+from .methods import get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole
 from .moderator import Moderator
 
@@ -244,6 +245,26 @@ def reorder_da_in_turn_order(discussion: Discussion) -> None:
             )
 
 
+def set_discussion_method(
+    discussion: Discussion,
+    method_name: str,
+) -> dict:
+    """Set the discussion method (must be called before starting).
+
+    Returns a dict with method info.
+    Raises ``ValueError`` if the method is unknown or the discussion
+    has already started.
+    """
+    if discussion.status != "setup":
+        raise ValueError("Cannot change method after discussion has started")
+    try:
+        method = get_method(method_name)
+    except KeyError:
+        raise ValueError(f"Unknown discussion method: {method_name!r}")
+    discussion.discussion_method = method_name
+    return method.to_dict()
+
+
 def start_discussion(
     discussion: Discussion,
     db: Database,
@@ -330,6 +351,18 @@ def start_discussion(
     # Persist max_rounds
     if max_rounds > 0:
         db.update_discussion(did, max_rounds=max_rounds)
+
+    # Initialise method state
+    try:
+        method = get_method(discussion.discussion_method)
+        discussion.method_state = method.init_state(discussion)
+        db.update_discussion(
+            did,
+            discussion_method=discussion.discussion_method,
+            method_state=serialize_method_state(discussion.method_state),
+        )
+    except KeyError:
+        pass  # open_discussion — no special state needed
 
     # Opening message from moderator
     target_type = "ai" if mod.entity_type == EntityType.AI else "human"

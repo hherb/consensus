@@ -232,6 +232,10 @@ class Discussion:
     is_active: bool = False
     status: str = "setup"
     member_roles: dict[int, str] = field(default_factory=dict)
+    # Discussion method (e.g. "open_discussion", "belief_diffusion", "ach")
+    discussion_method: str = "open_discussion"
+    # Method-specific state (phases, hypotheses, belief history, etc.)
+    method_state: dict = field(default_factory=dict)
 
     @property
     def current_round(self) -> int:
@@ -287,4 +291,6 @@ class Discussion:
             "member_roles": {
                 str(k): v for k, v in self.member_roles.items()
             },
+            "discussion_method": self.discussion_method,
+            "method_state": self.method_state,
         }

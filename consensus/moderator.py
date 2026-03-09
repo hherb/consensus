@@ -4,15 +4,13 @@ import asyncio
 import json
 import logging
 import time
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import Callable, Optional
 
 from .models import Discussion, Entity, EntityType
 from .ai_client import AIClient, AIResponse
 from .database import Database
+from .methods import get_active_method
 from .tools import ToolCallRecord, ToolRegistry, MAX_TOOL_ITERATIONS
-
-if TYPE_CHECKING:
-    from .tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +150,11 @@ class Moderator:
         cfg = entity.ai_config
         participants = self._participant_names()
 
+        # Check for method-specific prompts first
+        method = get_active_method(self.discussion)
+        method_system = method.get_system_prompt(entity, self.discussion) if method else ""
+        method_turn = method.get_turn_prompt(entity, self.discussion) if method else ""
+
         # Select prompt task variants based on participant role
         system_task = "system"
         turn_task = "turn"
@@ -159,7 +162,9 @@ class Moderator:
             system_task = "system_devils_advocate"
             turn_task = "turn_devils_advocate"
 
-        if cfg.system_prompt:
+        if method_system:
+            system_prompt = method_system
+        elif cfg.system_prompt:
             system_prompt = cfg.system_prompt
         else:
             system_prompt = self.resolve_prompt(
@@ -169,12 +174,15 @@ class Moderator:
                 participants=participants,
             )
 
-        task = self.resolve_prompt(
-            "participant", "ai", turn_task,
-            entity_name=entity.name,
-            topic=self.discussion.topic,
-            participants=participants,
-        )
+        if method_turn:
+            task = method_turn
+        else:
+            task = self.resolve_prompt(
+                "participant", "ai", turn_task,
+                entity_name=entity.name,
+                topic=self.discussion.topic,
+                participants=participants,
+            )
         if not task:
             task = f"It is your turn to speak as {entity.name}. Be concise."
 
@@ -423,15 +431,26 @@ class Moderator:
             participants=participants,
         )
 
-        task = self.resolve_prompt(
-            "moderator", "ai", "summarize",
-            entity_name=mod.name,
-            topic=self.discussion.topic,
-            speaker_name=speaker,
-            turn_number=str(self.discussion.turn_number),
-            participants=participants,
-            next_speaker_name=next_speaker_name,
+        # Check for method-specific summary prompt
+        method = get_active_method(self.discussion)
+        method_summary = (
+            method.get_summary_prompt(self.discussion, speaker,
+                                      next_speaker_name)
+            if method else ""
         )
+
+        if method_summary:
+            task = method_summary
+        else:
+            task = self.resolve_prompt(
+                "moderator", "ai", "summarize",
+                entity_name=mod.name,
+                topic=self.discussion.topic,
+                speaker_name=speaker,
+                turn_number=str(self.discussion.turn_number),
+                participants=participants,
+                next_speaker_name=next_speaker_name,
+            )
         if not task:
             task = f"Summarize turn {self.discussion.turn_number} by {speaker}."
 
@@ -459,11 +478,21 @@ class Moderator:
             participants=participants,
         )
 
-        task = self.resolve_prompt(
-            "moderator", "ai", "conclude",
-            topic=self.discussion.topic,
-            participants=participants,
+        # Check for method-specific conclusion prompt
+        method = get_active_method(self.discussion)
+        method_conclusion = (
+            method.get_conclusion_prompt(self.discussion)
+            if method else ""
         )
+
+        if method_conclusion:
+            task = method_conclusion
+        else:
+            task = self.resolve_prompt(
+                "moderator", "ai", "conclude",
+                topic=self.discussion.topic,
+                participants=participants,
+            )
         if not task:
             task = f"Conclude the discussion on '{self.discussion.topic}'."
 

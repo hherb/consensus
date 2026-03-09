@@ -163,6 +163,14 @@ class DesktopBridge:
         """Set the discussion topic."""
         return self.app.set_topic(topic)
 
+    def set_discussion_method(self, method_name: str) -> dict:
+        """Set the discussion method (e.g. 'ach', 'belief_diffusion')."""
+        return self.app.set_discussion_method(method_name)
+
+    def list_discussion_methods(self) -> list[dict]:
+        """Return metadata for all available discussion methods."""
+        return self.app.list_discussion_methods()
+
     # -- Discussion lifecycle --
     def start_discussion(self, moderator_participates: bool = False,
                          max_rounds: int = 0) -> dict:
