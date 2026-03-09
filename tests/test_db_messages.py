@@ -38,6 +38,22 @@ class TestMessages:
         did = tmp_db.create_discussion("T", sample_ai_entity)
         assert tmp_db.get_max_turn_number(did) == 0
 
+    def test_add_message_with_cost(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        mid = tmp_db.add_message(
+            did, sample_ai_entity, "Costly response", "participant",
+            turn_number=1, cost=0.0042,
+        )
+        msgs = tmp_db.get_messages(did)
+        assert len(msgs) == 1
+        assert msgs[0]["cost"] == pytest.approx(0.0042)
+
+    def test_add_message_cost_defaults_to_none(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.add_message(did, sample_ai_entity, "No cost", "participant", turn_number=1)
+        msgs = tmp_db.get_messages(did)
+        assert msgs[0]["cost"] is None
+
 
 class TestStoryboard:
     def test_add_and_get_storyboard(self, tmp_db, sample_ai_entity):

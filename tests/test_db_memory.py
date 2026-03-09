@@ -11,6 +11,26 @@ except ImportError:
 from consensus.database import Database
 
 
+class TestMemoryConfig:
+    """Tests for memory_config that do NOT require sqlite_vec."""
+
+    def test_get_memory_config_returns_defaults(self, tmp_db):
+        config = tmp_db.get_memory_config()
+        assert "embedding_backend" in config
+        assert "embedding_model" in config
+        assert "embedding_endpoint" in config
+
+    def test_set_and_get_memory_config(self, tmp_db):
+        tmp_db.set_memory_config("custom_key", "custom_val")
+        config = tmp_db.get_memory_config()
+        assert config["custom_key"] == "custom_val"
+
+    def test_set_memory_config_upsert(self, tmp_db):
+        tmp_db.set_memory_config("embedding_backend", "overridden")
+        config = tmp_db.get_memory_config()
+        assert config["embedding_backend"] == "overridden"
+
+
 @pytest.mark.skipif(not HAS_SQLITE_VEC, reason="sqlite_vec not installed")
 class TestMemoryAndKG:
     def test_memory_config_get_set(self, tmp_db):

@@ -76,6 +76,18 @@ class TestEntities:
         ids = [e["id"] for e in entities]
         assert sample_ai_entity in ids
 
+    def test_get_entities_include_inactive_with_type_filter(self, tmp_db, sample_ai_entity, sample_human_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.add_discussion_member(did, sample_ai_entity, True, False)
+        tmp_db.delete_entity(sample_ai_entity)
+        # include_inactive=True + entity_type="ai" should include the deactivated AI entity
+        entities = tmp_db.get_entities(include_inactive=True, entity_type="ai")
+        ids = [e["id"] for e in entities]
+        assert sample_ai_entity in ids
+        assert all(e["entity_type"] == "ai" for e in entities)
+        # human should not appear when filtering for AI
+        assert sample_human_entity not in ids
+
     def test_get_inactive_entities(self, tmp_db, sample_ai_entity):
         did = tmp_db.create_discussion("T", sample_ai_entity)
         tmp_db.add_discussion_member(did, sample_ai_entity, True, False)

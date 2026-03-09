@@ -75,7 +75,11 @@ class Database(
                     allowed: set[str], extra_sets: Optional[dict] = None,
                     **kwargs: object) -> None:
         """Generic row update: filters kwargs to allowed fields, appends
-        extra_sets (e.g. updated_at), and executes a single UPDATE."""
+        extra_sets (e.g. updated_at), and executes a single UPDATE.
+
+        The table name is validated against _VALID_TABLES (module-level)
+        to prevent SQL injection. If a new mixin needs _update_row for a
+        table not yet listed, add it to _VALID_TABLES in this file."""
         if table not in _VALID_TABLES:
             raise ValueError(f"Invalid table: {table}")
         sets: list[str] = []

@@ -84,14 +84,16 @@ class MCPMixin:
             )
 
     def delete_mcp_server(self, server_id: int) -> None:
-        """Delete an MCP server and its associated expert definitions."""
-        self._execute_write(
-            "DELETE FROM expert_definitions WHERE mcp_server_id=?",
-            (server_id,),
-        )
-        self._execute_write(
-            "DELETE FROM mcp_servers WHERE id=?", (server_id,),
-        )
+        """Delete an MCP server and its associated expert definitions atomically."""
+        with self._lock:
+            self.conn.execute(
+                "DELETE FROM expert_definitions WHERE mcp_server_id=?",
+                (server_id,),
+            )
+            self.conn.execute(
+                "DELETE FROM mcp_servers WHERE id=?", (server_id,),
+            )
+            self.conn.commit()
 
     # ------------------------------------------------------------------
     # Expert Definitions

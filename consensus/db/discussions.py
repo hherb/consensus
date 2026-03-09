@@ -57,29 +57,28 @@ class DiscussionsMixin:
         if not discussion_ids:
             return 0
         placeholders = ",".join("?" * len(discussion_ids))
-        with self._lock:
-            cur = self.conn.execute(
-                f"UPDATE discussions SET deleted_at = ? "
-                f"WHERE id IN ({placeholders}) AND deleted_at IS NULL",
-                (time.time(), *discussion_ids),
-            )
-            self.conn.commit()
+        cur = self._execute_write(
+            f"UPDATE discussions SET deleted_at = ? "
+            f"WHERE id IN ({placeholders}) AND deleted_at IS NULL",
+            (time.time(), *discussion_ids),
+        )
         return cur.rowcount
 
     def restore_discussion(self, discussion_id: int) -> bool:
         """Restore a soft-deleted discussion."""
-        with self._lock:
-            cur = self.conn.execute(
-                "UPDATE discussions SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL",
-                (discussion_id,),
-            )
-            self.conn.commit()
+        cur = self._execute_write(
+            "UPDATE discussions SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL",
+            (discussion_id,),
+        )
         return cur.rowcount > 0
 
     def purge_deleted_discussions(self, max_days: int = MAX_DAYS_KEEP_DELETED) -> int:
         """Hard-delete discussions soft-deleted more than max_days ago.
         Cascades to messages, discussion_members, and storyboard_entries.
         Returns count of discussions purged.
+
+        Uses explicit lock + conn.execute (not _execute_write) to keep
+        all four deletes in a single atomic transaction.
         """
         cutoff = time.time() - (max_days * 86400)
         with self._lock:

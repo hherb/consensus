@@ -64,6 +64,11 @@ class ProvidersMixin:
         """Apply provider data fixes for existing databases."""
         from ..config import save_api_key
 
+        # Collect literal key migrations under the lock, then perform
+        # file I/O (save_api_key) outside to avoid holding the lock
+        # during potentially blocking filesystem operations.
+        keys_to_migrate: list[tuple[int, str, str]] = []  # (id, env_var, value)
+
         with self._lock:
             # Fix DeepSeek base_url (was /v1, which breaks /models endpoint)
             self.conn.execute(
@@ -103,13 +108,17 @@ class ProvidersMixin:
                                .replace(")", "") + "_API_KEY")
                     if env_var.endswith("_API_KEY_API_KEY"):
                         env_var = env_var[:-8]
-                    save_api_key(env_var, value)
+                    keys_to_migrate.append((row[0], env_var, value))
                     self.conn.execute(
                         "UPDATE providers SET api_key_env = ? WHERE id = ?",
                         (env_var, row[0]),
                     )
 
             self.conn.commit()
+
+        # Perform file I/O outside the lock
+        for _, env_var, value in keys_to_migrate:
+            save_api_key(env_var, value)
 
     def add_provider(self, name: str, base_url: str,
                      api_key_env: str = "") -> int:
