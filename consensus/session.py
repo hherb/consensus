@@ -57,6 +57,10 @@ class SessionManager:
         async with self._lock:
             for info in self._sessions.values():
                 try:
+                    await info["app"].shutdown()
+                except Exception:
+                    pass
+                try:
                     await info["app"].moderator.close()
                 except Exception:
                     pass

@@ -36,6 +36,7 @@ class EntityType(Enum):
     """Types of discussion participants."""
     HUMAN = "human"
     AI = "ai"
+    EXPERT = "expert"
 
 
 class MessageRole(Enum):
@@ -113,7 +114,7 @@ class Entity:
     def from_db_row(cls, row: dict) -> "Entity":
         """Build an Entity from a database row dictionary."""
         etype = EntityType(row["entity_type"])
-        ai_config = AIConfig.from_db_row(row) if etype == EntityType.AI else None
+        ai_config = AIConfig.from_db_row(row) if etype in (EntityType.AI, EntityType.EXPERT) else None
         return cls(
             name=row["name"],
             entity_type=etype,

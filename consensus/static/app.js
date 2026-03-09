@@ -1,6 +1,12 @@
 /* Consensus - Discussion Moderator Frontend */
 
 // ============================================================
+// Progress / Stall Detection
+// ============================================================
+
+let progressStallTimer = null;
+
+// ============================================================
 // API Adapters
 // ============================================================
 
@@ -51,6 +57,24 @@ class DesktopAPI {
     async getMemoryConfig() { return await window.pywebview.api.get_memory_config(); }
     async saveMemoryConfig(data) { return await window.pywebview.api.save_memory_config(data); }
     async testMemoryConnection() { return await window.pywebview.api.test_memory_connection(); }
+    // MCP Servers
+    async getMcpServers() { return await window.pywebview.api.get_mcp_servers(); }
+    async addMcpServer(name, description, command, args, env) {
+        return await window.pywebview.api.add_mcp_server(name, description, command, args, env);
+    }
+    async updateMcpServer(serverId, updates) {
+        return await window.pywebview.api.update_mcp_server(serverId, updates);
+    }
+    async deleteMcpServer(serverId) { return await window.pywebview.api.delete_mcp_server(serverId); }
+    async testMcpConnection(serverId) { return await window.pywebview.api.test_mcp_connection(serverId); }
+    // Experts
+    async saveExpertDefinition(entityId, mcpServerId, toolName, description, defaultArgs, timeout) {
+        return await window.pywebview.api.save_expert_definition(entityId, mcpServerId, toolName, description, defaultArgs, timeout);
+    }
+    async getExpertDefinitions() { return await window.pywebview.api.get_expert_definitions(); }
+    async consultExpert(expertName, query) {
+        return await window.pywebview.api.consult_expert(expertName, query);
+    }
 }
 
 class WebAPI {
@@ -134,6 +158,27 @@ class WebAPI {
     async testMemoryConnection() {
         const resp = await fetch('/api/memory/test', { method: 'POST' });
         return await resp.json();
+    }
+    // MCP Servers
+    async getMcpServers() { return await this._post('get_mcp_servers'); }
+    async addMcpServer(name, description, command, args, env) {
+        return await this._post('add_mcp_server', { name, description, command, args, env });
+    }
+    async updateMcpServer(serverId, updates) {
+        return await this._post('update_mcp_server', { server_id: serverId, ...updates });
+    }
+    async deleteMcpServer(serverId) { return await this._post('delete_mcp_server', { server_id: serverId }); }
+    async testMcpConnection(serverId) { return await this._post('test_mcp_connection', { server_id: serverId }); }
+    // Experts
+    async saveExpertDefinition(entityId, mcpServerId, toolName, description, defaultArgs, timeout) {
+        return await this._post('save_expert_definition', {
+            entity_id: entityId, mcp_server_id: mcpServerId, tool_name: toolName,
+            description, default_arguments: defaultArgs, timeout_seconds: timeout
+        });
+    }
+    async getExpertDefinitions() { return await this._post('get_expert_definitions'); }
+    async consultExpert(expertName, query) {
+        return await this._post('consult_expert', { expert_name: expertName, query });
     }
 }
 
@@ -464,6 +509,8 @@ function renderProviders() {
         list.innerHTML = '<div class="empty-state">No providers configured yet</div>';
         return;
     }
+    // Also render MCP servers section
+    renderMcpServers();
     const isWeb = !window.pywebview;
     list.innerHTML = providers.map(p => {
         const byok = hasByokKey(p.id);
@@ -1287,6 +1334,8 @@ function renderNewMessages() {
         const entity = getEntity(msg.entity_id);
         const color = entity?.avatar_color || '#666';
         const isMod = msg.role === 'moderator';
+        const isExpert = entity && entity.entity_type === 'expert';
+        const expertBadge = isExpert ? '<span class="expert-badge">Expert</span>' : '';
         const div = document.createElement('div');
         div.className = `message ${isMod ? 'moderator' : ''} ${msg.role === 'system' ? 'system' : ''}`;
         if (!isMod) div.style.borderLeftColor = color;
@@ -1313,7 +1362,7 @@ function renderNewMessages() {
         div.innerHTML = `
             <div class="message-header">
                 <div class="entity-avatar" style="background:${color};width:24px;height:24px;font-size:0.65rem">${getInitials(msg.entity_name)}</div>
-                <span class="message-sender" ${isMod ? '' : `style="color:${color}"`}>${escHtml(msg.entity_name)}</span>
+                <span class="message-sender" ${isMod ? '' : `style="color:${color}"`}>${escHtml(msg.entity_name)}${expertBadge}</span>
                 ${metaHtml}
                 <span class="message-time">${formatTime(msg.timestamp)}</span>
             </div>
@@ -1355,6 +1404,14 @@ function updateInputArea() {
     const sendBtn = $('#send-btn');
     const turnInfo = $('#turn-info');
     const speaker = getEntity(state.current_speaker_id);
+
+    // Show/hide Consult Expert button based on available experts
+    const consultBtn = $('#consult-expert-btn');
+    if (consultBtn) {
+        const hasExperts = (state.experts || []).length > 0;
+        if (hasExperts && state.is_active) show(consultBtn);
+        else hide(consultBtn);
+    }
 
     if (state.status === 'paused') {
         turnInfo.textContent = 'Discussion is paused. Manage participants, then click Resume.';
@@ -2001,6 +2058,7 @@ async function onBack() {
 
 function onStateUpdate(newState) {
     if (!newState) return;
+    if (progressStallTimer) { clearTimeout(progressStallTimer); progressStallTimer = null; }
     state = newState;
     if ($('#setup-phase') && !$('#setup-phase').classList.contains('hidden')) {
         renderSetupTab();
@@ -2154,8 +2212,22 @@ function init() {
             case 'export-history-json': closeAllHistoryMenus(); exportHistoryDiscussion(id, 'json'); break;
             case 'export-history-html': closeAllHistoryMenus(); exportHistoryDiscussion(id, 'html'); break;
             case 'export-history-pdf': closeAllHistoryMenus(); exportHistoryDiscussion(id, 'pdf'); break;
+            // MCP Server actions
+            case 'test-mcp': testMcpConnection(id); break;
+            case 'toggle-mcp': toggleMcpServer(id); break;
+            case 'edit-mcp': { const srv = (state.mcp_servers || []).find(s => s.id === id); if (srv) openMcpServerDialog(srv); break; }
+            case 'delete-mcp': deleteMcpServer(id); break;
+            case 'consult-expert-btn': showConsultExpertDialog(); break;
         }
     });
+
+    // MCP Server dialog
+    const addMcpBtn = $('#add-mcp-server-btn');
+    if (addMcpBtn) addMcpBtn.addEventListener('click', () => openMcpServerDialog(null));
+    const confirmMcpBtn = $('#confirm-mcp-btn');
+    if (confirmMcpBtn) confirmMcpBtn.addEventListener('click', confirmMcpServer);
+    const cancelMcpBtn = $('#cancel-mcp-btn');
+    if (cancelMcpBtn) cancelMcpBtn.addEventListener('click', () => hide('#mcp-server-dialog'));
 
     // Memory config
     const memorySaveBtn = $('#memory-save-btn');
@@ -2223,6 +2295,231 @@ async function testMemoryConnection() {
 }
 
 // ============================================================
+// Tool Progress Indicator (Task 9 + Task 14 stall detection)
+// ============================================================
+
+function onToolProgress(data) {
+    const container = $('#messages');
+    if (!container) return;
+
+    // Find or create the typing indicator
+    let indicator = container.querySelector('.typing-indicator');
+    if (!indicator) {
+        indicator = document.createElement('div');
+        indicator.className = 'typing-indicator';
+        container.appendChild(indicator);
+    }
+
+    const { entity_name, message, progress, total } = data;
+
+    let progressText = message || 'Working...';
+    let barHtml = '';
+
+    if (total && total > 0) {
+        const pct = Math.round((progress / total) * 100);
+        progressText += ` (${progress}/${total})`;
+        barHtml = `<div class="progress-bar-container">
+            <div class="progress-bar-fill" style="width: ${pct}%"></div>
+        </div>`;
+    }
+
+    indicator.innerHTML = `
+        <div class="expert-progress">
+            <span class="typing-name">${escHtml(entity_name || '')}</span>:
+            <span class="typing-status">${escHtml(progressText)}</span>
+            ${barHtml}
+        </div>`;
+    show(indicator);
+    container.scrollTop = container.scrollHeight;
+
+    // Stall detection (Task 14)
+    if (progressStallTimer) clearTimeout(progressStallTimer);
+    progressStallTimer = setTimeout(() => {
+        const ind = container.querySelector('.typing-indicator');
+        if (ind && ind.querySelector('.expert-progress')) {
+            const status = ind.querySelector('.typing-status');
+            if (status) status.textContent = 'Still working...';
+        }
+    }, 60000);
+}
+
+// ============================================================
+// MCP Server Management UI (Task 10)
+// ============================================================
+
+function renderMcpServers() {
+    const container = $('#mcp-server-list');
+    if (!container) return;
+    const servers = state.mcp_servers || [];
+    if (!servers.length) {
+        container.innerHTML = '<div class="empty-state">No MCP servers configured</div>';
+        return;
+    }
+    container.innerHTML = servers.map(s => `
+        <div class="settings-item">
+            <div class="entity-info">
+                <div class="entity-name">
+                    ${escHtml(s.name)}
+                    <span class="badge ${s.enabled ? 'active' : ''}" style="font-size:0.65rem;margin-left:0.3rem">
+                        ${s.enabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                </div>
+                <div class="settings-detail">${escHtml(s.description || '')}</div>
+                <div class="settings-detail" style="font-family:var(--font-mono);font-size:0.75rem">${escHtml(s.command || '')}</div>
+            </div>
+            <div class="entity-actions">
+                <button class="btn btn-outline btn-sm" data-action="test-mcp" data-id="${s.id}">Test</button>
+                <button class="btn btn-outline btn-sm" data-action="toggle-mcp" data-id="${s.id}">${s.enabled ? 'Disable' : 'Enable'}</button>
+                <button class="btn btn-ghost btn-sm" data-action="edit-mcp" data-id="${s.id}">Edit</button>
+                <button class="btn btn-ghost btn-sm" data-action="delete-mcp" data-id="${s.id}">Delete</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function openMcpServerDialog(server) {
+    $('#mcp-dialog-title').textContent = server ? 'Edit MCP Server' : 'Add MCP Server';
+    $('#mcp-name').value = server?.name || '';
+    $('#mcp-description').value = server?.description || '';
+    $('#mcp-command').value = server?.command || '';
+    $('#mcp-args').value = (server?.args || []).join(', ');
+    $('#mcp-env').value = server?.env ? Object.entries(server.env).map(([k, v]) => `${k}=${v}`).join('\n') : '';
+    $('#mcp-edit-id').value = server?.id || '';
+    show('#mcp-server-dialog');
+    $('#mcp-name').focus();
+}
+
+async function confirmMcpServer() {
+    const name = $('#mcp-name').value.trim();
+    const description = $('#mcp-description').value.trim();
+    const command = $('#mcp-command').value.trim();
+    if (!name || !command) return showToast('Name and command are required');
+
+    const argsStr = $('#mcp-args').value.trim();
+    const args = argsStr ? argsStr.split(',').map(a => a.trim()).filter(Boolean) : [];
+
+    const envStr = $('#mcp-env').value.trim();
+    const env = {};
+    if (envStr) {
+        for (const line of envStr.split('\n')) {
+            const eq = line.indexOf('=');
+            if (eq > 0) {
+                env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+            }
+        }
+    }
+
+    const editId = $('#mcp-edit-id').value;
+    if (editId) {
+        await api.updateMcpServer(Number(editId), { name, description, command, args, env });
+    } else {
+        await api.addMcpServer(name, description, command, args, env);
+    }
+    const s = await api.getState();
+    onStateUpdate(s);
+    hide('#mcp-server-dialog');
+    renderMcpServers();
+}
+
+async function toggleMcpServer(id) {
+    const server = (state.mcp_servers || []).find(s => s.id === id);
+    if (!server) return;
+    await api.updateMcpServer(id, { enabled: !server.enabled });
+    const s = await api.getState();
+    onStateUpdate(s);
+    renderMcpServers();
+}
+
+async function deleteMcpServer(id) {
+    await api.deleteMcpServer(id);
+    const s = await api.getState();
+    onStateUpdate(s);
+    renderMcpServers();
+}
+
+async function testMcpConnection(id) {
+    showToast('Testing connection...', 3000, 'info');
+    try {
+        const result = await api.testMcpConnection(id);
+        if (result && result.success) {
+            const toolNames = (result.tools || []).map(t => t.name).join(', ');
+            showToast(`Connected! Tools: ${toolNames || 'none'}`, 6000, 'success');
+        } else {
+            showToast(`Connection failed: ${result?.error || 'Unknown error'}`, 5000, 'error');
+        }
+    } catch (e) {
+        showToast('Test failed: ' + e.message, 5000, 'error');
+    }
+}
+
+// ============================================================
+// Consult Expert Dialog
+// ============================================================
+
+function showConsultExpertDialog() {
+    const experts = (state.experts || []);
+    if (!experts.length) {
+        showToast('No experts configured');
+        return;
+    }
+    const optionsHtml = experts.map(ex =>
+        `<option value="${escHtml(ex.entity_name || ex.name || '')}">${escHtml(ex.entity_name || ex.name || 'Expert')}</option>`
+    ).join('');
+
+    // Create or reuse dialog
+    let overlay = $('#consult-expert-dialog');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'consult-expert-dialog';
+        overlay.className = 'dialog-overlay hidden';
+        overlay.innerHTML = `<div class="dialog">
+            <h3>Consult Expert</h3>
+            <div class="form-group">
+                <label for="expert-select">Expert</label>
+                <select id="expert-select"></select>
+            </div>
+            <div class="form-group">
+                <label for="expert-query">Query</label>
+                <textarea id="expert-query" rows="4" placeholder="What would you like to ask the expert?"></textarea>
+            </div>
+            <div class="dialog-actions">
+                <button class="btn btn-ghost" id="cancel-consult-expert">Cancel</button>
+                <button class="btn btn-primary" id="confirm-consult-expert">Consult</button>
+            </div>
+        </div>`;
+        document.getElementById('app').appendChild(overlay);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) hide(overlay); });
+        $('#cancel-consult-expert').addEventListener('click', () => hide(overlay));
+        $('#confirm-consult-expert').addEventListener('click', doConsultExpert);
+    }
+    $('#expert-select').innerHTML = optionsHtml;
+    $('#expert-query').value = '';
+    show(overlay);
+    $('#expert-query').focus();
+}
+
+async function doConsultExpert() {
+    const expertName = $('#expert-select').value;
+    const query = $('#expert-query').value.trim();
+    if (!query) return showToast('Please enter a query');
+    hide('#consult-expert-dialog');
+    showToast('Consulting expert...', 3000, 'info');
+    try {
+        const result = await api.consultExpert(expertName, query);
+        if (result && result.is_error) {
+            showToast('Expert error: ' + (result.content || 'Unknown error'), 5000, 'error');
+        } else {
+            // Refresh state to show the expert response in messages
+            onStateUpdate(await api.getState());
+            renderDiscussion();
+            showToast('Expert response received', 3000, 'success');
+        }
+    } catch (e) {
+        showToast('Consult failed: ' + e.message, 5000, 'error');
+    }
+}
+
+// ============================================================
 // Bootstrap
 // ============================================================
 
@@ -2240,6 +2537,15 @@ async function bootstrap() {
     }
 
     init();
+
+    // SSE connection for real-time tool progress events (web mode only)
+    if (typeof window.pywebview === 'undefined') {
+        const evtSource = new EventSource('/api/events');
+        evtSource.addEventListener('tool_progress', (e) => {
+            onToolProgress(JSON.parse(e.data));
+        });
+        evtSource.onerror = () => console.debug('SSE reconnecting...');
+    }
 
     // Show user bar if authenticated (logout listener attached via showAuthPhase)
     if (authUser) {

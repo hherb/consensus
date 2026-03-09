@@ -415,6 +415,29 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             "set_tool_override": lambda: app.set_discussion_tool_override(
                 data["discussion_id"], data["entity_id"],
                 data["tool_name"], data["enabled"]),
+            # MCP servers
+            "add_mcp_server": lambda: app.add_mcp_server(
+                data["name"], data.get("description", ""),
+                data["command"], data.get("args"), data.get("env")),
+            "get_mcp_servers": lambda: app.get_mcp_servers(),
+            "update_mcp_server": lambda: app.update_mcp_server(
+                data["server_id"],
+                **{k: v for k, v in data.items()
+                   if k in ("name", "description", "command", "args", "env", "enabled")}),
+            "delete_mcp_server": lambda: app.delete_mcp_server(
+                data["server_id"]),
+            "test_mcp_connection": lambda: app.test_mcp_connection(
+                data["server_id"]),
+            # Expert definitions
+            "save_expert_definition": lambda: app.save_expert_definition(
+                data["entity_id"], data["mcp_server_id"],
+                data["tool_name"], data.get("description", ""),
+                data.get("default_arguments"),
+                data.get("query_param_name", "query"),
+                data.get("timeout_seconds", 300)),
+            "get_expert_definitions": lambda: app.get_expert_definitions(),
+            "consult_expert": lambda: app.consult_expert(
+                data["expert_name"], data["query"]),
         }
 
         handler = handlers.get(method)
@@ -754,6 +777,46 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"ok": False, "message": str(e)})
 
     # ------------------------------------------------------------------
+    # SSE endpoint for real-time events
+    # ------------------------------------------------------------------
+
+    async def handle_events(request: web.Request) -> web.StreamResponse:
+        """SSE endpoint for real-time events (tool progress, etc.)."""
+        app_instance, _sid = await _get_app_for_request(request)
+        if app_instance is None:
+            return web.json_response(
+                {"error": "Server is at capacity."}, status=503,
+            )
+
+        resp = web.StreamResponse()
+        resp.headers["Content-Type"] = "text/event-stream"
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["Connection"] = "keep-alive"
+        await resp.prepare(request)
+
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def on_event(data: dict) -> None:
+            queue.put_nowait(data)
+
+        app_instance.on("tool_progress", on_event)
+        try:
+            while True:
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=30)
+                    event_str = f"event: tool_progress\ndata: {json.dumps(data)}\n\n"
+                    await resp.write(event_str.encode())
+                except asyncio.TimeoutError:
+                    # Send keepalive comment
+                    await resp.write(b": keepalive\n\n")
+        except (asyncio.CancelledError, ConnectionResetError):
+            pass
+        finally:
+            app_instance.off("tool_progress", on_event)
+
+        return resp
+
+    # ------------------------------------------------------------------
     # Static file serving
     # ------------------------------------------------------------------
 
@@ -798,6 +861,9 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     webapp.router.add_put("/api/memory/config", handle_memory_config_put)
     webapp.router.add_post("/api/memory/test", handle_memory_test)
 
+    # SSE events
+    webapp.router.add_get("/api/events", handle_events)
+
     # API
     webapp.router.add_post("/api/{method}", handle_api)
 
@@ -831,6 +897,9 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     try:
         await asyncio.Event().wait()
     finally:
+        # Close MCP providers for the shared app (single-user mode)
+        if shared_app:
+            await shared_app.shutdown()
         if session_mgr:
             await session_mgr.stop()
         await runner.cleanup()
