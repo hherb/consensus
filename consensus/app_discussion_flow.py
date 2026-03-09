@@ -6,11 +6,24 @@ import time
 from typing import Callable, Optional
 
 from .database import Database
+from .methods import get_method
+from .methods.base import DiscussionMethod
 from .models import Discussion, Entity, EntityType, Message, MessageRole, StoryboardEntry
 from .moderator import Moderator
 from .pricing import PricingCache
 
 logger = logging.getLogger(__name__)
+
+
+def _get_method(discussion: Discussion) -> Optional[DiscussionMethod]:
+    """Return the DiscussionMethod for a discussion, or None for open."""
+    name = discussion.discussion_method
+    if not name or name == "open_discussion":
+        return None
+    try:
+        return get_method(name)
+    except KeyError:
+        return None
 
 
 def is_pass(content: str) -> bool:
@@ -103,8 +116,24 @@ async def generate_ai_turn(
 
         # Detect if the participant chose to pass
         passed = is_pass(resp.content)
-        content = (f"*{current.name} passed this round.*"
-                   if passed else resp.content)
+
+        # Method-specific response post-processing
+        method = _get_method(discussion)
+        if method and not passed:
+            processed = method.process_response(
+                resp.content, current, discussion)
+            content = processed.display_content
+            # Persist updated method_state
+            if discussion.id:
+                db.update_discussion(
+                    discussion.id,
+                    method_state=json.dumps(discussion.method_state),
+                )
+        else:
+            content = resp.content
+
+        if passed:
+            content = f"*{current.name} passed this round.*"
 
         # Serialize tool call records if any
         tool_calls_json = ""
@@ -274,6 +303,62 @@ async def complete_turn(
         discussion.messages.append(summary_msg)
 
     next_speaker = moderator.advance_turn()
+
+    # Method phase management
+    method = _get_method(discussion)
+    if method:
+        # Increment phase round at end of each full round
+        if (discussion.turn_order and
+                discussion.current_turn_index == 0 and
+                discussion.turn_number > 1):
+            discussion.method_state["phase_round"] = (
+                discussion.method_state.get("phase_round", 1) + 1
+            )
+            # Track diffusion round separately for belief_diffusion
+            if discussion.discussion_method == "belief_diffusion":
+                phase = method.current_phase(discussion)
+                if phase and phase.name == "diffuse":
+                    discussion.method_state["diffuse_round"] = (
+                        discussion.method_state.get("diffuse_round", 0) + 1
+                    )
+
+        # Check for phase transition
+        if method.should_advance_phase(discussion):
+            new_phase = method.advance_phase(discussion)
+            if new_phase:
+                # Post phase transition message
+                transition_msg = method.get_phase_transition_message(
+                    new_phase, discussion)
+                if transition_msg and mod:
+                    sys_msg = Message(
+                        entity_id=mod.id, entity_name=mod.name,
+                        content=transition_msg, role=MessageRole.SYSTEM,
+                    )
+                    discussion.messages.append(sys_msg)
+                    db.add_message(
+                        discussion.id, mod.id, transition_msg, "system",
+                        turn_number=discussion.turn_number,
+                    )
+            else:
+                # All phases exhausted — conclude
+                if discussion.id:
+                    db.update_discussion(
+                        discussion.id,
+                        method_state=json.dumps(discussion.method_state),
+                    )
+                return {
+                    "method_complete": True,
+                    "turn_number": discussion.turn_number,
+                    "current_round": discussion.current_round,
+                    "state": get_state_fn(),
+                }
+
+            # Persist method state after phase transition
+            if discussion.id:
+                db.update_discussion(
+                    discussion.id,
+                    method_state=json.dumps(discussion.method_state),
+                )
 
     # Check if max_rounds has been reached
     max_r = discussion.max_rounds

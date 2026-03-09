@@ -503,6 +503,22 @@ class ConsensusApp:
         """Ensure devil's advocate entity is last in turn order."""
         app_discussion_setup.reorder_da_in_turn_order(self.discussion)
 
+    def set_discussion_method(self, method_name: str) -> dict:
+        """Set the discussion method (e.g. 'ach', 'belief_diffusion').
+
+        Must be called before starting the discussion.
+        """
+        result = app_discussion_setup.set_discussion_method(
+            self.discussion, method_name,
+        )
+        self._notify()
+        return result
+
+    def list_discussion_methods(self) -> list[dict]:
+        """Return metadata for all available discussion methods."""
+        from .methods import list_methods
+        return list_methods()
+
     # ------------------------------------------------------------------
     # Discussion lifecycle
     # ------------------------------------------------------------------

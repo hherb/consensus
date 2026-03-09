@@ -1,5 +1,6 @@
 """Discussion state management — pause, resume, reopen, reset, load, export, delete, restore."""
 
+import json
 import time
 from typing import Callable, Optional
 
@@ -110,6 +111,14 @@ def load_discussion(
         for m in members
     }
 
+    # Restore method state
+    discussion_method = disc.get("discussion_method", "open_discussion")
+    method_state_raw = disc.get("method_state", "{}")
+    try:
+        method_state = json.loads(method_state_raw) if method_state_raw else {}
+    except (json.JSONDecodeError, TypeError):
+        method_state = {}
+
     discussion = Discussion(
         id=discussion_id,
         topic=disc["topic"],
@@ -124,6 +133,8 @@ def load_discussion(
         is_active=is_active,
         status=status,
         member_roles=member_roles,
+        discussion_method=discussion_method,
+        method_state=method_state,
     )
     moderator = Moderator(
         discussion, db,
