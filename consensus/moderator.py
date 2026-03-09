@@ -212,6 +212,7 @@ class Moderator:
 
         # Tool execution loop
         all_tool_records: list[ToolCallRecord] = []
+        intermediate_content: list[str] = []  # content from tool-call iterations
         total_prompt_tokens = 0
         total_completion_tokens = 0
         total_latency_ms = 0
@@ -265,10 +266,15 @@ class Moderator:
             # Check for tool calls
             api_tool_calls = msg_dict.get("tool_calls", [])
             if not api_tool_calls:
-                # No tool calls — return final response
-                content = msg_dict.get("content") or ""
+                # No tool calls — return final response.
+                # Combine any content produced alongside earlier tool-call
+                # iterations with this final response so nothing is lost.
+                final_content = msg_dict.get("content") or ""
+                if intermediate_content:
+                    parts = intermediate_content + ([final_content] if final_content else [])
+                    final_content = "\n\n".join(parts)
                 return AIResponse(
-                    content=content,
+                    content=final_content,
                     model=result["model"],
                     prompt_tokens=total_prompt_tokens,
                     completion_tokens=total_completion_tokens,
@@ -276,6 +282,12 @@ class Moderator:
                     latency_ms=total_latency_ms,
                     tool_calls=all_tool_records,
                 )
+
+            # Capture any content the model produced alongside tool calls
+            # (e.g. reasoning, partial analysis) so it isn't lost.
+            interim = msg_dict.get("content") or ""
+            if interim.strip():
+                intermediate_content.append(interim.strip())
 
             # Detect whether tool calls came from DSML parsing (flag set
             # by ai_client when it promotes DSML markup to tool_calls).
@@ -349,9 +361,41 @@ class Moderator:
                     ),
                 })
 
-        # Should not reach here, but return what we have
+        # Exhausted tool iterations — make one final plain completion to
+        # force a substantive text response if we have no content yet.
+        fallback_content = "\n\n".join(intermediate_content) if intermediate_content else ""
+        if not fallback_content.strip() and all_tool_records:
+            logger.info(
+                "No text content after %d tool iterations for %s; "
+                "requesting final plain response.",
+                MAX_TOOL_ITERATIONS, entity.name,
+            )
+            messages.append({
+                "role": "system",
+                "content": (
+                    "You have completed your research. Now provide your "
+                    "substantive response based on what you found."
+                ),
+            })
+            try:
+                final_resp = await client.complete(
+                    messages=messages,
+                    model=cfg.model,
+                    temperature=cfg.temperature,
+                    max_tokens=cfg.max_tokens,
+                )
+                fallback_content = final_resp.content
+                total_prompt_tokens += final_resp.prompt_tokens
+                total_completion_tokens += final_resp.completion_tokens
+                total_latency_ms += final_resp.latency_ms
+            except Exception:
+                logger.warning(
+                    "Final plain completion failed for %s", entity.name,
+                    exc_info=True,
+                )
+
         return AIResponse(
-            content="",
+            content=fallback_content,
             model=cfg.model,
             prompt_tokens=total_prompt_tokens,
             completion_tokens=total_completion_tokens,

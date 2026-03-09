@@ -77,12 +77,19 @@ export async function onSendMessage() {
  * @returns {Promise<boolean>} True if turn is fully completed, false if waiting for input
  */
 async function completeTurnFlow() {
+    if (!state.is_active || state.status === 'concluded') return false;
     const mod = getEntity(state.moderator_id);
     if (!mod) return true;
     if (mod.entity_type === 'ai') {
         showTypingIndicator(mod.name + ' (summarizing)');
         try {
             const result = await api.completeTurn();
+            if (result?.error) {
+                // Discussion may have been concluded while we were waiting
+                onStateUpdate(await api.getState());
+                renderDiscussion();
+                return false;
+            }
             if (result?.state) onStateUpdate(result.state);
             else onStateUpdate(await api.getState());
             if (result?.max_rounds_reached) {
@@ -96,7 +103,7 @@ async function completeTurnFlow() {
             onStateUpdate(await api.getState());
         }
         renderDiscussion();
-        return true;
+        return state.is_active && state.status !== 'concluded';
     } else {
         promptModeratorInput('summary');
         return false;
@@ -147,10 +154,10 @@ export async function onConfirmModeratorInput() {
  * Process the current turn — loops through sequential AI speakers.
  */
 export async function processCurrentTurn() {
-    if (!state.is_active || processing) return;
+    if (!state.is_active || state.status === 'concluded' || processing) return;
     setProcessing(true);
     try {
-        while (state.is_active) {
+        while (state.is_active && state.status !== 'concluded') {
             const speaker = getEntity(state.current_speaker_id);
             if (!speaker || speaker.entity_type !== 'ai') {
                 renderDiscussion();
@@ -159,10 +166,13 @@ export async function processCurrentTurn() {
             showTypingIndicator(speaker.name);
             renderDiscussion();
             const result = await api.generateAiTurn();
+            // Re-check after await — discussion may have been concluded
+            if (!state.is_active || state.status === 'concluded') break;
             if (result?.error && !result?.skipped) { showToast(result.error); break; }
             if (result?.skipped) showToast(`${speaker.name} skipped due to API error`, 5000, 'warning');
             if (result?.warning) showToast(result.warning, 5000, 'info');
             onStateUpdate(await api.getState());
+            if (!state.is_active || state.status === 'concluded') break;
             renderDiscussion();
             const turnCompleted = await completeTurnFlow();
             if (!turnCompleted) break;

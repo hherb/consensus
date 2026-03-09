@@ -856,6 +856,8 @@ class ConsensusApp:
 
     async def generate_ai_turn(self) -> dict:
         """Generate an AI participant's contribution for the current turn."""
+        if not self.discussion.is_active or self.discussion.status == "concluded":
+            return {"error": "Discussion is not active"}
         current = self.discussion.current_speaker
         if not current:
             return {"error": "No current speaker"}
@@ -954,6 +956,8 @@ class ConsensusApp:
 
     async def complete_turn(self, moderator_summary: str = "") -> dict:
         """Complete the current turn: generate or accept summary, advance turn order."""
+        if not self.discussion.is_active or self.discussion.status == "concluded":
+            return {"error": "Discussion is not active"}
         mod = self.discussion.moderator
         summary_text = ""
 
