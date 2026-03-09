@@ -148,6 +148,19 @@ class ConsensusApp:
             self._on_update(self.get_state())
 
     # ------------------------------------------------------------------
+    # Shutdown
+    # ------------------------------------------------------------------
+
+    async def shutdown(self) -> None:
+        """Close all MCP provider connections. Call on app exit."""
+        for provider in self._mcp_providers.values():
+            try:
+                await provider.close()
+            except Exception:
+                logger.debug("Error closing MCP provider", exc_info=True)
+        self._mcp_providers.clear()
+
+    # ------------------------------------------------------------------
     # Event emitter
     # ------------------------------------------------------------------
 
@@ -189,10 +202,10 @@ class ConsensusApp:
         self.db.update_mcp_server(server_id, **kwargs)
         self._notify()
 
-    def delete_mcp_server(self, server_id: int) -> None:
+    async def delete_mcp_server(self, server_id: int) -> None:
         """Delete an MCP server, closing any active connection."""
         if server_id in self._mcp_providers:
-            asyncio.create_task(self._mcp_providers[server_id].close())
+            await self._mcp_providers[server_id].close()
             del self._mcp_providers[server_id]
         self.db.delete_mcp_server(server_id)
         self._notify()
@@ -208,8 +221,7 @@ class ConsensusApp:
             args=server["args"], env=server["env"],
         )
         try:
-            connected = await provider.connect()
-            if not connected:
+            if not await provider.connect():
                 return {"success": False, "error": "Failed to connect"}
             tools = await provider.list_tools()
             tool_info = [{"name": t.name, "description": t.description} for t in tools]
@@ -229,11 +241,11 @@ class ConsensusApp:
             name=server["name"], command=server["command"],
             args=server["args"], env=server["env"],
         )
-        connected = await provider.connect()
-        if connected:
-            self._mcp_providers[server_id] = provider
-            self.tool_registry.register_provider(provider)
-        return connected
+        if not await provider.connect():
+            return False
+        self._mcp_providers[server_id] = provider
+        self.tool_registry.register_provider(provider)
+        return True
 
     # ------------------------------------------------------------------
     # Expert Definitions
@@ -241,10 +253,12 @@ class ConsensusApp:
 
     def save_expert_definition(self, entity_id: int, mcp_server_id: int, tool_name: str,
                                description: str = "", default_arguments: dict | None = None,
+                               query_param_name: str = "query",
                                timeout_seconds: int = 300) -> dict | None:
         """Save an expert definition linking an entity to an MCP tool."""
         self.db.add_expert_definition(entity_id, mcp_server_id, tool_name,
-                                       description, default_arguments, timeout_seconds)
+                                       description, default_arguments,
+                                       query_param_name, timeout_seconds)
         self._notify()
         return self.db.get_expert_definition(entity_id)
 
@@ -284,9 +298,10 @@ class ConsensusApp:
         if not provider:
             return ToolResult(content=f"MCP server for '{expert_name}' is not available", is_error=True)
 
-        # Build arguments
+        # Build arguments — use configurable param name (defaults to "query")
         tool_args = dict(defn["default_arguments"])
-        tool_args.update({"claim": query})
+        param_name = defn.get("query_param_name", "query")
+        tool_args[param_name] = query
 
         def on_progress(progress, total, message):
             self.emit("tool_progress", {

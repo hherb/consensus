@@ -422,7 +422,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             "get_mcp_servers": lambda: app.get_mcp_servers(),
             "update_mcp_server": lambda: app.update_mcp_server(
                 data["server_id"],
-                **{k: v for k, v in data.items() if k != "server_id"}),
+                **{k: v for k, v in data.items()
+                   if k in ("name", "description", "command", "args", "env", "enabled")}),
             "delete_mcp_server": lambda: app.delete_mcp_server(
                 data["server_id"]),
             "test_mcp_connection": lambda: app.test_mcp_connection(
@@ -432,6 +433,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                 data["entity_id"], data["mcp_server_id"],
                 data["tool_name"], data.get("description", ""),
                 data.get("default_arguments"),
+                data.get("query_param_name", "query"),
                 data.get("timeout_seconds", 300)),
             "get_expert_definitions": lambda: app.get_expert_definitions(),
             "consult_expert": lambda: app.consult_expert(
@@ -895,6 +897,9 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     try:
         await asyncio.Event().wait()
     finally:
+        # Close MCP providers for the shared app (single-user mode)
+        if shared_app:
+            await shared_app.shutdown()
         if session_mgr:
             await session_mgr.stop()
         await runner.cleanup()

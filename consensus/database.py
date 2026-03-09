@@ -876,15 +876,16 @@ class Database:
     def add_expert_definition(self, entity_id: int, mcp_server_id: int,
                               tool_name: str, description: str = "",
                               default_arguments: dict | None = None,
+                              query_param_name: str = "query",
                               timeout_seconds: int = 300) -> int:
         """Link an entity to an MCP server tool as an expert. Returns the definition ID."""
         import json
         cur = self._execute_write(
             "INSERT INTO expert_definitions "
             "(entity_id, mcp_server_id, tool_name, description, "
-            "default_arguments, timeout_seconds) VALUES (?,?,?,?,?,?)",
+            "default_arguments, query_param_name, timeout_seconds) VALUES (?,?,?,?,?,?,?)",
             (entity_id, mcp_server_id, tool_name, description,
-             json.dumps(default_arguments or {}), timeout_seconds),
+             json.dumps(default_arguments or {}), query_param_name, timeout_seconds),
         )
         return cur.lastrowid
 

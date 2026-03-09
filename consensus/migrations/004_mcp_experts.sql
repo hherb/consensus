@@ -19,12 +19,16 @@ CREATE TABLE IF NOT EXISTS expert_definitions (
     tool_name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     default_arguments TEXT NOT NULL DEFAULT '{}',
+    query_param_name TEXT NOT NULL DEFAULT 'query',
     timeout_seconds INTEGER NOT NULL DEFAULT 300,
     UNIQUE(entity_id)
 );
 
 -- Expand entity_type CHECK constraint to allow 'expert'.
 -- SQLite does not support ALTER COLUMN, so we recreate the table.
+-- Disable foreign keys to prevent CASCADE deletes during DROP TABLE.
+PRAGMA foreign_keys=OFF;
+
 CREATE TABLE entities_new (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT NOT NULL,
@@ -45,3 +49,5 @@ CREATE TABLE entities_new (
 INSERT INTO entities_new SELECT * FROM entities;
 DROP TABLE entities;
 ALTER TABLE entities_new RENAME TO entities;
+
+PRAGMA foreign_keys=ON;

@@ -416,9 +416,10 @@ class TestMCPServerManagement:
         servers = app.get_mcp_servers()
         assert any(s["name"] == "Updated" for s in servers)
 
-    def test_delete_mcp_server(self, app):
+    @pytest.mark.asyncio
+    async def test_delete_mcp_server(self, app):
         result = app.add_mcp_server("ToDelete", "Desc", "cmd")
-        app.delete_mcp_server(result["id"])
+        await app.delete_mcp_server(result["id"])
         assert len(app.get_mcp_servers()) == 0
 
     def test_save_expert_definition(self, app):

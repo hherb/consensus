@@ -237,7 +237,7 @@ class DesktopBridge:
 
     def delete_mcp_server(self, server_id) -> bool:
         """Delete an MCP server configuration."""
-        return self.app.delete_mcp_server(server_id)
+        return self._run_async(self.app.delete_mcp_server(server_id))
 
     def test_mcp_connection(self, server_id) -> dict:
         """Test connectivity to an MCP server."""
@@ -245,10 +245,12 @@ class DesktopBridge:
 
     # -- Experts --
     def save_expert_definition(self, entity_id, mcp_server_id, tool_name,
-                               description="", default_arguments=None, timeout_seconds=300) -> dict:
+                               description="", default_arguments=None,
+                               query_param_name="query", timeout_seconds=300) -> dict:
         """Save an expert definition linking an entity to an MCP tool."""
         return self.app.save_expert_definition(entity_id, mcp_server_id, tool_name,
-                                                description, default_arguments, timeout_seconds)
+                                                description, default_arguments,
+                                                query_param_name, timeout_seconds)
 
     def get_expert_definitions(self) -> list:
         """List all expert definitions."""

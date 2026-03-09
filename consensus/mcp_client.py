@@ -68,35 +68,44 @@ class MCPToolProvider(ToolProvider):
         self._pending: dict[int | str, asyncio.Future] = {}
         self._progress_callbacks: dict[str, Callable] = {}
 
-    async def connect(self) -> None:
-        """Launch the MCP server subprocess and perform the initialize handshake."""
-        self._process = await asyncio.create_subprocess_exec(
-            self._command,
-            *self._args,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=self._env,
-        )
-        logger.info("Launched MCP server %s (pid=%s)", self.name, self._process.pid)
+    async def connect(self) -> bool:
+        """Launch the MCP server subprocess and perform the initialize handshake.
 
-        # Start the read loop
-        self._reader_task = asyncio.create_task(self._read_loop())
+        Returns True on success, False on failure.
+        """
+        try:
+            self._process = await asyncio.create_subprocess_exec(
+                self._command,
+                *self._args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self._env,
+            )
+            logger.info("Launched MCP server %s (pid=%s)", self.name, self._process.pid)
 
-        # Send initialize handshake
-        init_result = await self._send_request("initialize", {
-            "protocolVersion": MCP_PROTOCOL_VERSION,
-            "capabilities": {},
-            "clientInfo": {
-                "name": "consensus",
-                "version": "1.0.0",
-            },
-        })
-        logger.info("MCP server %s initialized: %s", self.name, init_result)
+            # Start the read loop
+            self._reader_task = asyncio.create_task(self._read_loop())
 
-        # Send initialized notification
-        await self._send_notification("notifications/initialized", {})
-        self._connected = True
+            # Send initialize handshake
+            init_result = await self._send_request("initialize", {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "consensus",
+                    "version": "1.0.0",
+                },
+            })
+            logger.info("MCP server %s initialized: %s", self.name, init_result)
+
+            # Send initialized notification
+            await self._send_notification("notifications/initialized", {})
+            self._connected = True
+            return True
+        except Exception:
+            logger.exception("Failed to connect to MCP server %s", self.name)
+            await self.close()
+            return False
 
     async def _read_loop(self) -> None:
         """Read newline-delimited JSON-RPC messages from the subprocess stdout."""
