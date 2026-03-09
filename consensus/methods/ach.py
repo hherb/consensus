@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from .base import DiscussionMethod, Phase, ProcessedResponse
 
@@ -28,6 +28,12 @@ if TYPE_CHECKING:
     from ..models import Discussion, Entity
 
 logger = logging.getLogger(__name__)
+
+# Minimum character length for parsed text to be considered meaningful
+MIN_HYPOTHESIS_LENGTH = 10
+MIN_EVIDENCE_LENGTH = 15
+# Word overlap ratio above which two hypotheses are considered duplicates
+SIMILARITY_THRESHOLD = 0.7
 
 
 class ACH(DiscussionMethod):
@@ -455,7 +461,7 @@ class ACH(DiscussionMethod):
             matches = re.findall(pattern, content, re.MULTILINE)
             if matches:
                 return [m.strip().rstrip('.') for m in matches
-                        if len(m.strip()) > 10]
+                        if len(m.strip()) > MIN_HYPOTHESIS_LENGTH]
         return []
 
     def _parse_evidence(self, content: str) -> list[dict]:
@@ -478,12 +484,12 @@ class ACH(DiscussionMethod):
             ):
                 text = match.group(1).strip()
                 source = match.group(2).strip() if match.group(2) else ""
-                if len(text) > 15:
+                if len(text) > MIN_EVIDENCE_LENGTH:
                     items.append({"text": text, "source": source})
 
         return items
 
-    def _parse_ratings(self, content: str) -> dict:
+    def _parse_ratings(self, content: str) -> dict[str, dict[str, str]]:
         """Extract the rating matrix JSON from content."""
         # Try ```json block
         json_match = re.search(r'```(?:json)?\s*(\{[^`]+\})\s*```', content,
@@ -516,7 +522,7 @@ class ACH(DiscussionMethod):
         if not w1 or not w2:
             return False
         overlap = len(w1 & w2) / max(len(w1), len(w2))
-        return overlap > 0.7
+        return overlap > SIMILARITY_THRESHOLD
 
     # ------------------------------------------------------------------
     # Formatting helpers
@@ -575,8 +581,8 @@ class ACH(DiscussionMethod):
                     r = matrix.get(hkey, {}).get(ekey, "0")
                     if r in votes:
                         votes[r] += 1
-                # Majority
-                majority = max(votes, key=votes.get)
+                # Majority vote across evaluators
+                majority = max(votes, key=lambda k: votes[k])
                 row_parts.append(majority)
                 if majority == "-":
                     inc_count += 1
@@ -592,7 +598,10 @@ class ACH(DiscussionMethod):
         lines.append("  Ranking (fewer inconsistencies = more likely):")
         for hkey, count in sorted(inconsistency_counts.items(),
                                   key=lambda x: x[1]):
-            idx = int(hkey.replace("H", "")) - 1
+            try:
+                idx = int(hkey.lstrip("H")) - 1
+            except ValueError:
+                idx = -1
             label = hypotheses[idx] if 0 <= idx < len(hypotheses) else hkey
             lines.append(f"    {hkey} ({count} inc.): {label}")
 

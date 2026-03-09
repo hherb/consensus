@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import Callable, Optional
 
 from .models import Discussion, Entity, EntityType
 from .ai_client import AIClient, AIResponse
@@ -12,9 +12,6 @@ from .database import Database
 from .methods import get_method
 from .methods.base import DiscussionMethod
 from .tools import ToolCallRecord, ToolRegistry, MAX_TOOL_ITERATIONS
-
-if TYPE_CHECKING:
-    from .tools import ToolRegistry
 
 logger = logging.getLogger(__name__)
 

@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from .base import DiscussionMethod, Phase, ProcessedResponse
 
@@ -37,6 +37,12 @@ DEFAULT_CONVERGENCE_THRESHOLD = 0.05
 
 # Safety limit for diffusion rounds
 MAX_DIFFUSE_ROUNDS = 10
+
+# Width of the belief bar chart in characters
+BELIEF_BAR_WIDTH = 30
+
+# Minimum character length for a parsed hypothesis to be kept
+MIN_HYPOTHESIS_LENGTH = 5
 
 
 class BeliefDiffusion(DiscussionMethod):
@@ -107,6 +113,19 @@ class BeliefDiffusion(DiscussionMethod):
             "max_diffuse_rounds": MAX_DIFFUSE_ROUNDS,
             "diffuse_round": 0,
         }
+
+    # ------------------------------------------------------------------
+    # Round lifecycle
+    # ------------------------------------------------------------------
+
+    def on_round_complete(self, discussion: Discussion) -> None:
+        """Increment phase round and track diffusion rounds separately."""
+        super().on_round_complete(discussion)
+        phase = self.current_phase(discussion)
+        if phase and phase.name == "diffuse":
+            discussion.method_state["diffuse_round"] = (
+                discussion.method_state.get("diffuse_round", 0) + 1
+            )
 
     # ------------------------------------------------------------------
     # Phase transitions
@@ -300,7 +319,6 @@ class BeliefDiffusion(DiscussionMethod):
         """Return the diagnosis/conclusion prompt."""
         state = discussion.method_state
         hypotheses = state.get("hypotheses", [])
-        history = state.get("belief_history", [])
 
         # Build trajectory summary
         trajectory = self._build_trajectory_summary(discussion)
@@ -377,7 +395,7 @@ class BeliefDiffusion(DiscussionMethod):
             return ProcessedResponse(display_content=content)
 
         state = discussion.method_state
-        beliefs = self._extract_beliefs(content, discussion)
+        beliefs = self._extract_beliefs(content)
 
         if beliefs:
             # Determine the round number
@@ -414,8 +432,7 @@ class BeliefDiffusion(DiscussionMethod):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _extract_beliefs(self, content: str,
-                         discussion: Discussion) -> dict[str, float]:
+    def _extract_beliefs(self, content: str) -> dict[str, float]:
         """Parse a belief JSON block from the response content."""
         # Try to find ```json ... ``` block
         json_match = re.search(r'```(?:json)?\s*(\{[^`]+\})\s*```', content,
@@ -447,10 +464,13 @@ class BeliefDiffusion(DiscussionMethod):
         lines = ["**Belief Distribution:**"]
         for key, prob in sorted(beliefs.items()):
             # Map H1 → hypothesis text
-            idx = int(key.replace("H", "")) - 1 if key.startswith("H") else -1
+            try:
+                idx = int(key.lstrip("H")) - 1 if key.startswith("H") else -1
+            except ValueError:
+                idx = -1
             label = hypotheses[idx] if 0 <= idx < len(hypotheses) else key
-            bar_len = int(prob * 30)
-            bar = "█" * bar_len + "░" * (30 - bar_len)
+            bar_len = int(prob * BELIEF_BAR_WIDTH)
+            bar = "█" * bar_len + "░" * (BELIEF_BAR_WIDTH - bar_len)
             lines.append(f"  {key} ({prob:.0%}) {bar}  *{label}*")
         return "\n".join(lines)
 
@@ -519,12 +539,12 @@ class BeliefDiffusion(DiscussionMethod):
         numbered = re.findall(r'^\s*(?:H?\d+[\.\):])\s*(.+)', content,
                               re.MULTILINE)
         if numbered:
-            return [h.strip().rstrip('.') for h in numbered if len(h.strip()) > 5]
+            return [h.strip().rstrip('.') for h in numbered if len(h.strip()) > MIN_HYPOTHESIS_LENGTH]
 
         # Pattern 2: bold or markdown list items
         bullets = re.findall(r'^\s*[-*]\s*\*?\*?(.+?)\*?\*?\s*$', content,
                              re.MULTILINE)
         if bullets:
-            return [h.strip().rstrip('.') for h in bullets if len(h.strip()) > 5]
+            return [h.strip().rstrip('.') for h in bullets if len(h.strip()) > MIN_HYPOTHESIS_LENGTH]
 
         return hypotheses

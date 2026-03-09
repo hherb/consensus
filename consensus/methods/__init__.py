@@ -31,19 +31,7 @@ def get_method(name: str) -> DiscussionMethod:
 
 def list_methods() -> list[dict]:
     """Return metadata for all registered methods."""
-    return [
-        {
-            "name": cls.name,
-            "display_name": cls.display_name,
-            "description": cls.description,
-            "phases": [
-                {"name": p.name, "display_name": p.display_name,
-                 "description": p.description}
-                for p in cls.default_phases
-            ],
-        }
-        for cls in _METHODS.values()
-    ]
+    return [cls().to_dict() for cls in _METHODS.values()]
 
 
 __all__ = [

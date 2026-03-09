@@ -160,6 +160,21 @@ class DiscussionMethod(ABC):
         return ProcessedResponse(display_content=content)
 
     # ------------------------------------------------------------------
+    # Round lifecycle hooks
+    # ------------------------------------------------------------------
+
+    def on_round_complete(self, discussion: Discussion) -> None:
+        """Called when a full round (all participants) completes.
+
+        Subclasses can override to update method-specific counters
+        (e.g. diffusion round tracking).  The base implementation
+        increments ``phase_round``.
+        """
+        discussion.method_state["phase_round"] = (
+            discussion.method_state.get("phase_round", 1) + 1
+        )
+
+    # ------------------------------------------------------------------
     # Turn order
     # ------------------------------------------------------------------
 

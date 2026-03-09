@@ -307,20 +307,11 @@ async def complete_turn(
     # Method phase management
     method = _get_method(discussion)
     if method:
-        # Increment phase round at end of each full round
-        if (discussion.turn_order and
-                discussion.current_turn_index == 0 and
-                discussion.turn_number > 1):
-            discussion.method_state["phase_round"] = (
-                discussion.method_state.get("phase_round", 1) + 1
-            )
-            # Track diffusion round separately for belief_diffusion
-            if discussion.discussion_method == "belief_diffusion":
-                phase = method.current_phase(discussion)
-                if phase and phase.name == "diffuse":
-                    discussion.method_state["diffuse_round"] = (
-                        discussion.method_state.get("diffuse_round", 0) + 1
-                    )
+        # Notify method at end of each full round (turn index wrapped to 0)
+        if (discussion.turn_order
+                and discussion.current_turn_index == 0
+                and discussion.turn_number > 1):
+            method.on_round_complete(discussion)
 
         # Check for phase transition
         if method.should_advance_phase(discussion):
