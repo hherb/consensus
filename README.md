@@ -37,7 +37,18 @@ A moderated discussion platform where two or more entities (humans and/or AI via
 - **Per-entity memory** — each AI entity maintains its own private memory, scoped by entity ID
 - **Graceful degradation** — if the embedding service (Ollama) is unavailable, discussions continue without memory; tools return informative errors
 - **Opt-in per entity** — memory tools are assigned via the Profiles tab, keeping them invisible to entities that don't need them
-- Requires: `pip install -e ".[memory]"` + [Ollama](https://ollama.com) running with an embedding model
+- Requires: `uv pip install -e ".[memory]"` + [Ollama](https://ollama.com) running with an embedding model
+
+### Document RAG (Optional)
+- **Reference document ingestion** — add documents to a discussion by URL or inline text; supports PDF (via pdfplumber/PyPDF2), HTML (via trafilatura), and plain text/Markdown
+- **Automatic chunking & embedding** — documents are split into overlapping chunks with paragraph-aware boundaries, then embedded in the background for semantic search
+- **RAG-powered Q&A** — `doc_ask` retrieves the top-k most relevant chunks via cosine similarity and calls an LLM to answer with passage citations
+- **Structured navigation** — `doc_get_sections`, `doc_get_chapter`, `doc_get_text` let participants browse documents by section headers or character ranges
+- **Map-reduce summarization** — `doc_summary` handles arbitrarily long documents by summarizing chunks then synthesizing
+- **Cross-discussion document library** — `doc_list` with `full_library=true` searches all documents across all discussions by semantic similarity
+- **Per-discussion document binding** — documents are associated with specific discussions; participants see only relevant documents by default
+- **Opt-in per entity** — document tools are assigned via the Profiles tab, like memory tools
+- Requires: `uv pip install -e ".[memory]"` + [Ollama](https://ollama.com) running with an embedding model (shared infra with Institutional Memory)
 
 ### Prompt Template System
 - **Customizable prompt templates** for every AI task (turn generation, summarization, mediation, conclusion, opening)
@@ -196,11 +207,17 @@ In **multi-user mode**, users provide their own API keys via the browser UI (sto
 Frontend (static HTML/CSS/JS)
     ↕ pywebview bridge OR aiohttp REST API
 ConsensusApp — orchestrator, state management, event emitter
+    ├── app_providers.py — provider management
+    ├── app_entities.py — entity CRUD
+    ├── app_discussion_setup.py — discussion creation & configuration
+    ├── app_discussion_flow.py — turn flow operations
+    ├── app_discussion_state.py — discussion state management
     ├── Moderator — turn flow, AI generation, summaries
     ├── AIClient — async OpenAI-compatible HTTP client (httpx)
-    ├── Database — thread-safe SQLite persistence
+    ├── Database (db/) — thread-safe SQLite persistence (domain-specific mixins)
     ├── PricingCache — model cost lookup via OpenRouter
     ├── MCPToolProvider — MCP server communication (JSON-RPC 2.0)
+    ├── DocumentRAG (tools_document.py) — document ingestion, chunking, RAG Q&A
     ├── Migrator — file-based SQL migration runner
     └── Evaluation — ablation study framework (cases, runner, scorer)
 
@@ -215,7 +232,8 @@ Multi-user mode:
 - **httpx** — async HTTP client for OpenAI-compatible API calls
 - **pywebview** — lightweight cross-platform desktop webview (optional)
 - **aiohttp** — web server for browser/mobile access (optional)
-- **sqlite-vec** + **numpy** — vector similarity search for institutional memory (optional)
+- **sqlite-vec** + **numpy** — vector similarity search for institutional memory and document RAG (optional)
+- **pdfplumber** — PDF document parsing for document RAG (optional)
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for production deployment instructions (Oracle Cloud Free Tier).
 

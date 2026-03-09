@@ -37,11 +37,17 @@ Initial pytest test suite in `tests/`. No linter or build system configured yet.
 Frontend (static HTML/CSS/JS in consensus/static/)
     ↕ pywebview bridge OR aiohttp REST API
 ConsensusApp (app.py) — orchestrator, state management, event emitter
+    ├── app_providers.py — provider management
+    ├── app_entities.py — entity CRUD
+    ├── app_discussion_setup.py — discussion creation & configuration
+    ├── app_discussion_flow.py — turn flow operations
+    ├── app_discussion_state.py — discussion state management
     ├── Moderator (moderator.py) — turn flow, AI generation, summaries
     ├── AIClient (ai_client.py) — async OpenAI-compatible HTTP client
     ├── PricingCache (pricing.py) — model cost lookup via OpenRouter
     ├── MCPToolProvider (mcp_client.py) — MCP server communication (JSON-RPC 2.0)
-    └── Database (database.py) — thread-safe SQLite persistence
+    ├── DocumentRAG (tools_document.py) — document ingestion, chunking, RAG Q&A
+    └── Database (db/) — thread-safe SQLite persistence (domain-specific mixins)
 ```
 
 **Key modules:**
@@ -53,10 +59,12 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
 - `auth.py` — `AuthManager`, `AuthDatabase`, `User` model, PBKDF2-SHA256 password hashing, OAuth Authorization Code flow (GitHub, Google, LinkedIn, Apple), bearer token management
 - `pricing.py` — `PricingCache` for per-message cost calculation using OpenRouter pricing data; fuzzy model name matching with aliases and variant generation
 - `mcp_client.py` — `MCPToolProvider` for JSON-RPC 2.0 communication with MCP server subprocesses; expert entity consultation
+- `tools_document.py` — Document RAG tool provider: ingestion (URL/text/PDF/HTML), chunking, embedding, RAG Q&A, section navigation, map-reduce summarization
+- `db/` — Database subpackage with domain-specific mixins: `providers.py`, `entities.py`, `discussions.py`, `messages.py`, `prompts.py`, `tools.py`, `mcp.py`, `memory.py`, `documents.py`
 
-**Database schema (SQLite, 7+ tables + auth):** `providers`, `entities` (types: human/ai/expert), `prompts`, `discussions`, `discussion_members`, `messages` (includes `cost` column), `storyboard_entries`, `model_pricing`, `mcp_servers`, `expert_definitions`. Auth tables (in separate `auth.db` for multi-user): `users`, `auth_tokens`, `user_oauth_identities`, `oauth_states`. Seeded with default moderator/participant prompt templates on first run.
+**Database schema (SQLite, 15+ tables + auth):** `providers`, `entities` (types: human/ai/expert), `prompts`, `discussions`, `discussion_members`, `messages` (includes `cost` column), `storyboard_entries`, `model_pricing`, `mcp_servers`, `expert_definitions`, `tool_providers`, `entity_tools`, `discussion_tool_overrides`, `documents`, `document_chunks`, `document_chunk_embeddings`, `discussion_documents`. Auth tables (in separate `auth.db` for multi-user): `users`, `auth_tokens`, `user_oauth_identities`, `oauth_states`. Seeded with default moderator/participant prompt templates on first run.
 
-**Frontend:** Vanilla JS in `consensus/static/app.js`. Tabbed setup UI (New Discussion, Providers, Profiles, Prompts, History) and live discussion view. Uses CSS custom properties for light/dark mode.
+**Frontend:** Vanilla JS in `consensus/static/` organized as ES modules. Tabbed setup UI (New Discussion, Providers, Profiles, Prompts, History) and live discussion view. Uses CSS custom properties for light/dark mode.
 
 ## Key Design Decisions
 

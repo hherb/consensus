@@ -31,17 +31,23 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ✅ Done | OpenAI API compatibility | Uses `max_completion_tokens` for newer models, DeepSeek DSML tool-call parsing |
 | **Code Quality & Maintainability** | | |
 | ✅ Done | Database migration system | File-based SQL migrations in `consensus/migrations/`, tracked in `migrations` table, run idempotently on startup (`migrator.py`) |
-| ✅ Done | Comprehensive test suite | 199 tests across 7 modules covering database, app, config, models, moderator, sessions, and tools |
-| 🔧 In Progress | Refactor large modules | Target < 500 lines per file for maintainability |
+| ✅ Done | Comprehensive test suite | 299 tests across 7+ modules covering database, app, config, models, moderator, sessions, tools, and documents |
+| ✅ Done | Refactor large modules | `ConsensusApp` split into `app_providers.py`, `app_entities.py`, `app_discussion_setup.py`, `app_discussion_flow.py`, `app_discussion_state.py`; `Database` split into `db/` subpackage with 9 domain-specific mixins; `app.js` refactored into ES modules |
 | **Specialist Plugins** | | |
-| 🔧 In Progress | MCP client (stdio transport) | MCPToolProvider class connecting to external MCP servers via stdio; expert entities that get one turn when invoked then step back |
-| 🔧 In Progress | Expert invocation UI | AI entities invoke experts via tool calls; humans trigger consultation via UI button; progress notifications shown as live typing indicator with stage text and progress count |
-| 🔧 In Progress | MCP server management UI | Register/configure MCP servers in the Providers tab, stored in database |
+| ✅ Done | MCP client (stdio transport) | MCPToolProvider class connecting to external MCP servers via stdio; expert entities that get one turn when invoked then step back |
+| ✅ Done | Expert invocation UI | AI entities invoke experts via tool calls; humans trigger consultation via UI button; progress notifications shown as live typing indicator with stage text and progress count |
+| ✅ Done | MCP server management UI | Register/configure MCP servers in the Providers tab, stored in database |
 | ⬜ Planned | MCP Streamable HTTP transport | Connect to remote MCP servers over HTTP+SSE in addition to stdio |
 | ⬜ Planned | Multiple simultaneous expert consultations | Invoke several experts in parallel during a single turn |
 | ⬜ Planned | Expert-to-expert chaining | Allow one expert to invoke another expert as part of its work |
 | ⬜ Planned | Config file-based MCP server definitions | JSON/TOML config for deployment-managed MCP server defaults |
 | ⬜ Planned | MCP resources and prompts | Support MCP resources and prompt templates beyond tool calls |
+| **Document RAG** | | |
+| ✅ Done | Document ingestion & parsing | `tools_document.py`: URL/text/PDF/HTML ingestion with pdfplumber, trafilatura; auto-chunking with paragraph-aware boundaries and configurable overlap |
+| ✅ Done | RAG-powered Q&A | Embed question, retrieve top-k chunks by cosine similarity, LLM-generated answer with passage citations |
+| ✅ Done | Document navigation tools | `doc_get_sections`, `doc_get_chapter`, `doc_get_text`, `doc_get_length` for structured document browsing |
+| ✅ Done | Cross-discussion document library | `doc_list` with full_library mode for semantic search across all documents; per-discussion document binding |
+| ✅ Done | Map-reduce summarization | `doc_summary` handles arbitrarily long documents by summarizing chunks then synthesizing |
 | **Architecture & Scalability** | | |
 | ⬜ Planned | Participant-driven context loading | Replace centralized in-memory Discussion state with direct DB access per participant. Each participant queries only the context it needs (full history, sliding window, or map-reduce over long context). Eliminates state conflicts since writes are limited to the participant's own new contribution. Enables arbitrarily long discussions without memory pressure, and allows different participants to use different context strategies simultaneously |
 | **Training Data & Model Development** | | |
