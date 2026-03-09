@@ -14,7 +14,7 @@ from .models import (
 )
 from .moderator import Moderator
 from .database import Database
-from . import app_entities, app_providers
+from . import app_entities, app_providers, app_discussion_setup
 from .config import get_db_path, save_api_key, remove_api_key, has_api_key
 from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolRegistry, ToolResult
 
@@ -465,196 +465,51 @@ class ConsensusApp:
                           also_participant: bool = False,
                           participant_role: str = "standard") -> dict:
         """Add a saved entity to the current discussion."""
-        row = self.db.get_entity(entity_id)
-        if not row:
-            return {"error": "Entity not found"}
-
-        entity = Entity.from_db_row(row)
-
-        if self.discussion.get_entity(entity_id):
-            return {"error": f"{entity.name} is already in the discussion"}
-
-        self.discussion.entities.append(entity)
-        self.discussion.member_roles[entity_id] = participant_role
-
-        if is_moderator:
-            self.discussion.moderator_id = entity_id
-
-        # Single-DA enforcement: revert any existing DA
-        if participant_role == "devils_advocate":
-            for eid, role in list(self.discussion.member_roles.items()):
-                if role == "devils_advocate" and eid != entity_id:
-                    self.discussion.member_roles[eid] = "standard"
-            self._auto_assign_da_tools(entity_id)
-
-        # Persist to DB if discussion is already started
-        if self.discussion.id and self.discussion.status in ("active", "paused"):
-            next_pos = len(self.discussion.turn_order)
-            self.db.add_discussion_member(
-                self.discussion.id, entity_id,
-                is_moderator=is_moderator,
-                also_participant=True,
-                turn_position=next_pos,
-                participant_role=participant_role,
-            )
-            self.discussion.turn_order.append(entity_id)
-
-            sys_msg = Message(
-                entity_id=entity_id, entity_name=entity.name,
-                content=f"-- {entity.name} joined the discussion --",
-                role=MessageRole.SYSTEM,
-            )
-            self.discussion.messages.append(sys_msg)
-            self.db.add_message(
-                self.discussion.id, entity_id,
-                f"-- {entity.name} joined the discussion --",
-                "system", turn_number=self.discussion.turn_number,
-            )
-
+        result = app_discussion_setup.add_to_discussion(
+            self.discussion, self.db, entity_id,
+            is_moderator, also_participant, participant_role,
+        )
         self._notify()
-        return entity.to_dict()
+        return result
 
     def remove_from_discussion(self, entity_id: int) -> dict | bool:
         """Remove an entity from the current discussion."""
-        # Guard: cannot remove moderator or current speaker mid-discussion
-        if self.discussion.id and self.discussion.status in ("active", "paused"):
-            if entity_id == self.discussion.moderator_id:
-                return {"error": "Cannot remove the moderator"}
-            current = self.discussion.current_speaker
-            if (self.discussion.status == "active"
-                    and current and current.id == entity_id):
-                return {"error": "Cannot remove the current speaker"}
-
-        entity = self.discussion.get_entity(entity_id)
-        entity_name = entity.name if entity else str(entity_id)
-
-        # Adjust current_turn_index before removing from turn_order
-        if entity_id in self.discussion.turn_order:
-            removed_pos = self.discussion.turn_order.index(entity_id)
-            self.discussion.turn_order.remove(entity_id)
-            if removed_pos < self.discussion.current_turn_index:
-                self.discussion.current_turn_index -= 1
-            if self.discussion.turn_order:
-                self.discussion.current_turn_index = (
-                    self.discussion.current_turn_index
-                    % len(self.discussion.turn_order)
-                )
-            else:
-                self.discussion.current_turn_index = 0
-
-        self.discussion.entities = [
-            e for e in self.discussion.entities if e.id != entity_id
-        ]
-        self.discussion.member_roles.pop(entity_id, None)
-        if self.discussion.moderator_id == entity_id:
-            self.discussion.moderator_id = None
-
-        # Persist to DB if discussion is already started
-        if self.discussion.id and self.discussion.status in ("active", "paused"):
-            self.db.remove_discussion_member(self.discussion.id, entity_id)
-
-            sys_msg = Message(
-                entity_id=entity_id, entity_name=entity_name,
-                content=f"-- {entity_name} left the discussion --",
-                role=MessageRole.SYSTEM,
-            )
-            self.discussion.messages.append(sys_msg)
-            self.db.add_message(
-                self.discussion.id, entity_id,
-                f"-- {entity_name} left the discussion --",
-                "system", turn_number=self.discussion.turn_number,
-            )
-
+        result = app_discussion_setup.remove_from_discussion(
+            self.discussion, self.db, entity_id,
+        )
         self._notify()
-        return True
+        return result
 
     def set_moderator(self, entity_id: int,
                       also_participant: bool = False) -> bool:
         """Designate an entity as the moderator."""
-        entity = self.discussion.get_entity(entity_id)
-        if entity:
-            self.discussion.moderator_id = entity_id
+        result = app_discussion_setup.set_moderator(self.discussion, entity_id, also_participant)
+        if result:
             self._notify()
-            return True
-        return False
+        return result
 
     def set_topic(self, topic: str) -> bool:
         """Set the discussion topic."""
-        self.discussion.topic = topic
+        result = app_discussion_setup.set_topic(self.discussion, topic)
         self._notify()
-        return True
+        return result
 
     def set_participant_role(self, entity_id: int,
                              participant_role: str = "standard") -> dict:
-        """Set or change a participant's role (e.g. devils_advocate).
-
-        Only one devil's advocate is allowed per discussion. Setting a new
-        DA reverts the previous one to standard. The DA is always moved to
-        the end of the turn order.
-        """
-        entity = self.discussion.get_entity(entity_id)
-        if not entity:
-            return {"error": "Entity not in discussion"}
-        if entity_id == self.discussion.moderator_id:
-            return {"error": "Cannot assign a role to the moderator"}
-
-        # Single-DA enforcement: revert any existing DA
-        if participant_role == "devils_advocate":
-            for eid, role in list(self.discussion.member_roles.items()):
-                if role == "devils_advocate" and eid != entity_id:
-                    self.discussion.member_roles[eid] = "standard"
-                    if self.discussion.id:
-                        self.db.update_member_role(
-                            self.discussion.id, eid, "standard")
-
-        self.discussion.member_roles[entity_id] = participant_role
-
-        # Auto-assign tools for DA
-        if participant_role == "devils_advocate":
-            self._auto_assign_da_tools(entity_id)
-
-        # Move DA to end of turn order (or restore normal position)
-        if entity_id in self.discussion.turn_order:
-            self._reorder_da_in_turn_order()
-
-        # Persist role to DB if discussion is active
-        if self.discussion.id:
-            self.db.update_member_role(
-                self.discussion.id, entity_id, participant_role)
-
+        """Set or change a participant's role (e.g. devils_advocate)."""
+        result = app_discussion_setup.set_participant_role(
+            self.discussion, self.db, entity_id, participant_role,
+        )
         self._notify()
-        return entity.to_dict()
+        return result
 
     def _auto_assign_da_tools(self, entity_id: int) -> None:
         """Assign web search and memory tools to a devil's advocate entity."""
-        da_tools = [
-            "web_search", "fetch_webpage",
-            "memory_store", "memory_recall", "memory_forget",
-            "discussion_search", "kg_assert", "kg_query",
-        ]
-        for tool_name in da_tools:
-            existing = self.db.get_entity_tool(entity_id, tool_name)
-            if not existing:
-                self.db.add_entity_tool(entity_id, tool_name, "private")
+        app_discussion_setup.auto_assign_da_tools(self.db, entity_id)
 
     def _reorder_da_in_turn_order(self) -> None:
         """Ensure devil's advocate entity is last in turn order."""
-        da_id = None
-        for eid, role in self.discussion.member_roles.items():
-            if role == "devils_advocate" and eid in self.discussion.turn_order:
-                da_id = eid
-                break
-        if da_id is None:
-            return
-        if da_id in self.discussion.turn_order:
-            self.discussion.turn_order.remove(da_id)
-            self.discussion.turn_order.append(da_id)
-            # Keep current_turn_index valid
-            if self.discussion.turn_order:
-                self.discussion.current_turn_index = (
-                    self.discussion.current_turn_index
-                    % len(self.discussion.turn_order)
-                )
+        app_discussion_setup.reorder_da_in_turn_order(self.discussion)
 
     # ------------------------------------------------------------------
     # Discussion lifecycle
@@ -663,115 +518,13 @@ class ConsensusApp:
     def start_discussion(self, moderator_participates: bool = False,
                          max_rounds: int = 0) -> dict:
         """Start a new discussion with the configured entities and topic."""
-        if not self.discussion.topic:
-            return {"error": "No topic set"}
-        if len(self.discussion.entities) < 2:
-            return {"error": "Need at least 2 participants"}
-        if not self.discussion.moderator_id:
-            return {"error": "No moderator designated"}
-
-        mod = self.discussion.moderator
-        if not mod:
-            return {"error": "Moderator entity not found"}
-
-        # Validate all entities still exist in the database
-        for e in self.discussion.entities:
-            if not self.db.get_entity(e.id):
-                return {"error": f"Entity '{e.name}' (id={e.id}) no longer exists"}
-
-        # Clear any stale state from a previous discussion
-        self.discussion.messages.clear()
-        self.discussion.storyboard.clear()
-        self.discussion.turn_order.clear()
-
-        # Create DB record
-        did = self.db.create_discussion(
-            self.discussion.topic, self.discussion.moderator_id,
+        result = app_discussion_setup.start_discussion(
+            self.discussion, self.db, self.moderator,
+            moderator_participates, max_rounds,
         )
-        self.discussion.id = did
-        self.db.update_discussion(did, status="active", started_at=time.time())
-
-        # Build turn order — DA goes last
-        da_entity = None
-        turn_pos = 0
-        for e in self.discussion.entities:
-            is_mod = e.id == self.discussion.moderator_id
-            in_rotation = not is_mod or moderator_participates
-            role = self.discussion.member_roles.get(e.id, "standard")
-            if role == "devils_advocate" and in_rotation:
-                da_entity = e  # defer to end
-                continue
-            self.db.add_discussion_member(
-                did, e.id,
-                is_moderator=is_mod,
-                also_participant=moderator_participates if is_mod else True,
-                turn_position=turn_pos if in_rotation else None,
-                participant_role=role,
-            )
-            if in_rotation:
-                self.discussion.turn_order.append(e.id)
-                turn_pos += 1
-        # Append DA last
-        if da_entity:
-            is_mod = da_entity.id == self.discussion.moderator_id
-            in_rotation = not is_mod or moderator_participates
-            role = self.discussion.member_roles.get(da_entity.id, "standard")
-            self.db.add_discussion_member(
-                did, da_entity.id,
-                is_moderator=is_mod,
-                also_participant=moderator_participates if is_mod else True,
-                turn_position=turn_pos if in_rotation else None,
-                participant_role=role,
-            )
-            if in_rotation:
-                self.discussion.turn_order.append(da_entity.id)
-                turn_pos += 1
-
-        self.discussion.current_turn_index = 0
-        self.discussion.turn_number = 1
-        self.discussion.max_rounds = max_rounds
-        self.discussion.is_active = True
-        self.discussion.status = "active"
-
-        # Persist max_rounds
-        if max_rounds > 0:
-            self.db.update_discussion(did, max_rounds=max_rounds)
-
-        # Opening message from moderator
-        target_type = "ai" if mod.entity_type == EntityType.AI else "human"
-        open_prompt = self.moderator.resolve_prompt(
-            "moderator", target_type, "open",
-            entity_name=mod.name,
-            topic=self.discussion.topic,
-            participants=", ".join(
-                e.name for e in self.discussion.entities if e.id != mod.id
-            ),
-        )
-        if not open_prompt:
-            open_prompt = (
-                f"Welcome to this discussion on: **{self.discussion.topic}**\n\n"
-                f"Let's begin."
-            )
-
-        if max_rounds > 0:
-            open_prompt += (
-                f"\n\n**Note:** This discussion is limited to "
-                f"**{max_rounds} round{'s' if max_rounds != 1 else ''}**. "
-                f"Please make your contributions count — be thorough and "
-                f"concise. A conclusion will be drawn after the final round."
-            )
-
-        opening = Message(
-            entity_id=mod.id, entity_name=mod.name,
-            content=open_prompt, role=MessageRole.MODERATOR,
-        )
-        self.discussion.messages.append(opening)
-        self.db.add_message(
-            did, mod.id, open_prompt, "moderator",
-            turn_number=0,
-        )
-
         self._notify()
+        if "error" in result:
+            return result
         return self.get_state()
 
     def submit_human_message(self, entity_id: int, content: str) -> dict:
