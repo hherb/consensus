@@ -10,6 +10,9 @@ import { renderDiscussion } from './discussion.js';
 
 const MOST_RECENT_ENTITIES = 6;
 
+/** Cached list of discussion method metadata from the backend. */
+let _methodsCache = null;
+
 /**
  * Render the full setup tab (available entities, roster, start button).
  */
@@ -17,6 +20,7 @@ export function renderSetupTab() {
     renderAvailableEntities();
     renderDiscussionRoster();
     updateStartButton();
+    loadDiscussionMethods();
 }
 
 /**
@@ -174,4 +178,39 @@ export async function setDevilsAdvocate(entityId) {
     const s = await api.getState();
     onStateUpdate(s);
     renderSetupTab();
+}
+
+/**
+ * Fetch available discussion methods and populate the selector dropdown.
+ */
+export async function loadDiscussionMethods() {
+    const select = $('#discussion-method');
+    if (!select) return;
+    if (!_methodsCache) {
+        _methodsCache = await api.listDiscussionMethods() || [];
+    }
+    select.innerHTML = _methodsCache.map(m =>
+        `<option value="${m.name}" title="${escHtml(m.description)}">${escHtml(m.display_name)}</option>`
+    ).join('');
+    select.value = 'open_discussion';
+    updateMethodDescription();
+}
+
+/**
+ * Handle discussion method selection change.
+ */
+export async function onMethodChange() {
+    const select = $('#discussion-method');
+    if (!select) return;
+    updateMethodDescription();
+    const result = await api.setDiscussionMethod(select.value);
+    if (result?.error) showToast(result.error);
+}
+
+function updateMethodDescription() {
+    const select = $('#discussion-method');
+    const desc = $('#method-description');
+    if (!select || !desc || !_methodsCache) return;
+    const method = _methodsCache.find(m => m.name === select.value);
+    desc.textContent = method?.description || '';
 }

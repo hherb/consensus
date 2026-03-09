@@ -50,6 +50,8 @@ class DesktopAPI {
     async setModerator(id, alsoPart) { return await window.pywebview.api.set_moderator(id, !!alsoPart); }
     async setParticipantRole(eid, role) { return await window.pywebview.api.set_participant_role(eid, role); }
     async setTopic(t) { return await window.pywebview.api.set_topic(t); }
+    async listDiscussionMethods() { return await window.pywebview.api.list_discussion_methods(); }
+    async setDiscussionMethod(name) { return await window.pywebview.api.set_discussion_method(name); }
     async startDiscussion(modPart, maxRounds=0) { return await window.pywebview.api.start_discussion(!!modPart, maxRounds); }
 
     // --- Discussion lifecycle ---
@@ -171,6 +173,8 @@ class WebAPI {
     async setModerator(id, alsoPart) { return await this._post('set_moderator', { entity_id: id, also_participant: !!alsoPart }); }
     async setParticipantRole(eid, role) { return await this._post('set_participant_role', { entity_id: eid, participant_role: role }); }
     async setTopic(t) { return await this._post('set_topic', { topic: t }); }
+    async listDiscussionMethods() { return await this._post('list_discussion_methods'); }
+    async setDiscussionMethod(name) { return await this._post('set_discussion_method', { method_name: name }); }
     async startDiscussion(modPart, maxRounds=0) { return await this._post('start_discussion', { moderator_participates: !!modPart, max_rounds: maxRounds }); }
     async submitMessage(eid, content) { return await this._post('submit_human_message', { entity_id: eid, content }); }
     async submitModeratorMessage(content) { return await this._post('submit_moderator_message', { content }); }

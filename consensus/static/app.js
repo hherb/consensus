@@ -11,7 +11,7 @@ import { renderProviders, openProviderDialog, confirmProvider, editProvider, rem
 import { renderProfiles, openEntityDialog, confirmEntity, editProfile, removeProfile, reactivateProfile, renderInactiveProfiles, loadModelsForProvider, selectColorSwatch } from './profiles.js';
 import { renderPrompts, openPromptDialog, confirmPrompt, editPrompt, removePrompt } from './prompts.js';
 import { renderHistory, deleteSelectedDiscussions, loadDiscussion } from './history.js';
-import { renderSetupTab, renderAvailableEntities, updateStartButton, addToDiscussion, removeFromDiscussion, setModerator, setDevilsAdvocate } from './setup.js';
+import { renderSetupTab, renderAvailableEntities, updateStartButton, addToDiscussion, removeFromDiscussion, setModerator, setDevilsAdvocate, onMethodChange } from './setup.js';
 import { onStartDiscussion, onSendMessage, onConfirmModeratorInput, onReassign, doReassign, onMediate, onConclude, onPause, onResume, onReopen, onBack, reopenFromHistory } from './discussion-actions.js';
 import { exportAsJson, exportAsHtml, exportAsPdf, toggleExportMenu, closeExportMenu, toggleHistoryExportMenu, closeAllHistoryMenus, exportHistoryDiscussion } from './export.js';
 import { openMcpServerDialog, confirmMcpServer, toggleMcpServer, deleteMcpServer, testMcpConnection } from './mcp.js';
@@ -111,6 +111,7 @@ function init() {
     // Discussion setup
     $('#entity-search').addEventListener('input', () => renderAvailableEntities());
     $('#topic-input').addEventListener('input', updateStartButton);
+    $('#discussion-method').addEventListener('change', onMethodChange);
     $('#start-btn').addEventListener('click', onStartDiscussion);
 
     // Discussion phase
