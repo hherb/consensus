@@ -11,7 +11,7 @@ import time
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_MODEL = "llama3"
 DEFAULT_TEMPERATURE = 0.7
-DEFAULT_MAX_TOKENS = 1024
+DEFAULT_MAX_TOKENS = 4096
 DEFAULT_AVATAR_COLOR = "#3b82f6"
 
 # Embedding / institutional memory defaults

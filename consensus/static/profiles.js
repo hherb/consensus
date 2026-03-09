@@ -164,11 +164,24 @@ export async function confirmEntity() {
     renderSetupTab();
 }
 
-/**
- * Load available tools and current assignments for an entity.
- * @param {number|string|undefined} entityId
- */
-async function loadEntityTools(entityId) {
+/** Map provider names to user-friendly category labels */
+const TOOL_CATEGORIES = {
+    memory:   { label: 'Memory Tools',   icon: '🧠', providers: ['memory'] },
+    web:      { label: 'Web Tools',      icon: '🌐', providers: ['builtin'] },
+    expert:   { label: 'Expert Tools',   icon: '🎓', providers: ['experts'] },
+    document: { label: 'Document Tools', icon: '📄', providers: ['documents'] },
+};
+
+/** Classify a tool by its provider into a category key */
+function _toolCategory(tool) {
+    const prov = tool.provider || '';
+    for (const [cat, info] of Object.entries(TOOL_CATEGORIES)) {
+        if (info.providers.includes(prov)) return cat;
+    }
+    return 'other';
+}
+
+export async function loadEntityTools(entityId) {
     const container = $('#entity-tools-list');
     try {
         _availableTools = (await api.listTools()) || [];
@@ -187,14 +200,114 @@ async function loadEntityTools(entityId) {
         return;
     }
 
-    container.innerHTML = _availableTools.map(t => {
+    // Group tools by category
+    const groups = {};
+    for (const t of _availableTools) {
+        const cat = _toolCategory(t);
+        if (!groups[cat]) groups[cat] = [];
+        groups[cat].push(t);
+    }
+
+    // Build category-based UI
+    let html = '<div class="tool-categories-bar">';
+    html += '<button type="button" class="tool-cat-btn" data-action="all">Select All</button>';
+    html += '<button type="button" class="tool-cat-btn" data-action="none">None</button>';
+    for (const [cat, info] of Object.entries(TOOL_CATEGORIES)) {
+        if (!groups[cat]) continue;
+        const allChecked = groups[cat].every(t => t.name in _entityToolAssignments);
+        html += `<button type="button" class="tool-cat-btn ${allChecked ? 'active' : ''}" data-category="${cat}">${info.icon} ${info.label}</button>`;
+    }
+    if (groups.other) {
+        const allChecked = groups.other.every(t => t.name in _entityToolAssignments);
+        html += `<button type="button" class="tool-cat-btn ${allChecked ? 'active' : ''}" data-category="other">🔧 Other</button>`;
+    }
+    html += '</div>';
+
+    // Hidden checkboxes for save logic (one per tool, preserving data-tool attribute)
+    html += '<div class="tool-hidden-assignments">';
+    for (const t of _availableTools) {
+        const checked = t.name in _entityToolAssignments;
+        const mode = _entityToolAssignments[t.name] || 'private';
+        html += `<input type="checkbox" data-tool="${escHtml(t.name)}" ${checked ? 'checked' : ''} style="display:none">`;
+        html += `<input type="hidden" data-tool-mode="${escHtml(t.name)}" value="${mode}">`;
+    }
+    html += '</div>';
+
+    // Advanced section (collapsed by default)
+    html += '<details class="tool-advanced-details"><summary class="tool-advanced-toggle">Advanced — individual tool permissions</summary>';
+    html += '<div class="tool-advanced-list">';
+    for (const [cat, info] of Object.entries(TOOL_CATEGORIES)) {
+        if (!groups[cat]) continue;
+        html += `<div class="tool-group-header">${info.icon} ${info.label}</div>`;
+        html += _renderToolGroup(groups[cat]);
+    }
+    if (groups.other) {
+        html += '<div class="tool-group-header">🔧 Other</div>';
+        html += _renderToolGroup(groups.other);
+    }
+    html += '</div></details>';
+
+    container.innerHTML = html;
+
+    // Wire up category buttons
+    container.querySelectorAll('.tool-cat-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const action = btn.dataset.action;
+            const category = btn.dataset.category;
+            let tools;
+            if (action === 'all') tools = _availableTools;
+            else if (action === 'none') tools = _availableTools;
+            else tools = groups[category] || [];
+
+            const enable = action !== 'none' && !btn.classList.contains('active');
+            for (const t of tools) {
+                const cb = container.querySelector(`input[data-tool="${t.name}"]`);
+                if (cb) cb.checked = enable;
+                const advCb = container.querySelector(`.tool-advanced-list input[data-tool-adv="${t.name}"]`);
+                if (advCb) advCb.checked = enable;
+                const sel = container.querySelector(`select[data-tool="${t.name}"]`);
+                if (sel) sel.disabled = !enable;
+            }
+            if (action === 'all' || action === 'none') {
+                container.querySelectorAll('.tool-cat-btn[data-category]').forEach(b =>
+                    b.classList.toggle('active', enable));
+            } else {
+                btn.classList.toggle('active', enable);
+            }
+        });
+    });
+
+    // Wire up advanced checkboxes to sync with hidden ones
+    container.querySelectorAll('.tool-advanced-list input[type="checkbox"]').forEach(advCb => {
+        advCb.addEventListener('change', () => {
+            const toolName = advCb.dataset.toolAdv;
+            const hidden = container.querySelector(`input[data-tool="${toolName}"]`);
+            if (hidden) hidden.checked = advCb.checked;
+            const sel = container.querySelector(`select[data-tool="${toolName}"]`);
+            if (sel) sel.disabled = !advCb.checked;
+            // Update category button state
+            _updateCategoryButtonStates(container, groups);
+        });
+    });
+
+    // Wire up advanced selects to sync with hidden mode inputs
+    container.querySelectorAll('.tool-advanced-list select').forEach(sel => {
+        sel.addEventListener('change', () => {
+            const modeInput = container.querySelector(`input[data-tool-mode="${sel.dataset.tool}"]`);
+            if (modeInput) modeInput.value = sel.value;
+        });
+    });
+}
+
+function _renderToolGroup(tools) {
+    return tools.map(t => {
         const checked = t.name in _entityToolAssignments;
         const mode = _entityToolAssignments[t.name] || 'private';
         return `<div class="tool-assignment">
             <label class="tool-checkbox">
-                <input type="checkbox" data-tool="${escHtml(t.name)}" ${checked ? 'checked' : ''}>
+                <input type="checkbox" data-tool-adv="${escHtml(t.name)}" ${checked ? 'checked' : ''}>
                 <strong>${escHtml(t.name)}</strong>
-                <span class="text-muted" style="font-size:0.75rem"> — ${escHtml(t.description)}</span>
+                <span class="text-muted tool-desc"> — ${escHtml(t.description)}</span>
             </label>
             <select class="tool-access-mode" data-tool="${escHtml(t.name)}" ${!checked ? 'disabled' : ''}>
                 <option value="private" ${mode === 'private' ? 'selected' : ''}>Private</option>
@@ -203,13 +316,18 @@ async function loadEntityTools(entityId) {
             </select>
         </div>`;
     }).join('');
+}
 
-    container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-        cb.addEventListener('change', () => {
-            const sel = container.querySelector(`select[data-tool="${cb.dataset.tool}"]`);
-            if (sel) sel.disabled = !cb.checked;
+function _updateCategoryButtonStates(container, groups) {
+    for (const [cat, tools] of Object.entries(groups)) {
+        const btn = container.querySelector(`.tool-cat-btn[data-category="${cat}"]`);
+        if (!btn) continue;
+        const allChecked = tools.every(t => {
+            const cb = container.querySelector(`input[data-tool="${t.name}"]`);
+            return cb && cb.checked;
         });
-    });
+        btn.classList.toggle('active', allChecked);
+    }
 }
 
 /**
@@ -219,14 +337,16 @@ async function loadEntityTools(entityId) {
 async function saveEntityTools(entityId) {
     if (!entityId || !_availableTools.length) return;
     const container = $('#entity-tools-list');
-    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+    // Use the hidden checkboxes (data-tool) as source of truth
+    const checkboxes = container.querySelectorAll('.tool-hidden-assignments input[type="checkbox"]');
 
     for (const cb of checkboxes) {
         const toolName = cb.dataset.tool;
         const wasAssigned = toolName in _entityToolAssignments;
         const isAssigned = cb.checked;
+        const modeInput = container.querySelector(`input[data-tool-mode="${toolName}"]`);
         const modeSelect = container.querySelector(`select[data-tool="${toolName}"]`);
-        const mode = modeSelect ? modeSelect.value : 'private';
+        const mode = modeSelect ? modeSelect.value : (modeInput ? modeInput.value : 'private');
 
         if (isAssigned && !wasAssigned) {
             await api.assignTool(entityId, toolName, mode);

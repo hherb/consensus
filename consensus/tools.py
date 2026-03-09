@@ -231,7 +231,33 @@ class ToolRegistry:
                     continue
                 result.append(all_tools[tool_name])
 
+        # Enrich consult_expert with available expert names so models
+        # can only request existing experts (enum constraint).
+        result = [self._enrich_expert_tool(t) if t.name == "consult_expert" else t
+                  for t in result]
+
         return result
+
+    def _enrich_expert_tool(self, tool: ToolDefinition) -> ToolDefinition:
+        """Add available expert names as enum to the consult_expert tool."""
+        if not self._db:
+            return tool
+        entities = self._db.get_entities()
+        expert_names = [e["name"] for e in entities if e.get("entity_type") == "expert"]
+        if not expert_names:
+            return tool
+
+        import copy
+        enriched = copy.deepcopy(tool)
+        enriched.parameters["properties"]["expert_name"]["enum"] = expert_names
+        enriched.parameters["properties"]["expert_name"]["description"] = (
+            f"Name of the expert to consult. Available experts: {', '.join(expert_names)}"
+        )
+        enriched.description = (
+            f"Consult a specialist expert for authoritative analysis. "
+            f"Available experts: {', '.join(expert_names)}"
+        )
+        return enriched
 
     async def execute(
         self, tool_name: str, arguments: dict,

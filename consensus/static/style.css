@@ -544,23 +544,86 @@ input[type="checkbox"] { width: auto; }
 }
 
 /* Tool assignment in entity dialog */
-.entity-tools-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.entity-tools-list { display: flex; flex-direction: column; gap: 0.5rem; }
+
+/* Category toggle buttons bar */
+.tool-categories-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0.3rem 0;
+}
+.tool-cat-btn {
+    padding: 0.35rem 0.7rem;
+    font-size: 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+.tool-cat-btn:hover { border-color: var(--accent); }
+.tool-cat-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+.tool-cat-btn[data-action] {
+    font-weight: 600;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* Advanced details toggle */
+.tool-advanced-details { margin-top: 0.3rem; }
+.tool-advanced-toggle {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    padding: 0.2rem 0;
+}
+.tool-advanced-toggle:hover { color: var(--accent); }
+.tool-advanced-list { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.4rem; }
+
+.tool-group-header {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-top: 0.4rem;
+    padding-bottom: 0.15rem;
+    border-bottom: 1px solid var(--border);
+}
+
 .tool-assignment {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 0.5rem;
     padding: 0.3rem 0.4rem;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
 }
-.tool-checkbox { display: flex; align-items: center; gap: 0.4rem; flex: 1; cursor: pointer; }
-.tool-checkbox input[type="checkbox"] { margin: 0; }
+.tool-checkbox { display: flex; align-items: center; gap: 0.4rem; flex: 1 1 0; min-width: 0; cursor: pointer; }
+.tool-checkbox input[type="checkbox"] { margin: 0; flex-shrink: 0; }
+.tool-checkbox strong { white-space: nowrap; flex-shrink: 0; font-size: 0.8rem; }
+.tool-desc {
+    font-size: 0.72rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1 1 0;
+}
 .tool-access-mode {
     font-size: 0.75rem;
     padding: 0.15rem 0.3rem;
-    min-width: 100px;
+    width: 110px;
+    flex: 0 0 110px;
 }
 .tool-access-mode:disabled { opacity: 0.4; }
 

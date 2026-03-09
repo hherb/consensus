@@ -220,3 +220,5 @@ docs/drafts/
 
 # Git worktrees
 .worktrees/
+.codelibrarian/index.db
+.codelibrarian/config.toml

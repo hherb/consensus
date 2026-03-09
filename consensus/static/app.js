@@ -8,7 +8,7 @@ import { state, onStateUpdate, registerSetupCallback } from './state.js';
 import { api, initApi } from './api.js';
 import { checkAuthStatus, showAuthPhase, showAppPhase, authUser, authRequired, setAuthUser } from './auth.js';
 import { renderProviders, openProviderDialog, confirmProvider, editProvider, removeProvider, promptByokKey, confirmByokKey, removeByokKey } from './providers.js';
-import { renderProfiles, openEntityDialog, confirmEntity, editProfile, removeProfile, reactivateProfile, renderInactiveProfiles, loadModelsForProvider, selectColorSwatch } from './profiles.js';
+import { renderProfiles, openEntityDialog, confirmEntity, editProfile, removeProfile, reactivateProfile, renderInactiveProfiles, loadModelsForProvider, selectColorSwatch, loadEntityTools } from './profiles.js';
 import { renderPrompts, openPromptDialog, confirmPrompt, editPrompt, removePrompt } from './prompts.js';
 import { renderHistory, deleteSelectedDiscussions, loadDiscussion } from './history.js';
 import { renderSetupTab, renderAvailableEntities, updateStartButton, addToDiscussion, removeFromDiscussion, setModerator, setDevilsAdvocate, onMethodChange } from './setup.js';
@@ -77,8 +77,12 @@ function init() {
     $('#add-profile-btn').addEventListener('click', () => openEntityDialog(null));
     $('#quick-add-btn').addEventListener('click', () => openEntityDialog(null));
     $('#entity-type').addEventListener('change', (e) => {
-        if (e.target.value === 'ai') show('#ai-config');
-        else hide('#ai-config');
+        if (e.target.value === 'ai') {
+            show('#ai-config');
+            loadEntityTools($('#entity-edit-id').value || undefined);
+        } else {
+            hide('#ai-config');
+        }
     });
     $('#ai-provider').addEventListener('change', (e) => {
         const pid = e.target.value;
