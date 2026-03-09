@@ -202,6 +202,30 @@ class PricingCache:
         return (prompt_tokens * prompt_cost) + \
                (completion_tokens * completion_cost)
 
+    def calculate_cost_with_refresh(
+        self, model_name: str, base_url: str,
+        prompt_tokens: int, completion_tokens: int,
+    ) -> Optional[float]:
+        """Calculate cost in USD, refreshing pricing data once if model is unknown.
+
+        Wraps ``calculate_cost`` with a single retry after refreshing the
+        pricing cache when the model is not yet known.
+
+        Args:
+            model_name: The model identifier (e.g. "gpt-4o").
+            base_url: The provider's API base URL for disambiguation.
+            prompt_tokens: Number of prompt/input tokens used.
+            completion_tokens: Number of completion/output tokens used.
+
+        Returns:
+            Cost in USD, or None if pricing is unavailable even after refresh.
+        """
+        cost = self.calculate_cost(model_name, base_url, prompt_tokens, completion_tokens)
+        if cost is None and self.needs_refresh_for_model(model_name):
+            self.refresh()
+            cost = self.calculate_cost(model_name, base_url, prompt_tokens, completion_tokens)
+        return cost
+
 
 def _strip_date_suffix(model_name: str) -> str:
     """Strip trailing date suffixes like -20250605 from model names."""
