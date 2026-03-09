@@ -14,7 +14,7 @@ from .models import (
 )
 from .moderator import Moderator
 from .database import Database
-from . import app_providers
+from . import app_entities, app_providers
 from .config import get_db_path, save_api_key, remove_api_key, has_api_key
 from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolRegistry, ToolResult
 
@@ -414,35 +414,26 @@ class ConsensusApp:
                     system_prompt: str = "",
                     entity_id: int = 0) -> Optional[dict]:
         """Create or update a persistent entity profile."""
-        if entity_id:
-            self.db.update_entity(
-                entity_id, name=name, entity_type=entity_type,
-                avatar_color=avatar_color, provider_id=provider_id,
-                model=model, temperature=temperature,
-                max_tokens=max_tokens, system_prompt=system_prompt,
-            )
-        else:
-            entity_id = self.db.add_entity(
-                name, entity_type, avatar_color, provider_id,
-                model, temperature, max_tokens, system_prompt,
-            )
-        return self.db.get_entity(entity_id)
+        return app_entities.save_entity(
+            self.db, name, entity_type, avatar_color, provider_id,
+            model, temperature, max_tokens, system_prompt, entity_id,
+        )
 
     def delete_entity(self, entity_id: int) -> dict:
         """Delete or deactivate an entity profile by ID."""
-        return self.db.delete_entity(entity_id)
+        return app_entities.delete_entity(self.db, entity_id)
 
     def reactivate_entity(self, entity_id: int) -> bool:
         """Reactivate a previously deactivated entity profile."""
-        return self.db.reactivate_entity(entity_id)
+        return app_entities.reactivate_entity(self.db, entity_id)
 
     def get_entities(self) -> list[dict]:
         """Return all saved active entity profiles."""
-        return self.db.get_entities()
+        return app_entities.get_entities(self.db)
 
     def get_inactive_entities(self) -> list[dict]:
         """Return all inactive (soft-deleted) entity profiles."""
-        return self.db.get_inactive_entities()
+        return app_entities.get_inactive_entities(self.db)
 
     # ------------------------------------------------------------------
     # Prompt management
