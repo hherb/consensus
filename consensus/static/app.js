@@ -231,8 +231,12 @@ async function bootstrap() {
 
     init();
 
-    // SSE connection for real-time tool progress events (web mode only)
-    if (typeof window.pywebview === 'undefined') {
+    if (window.pywebview) {
+        // Expose callbacks for pywebview Python→JS evaluate_js() calls
+        window.onStateUpdate = onStateUpdate;
+        window.onToolProgress = onToolProgress;
+    } else {
+        // SSE connection for real-time tool progress events (web mode only)
         const evtSource = new EventSource('/api/events');
         evtSource.addEventListener('tool_progress', (e) => {
             onToolProgress(JSON.parse(e.data));
