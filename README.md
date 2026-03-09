@@ -21,6 +21,15 @@ A moderated discussion platform where two or more entities (humans and/or AI via
 - **Dynamic participation** — add or remove participants mid-discussion
 - **Export** — save discussions as JSON or HTML (desktop mode uses native save dialog)
 
+### Pluggable Discussion Methods
+Different problems demand different reasoning structures. Consensus provides a `DiscussionMethod` abstraction that controls phases, prompts, response processing, and synthesis — while reusing the core infrastructure for turn-taking, message persistence, and tool execution.
+
+- **Open Discussion** (default) — the standard moderated round-robin with optional Devil's Advocate; a solid general-purpose method
+- **Analysis of Competing Hypotheses (ACH)** — from intelligence analysis. Participants enumerate all plausible hypotheses, gather evidence, then systematically rate each hypothesis against each piece of evidence (consistent/inconsistent/neutral). Focuses on *disconfirming* evidence and *diagnostic* evidence that distinguishes between hypotheses. Four phases: Hypothesise → Gather Evidence → Evaluate → Analyse
+- **Belief State Diffusion** — an LLM-native method. Each participant maintains an explicit probability distribution over hypotheses (not prose opinions). Over multiple rounds, participants see others' distributions and reasoning, update their own beliefs, and show the math. Automatic convergence detection stops when belief deltas fall below a threshold. Produces graphable belief trajectories showing which arguments were actually persuasive. Three phases: Prior → Diffuse → Diagnose
+
+Methods are selected per-discussion at setup time. The architecture is extensible — new methods implement the `DiscussionMethod` ABC and register in the method registry.
+
 ### Multi-Provider AI Support
 - **OpenAI-compatible API** support — works with OpenAI, Anthropic, Ollama, DeepSeek, LMStudio, vLLM, and any compatible endpoint
 - **Provider registry** with pre-seeded defaults (Ollama, Anthropic, DeepSeek, OpenAI)
