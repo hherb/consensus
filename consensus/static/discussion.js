@@ -6,7 +6,8 @@
 import { $, show, hide, escHtml, getInitials, formatTime, renderMarkdown } from './utils.js';
 import { state, renderedMessageCount, renderedStoryboardCount, syncRenderedMessageCount, syncRenderedStoryboardCount, getEntity } from './state.js';
 import { calculateDiscussionCost } from './export.js';
-import { renderMessageImages } from './images.js';
+import { renderMessageImages, showLightbox } from './images.js';
+import { api } from './api.js';
 
 /**
  * Render the full discussion view (header, messages, storyboard, input area).
@@ -106,10 +107,54 @@ function renderPauseAvailableEntities() {
 }
 
 /**
+ * Render discussion-level images at the top of the message flow.
+ * Called once when the first messages arrive; updates if images change.
+ */
+/** Track which image IDs are currently rendered in the banner */
+let _renderedDiscussionImageIds = '';
+
+function renderDiscussionImages() {
+    const container = $('#messages');
+    const images = state.discussion_images || [];
+    const existing = container.querySelector('.discussion-images-banner');
+    const imageKey = images.map(img => img.id).join(',');
+
+    if (images.length === 0) {
+        if (existing) existing.remove();
+        _renderedDiscussionImageIds = '';
+        return;
+    }
+
+    // Skip rebuild if images haven't changed
+    if (existing && imageKey === _renderedDiscussionImageIds) return;
+    _renderedDiscussionImageIds = imageKey;
+
+    // Build or rebuild the banner
+    const banner = existing || document.createElement('div');
+    banner.className = 'discussion-images-banner';
+    banner.innerHTML = images.map(img => `
+        <img class="discussion-image"
+             src="${api.getImageUrl(img.id)}"
+             alt="${escHtml(img.title || img.original_filename || 'Image')}"
+             loading="lazy">
+    `).join('');
+
+    // Wire lightbox clicks
+    banner.querySelectorAll('.discussion-image').forEach(imgEl => {
+        imgEl.addEventListener('click', () => showLightbox(imgEl.src, imgEl.alt));
+    });
+
+    if (!existing) {
+        container.insertBefore(banner, container.firstChild);
+    }
+}
+
+/**
  * Render only new messages since last render (incremental append).
  */
 function renderNewMessages() {
     const container = $('#messages');
+    renderDiscussionImages();
     const newMessages = state.messages.slice(renderedMessageCount);
     const typing = container.querySelector('.typing-indicator');
     if (typing) typing.remove();

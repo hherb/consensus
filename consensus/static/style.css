@@ -1197,3 +1197,23 @@ input[type="checkbox"] { width: auto; }
     transition: opacity 0.15s;
 }
 .message-image-thumb:hover { opacity: 0.8; }
+
+/* --- Discussion-level images shown at top of dialog flow --- */
+.discussion-images-banner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-secondary, var(--bg));
+}
+.discussion-image {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+.discussion-image:hover { opacity: 0.8; }
