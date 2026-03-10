@@ -35,7 +35,11 @@ ConsensusApp
     |     |     +-- discussion_search
     |     |     +-- kg_assert, kg_query
     |     |
-    |     +-- MCPToolProvider (mcp_client.py)   [per registered MCP server]
+    |     +-- MCPToolProvider (mcp_client.py)   [stdio MCP servers]
+    |     |     |
+    |     |     +-- Tools discovered dynamically via MCP tools/list
+    |     |
+    |     +-- MCPHTTPToolProvider (mcp_http_client.py)  [HTTP MCP servers]
     |           |
     |           +-- Tools discovered dynamically via MCP tools/list
     |
@@ -137,9 +141,9 @@ provider.register_tool(
 Handlers receive `(arguments: dict, context: ToolContext)` and return either a
 `ToolResult` or a plain string (auto-wrapped).
 
-### MCPToolProvider
+### MCPToolProvider (stdio)
 
-Communicates with external MCP servers via JSON-RPC 2.0 over stdin/stdout
+Communicates with local MCP servers via JSON-RPC 2.0 over stdin/stdout
 subprocesses. Defined in `mcp_client.py`.
 
 ```python
@@ -163,6 +167,29 @@ await provider.close()  # terminates subprocess
 - Progress notifications tied to requests via `progressToken` in `_meta`
 - Default timeout: 30 seconds per request (configurable)
 - `close()` terminates the subprocess and cleans up resources
+
+### MCPHTTPToolProvider (Streamable HTTP)
+
+Communicates with remote MCP servers via JSON-RPC 2.0 over HTTP POST with
+optional SSE streaming responses. Defined in `mcp_http_client.py`.
+
+```python
+provider = MCPHTTPToolProvider(
+    name="remote_server",
+    url="https://mcp.example.com/mcp",
+    headers={"Authorization": "Bearer token"}
+)
+await provider.connect()  # HTTP initialize + session setup
+tools = await provider.list_tools()  # calls tools/list
+result = await provider.execute("my_tool", {"arg": "val"}, context, progress_callback)
+await provider.close()  # session termination + client cleanup
+```
+
+**Key design:**
+- Session management via `Mcp-Session-Id` header
+- Handles both JSON and SSE response content types
+- Retry with exponential backoff for 5xx, 429, and connection errors
+- Progress notifications extracted from SSE stream events
 
 For full details, see [MCP Expert Plugins](13-mcp-expert-plugins.md).
 

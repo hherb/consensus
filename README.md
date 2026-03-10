@@ -27,6 +27,12 @@ Different problems demand different reasoning structures. Consensus provides a `
 - **Open Discussion** (default) — the standard moderated round-robin with optional Devil's Advocate; a solid general-purpose method
 - **Analysis of Competing Hypotheses (ACH)** — from intelligence analysis. Participants enumerate all plausible hypotheses, gather evidence, then systematically rate each hypothesis against each piece of evidence (consistent/inconsistent/neutral). Focuses on *disconfirming* evidence and *diagnostic* evidence that distinguishes between hypotheses. Four phases: Hypothesise → Gather Evidence → Evaluate → Analyse
 - **Belief State Diffusion** — an LLM-native method. Each participant maintains an explicit probability distribution over hypotheses (not prose opinions). Over multiple rounds, participants see others' distributions and reasoning, update their own beliefs, and show the math. Automatic convergence detection stops when belief deltas fall below a threshold. Produces graphable belief trajectories showing which arguments were actually persuasive. Three phases: Prior → Diffuse → Diagnose
+- **Delphi Method** — independent anonymous responses across multiple rounds; facilitator shares statistical distribution and anonymised reasoning; participants revise. Avoids anchoring, authority bias, and social pressure. Phases: Estimate → Revise → Synthesise
+- **Premortem Analysis** — assume a preliminary conclusion is reached, then each participant independently constructs a narrative of how and why it failed. Psychologically easier than critiquing a live idea. Phases: Frame → Premortem → Consolidate
+- **Key Assumptions Check** — explicitly surface and challenge the assumptions underlying the question before analysis begins. Can function standalone or as a first phase in other methods. Phases: Surface → Challenge → Assess
+- **Adversarial Collaboration** (Kahneman-style) — participants who genuinely disagree jointly design the criteria that would settle the question *before* gathering evidence. Prevents post-hoc rationalisation. Phases: Positions → Criteria → Evidence → Adjudicate
+- **Red Team / Blue Team** — rotating adversarial role each round; red team sees only the current conclusion and tries to break it. Phases: Construct → Attack → Revise → Assess
+- **Participant Voting** — structured deliberation followed by formal voting. Participants propose motions during deliberation, then vote for/against/abstain on each motion. Configurable thresholds (simple majority, supermajority, unanimous). Double-vote prevention, tally with pass/fail. Phases: Deliberate → Vote → Tally
 
 Methods are selected per-discussion at setup time. The architecture is extensible — new methods implement the `DiscussionMethod` ABC and register in the method registry.
 
@@ -109,10 +115,12 @@ Methods are selected per-discussion at setup time. The architecture is extensibl
 - **Per-message and per-discussion cost display** in the UI
 
 ### MCP Expert Plugins
-- **MCP (Model Context Protocol) server integration** — register external MCP servers that communicate via JSON-RPC 2.0 over stdin/stdout
+- **MCP (Model Context Protocol) server integration** — register external MCP servers via JSON-RPC 2.0 over stdio (local processes) or Streamable HTTP (remote servers)
+- **Dual transport** — stdio for local MCP servers (subprocess) and HTTP+SSE for remote MCP servers with session management (`Mcp-Session-Id`), retry with exponential backoff
 - **Expert entities** — a new entity type (`expert`) that wraps an MCP tool as a consultable participant
 - **`consult_expert` meta-tool** — AI participants can consult expert entities during turn generation; expert responses are added to the discussion
-- **MCP server management** — add, update, test, and delete MCP server configurations via the UI
+- **MCP server management** — add, update, test, and delete MCP server configurations via the UI; transport selector toggles between stdio and HTTP fields
+- **Config file-based MCP servers** — load MCP server definitions from JSON or TOML config files at startup. Searches `CONSENSUS_MCP_CONFIG` env var, `./mcp_servers.json`, `~/.consensus/`, and the platform data directory. New servers are added to the DB; changed servers are updated
 - **Real-time progress** — SSE endpoint (`GET /api/events`) for tool execution progress notifications
 - **Event emitter** — lightweight pub/sub system in `ConsensusApp` for real-time event dispatch
 
@@ -196,6 +204,7 @@ In **multi-user mode**, users provide their own API keys via the browser UI (sto
 | `OPENAI_API_KEY` | OpenAI API key |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `DEEPSEEK_API_KEY` | DeepSeek API key |
+| `CONSENSUS_MCP_CONFIG` | Path to MCP server config file (JSON or TOML); overrides default search paths |
 | `CONSENSUS_ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (multi-user mode) |
 | `CONSENSUS_SESSION_DIR` | Custom directory for per-session SQLite databases |
 | `CONSENSUS_EMBEDDING_ENDPOINT` | Ollama endpoint for embeddings (default: `http://localhost:11434`) |
@@ -225,7 +234,8 @@ ConsensusApp — orchestrator, state management, event emitter
     ├── AIClient — async OpenAI-compatible HTTP client (httpx)
     ├── Database (db/) — thread-safe SQLite persistence (domain-specific mixins)
     ├── PricingCache — model cost lookup via OpenRouter
-    ├── MCPToolProvider — MCP server communication (JSON-RPC 2.0)
+    ├── MCPToolProvider — MCP stdio transport (JSON-RPC 2.0 over subprocess)
+    ├── MCPHTTPToolProvider — MCP Streamable HTTP transport (JSON-RPC 2.0 over HTTP+SSE)
     ├── DocumentRAG (tools_document.py) — document ingestion, chunking, RAG Q&A
     ├── Migrator — file-based SQL migration runner
     └── Evaluation — ablation study framework (cases, runner, scorer)

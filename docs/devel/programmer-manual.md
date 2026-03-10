@@ -45,7 +45,10 @@ ConsensusApp (app.py + app_*.py domain modules)
     |     Pluggable tool providers, access control, execution with timeout
     |
     +-- MCPToolProvider (mcp_client.py)
-    |     JSON-RPC 2.0 communication with MCP server subprocesses
+    |     JSON-RPC 2.0 over stdio (local MCP server subprocesses)
+    |
+    +-- MCPHTTPToolProvider (mcp_http_client.py)
+    |     JSON-RPC 2.0 over Streamable HTTP+SSE (remote MCP servers)
     |
     +-- DocumentRAG (tools_document.py)
     |     Document ingestion, chunking, RAG Q&A, summarization

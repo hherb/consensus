@@ -164,7 +164,8 @@ USD cost per AI message.
 ## MCP Server and Expert Tables
 
 These tables support the MCP expert plugins system. Created via migration
-`004_mcp_experts.sql`.
+`004_mcp_experts.sql`, with HTTP transport columns added by
+`008_mcp_transport.sql`.
 
 ```sql
 -- Registered MCP server configurations
@@ -172,10 +173,13 @@ mcp_servers (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT NOT NULL UNIQUE,
     description TEXT NOT NULL DEFAULT '',
-    command     TEXT NOT NULL,              -- executable path (e.g. "python", "node")
-    args        TEXT NOT NULL DEFAULT '[]', -- JSON array of command-line arguments
-    env         TEXT NOT NULL DEFAULT '{}', -- JSON object of environment variables
+    command     TEXT NOT NULL,              -- executable path for stdio (e.g. "python", "node")
+    args        TEXT NOT NULL DEFAULT '[]', -- JSON array of command-line arguments (stdio)
+    env         TEXT NOT NULL DEFAULT '{}', -- JSON object of environment variables (stdio)
     enabled     INTEGER NOT NULL DEFAULT 1,
+    transport   TEXT NOT NULL DEFAULT 'stdio', -- 'stdio' or 'http'
+    url         TEXT NOT NULL DEFAULT '',       -- server endpoint URL (HTTP transport)
+    headers     TEXT NOT NULL DEFAULT '{}',     -- JSON object of HTTP headers (HTTP transport)
     created_at  REAL NOT NULL,
     updated_at  REAL NOT NULL
 )
@@ -464,6 +468,7 @@ every construction (predating the file-based system):
 | `005_documents.sql` | Creates `documents`, `document_chunks`, `document_chunk_embeddings`, `discussion_documents` tables |
 | `006_discussion_methods.sql` | Adds discussion method configuration tables |
 | `007_images.sql` | Creates `images`, `discussion_images`, `message_images` tables |
+| `008_mcp_transport.sql` | Adds `transport`, `url`, `headers` columns to `mcp_servers` for HTTP transport support |
 
 Migrations are idempotent -- they use `CREATE TABLE IF NOT EXISTS` and check
 for the existence of columns before making changes.
@@ -496,7 +501,7 @@ The `Database` class provides methods grouped by table:
 
 | Method | Purpose |
 |--------|---------|
-| `add_mcp_server(name, description, command, args, env)` | Register an MCP server, returns dict |
+| `add_mcp_server(name, description, command, args, env, enabled, transport, url, headers)` | Register an MCP server, returns ID |
 | `get_mcp_servers()` | List all MCP servers |
 | `update_mcp_server(server_id, **kwargs)` | Update server configuration |
 | `delete_mcp_server(server_id)` | Remove a server and its expert definitions |

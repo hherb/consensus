@@ -36,6 +36,7 @@ class ConsensusApp:
         self._init_memory_tools()    # memory tools (if sqlite-vec installed)
         self._init_document_tools()  # document RAG (if pdfplumber installed)
         self._init_image_tools()     # image tools (if Pillow installed)
+        self._load_mcp_config()      # load MCP servers from config files
 ```
 
 **Update callback:** `set_update_callback(callback)` registers a function
