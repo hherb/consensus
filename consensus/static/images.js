@@ -8,6 +8,21 @@ import { api } from './api.js';
 import { state } from './state.js';
 
 /**
+ * Load the displayable src for an image element.
+ * In desktop mode, fetches a base64 data URL from the bridge.
+ * In web mode, uses the HTTP endpoint directly.
+ */
+export async function loadImageSrc(imgEl, imageId) {
+    if (api.getImageDataUrl) {
+        try {
+            const dataUrl = await api.getImageDataUrl(imageId);
+            if (dataUrl) { imgEl.src = dataUrl; return; }
+        } catch { /* fall through */ }
+    }
+    imgEl.src = api.getImageUrl(imageId);
+}
+
+/**
  * Render the images panel for the current discussion setup.
  */
 export async function renderImagePanel() {
@@ -30,7 +45,7 @@ export async function renderImagePanel() {
 
     container.innerHTML = `<div class="image-grid">${images.map(img => `
         <div class="image-thumb-wrapper" data-image-id="${img.id}">
-            <img class="image-thumb" src="${api.getImageUrl(img.id)}"
+            <img class="image-thumb" data-image-id="${img.id}"
                  alt="${_escHtml(img.title || img.filename)}"
                  title="${_escHtml(img.title || img.filename)}"
                  loading="lazy">
@@ -38,6 +53,11 @@ export async function renderImagePanel() {
             <button class="btn btn-ghost btn-sm image-remove-btn" data-image-id="${img.id}" title="Remove from discussion">\u2715</button>
         </div>
     `).join('')}</div>`;
+
+    // Load image sources asynchronously (needed for desktop mode)
+    container.querySelectorAll('.image-thumb[data-image-id]').forEach(imgEl => {
+        loadImageSrc(imgEl, parseInt(imgEl.dataset.imageId));
+    });
 
     // Wire remove buttons
     container.querySelectorAll('.image-remove-btn').forEach(btn => {
@@ -184,10 +204,10 @@ export function renderMessageImages(div, imageIds) {
     wrapper.className = 'message-images';
     for (const id of imageIds) {
         const img = document.createElement('img');
-        img.src = api.getImageUrl(id);
         img.className = 'message-image-thumb';
         img.loading = 'lazy';
         img.addEventListener('click', () => showLightbox(img.src, ''));
+        loadImageSrc(img, id);
         wrapper.appendChild(img);
     }
     div.appendChild(wrapper);

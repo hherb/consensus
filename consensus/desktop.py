@@ -84,6 +84,17 @@ class DesktopBridge:
         """Return full application state."""
         return self.app.get_state()
 
+    def get_image_data_url(self, image_id: int) -> str:
+        """Return a base64 data URL for the given image ID (for desktop rendering)."""
+        from .tools_image import image_to_base64_url
+        img = self.app.db.get_image(image_id)
+        if not img:
+            return ""
+        try:
+            return image_to_base64_url(img["storage_path"], img["mime_type"])
+        except Exception:
+            return ""
+
     # -- Providers --
     def add_provider(self, name: str, base_url: str,
                      api_key_env: str = "",

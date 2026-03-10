@@ -6,8 +6,7 @@
 import { $, show, hide, escHtml, getInitials, formatTime, renderMarkdown } from './utils.js';
 import { state, renderedMessageCount, renderedStoryboardCount, syncRenderedMessageCount, syncRenderedStoryboardCount, getEntity } from './state.js';
 import { calculateDiscussionCost } from './export.js';
-import { renderMessageImages, showLightbox } from './images.js';
-import { api } from './api.js';
+import { renderMessageImages, showLightbox, loadImageSrc } from './images.js';
 
 /**
  * Render the full discussion view (header, messages, storyboard, input area).
@@ -133,14 +132,14 @@ function renderDiscussionImages() {
     const banner = existing || document.createElement('div');
     banner.className = 'discussion-images-banner';
     banner.innerHTML = images.map(img => `
-        <img class="discussion-image"
-             src="${api.getImageUrl(img.id)}"
+        <img class="discussion-image" data-image-id="${img.id}"
              alt="${escHtml(img.title || img.original_filename || 'Image')}"
              loading="lazy">
     `).join('');
 
-    // Wire lightbox clicks
+    // Load image sources asynchronously and wire lightbox clicks
     banner.querySelectorAll('.discussion-image').forEach(imgEl => {
+        loadImageSrc(imgEl, parseInt(imgEl.dataset.imageId));
         imgEl.addEventListener('click', () => showLightbox(imgEl.src, imgEl.alt));
     });
 

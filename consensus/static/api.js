@@ -93,6 +93,9 @@ class DesktopAPI {
     async removeImage(imageId, discussionId) { return await window.pywebview.api.remove_image(imageId, discussionId || 0); }
     async deleteImage(imageId) { return await window.pywebview.api.delete_image(imageId); }
     getImageUrl(imageId) { return `/api/images/file/${imageId}`; }
+    async getImageDataUrl(imageId) {
+        return await window.pywebview.api.get_image_data_url(imageId);
+    }
 
     // --- Memory ---
     async getMemoryConfig() { return await window.pywebview.api.get_memory_config(); }
@@ -273,6 +276,7 @@ class WebAPI {
         return await resp.json();
     }
     getImageUrl(imageId) { return `/api/images/file/${imageId}`; }
+    async getImageDataUrl(imageId) { return `/api/images/file/${imageId}`; }
 
     async getMemoryConfig() {
         const resp = await fetch('/api/memory/config');

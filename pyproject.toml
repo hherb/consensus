@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "consensus"
-version = "0.1.0"
+version = "1.0.0"
 description = "A moderated discussion platform for humans and AI"
 license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.11"
