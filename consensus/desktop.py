@@ -235,9 +235,11 @@ class DesktopBridge:
         """List all configured MCP servers."""
         return self.app.get_mcp_servers()
 
-    def add_mcp_server(self, name, description, command, args=None, env=None) -> dict:
+    def add_mcp_server(self, name, description, command, args=None, env=None,
+                       transport="stdio", url="", headers=None) -> dict:
         """Add a new MCP server configuration."""
-        return self.app.add_mcp_server(name, description, command, args, env)
+        return self.app.add_mcp_server(name, description, command, args, env,
+                                       transport=transport, url=url, headers=headers)
 
     def update_mcp_server(self, server_id, **kwargs) -> bool:
         """Update an existing MCP server configuration."""

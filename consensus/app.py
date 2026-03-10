@@ -51,6 +51,7 @@ class ConsensusApp:
         self._init_memory_tools()
         self._init_document_tools()
         self._init_image_tools()
+        self._load_mcp_config()
 
     def _refresh_pricing_if_needed(self) -> None:
         """Refresh pricing cache on startup if stale or missing models."""
@@ -125,6 +126,17 @@ class ConsensusApp:
         except ImportError as e:
             self.images_available = False
             logger.info("Image tools not available: %s", e)
+
+    def _load_mcp_config(self) -> None:
+        """Load MCP server definitions from config files on startup."""
+        try:
+            from .mcp_config import load_and_merge_config
+            result = load_and_merge_config(self.db)
+            if result["added"] or result["updated"]:
+                logger.info("MCP config: %d added, %d updated",
+                            result["added"], result["updated"])
+        except Exception:
+            logger.warning("Failed to load MCP config", exc_info=True)
 
     @staticmethod
     def set_request_api_keys(keys: dict[str, str]) -> None:
@@ -210,9 +222,14 @@ class ConsensusApp:
     # ------------------------------------------------------------------
 
     def add_mcp_server(self, name: str, description: str, command: str,
-                       args: list | None = None, env: dict | None = None) -> dict | None:
+                       args: list | None = None, env: dict | None = None,
+                       transport: str = "stdio", url: str = "",
+                       headers: dict | None = None) -> dict | None:
         """Register an MCP server and return its record."""
-        server_id = self.db.add_mcp_server(name, description, command, args, env)
+        server_id = self.db.add_mcp_server(
+            name, description, command, args, env,
+            transport=transport, url=url, headers=headers,
+        )
         self._notify()
         return self.db.get_mcp_server(server_id)
 
@@ -233,16 +250,31 @@ class ConsensusApp:
         self.db.delete_mcp_server(server_id)
         self._notify()
 
-    async def test_mcp_connection(self, server_id: int) -> dict:
-        """Test connectivity to an MCP server and list its tools."""
+    @staticmethod
+    def _create_mcp_provider(server: dict):
+        """Create the appropriate MCP tool provider for a server record."""
+        transport = server.get("transport", "stdio")
+        if transport == "http":
+            from .mcp_http_client import MCPHTTPToolProvider
+            return MCPHTTPToolProvider(
+                name=server["name"],
+                url=server.get("url", ""),
+                headers=server.get("headers", {}),
+            )
         from .mcp_client import MCPToolProvider
-        server = self.db.get_mcp_server(server_id)
-        if not server:
-            return {"success": False, "error": "Server not found"}
-        provider = MCPToolProvider(
+        return MCPToolProvider(
             name=server["name"], command=server["command"],
             args=server["args"], env=server["env"],
         )
+
+    async def test_mcp_connection(self, server_id: int) -> dict:
+        """Test connectivity to an MCP server and list its tools."""
+        server = self.db.get_mcp_server(server_id)
+        if not server:
+            return {"success": False, "error": "Server not found"}
+
+        provider = self._create_mcp_provider(server)
+
         try:
             if not await provider.connect():
                 return {"success": False, "error": "Failed to connect"}
@@ -256,14 +288,12 @@ class ConsensusApp:
 
     async def connect_mcp_server(self, server_id: int) -> bool:
         """Connect to an MCP server and register it as a tool provider."""
-        from .mcp_client import MCPToolProvider
         server = self.db.get_mcp_server(server_id)
         if not server or not server["enabled"]:
             return False
-        provider = MCPToolProvider(
-            name=server["name"], command=server["command"],
-            args=server["args"], env=server["env"],
-        )
+
+        provider = self._create_mcp_provider(server)
+
         if not await provider.connect():
             return False
         self._mcp_providers[server_id] = provider

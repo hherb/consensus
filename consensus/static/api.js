@@ -100,8 +100,8 @@ class DesktopAPI {
 
     // --- MCP Servers ---
     async getMcpServers() { return await window.pywebview.api.get_mcp_servers(); }
-    async addMcpServer(name, description, command, args, env) {
-        return await window.pywebview.api.add_mcp_server(name, description, command, args, env);
+    async addMcpServer(name, description, command, args, env, transport, url, headers) {
+        return await window.pywebview.api.add_mcp_server(name, description, command, args, env, transport, url, headers);
     }
     async updateMcpServer(serverId, updates) {
         return await window.pywebview.api.update_mcp_server(serverId, updates);
@@ -291,8 +291,8 @@ class WebAPI {
     }
 
     async getMcpServers() { return await this._post('get_mcp_servers'); }
-    async addMcpServer(name, description, command, args, env) {
-        return await this._post('add_mcp_server', { name, description, command, args, env });
+    async addMcpServer(name, description, command, args, env, transport, url, headers) {
+        return await this._post('add_mcp_server', { name, description, command, args, env, transport, url, headers });
     }
     async updateMcpServer(serverId, updates) {
         return await this._post('update_mcp_server', { server_id: serverId, ...updates });

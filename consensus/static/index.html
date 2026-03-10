@@ -543,16 +543,39 @@
                 <input id="mcp-description" type="text" placeholder="What this server provides">
             </div>
             <div class="form-group">
-                <label for="mcp-command">Command</label>
-                <input id="mcp-command" type="text" placeholder="e.g. npx, python, uvx">
+                <label>Transport</label>
+                <div style="display:flex;gap:1rem;margin-top:0.25rem">
+                    <label style="display:flex;align-items:center;gap:0.3rem;cursor:pointer">
+                        <input type="radio" name="mcp-transport" value="stdio" checked> Stdio (local process)
+                    </label>
+                    <label style="display:flex;align-items:center;gap:0.3rem;cursor:pointer">
+                        <input type="radio" name="mcp-transport" value="http"> HTTP (remote server)
+                    </label>
+                </div>
             </div>
-            <div class="form-group">
-                <label for="mcp-args">Arguments (comma-separated)</label>
-                <input id="mcp-args" type="text" placeholder="e.g. -m, my_server, --port, 8080">
+            <div id="mcp-stdio-fields">
+                <div class="form-group">
+                    <label for="mcp-command">Command</label>
+                    <input id="mcp-command" type="text" placeholder="e.g. npx, python, uvx">
+                </div>
+                <div class="form-group">
+                    <label for="mcp-args">Arguments (comma-separated)</label>
+                    <input id="mcp-args" type="text" placeholder="e.g. -m, my_server, --port, 8080">
+                </div>
+                <div class="form-group">
+                    <label for="mcp-env">Environment Variables (one per line, KEY=VALUE)</label>
+                    <textarea id="mcp-env" rows="3" placeholder="API_KEY=abc123&#10;DEBUG=true"></textarea>
+                </div>
             </div>
-            <div class="form-group">
-                <label for="mcp-env">Environment Variables (one per line, KEY=VALUE)</label>
-                <textarea id="mcp-env" rows="3" placeholder="API_KEY=abc123&#10;DEBUG=true"></textarea>
+            <div id="mcp-http-fields" class="hidden">
+                <div class="form-group">
+                    <label for="mcp-url">Server URL</label>
+                    <input id="mcp-url" type="text" placeholder="e.g. https://mcp.example.com/mcp">
+                </div>
+                <div class="form-group">
+                    <label for="mcp-headers">HTTP Headers (one per line, KEY=VALUE)</label>
+                    <textarea id="mcp-headers" rows="3" placeholder="Authorization=Bearer token123"></textarea>
+                </div>
             </div>
             <input id="mcp-edit-id" type="hidden" value="">
             <div class="dialog-actions">

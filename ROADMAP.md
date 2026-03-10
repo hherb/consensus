@@ -34,7 +34,7 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ✅ Done | Web search and tool access | `tools.py` (ToolProvider ABC, ToolRegistry), `tools_builtin.py` (Brave Search + DuckDuckGo fallback), native function calling in `ai_client.py`, tool execution loop in `moderator.py` |
 | ✅ Done | Devil's Advocate role | Constructive-critic participant role with dedicated prompt templates (`system_devils_advocate`, `turn_devils_advocate`) that challenge assumptions and identify weaknesses |
 | **Democratic Moderation** | | |
-| ⬜ Planned | Participant voting system | Any participant (human or AI) can propose a poll during discussion. Vote types: early conclusion (consensus reached, no further turns needed), extend discussion (max rounds hit but issues unresolved), invoke expert consultation, change topic focus, or custom motions. Moderator presents the motion, collects votes with optional rationale, and announces the outcome. Configurable thresholds (simple majority, supermajority, unanimous). Results logged as structured messages for audit trail |
+| ✅ Done | Participant voting system | `consensus/methods/voting.py` — three-phase discussion method (deliberate → vote → tally). Participants propose motions via JSON blocks during deliberation, then vote for/against/abstain on each motion. Configurable thresholds (simple majority, supermajority, unanimous). Double-vote prevention, vote validation, tally with pass/fail determination. Results synthesised by moderator |
 | ⬜ Planned | Moderation challenges | Entities formally challenge moderator summaries/decisions; reviewed by participant consensus |
 | ⬜ Planned | Moderator elections | Participants vote to replace or change moderator during a discussion |
 | **Authentication & Identity** | | |
@@ -56,10 +56,10 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ✅ Done | MCP client (stdio transport) | MCPToolProvider class connecting to external MCP servers via stdio; expert entities that get one turn when invoked then step back |
 | ✅ Done | Expert invocation UI | AI entities invoke experts via tool calls; humans trigger consultation via UI button; progress notifications shown as live typing indicator with stage text and progress count |
 | ✅ Done | MCP server management UI | Register/configure MCP servers in the Providers tab, stored in database |
-| ⬜ Planned | MCP Streamable HTTP transport | Connect to remote MCP servers over HTTP+SSE in addition to stdio |
+| ✅ Done | MCP Streamable HTTP transport | `mcp_http_client.py`: `MCPHTTPToolProvider` connects to remote MCP servers over HTTP+SSE. Session management via `Mcp-Session-Id`, SSE response parsing, retry with exponential backoff. Migration 008 adds `transport`/`url`/`headers` columns. Frontend transport selector toggles stdio vs HTTP fields |
 | ⬜ Planned | Multiple simultaneous expert consultations | Invoke several experts in parallel during a single turn |
 | ⬜ Planned | Expert-to-expert chaining | Allow one expert to invoke another expert as part of its work |
-| ⬜ Planned | Config file-based MCP server definitions | JSON/TOML config for deployment-managed MCP server defaults |
+| ✅ Done | Config file-based MCP server definitions | `mcp_config.py`: Load MCP servers from JSON/TOML config files at startup. Searches `CONSENSUS_MCP_CONFIG` env var, `./mcp_servers.json`, `~/.consensus/`, and platform data dir. New servers added to DB; changed servers updated. Supports both stdio and HTTP transport entries |
 | ⬜ Planned | MCP resources and prompts | Support MCP resources and prompt templates beyond tool calls |
 | **Document RAG** | | |
 | ✅ Done | Document ingestion & parsing | `tools_document.py`: URL/text/PDF/HTML ingestion with pdfplumber, trafilatura; auto-chunking with paragraph-aware boundaries and configurable overlap |

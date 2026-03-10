@@ -22,16 +22,20 @@ class MCPMixin:
     def add_mcp_server(self, name: str, description: str = "",
                        command: str = "", args: list | None = None,
                        env: dict | None = None,
-                       enabled: bool = True) -> int:
+                       enabled: bool = True,
+                       transport: str = "stdio", url: str = "",
+                       headers: dict | None = None) -> int:
         """Register an MCP server. Returns the new server ID."""
         now = time.time()
         cur = self._execute_write(
             "INSERT INTO mcp_servers "
-            "(name, description, command, args, env, enabled, created_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?)",
+            "(name, description, command, args, env, enabled, "
+            "transport, url, headers, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (name, description, command,
              json.dumps(args or []), json.dumps(env or {}),
-             int(enabled), now, now),
+             int(enabled), transport, url,
+             json.dumps(headers or {}), now, now),
         )
         return cur.lastrowid
 
@@ -45,6 +49,7 @@ class MCPMixin:
         d = dict(row)
         d["args"] = json.loads(d["args"])
         d["env"] = json.loads(d["env"])
+        d["headers"] = json.loads(d["headers"]) if d.get("headers") else {}
         return d
 
     def get_mcp_servers(self, enabled_only: bool = False) -> list[dict]:
@@ -58,12 +63,14 @@ class MCPMixin:
             d = dict(row)
             d["args"] = json.loads(d["args"])
             d["env"] = json.loads(d["env"])
+            d["headers"] = json.loads(d["headers"]) if d.get("headers") else {}
             results.append(d)
         return results
 
     def update_mcp_server(self, server_id: int, **kwargs: object) -> None:
         """Update an MCP server's mutable fields."""
-        allowed = {"name", "description", "command", "args", "env", "enabled"}
+        allowed = {"name", "description", "command", "args", "env", "enabled",
+                   "transport", "url", "headers"}
         sets: list[str] = []
         vals: list[object] = []
         for k, v in kwargs.items():
@@ -71,6 +78,8 @@ class MCPMixin:
                 if k == "args":
                     v = json.dumps(v)
                 elif k == "env":
+                    v = json.dumps(v)
+                elif k == "headers":
                     v = json.dumps(v)
                 sets.append(f"{k}=?")
                 vals.append(v)

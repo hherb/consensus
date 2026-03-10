@@ -14,7 +14,7 @@ import { renderHistory, deleteSelectedDiscussions, loadDiscussion } from './hist
 import { renderSetupTab, renderAvailableEntities, updateStartButton, addToDiscussion, removeFromDiscussion, setModerator, setDevilsAdvocate, onMethodChange } from './setup.js';
 import { onStartDiscussion, onSendMessage, onConfirmModeratorInput, onReassign, doReassign, onMediate, onConclude, onPause, onResume, onReopen, onBack, reopenFromHistory } from './discussion-actions.js';
 import { exportAsJson, exportAsHtml, exportAsPdf, toggleExportMenu, closeExportMenu, toggleHistoryExportMenu, closeAllHistoryMenus, exportHistoryDiscussion } from './export.js';
-import { openMcpServerDialog, confirmMcpServer, toggleMcpServer, deleteMcpServer, testMcpConnection } from './mcp.js';
+import { openMcpServerDialog, confirmMcpServer, toggleMcpServer, deleteMcpServer, testMcpConnection, initMcpTransportToggle } from './mcp.js';
 import { showConsultExpertDialog, onToolProgress } from './experts.js';
 import { loadMemoryConfig, saveMemoryConfig, testMemoryConnection } from './memory.js';
 import { renderDocumentPanel, uploadDocument, addDocumentByUrl } from './documents.js';
@@ -203,6 +203,7 @@ function init() {
     if (confirmMcpBtn) confirmMcpBtn.addEventListener('click', confirmMcpServer);
     const cancelMcpBtn = $('#cancel-mcp-btn');
     if (cancelMcpBtn) cancelMcpBtn.addEventListener('click', () => hide('#mcp-server-dialog'));
+    initMcpTransportToggle();
 
     // Memory config
     const memorySaveBtn = $('#memory-save-btn');

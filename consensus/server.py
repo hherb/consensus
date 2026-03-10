@@ -421,7 +421,10 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             # MCP servers
             "add_mcp_server": lambda: app.add_mcp_server(
                 data["name"], data.get("description", ""),
-                data["command"], data.get("args"), data.get("env")),
+                data.get("command", ""), data.get("args"), data.get("env"),
+                transport=data.get("transport", "stdio"),
+                url=data.get("url", ""),
+                headers=data.get("headers")),
             "get_mcp_servers": lambda: app.get_mcp_servers(),
             "update_mcp_server": lambda: app.update_mcp_server(
                 data["server_id"],
