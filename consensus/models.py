@@ -236,6 +236,8 @@ class Discussion:
     is_active: bool = False
     status: str = "setup"
     member_roles: dict[int, str] = field(default_factory=dict)
+    # Image IDs added during setup (before discussion has a DB ID)
+    pending_image_ids: list[int] = field(default_factory=list)
     # Discussion method (e.g. "open_discussion", "belief_diffusion", "ach")
     discussion_method: str = "open_discussion"
     # Method-specific state (phases, hypotheses, belief history, etc.)

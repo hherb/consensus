@@ -415,11 +415,8 @@ class ConsensusApp:
         state["tool_providers"] = self.db.get_tool_providers()
         state["mcp_servers"] = self.db.get_mcp_servers()
         state["experts"] = self.db.get_expert_definitions()
-        # Include discussion images if a discussion is active
-        if self.discussion.id:
-            state["discussion_images"] = self.db.get_discussion_images(
-                self.discussion.id,
-            )
+        # Include discussion images (from DB if active, from pending list during setup)
+        state["discussion_images"] = self.get_discussion_images()
         return state
 
     # ------------------------------------------------------------------
@@ -838,16 +835,20 @@ class ConsensusApp:
         """Add an image via file upload."""
         from .tools_image import ingest_image
 
+        disc_id = discussion_id or (self.discussion.id if self.discussion else 0)
         result = await ingest_image(
             db=self.db,
             content_bytes=content_bytes,
             filename=filename,
             mime_type=mime_type,
-            discussion_id=discussion_id or (self.discussion.id if self.discussion else 0),
+            discussion_id=disc_id,
             source_url=source_url or None,
             title=title or None,
             source_type="url" if source_url else "upload",
         )
+        # Track images added before discussion has a DB ID
+        if not disc_id and "image_id" in result and self.discussion:
+            self.discussion.pending_image_ids.append(result["image_id"])
         return result
 
     async def add_image_from_url(self, url: str, discussion_id: int = 0,
@@ -868,13 +869,24 @@ class ConsensusApp:
     def get_discussion_images(self, discussion_id: int = 0) -> list[dict]:
         """Return images attached to a discussion."""
         disc_id = discussion_id or (self.discussion.id if self.discussion else 0)
-        return self.db.get_discussion_images(disc_id)
+        if disc_id:
+            return self.db.get_discussion_images(disc_id)
+        # During setup (no discussion ID yet), return pending images
+        if self.discussion and self.discussion.pending_image_ids:
+            return [
+                img for img_id in self.discussion.pending_image_ids
+                if (img := self.db.get_image(img_id))
+            ]
+        return []
 
     def remove_discussion_image(self, image_id: int,
                                  discussion_id: int = 0) -> dict:
         """Remove an image from a discussion (keeps in library)."""
         disc_id = discussion_id or (self.discussion.id if self.discussion else 0)
-        self.db.remove_discussion_image(disc_id, image_id)
+        if disc_id:
+            self.db.remove_discussion_image(disc_id, image_id)
+        elif self.discussion and image_id in self.discussion.pending_image_ids:
+            self.discussion.pending_image_ids.remove(image_id)
         return {"success": True}
 
     def get_image_data(self, image_id: int) -> Optional[tuple[bytes, str, str]]:

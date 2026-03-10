@@ -306,6 +306,11 @@ def start_discussion(
     discussion.id = did
     db.update_discussion(did, status="active", started_at=time.time())
 
+    # Link images uploaded during setup to the new discussion
+    for image_id in discussion.pending_image_ids:
+        db.add_discussion_image(did, image_id)
+    discussion.pending_image_ids.clear()
+
     # Build turn order -- DA goes last
     da_entity = None
     turn_pos = 0
