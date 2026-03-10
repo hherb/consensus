@@ -48,7 +48,8 @@ class DiscussionsMixin:
         self._update_row(
             "discussions", discussion_id,
             allowed={"topic", "moderator_id", "status", "ended_at", "started_at",
-                     "max_rounds", "discussion_method", "method_state"},
+                     "max_rounds", "discussion_method", "method_state",
+                     "cost_limit"},
             **kwargs,
         )
 

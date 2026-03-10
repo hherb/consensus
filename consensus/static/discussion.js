@@ -33,7 +33,16 @@ export function renderDiscussion() {
     const costEl = $('#cost-badge');
     if (costEl) {
         const totalCost = calculateDiscussionCost(state.messages);
-        costEl.textContent = totalCost > 0 ? `Cost: $${totalCost.toFixed(2)}` : '';
+        const limit = state.cost_limit || 0;
+        if (totalCost > 0 || limit > 0) {
+            const limitStr = limit > 0 ? ` / $${limit.toFixed(2)}` : '';
+            costEl.textContent = `Cost: $${totalCost.toFixed(2)}${limitStr}`;
+            costEl.style.color = (limit > 0 && totalCost / limit > 0.8)
+                ? 'var(--warning, #e67e22)' : '';
+        } else {
+            costEl.textContent = '';
+            costEl.style.color = '';
+        }
     }
     if (state.status === 'active') {
         show('#pause-btn'); hide('#resume-btn'); hide('#reopen-btn');

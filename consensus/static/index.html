@@ -134,6 +134,12 @@
                         <span class="text-muted" style="font-size: 0.8rem;">(0 = unlimited)</span>
                     </label>
                     <label style="display: flex; align-items: center; gap: 0.5rem;">
+                        Budget ($):
+                        <input type="number" id="cost-limit" min="0" max="100" step="0.10" value="1.00"
+                               style="width: 5rem;" title="0 = unlimited">
+                        <span class="text-muted" style="font-size: 0.8rem;">(0 = unlimited)</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem;">
                         Method:
                         <select id="discussion-method" style="min-width: 10rem;"></select>
                     </label>
@@ -593,6 +599,23 @@
             <div id="reassign-list"></div>
             <div class="dialog-actions">
                 <button id="cancel-reassign-btn" class="btn btn-ghost">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== COST LIMIT DIALOG ===== -->
+    <div id="cost-limit-dialog" class="dialog-overlay hidden">
+        <div class="dialog">
+            <h3>Cost Limit Reached</h3>
+            <p>This discussion has spent <strong>$<span id="cost-limit-total">0.00</span></strong>,
+               reaching the budget of <strong>$<span id="cost-limit-amount">1.00</span></strong>.</p>
+            <label style="display:flex;align-items:center;gap:0.5rem;margin-top:1rem">
+                New limit ($):
+                <input type="number" id="cost-limit-new" min="0" step="0.50" value="2.00" style="width:5rem">
+            </label>
+            <div class="dialog-actions">
+                <button id="cost-limit-conclude-btn" class="btn btn-ghost">Conclude Discussion</button>
+                <button id="cost-limit-continue-btn" class="btn btn-primary">Continue with New Limit</button>
             </div>
         </div>
     </div>

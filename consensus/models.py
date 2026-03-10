@@ -242,6 +242,8 @@ class Discussion:
     discussion_method: str = "open_discussion"
     # Method-specific state (phases, hypotheses, belief history, etc.)
     method_state: dict = field(default_factory=dict)
+    # Cost limit in USD (0 = unlimited)
+    cost_limit: float = 0.0
 
     @property
     def current_round(self) -> int:
@@ -299,4 +301,5 @@ class Discussion:
             },
             "discussion_method": self.discussion_method,
             "method_state": self.method_state,
+            "cost_limit": self.cost_limit,
         }

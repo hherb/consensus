@@ -604,15 +604,24 @@ class ConsensusApp:
     # ------------------------------------------------------------------
 
     def start_discussion(self, moderator_participates: bool = False,
-                         max_rounds: int = 0) -> dict:
+                         max_rounds: int = 0,
+                         cost_limit: float = 0.0) -> dict:
         """Start a new discussion with the configured entities and topic."""
         result = app_discussion_setup.start_discussion(
             self.discussion, self.db, self.moderator,
-            moderator_participates, max_rounds,
+            moderator_participates, max_rounds, cost_limit,
         )
         self._notify()
         if "error" in result:
             return result
+        return self.get_state()
+
+    def set_cost_limit(self, cost_limit: float) -> dict:
+        """Update the cost limit for the current discussion."""
+        self.discussion.cost_limit = cost_limit
+        if self.discussion.id:
+            self.db.update_discussion(self.discussion.id, cost_limit=cost_limit)
+        self._notify()
         return self.get_state()
 
     def submit_human_message(self, entity_id: int, content: str) -> dict:

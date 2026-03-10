@@ -52,9 +52,10 @@ class DesktopAPI {
     async setTopic(t) { return await window.pywebview.api.set_topic(t); }
     async listDiscussionMethods() { return await window.pywebview.api.list_discussion_methods(); }
     async setDiscussionMethod(name) { return await window.pywebview.api.set_discussion_method(name); }
-    async startDiscussion(modPart, maxRounds=0) { return await window.pywebview.api.start_discussion(!!modPart, maxRounds); }
+    async startDiscussion(modPart, maxRounds=0, costLimit=0) { return await window.pywebview.api.start_discussion(!!modPart, maxRounds, costLimit); }
 
     // --- Discussion lifecycle ---
+    async setCostLimit(limit) { return await window.pywebview.api.set_cost_limit(limit); }
     async submitMessage(eid, content) { return await window.pywebview.api.submit_human_message(eid, content); }
     async submitModeratorMessage(content) { return await window.pywebview.api.submit_moderator_message(content); }
     async submitUserInput(requestId, content) { return await window.pywebview.api.submit_user_input(requestId, content); }
@@ -187,7 +188,8 @@ class WebAPI {
     async setTopic(t) { return await this._post('set_topic', { topic: t }); }
     async listDiscussionMethods() { return await this._post('list_discussion_methods'); }
     async setDiscussionMethod(name) { return await this._post('set_discussion_method', { method_name: name }); }
-    async startDiscussion(modPart, maxRounds=0) { return await this._post('start_discussion', { moderator_participates: !!modPart, max_rounds: maxRounds }); }
+    async startDiscussion(modPart, maxRounds=0, costLimit=0) { return await this._post('start_discussion', { moderator_participates: !!modPart, max_rounds: maxRounds, cost_limit: costLimit }); }
+    async setCostLimit(limit) { return await this._post('set_cost_limit', { cost_limit: limit }); }
     async submitMessage(eid, content) { return await this._post('submit_human_message', { entity_id: eid, content }); }
     async submitModeratorMessage(content) { return await this._post('submit_moderator_message', { content }); }
     async submitUserInput(requestId, content) { return await this._post('submit_user_input', { request_id: requestId, content }); }

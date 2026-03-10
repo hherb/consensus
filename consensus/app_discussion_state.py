@@ -135,6 +135,7 @@ def load_discussion(
         member_roles=member_roles,
         discussion_method=discussion_method,
         method_state=method_state,
+        cost_limit=disc.get("cost_limit", 0.0),
     )
     moderator = Moderator(
         discussion, db,

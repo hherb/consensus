@@ -271,6 +271,7 @@ def start_discussion(
     moderator: Moderator,
     moderator_participates: bool = False,
     max_rounds: int = 0,
+    cost_limit: float = 0.0,
 ) -> dict:
     """Start a new discussion with the configured entities and topic.
 
@@ -350,12 +351,18 @@ def start_discussion(
     discussion.current_turn_index = 0
     discussion.turn_number = 1
     discussion.max_rounds = max_rounds
+    discussion.cost_limit = cost_limit
     discussion.is_active = True
     discussion.status = "active"
 
-    # Persist max_rounds
+    # Persist max_rounds and cost_limit
+    limits = {}
     if max_rounds > 0:
-        db.update_discussion(did, max_rounds=max_rounds)
+        limits["max_rounds"] = max_rounds
+    if cost_limit > 0:
+        limits["cost_limit"] = cost_limit
+    if limits:
+        db.update_discussion(did, **limits)
 
     # Initialise method state
     try:
@@ -391,6 +398,12 @@ def start_discussion(
             f"**{max_rounds} round{'s' if max_rounds != 1 else ''}**. "
             f"Please make your contributions count — be thorough and "
             f"concise. A conclusion will be drawn after the final round."
+        )
+
+    if cost_limit > 0:
+        open_prompt += (
+            f"\n\n**Budget:** This discussion has a cost limit of "
+            f"**${cost_limit:.2f}**."
         )
 
     opening = Message(

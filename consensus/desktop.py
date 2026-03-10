@@ -197,9 +197,15 @@ class DesktopBridge:
 
     # -- Discussion lifecycle --
     def start_discussion(self, moderator_participates: bool = False,
-                         max_rounds: int = 0) -> dict:
+                         max_rounds: int = 0,
+                         cost_limit: float = 0.0) -> dict:
         """Start the discussion."""
-        return self.app.start_discussion(moderator_participates, max_rounds)
+        return self.app.start_discussion(moderator_participates, max_rounds,
+                                         cost_limit)
+
+    def set_cost_limit(self, cost_limit: float) -> dict:
+        """Update the cost limit for the current discussion."""
+        return self.app.set_cost_limit(cost_limit)
 
     def submit_human_message(self, entity_id: int, content: str) -> dict:
         """Submit a message from a human participant."""

@@ -18,7 +18,8 @@ export async function onStartDiscussion() {
     await api.setTopic(topic);
     const modParticipates = $('#mod-participates').checked;
     const maxRounds = parseInt($('#max-rounds')?.value) || 0;
-    const result = await api.startDiscussion(modParticipates, maxRounds);
+    const costLimit = parseFloat($('#cost-limit')?.value) || 0;
+    const result = await api.startDiscussion(modParticipates, maxRounds, costLimit);
     if (result?.error) return showToast(result.error);
     onStateUpdate(result);
     hide('#setup-phase');
@@ -98,6 +99,11 @@ async function completeTurnFlow() {
                 await onConclude();
                 return false;
             }
+            if (result?.cost_limit_reached) {
+                renderDiscussion();
+                showCostLimitDialog(result.total_cost, result.cost_limit);
+                return false;
+            }
         } catch (e) {
             showToast('Summary failed: ' + e.message);
             onStateUpdate(await api.getState());
@@ -168,6 +174,12 @@ export async function processCurrentTurn() {
             const result = await api.generateAiTurn();
             // Re-check after await — discussion may have been concluded
             if (!state.is_active || state.status === 'concluded') break;
+            if (result?.cost_limit_reached) {
+                onStateUpdate(await api.getState());
+                renderDiscussion();
+                showCostLimitDialog(result.total_cost, result.cost_limit);
+                break;
+            }
             if (result?.error && !result?.skipped) { showToast(result.error); break; }
             if (result?.skipped) showToast(`${speaker.name} skipped due to API error`, 5000, 'warning');
             if (result?.warning) showToast(result.warning, 5000, 'info');
@@ -314,4 +326,37 @@ export async function onBack() {
     hide('#discussion-phase');
     show('#setup-phase');
     renderSetupTab();
+}
+
+// -- Cost limit dialog helpers --
+
+function showCostLimitDialog(totalCost, costLimit) {
+    $('#cost-limit-total').textContent = totalCost?.toFixed(2) || '?';
+    $('#cost-limit-amount').textContent = costLimit?.toFixed(2) || '?';
+    // Suggest a new limit: double, rounded up to nearest $0.50
+    const doubled = (costLimit || 1) * 2;
+    const suggested = Math.ceil(doubled * 2) / 2;
+    $('#cost-limit-new').value = suggested.toFixed(2);
+    show('#cost-limit-dialog');
+}
+
+/**
+ * Continue the discussion with a new cost limit.
+ */
+export async function onCostLimitContinue() {
+    const newLimit = parseFloat($('#cost-limit-new').value) || 0;
+    if (newLimit <= 0) return showToast('Please enter a valid cost limit');
+    hide('#cost-limit-dialog');
+    await api.setCostLimit(newLimit);
+    onStateUpdate(await api.getState());
+    renderDiscussion();
+    processCurrentTurn();
+}
+
+/**
+ * Conclude the discussion when cost limit is reached.
+ */
+export async function onCostLimitConclude() {
+    hide('#cost-limit-dialog');
+    await onConclude();
 }

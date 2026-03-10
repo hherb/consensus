@@ -27,6 +27,11 @@ def is_pass(content: str) -> bool:
     return "passed this round." in content.lower()
 
 
+def calculate_discussion_cost(discussion: Discussion) -> float:
+    """Sum the cost of all messages in the discussion."""
+    return sum(m.cost or 0.0 for m in discussion.messages)
+
+
 def submit_human_message(
     discussion: Discussion, db: Database, entity_id: int, content: str,
 ) -> dict:
@@ -95,6 +100,13 @@ async def generate_ai_turn(
         return {"error": "No current speaker"}
     if current.entity_type != EntityType.AI:
         return {"error": f"{current.name} is human - waiting for input"}
+
+    # Pre-flight cost limit check
+    if discussion.cost_limit > 0:
+        total = calculate_discussion_cost(discussion)
+        if total >= discussion.cost_limit:
+            return {"cost_limit_reached": True, "total_cost": total,
+                    "cost_limit": discussion.cost_limit}
 
     try:
         participant_role = discussion.member_roles.get(
@@ -358,6 +370,19 @@ async def complete_turn(
             "current_round": discussion.current_round,
             "state": get_state_fn(),
         }
+
+    # Check if cost limit has been reached
+    if discussion.cost_limit > 0:
+        total_cost = calculate_discussion_cost(discussion)
+        if total_cost >= discussion.cost_limit:
+            return {
+                "cost_limit_reached": True,
+                "total_cost": total_cost,
+                "cost_limit": discussion.cost_limit,
+                "turn_number": discussion.turn_number,
+                "current_round": discussion.current_round,
+                "state": get_state_fn(),
+            }
 
     return {
         "next_speaker": next_speaker.to_dict() if next_speaker else None,

@@ -1,0 +1,1 @@
+ALTER TABLE discussions ADD COLUMN cost_limit REAL NOT NULL DEFAULT 0.0;

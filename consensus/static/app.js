@@ -12,7 +12,7 @@ import { renderProfiles, openEntityDialog, confirmEntity, editProfile, removePro
 import { renderPrompts, openPromptDialog, confirmPrompt, editPrompt, removePrompt } from './prompts.js';
 import { renderHistory, deleteSelectedDiscussions, loadDiscussion } from './history.js';
 import { renderSetupTab, renderAvailableEntities, updateStartButton, addToDiscussion, removeFromDiscussion, setModerator, setDevilsAdvocate, onMethodChange } from './setup.js';
-import { onStartDiscussion, onSendMessage, onConfirmModeratorInput, onReassign, doReassign, onMediate, onConclude, onPause, onResume, onReopen, onBack, reopenFromHistory } from './discussion-actions.js';
+import { onStartDiscussion, onSendMessage, onConfirmModeratorInput, onReassign, doReassign, onMediate, onConclude, onPause, onResume, onReopen, onBack, reopenFromHistory, onCostLimitContinue, onCostLimitConclude } from './discussion-actions.js';
 import { exportAsJson, exportAsHtml, exportAsPdf, toggleExportMenu, closeExportMenu, toggleHistoryExportMenu, closeAllHistoryMenus, exportHistoryDiscussion } from './export.js';
 import { openMcpServerDialog, confirmMcpServer, toggleMcpServer, deleteMcpServer, testMcpConnection, initMcpTransportToggle } from './mcp.js';
 import { showConsultExpertDialog, onToolProgress } from './experts.js';
@@ -131,6 +131,8 @@ function init() {
     $('#resume-btn').addEventListener('click', onResume);
     $('#reopen-btn').addEventListener('click', onReopen);
     $('#conclude-btn').addEventListener('click', onConclude);
+    $('#cost-limit-continue-btn').addEventListener('click', onCostLimitContinue);
+    $('#cost-limit-conclude-btn').addEventListener('click', onCostLimitConclude);
     $('#export-btn').addEventListener('click', () => toggleExportMenu());
     document.addEventListener('click', (ev) => {
         if (!ev.target.closest('.export-dropdown')) {

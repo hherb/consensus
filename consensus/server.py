@@ -381,7 +381,10 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             # Discussion lifecycle
             "start_discussion": lambda: app.start_discussion(
                 data.get("moderator_participates", False),
-                int(data.get("max_rounds", 0))),
+                int(data.get("max_rounds", 0)),
+                float(data.get("cost_limit", 0.0))),
+            "set_cost_limit": lambda: app.set_cost_limit(
+                float(data.get("cost_limit", 0.0))),
             "submit_human_message": lambda: app.submit_human_message(
                 data["entity_id"], data["content"]),
             "submit_moderator_message": lambda: app.submit_moderator_message(
