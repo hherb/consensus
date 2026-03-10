@@ -13,6 +13,11 @@ from .base import DiscussionMethod, Phase, ProcessedResponse
 from .open_discussion import OpenDiscussion
 from .belief_diffusion import BeliefDiffusion
 from .ach import ACH
+from .premortem import PremortemAnalysis
+from .key_assumptions import KeyAssumptionsCheck
+from .adversarial_collab import AdversarialCollaboration
+from .red_team import RedTeamBlueTeam
+from .delphi import DelphiMethod
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +26,11 @@ _METHODS: dict[str, type[DiscussionMethod]] = {
     "open_discussion": OpenDiscussion,
     "belief_diffusion": BeliefDiffusion,
     "ach": ACH,
+    "premortem": PremortemAnalysis,
+    "key_assumptions": KeyAssumptionsCheck,
+    "adversarial_collab": AdversarialCollaboration,
+    "red_team": RedTeamBlueTeam,
+    "delphi": DelphiMethod,
 }
 _INSTANCES: dict[str, DiscussionMethod] = {}
 _METHODS_METADATA: list[dict] | None = None
@@ -82,4 +92,6 @@ __all__ = [
     "get_method", "get_active_method", "list_methods",
     "serialize_method_state",
     "OpenDiscussion", "BeliefDiffusion", "ACH",
+    "PremortemAnalysis", "KeyAssumptionsCheck",
+    "AdversarialCollaboration", "RedTeamBlueTeam", "DelphiMethod",
 ]

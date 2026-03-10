@@ -308,6 +308,13 @@ async def complete_turn(
         if method.should_advance_phase(discussion):
             new_phase = method.advance_phase(discussion)
             if new_phase:
+                # Let the method reorder turns for the new phase
+                new_order = method.get_turn_order(
+                    list(discussion.turn_order), discussion)
+                if new_order != list(discussion.turn_order):
+                    discussion.turn_order = new_order
+                    discussion.current_turn_index = 0
+
                 # Post phase transition message
                 transition_msg = method.get_phase_transition_message(
                     new_phase, discussion)
