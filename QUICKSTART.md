@@ -113,6 +113,26 @@ Go to **New Discussion** tab:
 3. Enter a discussion topic
 4. Click **Start Discussion**
 
+### 3b. Choose a discussion method (optional)
+
+The default is **Open Discussion** (freeform turn-taking). Other structured methods are available in the setup panel:
+
+| Method | Purpose |
+|--------|---------|
+| **Delphi** | Anonymous multi-round estimation with convergence |
+| **Red Team / Blue Team** | Adversarial stress-testing of proposals |
+| **Premortem** | "Assume this failed — why?" risk analysis |
+| **ACH** | Analysis of Competing Hypotheses |
+| **Key Assumptions Check** | Surface and challenge hidden assumptions |
+| **Adversarial Collaboration** | Structured disagreement toward resolution |
+| **Belief Diffusion** | Track how opinions shift through discussion |
+| **Voting** | Formal vote to reach a decision |
+
+### 3c. Attach images or documents (optional)
+
+- **Images:** Upload or paste a URL in the Images panel. Vision-capable models see them directly; others can use the `describe_image` tool.
+- **Documents:** Upload PDFs, HTML, Markdown, or plain text. AI participants can search, quote, and answer questions about document content via RAG tools.
+
 ### 4. Discuss
 
 - **AI participants** generate responses automatically when it's their turn
@@ -122,6 +142,53 @@ Go to **New Discussion** tab:
 - **Add or remove participants** mid-discussion
 - Click **Conclude** to end the discussion and generate a final synthesis
 - **Resume** a concluded discussion to continue the conversation
+
+## AI Tools
+
+AI participants can use tools during their turns. Assign tools per-entity in the **Profiles** tab under the Tools section.
+
+### Built-in tools
+
+| Tool | Requires | Description |
+|------|----------|-------------|
+| **web_search** | `BRAVE_API_KEY` env var (falls back to DuckDuckGo) | Search the web for current information |
+| **fetch_webpage** | — | Extract content from a URL |
+| **describe_image** | A vision-capable model in the discussion | Get AI-generated description of an attached image |
+| **list_images** | — | List images attached to the discussion |
+| **add_image_url** | — | Add an image from a URL mid-discussion |
+| **ask_user** | A human user present | Pause and request input from the human user mid-turn |
+| **add_document** / **ask_document** | — | Ingest and query reference documents via RAG |
+| **consult_expert** | An expert entity configured | Get specialist analysis from an expert entity |
+
+Memory and knowledge-graph tools are covered in the next section.
+
+### MCP servers (external tools)
+
+Connect [Model Context Protocol](https://modelcontextprotocol.io/) servers to give AI participants access to external capabilities (databases, APIs, code execution, etc.).
+
+1. Go to **Providers → MCP Servers**
+2. Add a server (stdio command or HTTP URL)
+3. Click **Test** to verify connectivity
+4. Assign MCP tools to entities in the **Profiles** tab
+
+MCP servers can also be auto-loaded from a config file. The app searches these paths on startup:
+- `./mcp_servers.json` (current directory)
+- `~/.consensus/mcp_servers.json`
+- Platform data dir (e.g. `~/Library/Application Support/consensus/mcp_servers.json` on macOS)
+
+## Exporting Discussions
+
+From the discussion view or the **History** tab, export in three formats:
+
+- **JSON** — Structured data with full metadata, tool calls, and storyboard
+- **HTML** — Self-contained styled document (dark/light mode aware)
+- **PDF** — Opens the HTML export in a print dialog
+
+Exports include per-message AI metadata (model, tokens, latency, cost) and tool call records.
+
+## Cost Tracking
+
+Message costs are calculated automatically using OpenRouter pricing data. Per-message costs appear in the discussion view, and total cost is shown in exports. The pricing cache refreshes weekly.
 
 ## Enabling Institutional Memory (Optional)
 
@@ -159,15 +226,24 @@ Models **choose autonomously** when to use memory tools — no manual prompting 
 
 You can configure the embedding endpoint and model in the **Settings** tab under "Memory Configuration".
 
+## Authentication (multi-user mode)
+
+When running with `--multi-user`, users must register and log in:
+
+- **Email/password** registration with secure PBKDF2-SHA256 hashing
+- **OAuth** sign-in via GitHub, Google, LinkedIn, or Apple (configure via environment variables — see `docs/devel/programmer-manual.md`)
+- Each user gets an isolated database — no data is shared between users
+- **BYOK:** Users provide their own API keys via the browser UI. Keys are stored in `sessionStorage` and sent per-request — never persisted on the server.
+
 ## Tips
 
 - The moderator can be either human or AI. An AI moderator generates summaries automatically; a human moderator is prompted to type summaries.
 - Check the **Storyboard** panel (right side) for a running summary of the discussion.
 - You can **reassign turns** to any participant at any time.
-- **Export** discussions as JSON or HTML from the discussion view.
+- **Export** discussions as JSON, HTML, or PDF from the discussion view or History tab.
 - The **Prompts** tab lets you customize the system prompts and instructions for AI moderators and participants.
 - Past discussions are saved and can be reviewed from the **History** tab.
-- In **multi-user mode**, enter your API keys in the Provider Keys section of the UI — they stay in your browser and are never stored on the server.
+- Discussion methods can be changed per-discussion — experiment with Delphi for estimation tasks, Red Team for stress-testing proposals, etc.
 
 ## Troubleshooting
 

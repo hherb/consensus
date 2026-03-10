@@ -1,6 +1,6 @@
 # Consensus
 
-A moderated discussion platform where two or more entities (humans and/or AI via OpenAI-compatible APIs) can discuss topics with a designated moderator who arbitrates, summarizes, and synthesizes conclusions. The moderator can be AI or human and may participate in the discussion.
+A collaborative intelligence platform that orchestrates structured reasoning between (optional) humans and AI models. Multiple participants — each with their own knowledge, tools, and analytical methods — work together under moderation to investigate questions, stress-test hypotheses, and synthesize conclusions. Supports nine analytical frameworks from Delphi estimation to adversarial red-teaming, with built-in web search, document RAG, vision, persistent memory, and extensible tooling via MCP.
 
 <p align="center">
   <img src="assets/screenshot.png" alt="Consensus screenshot">
