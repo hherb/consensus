@@ -167,6 +167,19 @@ class AIClient:
                     continue
                 raise
 
+            # Some models reject non-default temperature values (e.g.
+            # Kimi K2.5 only accepts temperature=1).  Drop temperature
+            # from the payload and retry immediately.
+            if (response.status_code == 400
+                    and "temperature" in payload
+                    and "invalid temperature" in response.text.lower()):
+                logger.info(
+                    "Model %s rejected temperature=%.2f; retrying without it",
+                    model, payload.get("temperature", 0),
+                )
+                payload.pop("temperature", None)
+                continue
+
             if response.status_code in RETRYABLE_STATUS_CODES:
                 delay = RETRY_BASE_DELAY * (2 ** attempt)
                 # Respect Retry-After header if present
