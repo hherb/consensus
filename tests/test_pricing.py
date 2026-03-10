@@ -15,10 +15,12 @@ def pricing_cache(tmp_path):
     """Create a PricingCache with a temporary database matching production schema."""
     db_path = str(tmp_path / "pricing_test.db")
     conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
     conn.execute(
         "CREATE TABLE IF NOT EXISTS model_pricing "
         "(model_id TEXT PRIMARY KEY, prompt_cost REAL NOT NULL DEFAULT 0, "
-        "completion_cost REAL NOT NULL DEFAULT 0, last_updated REAL NOT NULL DEFAULT 0)"
+        "completion_cost REAL NOT NULL DEFAULT 0, last_updated REAL NOT NULL DEFAULT 0, "
+        "input_modalities TEXT DEFAULT 'text')"
     )
     conn.commit()
     cache = PricingCache(conn, threading.Lock())
@@ -83,3 +85,63 @@ class TestCalculateCostWithRefresh:
         expected_cost = 100 * 0.001 + 50 * 0.002
         assert cost is not None
         assert abs(cost - expected_cost) < 1e-10
+
+
+class TestHasInputModality:
+    """Tests for the has_input_modality method."""
+
+    def test_returns_true_for_vision_model(self, pricing_cache):
+        """Should return True for a model with image input modality."""
+        pricing_cache._conn.execute(
+            "INSERT INTO model_pricing "
+            "(model_id, prompt_cost, completion_cost, last_updated, input_modalities) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("provider/vision-model", 0.001, 0.002, time.time(), "text,image"),
+        )
+        pricing_cache._conn.commit()
+
+        assert pricing_cache.has_input_modality("vision-model", "image") is True
+
+    def test_returns_false_for_text_only_model(self, pricing_cache):
+        """Should return False for a model without image input modality."""
+        pricing_cache._conn.execute(
+            "INSERT INTO model_pricing "
+            "(model_id, prompt_cost, completion_cost, last_updated, input_modalities) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("provider/text-model", 0.001, 0.002, time.time(), "text"),
+        )
+        pricing_cache._conn.commit()
+
+        assert pricing_cache.has_input_modality("text-model", "image") is False
+
+    def test_returns_none_for_unknown_model(self, pricing_cache):
+        """Should return None when model is not in the cache."""
+        with patch.object(pricing_cache, "refresh", return_value=False):
+            result = pricing_cache.has_input_modality("unknown-model", "image")
+        assert result is None
+
+    def test_case_insensitive(self, pricing_cache):
+        """Should match modalities case-insensitively."""
+        pricing_cache._conn.execute(
+            "INSERT INTO model_pricing "
+            "(model_id, prompt_cost, completion_cost, last_updated, input_modalities) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("provider/mixed-case", 0.001, 0.002, time.time(), "Text,Image"),
+        )
+        pricing_cache._conn.commit()
+
+        assert pricing_cache.has_input_modality("mixed-case", "image") is True
+        assert pricing_cache.has_input_modality("mixed-case", "IMAGE") is True
+
+    def test_default_modality_text(self, pricing_cache):
+        """Should default to 'text' when input_modalities column is NULL."""
+        pricing_cache._conn.execute(
+            "INSERT INTO model_pricing "
+            "(model_id, prompt_cost, completion_cost, last_updated, input_modalities) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("provider/null-mod", 0.001, 0.002, time.time(), None),
+        )
+        pricing_cache._conn.commit()
+
+        assert pricing_cache.has_input_modality("null-mod", "text") is True
+        assert pricing_cache.has_input_modality("null-mod", "image") is False

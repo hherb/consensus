@@ -1,6 +1,7 @@
 """Fetch and cache model pricing from OpenRouter."""
 
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -92,8 +93,14 @@ class PricingCache:
             pricing = m.get("pricing") or {}
             prompt_cost = _parse_cost(pricing.get("prompt"))
             completion_cost = _parse_cost(pricing.get("completion"))
-            if model_id and (prompt_cost or completion_cost):
-                rows.append((model_id, prompt_cost, completion_cost, now))
+            arch = m.get("architecture") or {}
+            input_mods = arch.get("input_modalities") or ["text"]
+            input_modalities = ",".join(input_mods)
+            if model_id:
+                rows.append((
+                    model_id, prompt_cost, completion_cost, now,
+                    input_modalities,
+                ))
 
         if not rows:
             return False
@@ -101,8 +108,9 @@ class PricingCache:
         with self._lock:
             self._conn.executemany(
                 "INSERT OR REPLACE INTO model_pricing "
-                "(model_id, prompt_cost, completion_cost, last_updated) "
-                "VALUES (?, ?, ?, ?)",
+                "(model_id, prompt_cost, completion_cost, last_updated,"
+                " input_modalities) "
+                "VALUES (?, ?, ?, ?, ?)",
                 rows,
             )
             self._conn.commit()
@@ -119,74 +127,10 @@ class PricingCache:
         If base_url is provided, uses it to disambiguate.
         Returns None if no match found.
         """
-        # Strip date suffixes (e.g. "claude-opus-4-6-20250605" → "claude-opus-4-6")
-        model_name = _strip_date_suffix(model_name)
-
-        # Check alias table (e.g. "deepseek-reasoner" → "deepseek/deepseek-r1")
-        alias = _MODEL_ALIASES.get(model_name)
-        if alias:
-            cur = self._conn.execute(
-                "SELECT prompt_cost, completion_cost FROM model_pricing "
-                "WHERE model_id = ?",
-                (alias,),
-            )
-            row = cur.fetchone()
-            if row:
-                return (row[0], row[1])
-
-        # Try exact match first (user might use full OpenRouter ID)
-        cur = self._conn.execute(
-            "SELECT prompt_cost, completion_cost FROM model_pricing "
-            "WHERE model_id = ?",
-            (model_name,),
-        )
-        row = cur.fetchone()
-        if row:
-            return (row[0], row[1])
-
-        # Build list of name variants to try (handles hyphen vs dot in
-        # version suffixes, e.g. "claude-opus-4-6" → "claude-opus-4.6")
-        variants = [model_name] + _version_variants(model_name)
-
-        matches = []
-        for name in variants:
-            cur = self._conn.execute(
-                "SELECT model_id, prompt_cost, completion_cost "
-                "FROM model_pricing WHERE model_id LIKE ?",
-                (f"%/{name}",),
-            )
-            matches = cur.fetchall()
-            if matches:
-                break
-
-        if not matches:
-            # Try prefix matching (e.g. "gpt-4o" matches "openai/gpt-4o-2024-08-06")
-            for name in variants:
-                cur = self._conn.execute(
-                    "SELECT model_id, prompt_cost, completion_cost "
-                    "FROM model_pricing WHERE model_id LIKE ?",
-                    (f"%/{name}%",),
-                )
-                matches = cur.fetchall()
-                if matches:
-                    break
-
-        if not matches:
+        row = self._lookup_row(model_name, base_url)
+        if row is None:
             return None
-
-        if len(matches) == 1:
-            return (matches[0][1], matches[0][2])
-
-        # Disambiguate using base_url
-        if base_url:
-            preferred = _provider_from_url(base_url)
-            if preferred:
-                for m in matches:
-                    if m[0].startswith(preferred + "/"):
-                        return (m[1], m[2])
-
-        # Fall back to first match
-        return (matches[0][1], matches[0][2])
+        return (row["prompt_cost"], row["completion_cost"])
 
     def calculate_cost(self, model_name: str, base_url: str,
                        prompt_tokens: int,
@@ -226,10 +170,96 @@ class PricingCache:
             cost = self.calculate_cost(model_name, base_url, prompt_tokens, completion_tokens)
         return cost
 
+    def has_input_modality(self, model_name: str, modality: str,
+                           base_url: str = "") -> Optional[bool]:
+        """Check if a model supports a given input modality (e.g. "image").
+
+        Uses the same fuzzy matching logic as ``lookup()``.
+        Refreshes the cache once if the model is unknown.
+        Returns True/False if the model is found, None if still unknown.
+        """
+        row = self._lookup_row(model_name, base_url)
+        if row is None and self.needs_refresh_for_model(model_name):
+            self.refresh()
+            row = self._lookup_row(model_name, base_url)
+        if row is None:
+            return None
+        modalities = (row["input_modalities"] or "text").lower().split(",")
+        return modality.lower() in modalities
+
+    def _lookup_row(self, model_name: str,
+                    base_url: str = "") -> Optional[dict]:
+        """Look up the full model_pricing row for a model name.
+
+        Returns a dict with model_id, prompt_cost, completion_cost,
+        input_modalities — or None if not found.
+        """
+        model_name = _strip_date_suffix(model_name)
+
+        alias = _MODEL_ALIASES.get(model_name)
+        if alias:
+            cur = self._conn.execute(
+                "SELECT model_id, prompt_cost, completion_cost, "
+                "input_modalities FROM model_pricing WHERE model_id = ?",
+                (alias,),
+            )
+            row = cur.fetchone()
+            if row:
+                return dict(row)
+
+        cur = self._conn.execute(
+            "SELECT model_id, prompt_cost, completion_cost, "
+            "input_modalities FROM model_pricing WHERE model_id = ?",
+            (model_name,),
+        )
+        row = cur.fetchone()
+        if row:
+            return dict(row)
+
+        variants = [model_name] + _version_variants(model_name)
+
+        matches = []
+        for name in variants:
+            cur = self._conn.execute(
+                "SELECT model_id, prompt_cost, completion_cost, "
+                "input_modalities FROM model_pricing "
+                "WHERE model_id LIKE ?",
+                (f"%/{name}",),
+            )
+            matches = cur.fetchall()
+            if matches:
+                break
+
+        if not matches:
+            for name in variants:
+                cur = self._conn.execute(
+                    "SELECT model_id, prompt_cost, completion_cost, "
+                    "input_modalities FROM model_pricing "
+                    "WHERE model_id LIKE ?",
+                    (f"%/{name}%",),
+                )
+                matches = cur.fetchall()
+                if matches:
+                    break
+
+        if not matches:
+            return None
+
+        if len(matches) == 1:
+            return dict(matches[0])
+
+        if base_url:
+            preferred = _provider_from_url(base_url)
+            if preferred:
+                for m in matches:
+                    if m["model_id"].startswith(preferred + "/"):
+                        return dict(m)
+
+        return dict(matches[0])
+
 
 def _strip_date_suffix(model_name: str) -> str:
     """Strip trailing date suffixes like -20250605 from model names."""
-    import re
     return re.sub(r'-\d{8}$', '', model_name)
 
 
@@ -239,7 +269,6 @@ def _version_variants(model_name: str) -> list[str]:
     Anthropic's API returns hyphens (claude-opus-4-6) while OpenRouter
     uses dots (claude-opus-4.6). Generate the alternate form.
     """
-    import re
     # "claude-opus-4-6" → "claude-opus-4.6"
     dot_variant = re.sub(r'-(\d+)$', r'.\1', model_name)
     # "claude-opus-4.6" → "claude-opus-4-6"

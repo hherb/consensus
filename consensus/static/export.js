@@ -74,6 +74,9 @@ function buildExportData(exportState) {
             } else {
                 msg.ai_metadata = null;
             }
+            if (m.tool_calls && m.tool_calls.length > 0) {
+                msg.tool_calls = m.tool_calls;
+            }
             return msg;
         }),
         storyboard: s.storyboard.map(e => ({
@@ -154,6 +157,19 @@ function buildExportHtml(exportState) {
         }
         const cls = isMod ? 'message moderator' : isSystem ? 'message system' : 'message';
         const borderStyle = !isMod && !isSystem ? `border-left-color:${color};` : '';
+        let toolCallsHtml = '';
+        if (m.tool_calls && m.tool_calls.length > 0) {
+            toolCallsHtml = m.tool_calls.map(tc => {
+                const argsStr = typeof tc.arguments === 'object' ? JSON.stringify(tc.arguments) : tc.arguments;
+                const statusIcon = tc.is_error ? '&#x26A0;' : '&#x2705;';
+                const statusClass = tc.is_error ? 'tool-error' : 'tool-success';
+                return `<details class="tool-call ${statusClass}">
+                    <summary>${statusIcon} <strong>${escHtml(tc.tool_name)}</strong>(${escHtml(argsStr)})${tc.latency_ms ? ` <span class="meta">${tc.latency_ms}ms</span>` : ''}</summary>
+                    <pre class="tool-result">${escHtml(tc.result)}</pre>
+                </details>`;
+            }).join('');
+        }
+
         return `<div class="${cls}" style="${borderStyle}">
             <div class="msg-header">
                 <div class="avatar" style="background:${color};width:24px;height:24px;font-size:0.65rem">${escHtml(initials)}</div>
@@ -161,6 +177,7 @@ function buildExportHtml(exportState) {
                 ${metaHtml}
                 <span class="time">${formatTime(m.timestamp)}</span>
             </div>
+            ${toolCallsHtml}
             <div class="content">${renderMarkdown(m.content)}</div>
         </div>`;
     }).join('\n');
@@ -245,6 +262,11 @@ section > h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; padding
 .sb-text { font-size: 0.8rem; line-height: 1.5; margin-top: 0.2rem; color: var(--text-secondary); }
 .sb-entry.conclusion .sb-text { color: var(--text); font-weight: 500; }
 .sb-entry.conclusion::after { background: var(--success); width: 10px; height: 10px; left: -4px; }
+.tool-call { margin: 0.4rem 0; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; }
+.tool-call summary { padding: 0.35rem 0.6rem; cursor: pointer; font-size: 0.8rem; color: var(--text-secondary); }
+.tool-call summary strong { color: var(--text); }
+.tool-call.tool-error summary { color: #ef4444; }
+.tool-call .tool-result { padding: 0.5rem 0.75rem; margin: 0; font-size: 0.75rem; background: var(--surface-elevated); border-top: 1px solid var(--border); white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; }
 .export-footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--text-muted); text-align: center; }
 @media print {
     body { background: #fff; color: #000; padding: 1rem; }

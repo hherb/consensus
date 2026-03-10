@@ -243,7 +243,9 @@ class Moderator:
         if self.discussion.id:
             discussion_images = self.db.get_discussion_images(self.discussion.id)
 
-        if discussion_images and is_vision_capable(cfg.model):
+        if discussion_images and is_vision_capable(
+            cfg.model, pricing_cache=self.db.pricing, base_url=cfg.base_url,
+        ):
             messages = self._build_multimodal_context(
                 system_prompt, task,
                 current_entity_id=entity.id,

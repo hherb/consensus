@@ -44,18 +44,31 @@ SUPPORTED_IMAGE_TYPES = frozenset({
 # Vision model detection
 # ---------------------------------------------------------------------------
 
-VISION_MODEL_PATTERNS = [
-    "gpt-4o", "gpt-4-vision", "gpt-4-turbo", "gpt-4.1",
+# Fallback patterns used when a model isn't found in the OpenRouter cache.
+_VISION_MODEL_PATTERNS = [
+    "gpt-4o", "gpt-4-vision", "gpt-4-turbo", "gpt-4.1", "gpt-5",
     "claude-3", "claude-sonnet", "claude-opus", "claude-haiku",
     "gemini", "llava", "pixtral", "qwen-vl", "qwen2-vl",
-    "internvl",
+    "internvl", "kimi", "moonshot-v", "grok",
+    "step-2v", "glm-4v", "yi-vision", "phi-3-vision", "phi-4",
 ]
 
 
-def is_vision_capable(model: str) -> bool:
-    """Check if a model is likely vision-capable based on its name."""
+def is_vision_capable(model: str, pricing_cache=None,
+                      base_url: str = "") -> bool:
+    """Check if a model supports image input.
+
+    First consults the OpenRouter-backed pricing cache for authoritative
+    modality data.  Falls back to pattern matching on the model name when
+    the model isn't in the cache.
+    """
+    if pricing_cache is not None:
+        result = pricing_cache.has_input_modality(model, "image", base_url)
+        if result is not None:
+            return result
+    # Fallback: pattern matching
     model_lower = model.lower()
-    return any(p in model_lower for p in VISION_MODEL_PATTERNS)
+    return any(p in model_lower for p in _VISION_MODEL_PATTERNS)
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +324,9 @@ async def _call_vision_llm(
     ai_config = AIConfig.from_db_row(entity)
 
     # If the caller's model supports vision, use it; otherwise try the moderator
-    if not is_vision_capable(ai_config.model):
+    pc = app.db.pricing
+    if not is_vision_capable(ai_config.model, pricing_cache=pc,
+                             base_url=ai_config.base_url):
         # Try the moderator
         moderator_id = None
         if hasattr(app, 'discussion') and app.discussion:
@@ -320,7 +335,8 @@ async def _call_vision_llm(
             mod_entity = app.db.get_entity(moderator_id)
             if mod_entity:
                 mod_config = AIConfig.from_db_row(mod_entity)
-                if is_vision_capable(mod_config.model):
+                if is_vision_capable(mod_config.model, pricing_cache=pc,
+                                     base_url=mod_config.base_url):
                     ai_config = mod_config
                     entity = mod_entity
 
