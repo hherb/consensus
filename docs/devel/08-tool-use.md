@@ -20,22 +20,35 @@ ConsensusApp
     |     |     +-- web_search (tools_builtin.py)
     |     |     +-- consult_expert (app.py)
     |     |
-    |     +-- PythonToolProvider ("memory")   [optional, requires sqlite-vec]
+    |     +-- PythonToolProvider ("documents")  [optional, requires pdfplumber]
+    |     |     |
+    |     |     +-- doc_add, doc_list, doc_get_length, doc_get_text
+    |     |     +-- doc_get_sections, doc_get_chapter, doc_ask, doc_summary
+    |     |
+    |     +-- PythonToolProvider ("images")     [optional, requires Pillow]
+    |     |     |
+    |     |     +-- describe_image, list_images, add_image_url
+    |     |
+    |     +-- PythonToolProvider ("memory")     [optional, requires sqlite-vec]
     |     |     |
     |     |     +-- memory_store, memory_recall, memory_forget
     |     |     +-- discussion_search
     |     |     +-- kg_assert, kg_query
     |     |
-    |     +-- MCPToolProvider (mcp_client.py)  [per registered MCP server]
+    |     +-- MCPToolProvider (mcp_client.py)   [per registered MCP server]
     |           |
     |           +-- Tools discovered dynamically via MCP tools/list
     |
     +-- Moderator (moderator.py)
           |
           +-- generate_turn() tool execution loop
-                |
-                +-- AIClient.complete_with_tools()
-                +-- ToolRegistry.execute()
+          |     |
+          |     +-- AIClient.complete_with_tools()
+          |     +-- ToolRegistry.execute()
+          |
+          +-- _build_multimodal_context()
+                Injects discussion images as base64 content blocks
+                for vision-capable models
 ```
 
 ## Core Concepts
@@ -361,6 +374,91 @@ If the embedding service is unreachable:
 `memory_store`, `memory_recall`, and `memory_forget` are automatically scoped
 to the calling entity via `ToolContext.caller_entity_id`. An entity can only
 access its own memories — no cross-entity memory leakage.
+
+---
+
+## Document RAG Tools
+
+Defined in `tools_document.py`. Created via `create_document_provider(db, app)`
+and registered in `ConsensusApp._init_document_tools()`. Requires the
+`[documents]` optional dependency group (`sqlite-vec`, `numpy`, `pdfplumber`).
+
+### Architecture
+
+```
+ConsensusApp._init_document_tools()
+    |
+    +-- create_document_provider(db, app)
+          |
+          +-- EmbeddingClient (via app's configured embedding service)
+          +-- 8 tool handlers
+          +-- PythonToolProvider("documents")
+```
+
+### Tools
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `doc_add` | Add a document by URL for analysis | `url: str`, `title?: str` |
+| `doc_list` | List documents in the current discussion | *(none)* |
+| `doc_get_length` | Get character count of a document | `document_id: int` |
+| `doc_get_text` | Get a slice of document text by character range | `document_id: int`, `start: int`, `end: int` |
+| `doc_get_sections` | Get section headers with character offsets | `document_id: int` |
+| `doc_get_chapter` | Get full text of a named section | `document_id: int`, `section_name: str` |
+| `doc_ask` | RAG-based Q&A over a document's chunks | `document_id: int`, `question: str` |
+| `doc_summary` | Map-reduce summarization of a document or range | `document_id: int`, `start?: int`, `end?: int` |
+
+### Document ingestion pipeline
+
+1. Content is fetched (URL) or received (upload/paste)
+2. Text is extracted: `trafilatura` for HTML, `pdfplumber` for PDF, raw for text
+3. Text is chunked into overlapping segments (~1000 chars)
+4. Chunks are embedded via the configured embedding service
+5. Embeddings are stored in `document_chunk_embeddings` for RAG retrieval
+6. `doc_ask` performs similarity search, retrieves top-k chunks, and sends them
+   to the LLM with the user's question
+
+---
+
+## Image Tools
+
+Defined in `tools_image.py`. Created via `create_image_provider(db, app)` and
+registered in `ConsensusApp._init_image_tools()`. Optional dependency: Pillow
+(`[images]` extra) for image dimension detection and resizing.
+
+### Tools
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `describe_image` | Get a detailed description of an image using a vision-capable model | `image_id: int`, `question?: str` |
+| `list_images` | List all images attached to the current discussion | *(none)* |
+| `add_image_url` | Add an image from a URL to the discussion | `url: str`, `title?: str` |
+
+### Vision model detection
+
+`is_vision_capable(model)` checks the model name against known patterns
+(GPT-4o, Claude 3, Gemini, LLaVA, Pixtral, Qwen-VL, etc.). This determines
+whether the moderator injects images as multimodal content blocks or whether
+the `describe_image` tool should be used instead.
+
+### Multimodal context
+
+When a discussion has attached images and the current entity's model is
+vision-capable, `Moderator._build_multimodal_context()` injects images as
+base64 `image_url` content blocks in the message context. Non-vision models
+can use the `describe_image` tool to get a text description via a
+vision-capable model (falling back to the moderator's model).
+
+### Security
+
+- **Path traversal protection:** `_safe_image_path()` validates that resolved
+  paths stay within the images directory using `os.path.realpath()`
+- **SSRF protection:** `_is_private_ip()` blocks fetching from private,
+  loopback, link-local, and reserved IP ranges
+- **Size limits:** 20 MB maximum for both uploads and URL fetches
+- **MIME validation:** Only PNG, JPEG, GIF, WebP, SVG accepted
+- **Auto-resize:** Images larger than 2048px in either dimension are
+  thumbnailed down (requires Pillow)
 
 ---
 

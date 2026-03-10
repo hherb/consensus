@@ -98,34 +98,74 @@ configuration or CI pipeline exists yet.
 
 ```
 consensus/
-  __init__.py          Package marker; defines __version__
-  __main__.py          CLI entry point (argparse, mode selection)
-  models.py            Dataclasses: Entity, AIConfig, Message, Discussion, ...
-  config.py            Platform paths, .env loading, API key helpers
-  database.py          SQLite persistence layer (10 tables)
-  ai_client.py         Async OpenAI-compatible HTTP client (httpx)
-  moderator.py         Turn flow, AI generation, prompt resolution, tool execution
-  app.py               ConsensusApp orchestrator (all business logic)
-  server.py            aiohttp web server (REST routes, middleware, static files)
-  session.py           Multi-user session manager (per-session app + SQLite)
-  desktop.py           pywebview launcher and JS-Python bridge
-  tools.py             Pluggable tool framework (ToolProvider, ToolRegistry)
-  tools_builtin.py     Built-in web search tool (Brave + DuckDuckGo fallback)
-  mcp_client.py        MCPToolProvider — JSON-RPC 2.0 communication with MCP servers
-  pricing.py           PricingCache — model cost lookup via OpenRouter
-  migrations/          File-based SQL migrations (003_cost_tracking, 004_mcp_experts)
-  static/
-    index.html         Single-page HTML (setup + discussion views)
-    style.css          All styling (dark/light themes via CSS custom properties)
-    app.js             Entire frontend logic (vanilla JS SPA)
+  __init__.py              Package marker; defines __version__
+  __main__.py              CLI entry point (argparse, mode selection)
+  models.py                Dataclasses: Entity, AIConfig, Message, Discussion, ...
+  config.py                Platform paths, .env loading, API key helpers
+  ai_client.py             Async OpenAI-compatible HTTP client (httpx)
+  moderator.py             Turn flow, AI generation, prompt resolution, tool execution
+  app.py                   ConsensusApp orchestrator (central controller)
+  app_providers.py         Provider management (extracted from app.py)
+  app_entities.py          Entity CRUD (extracted from app.py)
+  app_discussion_setup.py  Discussion creation & configuration
+  app_discussion_flow.py   Turn flow operations
+  app_discussion_state.py  Discussion state management
+  server.py                aiohttp web server (REST + resource routes, middleware)
+  session.py               Multi-user session manager (per-session app + SQLite)
+  auth.py                  Authentication (email/password, OAuth)
+  desktop.py               pywebview launcher and JS-Python bridge
+  tools.py                 Pluggable tool framework (ToolProvider, ToolRegistry)
+  tools_builtin.py         Built-in web search tool (Brave + DuckDuckGo fallback)
+  tools_document.py        Document RAG tool provider (ingestion, chunking, Q&A)
+  tools_image.py           Image tool provider (storage, vision, multimodal context)
+  tools_memory.py          Institutional memory tools (sqlite-vec, Ollama)
+  mcp_client.py            MCPToolProvider — JSON-RPC 2.0 communication with MCP servers
+  pricing.py               PricingCache — model cost lookup via OpenRouter
+  methods.py               Pluggable discussion methods framework
+  migrator.py              Auto-discovers and applies numbered SQL migrations
+  db/                      Database subpackage with domain-specific mixins:
+    __init__.py               Database class (composes all mixins)
+    providers.py              Provider CRUD
+    entities.py               Entity CRUD
+    discussions.py            Discussion CRUD
+    messages.py               Message CRUD
+    prompts.py                Prompt CRUD
+    tools.py                  Tool provider/assignment CRUD
+    mcp.py                    MCP server/expert CRUD
+    memory.py                 Memory tables CRUD
+    documents.py              Document/chunk CRUD
+    images.py                 Image storage/association CRUD
+  migrations/              Numbered SQL migrations (auto-discovered by migrator.py)
+  static/                  Frontend — vanilla JS ES modules
+    index.html               Single-page HTML (setup + discussion views)
+    style.css                All styling (dark/light themes via CSS custom properties)
+    app.js                   Application entry point and event wiring
+    api.js                   DesktopAPI / WebAPI adapter classes
+    state.js                 Global state management
+    utils.js                 DOM helpers, escaping, markdown rendering
+    setup.js                 New Discussion tab rendering
+    providers.js             Providers tab
+    profiles.js              Profiles tab (entity editor, tool assignment)
+    prompts.js               Prompts tab
+    history.js               History tab
+    discussion.js            Active discussion view (messages, storyboard)
+    discussion-actions.js    Discussion control actions
+    documents.js             Document panel (upload, URL, list)
+    images.js                Image panel (upload, URL, grid, lightbox)
+    experts.js               MCP expert consultation UI
+    mcp.js                   MCP server management UI
+    memory.js                Memory configuration UI
+    export.js                JSON/HTML/PDF export
+    auth.js                  Authentication UI (login/register/OAuth)
+    byok.js                  BYOK key management UI
 docs/
-  plans/               Design documents for specific features
-  devel/               Developer documentation (you are here)
-pyproject.toml         Build config, dependencies, entry points
-CLAUDE.md              Instructions for AI coding assistants
-README.md              User-facing project overview
-QUICKSTART.md          Quick start guide for end users
-DEPLOYMENT.md          Oracle Cloud Free Tier deployment plan
+  plans/                   Design documents for specific features
+  devel/                   Developer documentation (you are here)
+pyproject.toml             Build config, dependencies, entry points
+CLAUDE.md                  Instructions for AI coding assistants
+README.md                  User-facing project overview
+QUICKSTART.md              Quick start guide for end users
+DEPLOYMENT.md              Oracle Cloud Free Tier deployment plan
 ```
 
 ---

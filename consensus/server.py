@@ -902,6 +902,160 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         return web.json_response(result)
 
     # ------------------------------------------------------------------
+    # Image management
+    # ------------------------------------------------------------------
+
+    async def handle_image_upload(request: web.Request) -> web.StreamResponse:
+        """Upload an image file via multipart form data."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+
+        reader = await request.multipart()
+        file_data = None
+        filename = "image"
+        mime_type = "image/png"
+        discussion_id = 0
+        title = ""
+
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if part.name == "file":
+                file_data = await part.read()
+                filename = part.filename or "image"
+                mime_type = part.headers.get("Content-Type", "image/png")
+                if isinstance(mime_type, str):
+                    mime_type = mime_type.split(";")[0].strip()
+            elif part.name == "discussion_id":
+                text = (await part.read()).decode()
+                discussion_id = int(text) if text.isdigit() else 0
+            elif part.name == "title":
+                title = (await part.read()).decode()
+
+        if not file_data:
+            return web.json_response({"error": "No file provided"}, status=400)
+
+        max_size = 20 * 1024 * 1024  # 20 MB
+        if len(file_data) > max_size:
+            return web.json_response(
+                {"error": f"Image too large. Maximum is {max_size // (1024*1024)} MB."},
+                status=413,
+            )
+
+        result = await app_inst.add_image(
+            filename=filename,
+            content_bytes=file_data,
+            mime_type=mime_type,
+            discussion_id=discussion_id,
+            title=title,
+        )
+        if "error" in result:
+            return web.json_response(result, status=400)
+        return web.json_response(result)
+
+    async def handle_image_add_url(request: web.Request) -> web.StreamResponse:
+        """Add an image by fetching from a URL."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+        url = data.get("url", "").strip()
+        if not url:
+            return web.json_response({"error": "url is required"}, status=400)
+
+        result = await app_inst.add_image_from_url(
+            url=url,
+            discussion_id=int(data.get("discussion_id", 0)),
+            title=data.get("title", ""),
+        )
+        if "error" in result:
+            return web.json_response(result, status=400)
+        return web.json_response(result)
+
+    async def handle_image_list(request: web.Request) -> web.StreamResponse:
+        """List images for a discussion."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+
+        try:
+            discussion_id = int(request.match_info["discussion_id"])
+        except (ValueError, KeyError):
+            return web.json_response({"error": "Invalid discussion ID"}, status=400)
+        images = app_inst.get_discussion_images(discussion_id)
+        return web.json_response({"images": images})
+
+    async def handle_image_serve(request: web.Request) -> web.StreamResponse:
+        """Serve an image file by ID."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+
+        try:
+            image_id = int(request.match_info["image_id"])
+        except (ValueError, KeyError):
+            return web.json_response({"error": "Invalid image ID"}, status=400)
+        result = app_inst.get_image_data(image_id)
+        if result is None:
+            return web.json_response({"error": "Image not found"}, status=404)
+
+        data, mime_type, filename = result
+        return web.Response(
+            body=data,
+            content_type=mime_type,
+            headers={
+                "Cache-Control": "private, max-age=3600",
+                "Content-Disposition": f'inline; filename="{filename}"',
+            },
+        )
+
+    async def handle_image_remove(request: web.Request) -> web.StreamResponse:
+        """Remove an image from a discussion."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+
+        try:
+            image_id = int(request.match_info["image_id"])
+            discussion_id = int(request.match_info["discussion_id"])
+        except (ValueError, KeyError):
+            return web.json_response({"error": "Invalid ID"}, status=400)
+        result = app_inst.remove_discussion_image(image_id, discussion_id)
+        return web.json_response(result)
+
+    async def handle_image_delete(request: web.Request) -> web.StreamResponse:
+        """Permanently delete an image."""
+        if auth_required and not request.get("auth_user"):
+            return web.json_response({"error": "Authentication required"}, status=401)
+        app_inst, _sid = await _get_app_for_request(request)
+        if app_inst is None:
+            return web.json_response({"error": "Server at capacity"}, status=503)
+
+        try:
+            image_id = int(request.match_info["image_id"])
+        except (ValueError, KeyError):
+            return web.json_response({"error": "Invalid image ID"}, status=400)
+        result = app_inst.delete_image(image_id)
+        return web.json_response(result)
+
+    # ------------------------------------------------------------------
     # SSE endpoint for real-time events
     # ------------------------------------------------------------------
 
@@ -992,6 +1146,14 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     webapp.router.add_get("/api/documents/{discussion_id}", handle_document_list)
     webapp.router.add_delete("/api/documents/{document_id}/{discussion_id}", handle_document_remove)
     webapp.router.add_delete("/api/documents/{document_id}", handle_document_delete)
+
+    # Image management
+    webapp.router.add_post("/api/images/upload", handle_image_upload)
+    webapp.router.add_post("/api/images/add-url", handle_image_add_url)
+    webapp.router.add_get("/api/images/file/{image_id}", handle_image_serve)
+    webapp.router.add_get("/api/images/{discussion_id}", handle_image_list)
+    webapp.router.add_delete("/api/images/{image_id}/{discussion_id}", handle_image_remove)
+    webapp.router.add_delete("/api/images/{image_id}", handle_image_delete)
 
     # SSE events
     webapp.router.add_get("/api/events", handle_events)

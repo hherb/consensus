@@ -6,6 +6,7 @@
 import { $, show, hide, escHtml, getInitials, formatTime, renderMarkdown } from './utils.js';
 import { state, renderedMessageCount, renderedStoryboardCount, syncRenderedMessageCount, syncRenderedStoryboardCount, getEntity } from './state.js';
 import { calculateDiscussionCost } from './export.js';
+import { renderMessageImages } from './images.js';
 
 /**
  * Render the full discussion view (header, messages, storyboard, input area).
@@ -152,6 +153,8 @@ function renderNewMessages() {
             ${toolCallsHtml}
             <div class="message-content">${renderMarkdown(msg.content)}</div>`;
         container.appendChild(div);
+        // Render inline images if present
+        if (msg.image_ids) renderMessageImages(div, msg.image_ids);
     }
     syncRenderedMessageCount();
     container.scrollTop = container.scrollHeight;

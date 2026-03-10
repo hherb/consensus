@@ -11,6 +11,7 @@ from .ai_client import AIClient, AIResponse
 from .database import Database
 from .methods import get_active_method
 from .tools import ToolCallRecord, ToolRegistry, MAX_TOOL_ITERATIONS
+from .tools_image import is_vision_capable, build_image_content_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,41 @@ class Moderator:
             "role": "user",
             "content": f"Discussion topic: {self.discussion.topic}",
         })
+
+        for msg in self.discussion.messages[-CONTEXT_MESSAGE_LIMIT:]:
+            if current_entity_id and msg.entity_id == current_entity_id:
+                role = "assistant"
+                content = msg.content
+            else:
+                role = "user"
+                content = f"[{msg.entity_name}]: {msg.content}"
+            messages.append({"role": role, "content": content})
+
+        messages.append({"role": "user", "content": task})
+        return messages
+
+    def _build_multimodal_context(
+        self, system_prompt: str, task: str,
+        current_entity_id: Optional[int] = None,
+        images: Optional[list[dict]] = None,
+    ) -> list[dict]:
+        """Build context with images as multimodal content blocks.
+
+        Same structure as _build_context but injects discussion images
+        as image_url content blocks for vision-capable models.
+        """
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
+
+        messages.append({
+            "role": "user",
+            "content": f"Discussion topic: {self.discussion.topic}",
+        })
+
+        # Inject discussion images as a multimodal message
+        if images:
+            content_blocks = build_image_content_blocks(images)
+            if content_blocks:
+                messages.append({"role": "user", "content": content_blocks})
 
         for msg in self.discussion.messages[-CONTEXT_MESSAGE_LIMIT:]:
             if current_entity_id and msg.entity_id == current_entity_id:
@@ -186,8 +222,20 @@ class Moderator:
         if not task:
             task = f"It is your turn to speak as {entity.name}. Be concise."
 
-        messages = self._build_context(system_prompt, task,
-                                       current_entity_id=entity.id)
+        # Check for discussion images and build appropriate context
+        discussion_images = []
+        if self.discussion.id:
+            discussion_images = self.db.get_discussion_images(self.discussion.id)
+
+        if discussion_images and is_vision_capable(cfg.model):
+            messages = self._build_multimodal_context(
+                system_prompt, task,
+                current_entity_id=entity.id,
+                images=discussion_images,
+            )
+        else:
+            messages = self._build_context(system_prompt, task,
+                                           current_entity_id=entity.id)
 
         # Get tools for this entity
         tool_schemas: list[dict] = []

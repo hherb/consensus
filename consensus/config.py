@@ -18,6 +18,13 @@ def get_data_dir() -> str:
     return path
 
 
+def get_images_dir() -> str:
+    """Get the directory for storing uploaded images."""
+    path = os.path.join(get_data_dir(), "images")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def get_db_path() -> str:
     """Get the default database file path."""
     return os.path.join(get_data_dir(), "consensus.db")

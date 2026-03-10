@@ -7,17 +7,18 @@
 ## High-Level Architecture
 
 ```
-Frontend (static/index.html + app.js + style.css)
+Frontend (static/ — vanilla JS ES modules)
     |
-    | pywebview JS bridge       OR       aiohttp REST POST /api/{method}
-    | (desktop.py:DesktopBridge)          (server.py:handle_api)
+    | pywebview JS bridge       OR       aiohttp REST API
+    | (desktop.py:DesktopBridge)          (server.py)
     |
     v
-ConsensusApp (app.py)
+ConsensusApp (app.py + app_*.py domain modules)
     |  Central orchestrator: state management, validation, DB writes, event emitter
     |
     +-- Moderator (moderator.py)
-    |     Turn flow, prompt resolution, AI generation, tool execution loop
+    |     Turn flow, prompt resolution, AI generation, tool execution loop,
+    |     multimodal context (images for vision-capable models)
     |
     +-- ToolRegistry (tools.py)
     |     Pluggable tool providers, access control, execution with timeout
@@ -25,15 +26,23 @@ ConsensusApp (app.py)
     +-- MCPToolProvider (mcp_client.py)
     |     JSON-RPC 2.0 communication with MCP server subprocesses
     |
+    +-- DocumentRAG (tools_document.py)
+    |     Document ingestion (URL/text/PDF/HTML), chunking, RAG Q&A,
+    |     section navigation, map-reduce summarization
+    |
+    +-- ImageTools (tools_image.py)
+    |     Image storage, vision-model description, multimodal context blocks
+    |
     +-- PricingCache (pricing.py)
     |     Model cost lookup via OpenRouter, fuzzy name matching, SQLite cache
     |
     +-- AIClient (ai_client.py)
     |     Async HTTP via httpx to any OpenAI-compatible endpoint
     |
-    +-- Database (database.py)
-    |     Thread-safe SQLite: providers, entities, prompts,
-    |     discussions, members, messages, storyboard, tools, pricing, MCP/experts
+    +-- Database (db/)
+    |     Thread-safe SQLite subpackage with domain-specific mixins:
+    |     providers, entities, prompts, discussions, messages, tools,
+    |     MCP/experts, memory, documents, images
     |
     +-- AuthManager (auth.py) [multi-user mode only]
           Email/password + OAuth auth, token management,
@@ -41,8 +50,9 @@ ConsensusApp (app.py)
 ```
 
 **Key principle:** Both UI modes (desktop and web) funnel everything through
-`ConsensusApp`. If you are adding backend functionality, you only need to add
-it in `app.py` (and expose it through both `server.py` and `desktop.py`).
+`ConsensusApp`. If you are adding backend functionality, add it in `app.py`
+(or an `app_*.py` domain module) and expose it through both `server.py` and
+`desktop.py`.
 
 ### Data ownership
 
@@ -130,11 +140,16 @@ The `.env` file is written with `0600` permissions (owner read/write only).
 
 ---
 
-### `database.py` -- SQLite Persistence
+### `db/` -- SQLite Persistence (Subpackage)
 
-`Database` is a **thread-safe SQLite wrapper**. All write operations are
-serialised through a `threading.Lock` to prevent concurrent write failures
-when called from pywebview's JS bridge threads.
+`Database` is a **thread-safe SQLite wrapper** composed from domain-specific
+mixins (`ProvidersMixin`, `EntitiesMixin`, `DiscussionsMixin`, etc.). All write
+operations are serialised through a `threading.Lock` to prevent concurrent
+write failures when called from pywebview's JS bridge threads.
+
+The `db/` subpackage splits CRUD operations by domain:
+- `providers.py`, `entities.py`, `discussions.py`, `messages.py`, `prompts.py`
+- `tools.py`, `mcp.py`, `memory.py`, `documents.py`, `images.py`
 
 **Construction:** Opens (or creates) the database, enables WAL mode and
 foreign keys, creates all tables, seeds default data, and runs migrations.
@@ -155,6 +170,10 @@ def _execute_write(self, sql, params=()):
 Every public write method (`add_entity`, `add_message`, etc.) goes through
 `_execute_write`. Read methods access `self.conn` directly (SQLite WAL mode
 allows concurrent readers).
+
+**Migrations:** Numbered SQL files in `consensus/migrations/` are
+auto-discovered by `migrator.py` (regex `^(\d{3})_.*\.sql$`) and applied once
+each in version order. No manual registration is required.
 
 For full schema details, see [Database](05-database.md).
 

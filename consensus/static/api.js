@@ -85,6 +85,14 @@ class DesktopAPI {
     async removeDocument(docId, discussionId) { return await window.pywebview.api.remove_document(docId, discussionId || 0); }
     async deleteDocument(docId) { return await window.pywebview.api.delete_document(docId); }
 
+    // --- Images ---
+    async uploadImage(file, discussionId) { return await window.pywebview.api.upload_image(discussionId || 0); }
+    async addImageFromUrl(url, discussionId, title) { return await window.pywebview.api.add_image_from_url(url, discussionId || 0, title || ''); }
+    async getDiscussionImages(discussionId) { return await window.pywebview.api.get_discussion_images(discussionId || 0); }
+    async removeImage(imageId, discussionId) { return await window.pywebview.api.remove_image(imageId, discussionId || 0); }
+    async deleteImage(imageId) { return await window.pywebview.api.delete_image(imageId); }
+    getImageUrl(imageId) { return `/api/images/file/${imageId}`; }
+
     // --- Memory ---
     async getMemoryConfig() { return await window.pywebview.api.get_memory_config(); }
     async saveMemoryConfig(data) { return await window.pywebview.api.save_memory_config(data); }
@@ -228,6 +236,41 @@ class WebAPI {
         if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Failed (${resp.status})` }; }
         return await resp.json();
     }
+
+    // --- Images ---
+    async uploadImage(file, discussionId) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('discussion_id', String(discussionId || 0));
+        const resp = await fetch('/api/images/upload', { method: 'POST', body: formData });
+        if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Upload failed (${resp.status})` }; }
+        return await resp.json();
+    }
+    async addImageFromUrl(url, discussionId, title) {
+        const resp = await fetch('/api/images/add-url', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, discussion_id: discussionId || 0, title: title || '' }),
+        });
+        if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Failed (${resp.status})` }; }
+        return await resp.json();
+    }
+    async getDiscussionImages(discussionId) {
+        const resp = await fetch(`/api/images/${discussionId || 0}`);
+        if (!resp.ok) return { images: [] };
+        const data = await resp.json();
+        return data.images || [];
+    }
+    async removeImage(imageId, discussionId) {
+        const resp = await fetch(`/api/images/${imageId}/${discussionId}`, { method: 'DELETE' });
+        if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Failed (${resp.status})` }; }
+        return await resp.json();
+    }
+    async deleteImage(imageId) {
+        const resp = await fetch(`/api/images/${imageId}`, { method: 'DELETE' });
+        if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Failed (${resp.status})` }; }
+        return await resp.json();
+    }
+    getImageUrl(imageId) { return `/api/images/file/${imageId}`; }
 
     async getMemoryConfig() {
         const resp = await fetch('/api/memory/config');

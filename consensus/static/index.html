@@ -154,6 +154,20 @@
                     </div>
                 </div>
 
+                <div class="card">
+                    <h2>Reference Images</h2>
+                    <p class="text-muted" style="margin-bottom:0.5rem">
+                        Attach images for visual context. Vision-capable models see them directly; others can use a describe tool.
+                    </p>
+                    <div id="image-list"></div>
+                    <div style="display:flex; gap:0.5rem; margin-top:0.75rem; flex-wrap:wrap; align-items:center;">
+                        <button id="img-upload-btn" class="btn btn-outline btn-sm">+ Upload Image</button>
+                        <span class="text-muted" style="font-size:0.85rem">or</span>
+                        <input type="text" id="img-url-input" placeholder="https://example.com/diagram.png" style="flex:1; min-width:12rem;">
+                        <button id="img-url-add-btn" class="btn btn-outline btn-sm">Add URL</button>
+                    </div>
+                </div>
+
                 <button id="start-btn" class="btn btn-primary btn-large" disabled>
                     Start Discussion
                 </button>

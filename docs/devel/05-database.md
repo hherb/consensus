@@ -258,6 +258,95 @@ memory_config (
 )
 ```
 
+## Document Tables
+
+These tables support the Document RAG system. Created via migration
+`005_documents.sql`.
+
+```sql
+-- Ingested documents
+documents (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    title           TEXT NOT NULL,
+    source_type     TEXT NOT NULL CHECK('url', 'text', 'upload'),
+    source_url      TEXT,
+    mime_type       TEXT NOT NULL DEFAULT 'text/plain',
+    full_text       TEXT NOT NULL DEFAULT '',
+    char_count      INTEGER NOT NULL DEFAULT 0,
+    chunk_count     INTEGER NOT NULL DEFAULT 0,
+    summary         TEXT NOT NULL DEFAULT '',
+    created_at      REAL NOT NULL
+)
+
+-- Text chunks for RAG retrieval
+document_chunks (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id     INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    chunk_index     INTEGER NOT NULL,
+    content         TEXT NOT NULL,
+    char_start      INTEGER NOT NULL,
+    char_end        INTEGER NOT NULL
+)
+
+-- Chunk embeddings for similarity search
+document_chunk_embeddings (
+    chunk_id        INTEGER PRIMARY KEY REFERENCES document_chunks(id) ON DELETE CASCADE,
+    embedding       BLOB NOT NULL
+)
+
+-- Many-to-many: documents attached to discussions
+discussion_documents (
+    discussion_id   INTEGER NOT NULL REFERENCES discussions(id) ON DELETE CASCADE,
+    document_id     INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    added_at        REAL NOT NULL,
+    PRIMARY KEY (discussion_id, document_id)
+)
+```
+
+## Image Tables
+
+These tables support image storage and multimodal context. Created via
+migration `007_images.sql`.
+
+```sql
+-- Stored images
+images (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename           TEXT NOT NULL,
+    original_filename  TEXT NOT NULL DEFAULT '',
+    title              TEXT NOT NULL DEFAULT '',
+    description        TEXT NOT NULL DEFAULT '',
+    mime_type          TEXT NOT NULL DEFAULT 'image/png',
+    width              INTEGER,
+    height             INTEGER,
+    file_size          INTEGER NOT NULL DEFAULT 0,
+    storage_path       TEXT NOT NULL,
+    source_type        TEXT NOT NULL CHECK('upload', 'url', 'ai_generated'),
+    source_url         TEXT,
+    uploader_entity_id INTEGER,
+    created_at         REAL NOT NULL
+)
+
+-- Many-to-many: images attached to discussions
+discussion_images (
+    discussion_id INTEGER NOT NULL REFERENCES discussions(id) ON DELETE CASCADE,
+    image_id      INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+    added_at      REAL NOT NULL,
+    PRIMARY KEY (discussion_id, image_id)
+)
+
+-- Many-to-many: images attached to messages
+message_images (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    image_id   INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+    PRIMARY KEY (message_id, image_id)
+)
+```
+
+Image files are stored on disk in `<data_dir>/images/` with UUID-prefixed
+filenames. The `storage_path` column stores the filename relative to the
+images directory.
+
 ## Auth Tables (multi-user mode)
 
 In multi-user mode (`--web --multi-user`), authentication data lives in a
@@ -346,8 +435,15 @@ Both seed methods check `COUNT(*)` first so they only run on an empty table.
 
 ## Migrations
 
-The `Database` class includes several migration methods that run on every
-construction:
+Migrations are handled by `migrator.py`, which auto-discovers numbered SQL
+files in `consensus/migrations/` using the regex `^(\d{3})_.*\.sql$`. Each
+migration is applied exactly once (tracked in a `migrations` table) in version
+order. New migrations only need to be added as files — no registration required.
+
+### Legacy inline migrations
+
+The `Database` class includes several inline migration methods that run on
+every construction (predating the file-based system):
 
 | Migration | Purpose |
 |-----------|---------|
@@ -361,11 +457,16 @@ construction:
 
 | File | Purpose |
 |------|---------|
+| `001_baseline.sql` | Baseline schema for fresh databases |
+| `002_max_rounds.sql` | Adds max rounds support to discussions |
 | `003_cost_tracking.sql` | Creates `model_pricing` table; adds `cost` column to `messages` |
 | `004_mcp_experts.sql` | Creates `mcp_servers` and `expert_definitions` tables; expands `entities.entity_type` CHECK to include `'expert'` |
+| `005_documents.sql` | Creates `documents`, `document_chunks`, `document_chunk_embeddings`, `discussion_documents` tables |
+| `006_discussion_methods.sql` | Adds discussion method configuration tables |
+| `007_images.sql` | Creates `images`, `discussion_images`, `message_images` tables |
 
-Migrations are idempotent -- they check for the existence of columns/tables
-before making changes.
+Migrations are idempotent -- they use `CREATE TABLE IF NOT EXISTS` and check
+for the existence of columns before making changes.
 
 ---
 
@@ -414,6 +515,34 @@ The `Database` class provides methods grouped by table:
 |--------|---------|
 | `set_discussion_tool_override(discussion_id, entity_id, tool_name, enabled)` | Enable/disable tool per-discussion per-entity |
 | `get_discussion_tool_overrides(discussion_id, entity_id)` | List overrides |
+
+### Document CRUD (`db/documents.py`)
+
+| Method | Purpose |
+|--------|---------|
+| `add_document(title, source_type, ...)` | Insert a document record, returns ID |
+| `get_document(document_id)` | Return document dict |
+| `delete_document(document_id)` | Delete document and its chunks |
+| `add_document_chunk(document_id, chunk_index, content, ...)` | Add a text chunk |
+| `add_discussion_document(discussion_id, document_id)` | Associate document with discussion |
+| `remove_discussion_document(discussion_id, document_id)` | Remove association |
+| `get_discussion_documents(discussion_id)` | List documents for a discussion |
+
+### Image CRUD (`db/images.py`)
+
+| Method | Purpose |
+|--------|---------|
+| `add_image(filename, original_filename, ...)` | Insert image record, returns ID |
+| `get_image(image_id)` | Return image dict |
+| `update_image_description(image_id, description)` | Update cached description |
+| `update_image_title(image_id, title)` | Update title |
+| `delete_image(image_id)` | Delete image record |
+| `get_all_images()` | List all images (library) |
+| `add_discussion_image(discussion_id, image_id)` | Associate image with discussion |
+| `remove_discussion_image(discussion_id, image_id)` | Remove association |
+| `get_discussion_images(discussion_id)` | List images for a discussion |
+| `add_message_image(message_id, image_id)` | Associate image with message |
+| `get_message_images(message_id)` | List images for a message |
 
 ---
 

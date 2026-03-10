@@ -142,6 +142,8 @@ class Message:
     cost: Optional[float] = None
     # Tool call records (JSON-serialized list of ToolCallRecord dicts)
     tool_calls_json: str = ""
+    # Image IDs attached to this message (populated from message_images table)
+    image_ids: list[int] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Serialize message to a dictionary."""
@@ -166,6 +168,8 @@ class Message:
                 d["tool_calls"] = json.loads(self.tool_calls_json)
             except json.JSONDecodeError:
                 d["tool_calls"] = []
+        if self.image_ids:
+            d["image_ids"] = self.image_ids
         return d
 
     @classmethod

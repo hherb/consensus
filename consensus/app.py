@@ -46,9 +46,11 @@ class ConsensusApp:
         self._mcp_providers: dict[int, Any] = {}
         self.memory_available = False
         self.documents_available = False
+        self.images_available = False
         self._init_builtin_tools()
         self._init_memory_tools()
         self._init_document_tools()
+        self._init_image_tools()
 
     def _refresh_pricing_if_needed(self) -> None:
         """Refresh pricing cache on startup if stale or missing models."""
@@ -110,6 +112,19 @@ class ConsensusApp:
             logger.debug("Document RAG tools registered")
         except ImportError as e:
             logger.info("Document tools not available: %s", e)
+
+    def _init_image_tools(self) -> None:
+        """Register image tool provider."""
+        try:
+            from .tools_image import create_image_provider
+            provider = create_image_provider(self.db, app=self)
+            self.tool_registry.register_provider(provider)
+            self.db.add_tool_provider("images", "python")
+            self.images_available = True
+            logger.debug("Image tools registered")
+        except ImportError as e:
+            self.images_available = False
+            logger.info("Image tools not available: %s", e)
 
     @staticmethod
     def set_request_api_keys(keys: dict[str, str]) -> None:
@@ -370,6 +385,11 @@ class ConsensusApp:
         state["tool_providers"] = self.db.get_tool_providers()
         state["mcp_servers"] = self.db.get_mcp_servers()
         state["experts"] = self.db.get_expert_definitions()
+        # Include discussion images if a discussion is active
+        if self.discussion.id:
+            state["discussion_images"] = self.db.get_discussion_images(
+                self.discussion.id,
+            )
         return state
 
     # ------------------------------------------------------------------
@@ -775,4 +795,75 @@ class ConsensusApp:
     def delete_document(self, document_id: int) -> dict:
         """Permanently delete a document and all its data."""
         deleted = self.db.delete_document(document_id)
+        return {"success": deleted}
+
+    # ------------------------------------------------------------------
+    # Image management
+    # ------------------------------------------------------------------
+
+    async def add_image(self, filename: str, content_bytes: bytes,
+                        mime_type: str, discussion_id: int = 0,
+                        source_url: str = "",
+                        title: str = "") -> dict:
+        """Add an image via file upload."""
+        from .tools_image import ingest_image
+
+        result = await ingest_image(
+            db=self.db,
+            content_bytes=content_bytes,
+            filename=filename,
+            mime_type=mime_type,
+            discussion_id=discussion_id or (self.discussion.id if self.discussion else 0),
+            source_url=source_url or None,
+            title=title or None,
+            source_type="url" if source_url else "upload",
+        )
+        return result
+
+    async def add_image_from_url(self, url: str, discussion_id: int = 0,
+                                  title: str = "") -> dict:
+        """Add an image by fetching from a URL."""
+        from .tools_image import fetch_image_from_url
+        try:
+            content_bytes, filename, mime_type = await fetch_image_from_url(url)
+        except Exception as e:
+            return {"error": f"Failed to fetch image: {e}"}
+
+        return await self.add_image(
+            filename=filename, content_bytes=content_bytes,
+            mime_type=mime_type, discussion_id=discussion_id,
+            source_url=url, title=title,
+        )
+
+    def get_discussion_images(self, discussion_id: int = 0) -> list[dict]:
+        """Return images attached to a discussion."""
+        disc_id = discussion_id or (self.discussion.id if self.discussion else 0)
+        return self.db.get_discussion_images(disc_id)
+
+    def remove_discussion_image(self, image_id: int,
+                                 discussion_id: int = 0) -> dict:
+        """Remove an image from a discussion (keeps in library)."""
+        disc_id = discussion_id or (self.discussion.id if self.discussion else 0)
+        self.db.remove_discussion_image(disc_id, image_id)
+        return {"success": True}
+
+    def get_image_data(self, image_id: int) -> Optional[tuple[bytes, str, str]]:
+        """Return (bytes, mime_type, filename) for serving an image."""
+        image = self.db.get_image(image_id)
+        if not image:
+            return None
+        from .tools_image import load_image_file
+        try:
+            data = load_image_file(image["storage_path"])
+            return data, image["mime_type"], image["original_filename"]
+        except FileNotFoundError:
+            return None
+
+    def delete_image(self, image_id: int) -> dict:
+        """Permanently delete an image and its file."""
+        image = self.db.get_image(image_id)
+        if image:
+            from .tools_image import delete_image_file
+            delete_image_file(image["storage_path"])
+        deleted = self.db.delete_image(image_id)
         return {"success": deleted}

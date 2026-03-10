@@ -18,6 +18,7 @@ import { openMcpServerDialog, confirmMcpServer, toggleMcpServer, deleteMcpServer
 import { showConsultExpertDialog, onToolProgress } from './experts.js';
 import { loadMemoryConfig, saveMemoryConfig, testMemoryConnection } from './memory.js';
 import { renderDocumentPanel, uploadDocument, addDocumentByUrl } from './documents.js';
+import { renderImagePanel, uploadImage, addImageByUrl } from './images.js';
 
 // Register the setup-tab callback so state.js can trigger it without circular imports
 registerSetupCallback(renderSetupTab);
@@ -36,7 +37,7 @@ function switchTab(tabName) {
     else if (tabName === 'settings-prompts') renderPrompts();
     else if (tabName === 'history') renderHistory();
     else if (tabName === 'settings-memory') loadMemoryConfig();
-    else if (tabName === 'new-discussion') { renderSetupTab(); renderDocumentPanel(); }
+    else if (tabName === 'new-discussion') { renderSetupTab(); renderDocumentPanel(); renderImagePanel(); }
 }
 
 /**
@@ -217,6 +218,16 @@ function init() {
     const docUrlInput = $('#doc-url-input');
     if (docUrlInput) docUrlInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') addDocumentByUrl();
+    });
+
+    // Image management
+    const imgUploadBtn = $('#img-upload-btn');
+    if (imgUploadBtn) imgUploadBtn.addEventListener('click', uploadImage);
+    const imgUrlAddBtn = $('#img-url-add-btn');
+    if (imgUrlAddBtn) imgUrlAddBtn.addEventListener('click', addImageByUrl);
+    const imgUrlInput = $('#img-url-input');
+    if (imgUrlInput) imgUrlInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') addImageByUrl();
     });
 
     // Load initial state

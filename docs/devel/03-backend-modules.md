@@ -10,6 +10,16 @@
 desktop bridge delegate to this class. It owns the `Database`, the current
 `Discussion`, the `Moderator`, and the `ToolRegistry`.
 
+**Module decomposition:** `ConsensusApp` methods are split across domain modules
+to keep file sizes manageable:
+- `app_providers.py` — provider management
+- `app_entities.py` — entity CRUD
+- `app_discussion_setup.py` — discussion creation & configuration
+- `app_discussion_flow.py` — turn flow operations
+- `app_discussion_state.py` — discussion state management
+
+These modules contain standalone functions that `app.py` delegates to.
+
 **Initialisation:**
 ```python
 class ConsensusApp:
@@ -21,9 +31,11 @@ class ConsensusApp:
         self.pricing = PricingCache(self.db.conn, self.db._lock)
         self._on_update = None    # callback for push-based state updates
         self._event_handlers = {}  # lightweight event emitter
-        self._mcp_providers = {}   # active MCP server connections {server_id: MCPToolProvider}
-        self._init_builtin_tools()  # registers web search, consult_expert, etc.
-        self._init_memory_tools()   # registers memory tools (if sqlite-vec installed)
+        self._mcp_providers = {}   # active MCP server connections
+        self._init_builtin_tools()   # web search, consult_expert
+        self._init_memory_tools()    # memory tools (if sqlite-vec installed)
+        self._init_document_tools()  # document RAG (if pdfplumber installed)
+        self._init_image_tools()     # image tools (if Pillow installed)
 ```
 
 **Update callback:** `set_update_callback(callback)` registers a function
@@ -61,6 +73,8 @@ def get_state(self):
 | **Tool management** | `list_available_tools`, `get_entity_tools`, `assign_tool_to_entity`, `remove_entity_tool`, `set_discussion_tool_override` |
 | **MCP server management** | `add_mcp_server`, `get_mcp_servers`, `update_mcp_server`, `delete_mcp_server`, `test_mcp_connection`, `connect_mcp_server` |
 | **Expert definitions** | `save_expert_definition`, `get_expert_definitions`, `consult_expert` |
+| **Document management** | `add_document`, `add_document_by_url`, `get_discussion_documents`, `remove_document`, `delete_document` |
+| **Image management** | `add_image`, `add_image_from_url`, `get_discussion_images`, `remove_discussion_image`, `get_image_data`, `delete_image` |
 | **Cost tracking** | Automatic via `PricingCache` during message generation |
 | **Events** | `on`, `emit` — lightweight pub/sub for real-time updates |
 | **BYOK** | `set_request_api_keys`, `clear_request_api_keys`, `resolve_provider_api_key` |
@@ -292,6 +306,14 @@ management: `get_mcp_servers()`, `add_mcp_server()`, `update_mcp_server()`,
 `delete_mcp_server()`, `test_mcp_connection()`, `save_expert_definition()`,
 `get_expert_definitions()`, `consult_expert()`. Async methods (delete, test,
 consult) are wrapped in `_run_async()`.
+
+**Document bridge methods:** `upload_document()` (opens a file picker),
+`add_document_by_url()`, `get_discussion_documents()`, `remove_document()`,
+`delete_document()`.
+
+**Image bridge methods:** `upload_image()` (opens a file picker for
+PNG/JPEG/GIF/WebP), `add_image_from_url()`, `get_discussion_images()`,
+`remove_image()`, `delete_image()`.
 
 **`launch_desktop()`** creates the pywebview window (1280x800, min 900x600)
 pointing at `static/index.html`, wires up the bridge, and starts the webview

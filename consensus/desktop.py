@@ -357,6 +357,64 @@ class DesktopBridge:
         """Permanently delete a document."""
         return self.app.delete_document(document_id)
 
+    # -- Images --
+
+    def upload_image(self, discussion_id: int = 0) -> dict:
+        """Open a file picker and upload an image."""
+        import webview
+        if not self._window:
+            return {"error": "No window available"}
+
+        result = self._window.create_file_dialog(
+            webview.FileDialog.OPEN,
+            file_types=(
+                "Images (*.png;*.jpg;*.jpeg;*.gif;*.webp)",
+                "PNG files (*.png)",
+                "JPEG files (*.jpg;*.jpeg)",
+                "GIF files (*.gif)",
+                "WebP files (*.webp)",
+                "All files (*.*)",
+            ),
+        )
+        if not result:
+            return {"cancelled": True}
+        filepath = result if isinstance(result, str) else result[0]
+
+        import mimetypes
+        mime_type, _ = mimetypes.guess_type(filepath)
+        if not mime_type:
+            mime_type = "image/png"
+
+        filename = os.path.basename(filepath)
+        with open(filepath, "rb") as f:
+            content = f.read()
+
+        return self._run_async(self.app.add_image(
+            filename=filename,
+            content_bytes=content,
+            mime_type=mime_type,
+            discussion_id=discussion_id,
+        ))
+
+    def add_image_from_url(self, url: str, discussion_id: int = 0,
+                            title: str = "") -> dict:
+        """Add an image by fetching from a URL."""
+        return self._run_async(self.app.add_image_from_url(
+            url=url, discussion_id=discussion_id, title=title,
+        ))
+
+    def get_discussion_images(self, discussion_id: int = 0) -> list:
+        """Return images attached to a discussion."""
+        return self.app.get_discussion_images(discussion_id)
+
+    def remove_image(self, image_id: int, discussion_id: int = 0) -> dict:
+        """Remove an image from a discussion."""
+        return self.app.remove_discussion_image(image_id, discussion_id)
+
+    def delete_image(self, image_id: int) -> dict:
+        """Permanently delete an image."""
+        return self.app.delete_image(image_id)
+
     # -- Export --
     def get_export_data(self, discussion_id: int) -> dict:
         """Get discussion data for export without mutating current state."""

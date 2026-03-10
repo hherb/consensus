@@ -93,6 +93,36 @@ All endpoints: `POST /api/{method}` with JSON body.
 | `get_expert_definitions` | *(none)* | List of expert definition dicts |
 | `consult_expert` | `expert_name`, `query` | `{"response": "...", "expert_name": "..."}` |
 
+### Documents
+
+Documents use dedicated REST endpoints (not the dispatch-style `/api/{method}`).
+
+| Endpoint | Method | Body / Params | Returns |
+|----------|--------|--------------|---------|
+| `/api/documents/upload` | POST | Multipart: `file`, `discussion_id?`, `title?` | Document dict |
+| `/api/documents/add-url` | POST | `url`, `discussion_id?`, `title?` | Document dict |
+| `/api/documents/{discussion_id}` | GET | *(none)* | `{"documents": [...]}` |
+| `/api/documents/{document_id}/{discussion_id}` | DELETE | *(none)* | `{"success": true}` |
+| `/api/documents/{document_id}` | DELETE | *(none)* | `{"success": true}` |
+
+### Images
+
+Images use dedicated REST endpoints with multipart upload and file serving.
+
+| Endpoint | Method | Body / Params | Returns |
+|----------|--------|--------------|---------|
+| `/api/images/upload` | POST | Multipart: `file`, `discussion_id?`, `title?` | Image dict |
+| `/api/images/add-url` | POST | `url`, `discussion_id?`, `title?` | Image dict |
+| `/api/images/file/{image_id}` | GET | *(none)* | Image binary (with `Cache-Control` and `Content-Disposition` headers) |
+| `/api/images/{discussion_id}` | GET | *(none)* | `{"images": [...]}` |
+| `/api/images/{image_id}/{discussion_id}` | DELETE | *(none)* | `{"success": true}` |
+| `/api/images/{image_id}` | DELETE | *(none)* | `{"success": true}` |
+
+**Security:** Upload endpoints enforce a 20 MB file size limit (HTTP 413).
+URL fetch endpoints include SSRF protection (blocks private/internal IPs).
+Image serving includes path traversal protection and requires authentication
+in multi-user mode.
+
 ### History / Export
 
 | Method | JSON body fields | Returns |

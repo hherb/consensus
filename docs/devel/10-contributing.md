@@ -8,19 +8,25 @@
 
 ### Adding a new backend feature
 
-1. Add the business logic method to `ConsensusApp` in `app.py`
+1. Add the business logic method to `ConsensusApp` in `app.py` (or an
+   `app_*.py` domain module for larger features)
 2. Expose it in **both**:
-   - `server.py` -- add an entry to the `handlers` dict in `handle_api()`
+   - `server.py` -- add a route handler (dispatch-style for simple methods,
+     or dedicated REST endpoints for resource-oriented features like
+     documents/images)
    - `desktop.py` -- add a method to `DesktopBridge` (use `_run_async()` if
      async)
-3. If it needs new UI, add the corresponding call to the API adapter classes
-   (`DesktopAPI` and `WebAPI`) in `app.js`
+3. If it needs new UI, add methods to both API adapter classes in
+   `static/api.js` (`DesktopAPI` and `WebAPI`), then create or update the
+   relevant JS module in `static/`
 
 ### Adding a new database table or column
 
-1. Add the `CREATE TABLE` or `ALTER TABLE` statement to `_create_tables()` or
-   a new `_migrate_*()` method in `database.py`
-2. Add CRUD methods to `Database`
+1. Create a numbered SQL migration file in `consensus/migrations/` (e.g.
+   `008_my_feature.sql`). The migrator auto-discovers files matching
+   `^(\d{3})_.*\.sql$` and applies them once each.
+2. Add a CRUD mixin in `consensus/db/` (e.g. `my_feature.py`) and add it to
+   the `Database` class in `db/__init__.py`
 3. Expose through `ConsensusApp`, `server.py`, and `desktop.py` as needed
 
 ### Adding a new prompt template
@@ -42,7 +48,9 @@ See [Tool Use](08-tool-use.md) for detailed examples.
 
 ### Modifying the frontend
 
-- Edit `static/app.js` for logic changes
+The frontend JS is organised as ES modules in `static/`:
+- Edit the relevant module for logic changes (e.g. `profiles.js`, `discussion.js`)
+- Edit `static/api.js` to add new API adapter methods
 - Edit `static/style.css` for styling changes
 - Edit `static/index.html` for structural changes
 - No build step needed; just refresh the browser / restart the app
@@ -82,9 +90,9 @@ See [Tool Use](08-tool-use.md) for detailed examples.
 
 ### JavaScript
 
-- **No framework, no build step.** The entire frontend is one JS file.
-- **`$` and `$$` helpers.** `$('#id')` is `document.querySelector`,
-  `$$('.class')` is `querySelectorAll`.
+- **No framework, no build step.** The frontend is vanilla JS ES modules.
+- **`$` and `$$` helpers** (in `utils.js`). `$('#id')` is
+  `document.querySelector`, `$$('.class')` is `querySelectorAll`.
 - **Incremental rendering.** Messages and storyboard entries track how many
   have been rendered and only add new ones. Full re-renders happen for setup
   panels.

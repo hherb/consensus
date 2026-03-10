@@ -4,20 +4,48 @@
 
 ---
 
-The frontend is a **single-page application** built with vanilla JavaScript --
-no frameworks, no build step, no npm.
+The frontend is a **single-page application** built with vanilla JavaScript
+organised as **ES modules** -- no frameworks, no build step, no npm.
+
+## Module Structure
+
+The frontend JS has been split from a monolithic `app.js` into focused modules:
+
+| Module | Purpose |
+|--------|---------|
+| `app.js` | Entry point, event wiring, tab switching |
+| `api.js` | `DesktopAPI` / `WebAPI` adapter classes |
+| `state.js` | Global `state` object, `onStateUpdate()`, render callbacks |
+| `utils.js` | `$`, `$$`, `escHtml`, `renderMarkdown`, `showToast` |
+| `setup.js` | New Discussion tab rendering |
+| `providers.js` | Providers tab |
+| `profiles.js` | Profiles tab (entity editor, tool assignment) |
+| `prompts.js` | Prompts tab |
+| `history.js` | History tab |
+| `discussion.js` | Active discussion view (messages, storyboard) |
+| `discussion-actions.js` | Pause/resume, conclude, reassign, mediate |
+| `documents.js` | Document panel (upload, URL add, list, remove) |
+| `images.js` | Image panel (upload, URL add, grid, lightbox) |
+| `experts.js` | MCP expert consultation dialog |
+| `mcp.js` | MCP server management dialog |
+| `memory.js` | Memory configuration settings |
+| `export.js` | JSON/HTML/PDF export |
+| `auth.js` | Authentication UI (login/register/OAuth) |
+| `byok.js` | BYOK key management UI |
 
 ## `index.html` -- Page Structure
 
 Two top-level `<section>` elements, toggled with the `.hidden` class:
 
 - **`#setup-phase`** -- shown before a discussion starts. Contains a tab bar
-  with 5 tabs:
-  - *New Discussion* -- topic input, entity picker, start button
+  with tabs:
+  - *New Discussion* -- topic input, entity picker, document panel, image panel,
+    discussion method selector, start button
   - *Providers* -- manage API provider endpoints
   - *Profiles* -- manage entity profiles (human/AI), including tool assignments
   - *Prompts* -- edit prompt templates
   - *History* -- browse and load past discussions
+  - *Memory* -- memory system configuration (Ollama endpoint, model)
 
 - **`#discussion-phase`** -- shown during an active discussion. Three-column
   grid:
@@ -40,32 +68,31 @@ column.
 
 **No external dependencies.** All styling is self-contained.
 
-## `app.js` -- Frontend Application
-
-The frontend JS is structured as follows:
-
-### API Adapters
+## API Adapters (`api.js`)
 
 Two classes (`DesktopAPI` and `WebAPI`) provide the same interface but
 communicate differently:
 - `DesktopAPI` calls `window.pywebview.api.<method>()` (synchronous Python bridge)
-- `WebAPI` uses `fetch('/api/<method>', ...)` (HTTP POST)
+- `WebAPI` uses `fetch('/api/<method>', ...)` (HTTP POST with JSON, or
+  multipart for file uploads)
 
 The correct adapter is selected at startup:
 ```javascript
 api = window.pywebview ? new DesktopAPI() : new WebAPI();
 ```
 
-Both adapters expose methods for tool management (`listTools()`,
-`getEntityTools()`, `assignTool()`, `removeTool()`, `setToolOverride()`) in
-addition to all other app methods.
+Both adapters expose methods for tool management, document management
+(`uploadDocument()`, `addDocumentByUrl()`, `getDiscussionDocuments()`),
+image management (`uploadImage()`, `addImageFromUrl()`,
+`getDiscussionImages()`), and all other app methods.
 
-### Global state
+## Global State (`state.js`)
 
 A single `state` object holds the full application state, updated by
-`onStateUpdate(newState)`.
+`onStateUpdate(newState)`. The state module manages render callbacks and
+exports helper functions like `getEntity()`.
 
-### `onStateUpdate(newState)` -- the state refresh function
+### `onStateUpdate(newState)`
 
 Called whenever the backend pushes new state (desktop mode) or after each API
 response (web mode). It merges the new state, re-renders all UI panels, and
@@ -73,17 +100,18 @@ manages the setup/discussion phase transitions.
 
 ### Key rendering functions
 
-| Function | Renders |
-|----------|---------|
-| `renderProviders()` | Provider list in the Providers tab |
-| `renderProfiles()` | Entity profile list in the Profiles tab |
-| `renderPrompts()` | Prompt template list in the Prompts tab |
-| `renderHistory()` | Discussion history list in the History tab |
-| `renderAvailableEntities()` | Selectable entity list for discussion setup |
-| `renderDiscussionRoster()` | Entities added to the current discussion |
-| `renderDiscussionEntities()` | Participant sidebar during discussion |
-| `renderMessages()` | Message feed (incremental -- only new messages) |
-| `renderStoryboard()` | Storyboard panel (incremental) |
+| Function | Module | Renders |
+|----------|--------|---------|
+| `renderProviders()` | `providers.js` | Provider list in the Providers tab |
+| `renderProfiles()` | `profiles.js` | Entity profile list in the Profiles tab |
+| `renderPrompts()` | `prompts.js` | Prompt template list in the Prompts tab |
+| `renderHistory()` | `history.js` | Discussion history list in the History tab |
+| `renderSetupTab()` | `setup.js` | New Discussion tab (topic, entities, method) |
+| `renderDocumentPanel()` | `documents.js` | Document list, upload, URL input |
+| `renderImagePanel()` | `images.js` | Image grid, upload, URL input |
+| `renderDiscussionEntities()` | `discussion.js` | Participant sidebar during discussion |
+| `renderNewMessages()` | `discussion.js` | Message feed (incremental) |
+| `renderNewStoryboard()` | `discussion.js` | Storyboard panel (incremental) |
 
 ### Discussion automation
 
@@ -110,6 +138,25 @@ Users can:
 
 `renderMarkdown()` converts a subset of Markdown to HTML (headers, bold,
 italic, code blocks, lists). HTML is escaped first to prevent XSS.
+
+### Document panel (`documents.js`)
+
+The New Discussion tab includes a "Reference Documents" card where users can
+attach documents for AI participants to analyse via RAG tools. Supports:
+- File upload (PDF, HTML, TXT) via native file picker (desktop) or `<input>`
+- URL ingestion (fetches and extracts text)
+- Thumbnail list of attached documents with remove buttons
+
+### Image panel (`images.js`)
+
+The New Discussion tab includes a "Reference Images" card where users can
+attach images for visual context. Supports:
+- File upload (PNG, JPEG, GIF, WebP) via native file picker (desktop) or `<input>`
+- URL ingestion (fetches image with SSRF protection)
+- Thumbnail grid with lightbox (click to enlarge)
+- Remove buttons per image
+- Inline message images (`renderMessageImages()` appends thumbnails to messages
+  that have `image_ids`)
 
 ### Export
 

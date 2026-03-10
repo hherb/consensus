@@ -20,6 +20,7 @@ web = ["aiohttp>=3.9"]
 tools = ["trafilatura>=1.6"]
 memory = ["sqlite-vec>=0.1.0", "numpy>=1.26"]
 documents = ["sqlite-vec>=0.1.0", "numpy>=1.26", "pdfplumber>=0.10"]
+images = ["Pillow>=10.0"]
 all = [
     "pywebview>=5.0",
     "aiohttp>=3.9",
@@ -27,6 +28,7 @@ all = [
     "sqlite-vec>=0.1.0",
     "numpy>=1.26",
     "pdfplumber>=0.10",
+    "Pillow>=10.0",
 ]
 
 [project.scripts]
