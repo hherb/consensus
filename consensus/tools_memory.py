@@ -24,6 +24,8 @@ from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolResult
 logger = logging.getLogger(__name__)
 
 EMBED_TIMEOUT = 10.0
+EMBED_MAX_RETRIES = 3
+EMBED_BASE_DELAY = 1.0
 SEARCH_DEFAULT_LIMIT = 5
 
 
@@ -47,29 +49,51 @@ class EmbeddingClient:
             }
 
     async def embed(self, text: str) -> list[float]:
-        """Return a float embedding vector for the given text."""
+        """Return a float embedding vector for the given text.
+
+        Retries up to EMBED_MAX_RETRIES times with exponential backoff on
+        transient failures (timeouts, server errors, connection resets).
+        """
         config = self._get_config()
         endpoint = config.get("embedding_endpoint", DEFAULT_EMBEDDING_ENDPOINT)
         model = config.get("embedding_model", DEFAULT_EMBEDDING_MODEL)
         url = endpoint.rstrip("/") + "/api/embeddings"
 
-        try:
-            async with httpx.AsyncClient(timeout=EMBED_TIMEOUT) as client:
-                response = await client.post(
-                    url,
-                    json={"model": model, "prompt": text},
+        last_exc: Exception | None = None
+        for attempt in range(EMBED_MAX_RETRIES):
+            try:
+                async with httpx.AsyncClient(timeout=EMBED_TIMEOUT) as client:
+                    response = await client.post(
+                        url,
+                        json={"model": model, "prompt": text},
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    return data["embedding"]
+            except httpx.ConnectError as e:
+                raise MemoryUnavailableError(
+                    f"Cannot connect to embedding service at {endpoint}: {e}"
+                ) from e
+            except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
+                last_exc = e
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500:
+                    raise MemoryUnavailableError(
+                        f"Embedding request failed: {e}"
+                    ) from e
+                delay = EMBED_BASE_DELAY * (2 ** attempt)
+                logger.warning(
+                    "Embedding attempt %d/%d failed (%s), retrying in %.1fs",
+                    attempt + 1, EMBED_MAX_RETRIES, e, delay,
                 )
-                response.raise_for_status()
-                data = response.json()
-                return data["embedding"]
-        except httpx.ConnectError as e:
-            raise MemoryUnavailableError(
-                f"Cannot connect to embedding service at {endpoint}: {e}"
-            ) from e
-        except Exception as e:
-            raise MemoryUnavailableError(
-                f"Embedding request failed: {e}"
-            ) from e
+                await asyncio.sleep(delay)
+            except Exception as e:
+                raise MemoryUnavailableError(
+                    f"Embedding request failed: {e}"
+                ) from e
+
+        raise MemoryUnavailableError(
+            f"Embedding request failed after {EMBED_MAX_RETRIES} attempts: {last_exc}"
+        ) from last_exc
 
     async def test_connection(self) -> tuple[bool, str]:
         """Return (success, message) for connection test."""

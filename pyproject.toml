@@ -33,6 +33,7 @@ all = [
 
 [project.scripts]
 consensus = "consensus.__main__:main"
+consensus-mcp = "consensus.mcp_server:main"
 
 [tool.setuptools.packages.find]
 include = ["consensus*", "evaluation*"]

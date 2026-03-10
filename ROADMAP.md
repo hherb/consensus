@@ -52,7 +52,7 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ✅ Done | OpenAI API compatibility | Uses `max_completion_tokens` for newer models, DeepSeek DSML tool-call parsing |
 | **Code Quality & Maintainability** | | |
 | ✅ Done | Database migration system | File-based SQL migrations in `consensus/migrations/`, tracked in `migrations` table, run idempotently on startup (`migrator.py`) |
-| ✅ Done | Comprehensive test suite | 299 tests across 7+ modules covering database, app, config, models, moderator, sessions, tools, and documents |
+| ✅ Done | Comprehensive test suite | 425 tests across 20+ modules covering database, app, config, models, moderator, sessions, tools, documents, MCP client/server, pricing, methods |
 | ✅ Done | Refactor large modules | `ConsensusApp` split into `app_providers.py`, `app_entities.py`, `app_discussion_setup.py`, `app_discussion_flow.py`, `app_discussion_state.py`; `Database` split into `db/` subpackage with 9 domain-specific mixins; `app.js` refactored into ES modules |
 | **Specialist Plugins** | | |
 | ✅ Done | MCP client (stdio transport) | MCPToolProvider class connecting to external MCP servers via stdio; expert entities that get one turn when invoked then step back |
@@ -62,6 +62,7 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ⬜ Planned | Multiple simultaneous expert consultations | Invoke several experts in parallel during a single turn |
 | ⬜ Planned | Expert-to-expert chaining | Allow one expert to invoke another expert as part of its work |
 | ✅ Done | Config file-based MCP server definitions | `mcp_config.py`: Load MCP servers from JSON/TOML config files at startup. Searches `CONSENSUS_MCP_CONFIG` env var, `./mcp_servers.json`, `~/.consensus/`, and platform data dir. New servers added to DB; changed servers updated. Supports both stdio and HTTP transport entries |
+| ✅ Done | MCP server for external AI agents | `mcp_server.py`: Consensus as an MCP server (stdio JSON-RPC 2.0). 13 tools: list/read/search discussions, entities, documents, memories, knowledge graph; store/delete memories, assert knowledge triples, run full automated discussions. Entry point `consensus-mcp`. Agent gets persistent memory via auto-created "Claude Code Agent" entity. Memory deletion ownership-enforced |
 | ⬜ Planned | MCP resources and prompts | Support MCP resources and prompt templates beyond tool calls |
 | **Document RAG** | | |
 | ✅ Done | Document ingestion & parsing | `tools_document.py`: URL/text/PDF/HTML ingestion with pdfplumber, trafilatura; auto-chunking with paragraph-aware boundaries and configurable overlap |

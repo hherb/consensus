@@ -24,6 +24,7 @@ document for detailed coverage.
 | 11 | [Authentication](11-authentication.md) | Email/password auth, OAuth (GitHub/Google/LinkedIn/Apple), tokens, CSRF, brute-force protection |
 | 12 | [Cost Tracking](12-cost-tracking.md) | PricingCache, OpenRouter integration, per-message cost, model name matching |
 | 13 | [MCP Expert Plugins](13-mcp-expert-plugins.md) | MCPToolProvider, expert entities, consult_expert meta-tool, SSE progress events |
+| 14 | [MCP Server](14-mcp-server.md) | ConsensusMCPServer, 13 tools for external AI agents, agent memory, run_discussion |
 
 ## Quick Architecture Diagram
 
@@ -69,6 +70,13 @@ ConsensusApp (app.py + app_*.py domain modules)
           Thread-safe SQLite subpackage with domain-specific mixins:
           providers, entities, prompts, discussions, messages, tools,
           MCP/experts, memory, documents, images
+
+ConsensusMCPServer (mcp_server.py)  ← external AI agents connect here
+    |  stdio JSON-RPC 2.0 — invoked as `consensus-mcp`
+    |
+    +-- Database (db/) — direct read/search/write access
+    +-- EmbeddingClient (tools_memory.py) — semantic search
+    +-- ConsensusApp (app.py) — for run_discussion orchestration
 ```
 
 ## Key Design Principles
@@ -100,6 +108,9 @@ ConsensusApp (app.py + app_*.py domain modules)
 - **MCP expert plugins.** External tools exposed via MCP servers can be wrapped
   as consultable expert entities, extending capabilities without modifying core
   code.
+- **MCP server for AI agents.** Consensus itself is an MCP server
+  (`consensus-mcp`), giving external AI agents access to discussions, memories,
+  the knowledge graph, and the ability to trigger full automated discussions.
 - **Cost tracking.** Per-message cost calculation using OpenRouter pricing data,
   with fuzzy model name matching and automatic cache refresh.
 

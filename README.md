@@ -132,6 +132,16 @@ Methods are selected per-discussion at setup time. The architecture is extensibl
 - **Real-time progress** — SSE endpoint (`GET /api/events`) for tool execution progress notifications
 - **Event emitter** — lightweight pub/sub system in `ConsensusApp` for real-time event dispatch
 
+### MCP Server for External AI Agents
+- **Consensus as an MCP server** — the `consensus-mcp` command exposes Consensus data and operations to external AI agents (e.g. Claude Code) via stdio JSON-RPC 2.0
+- **13 tools** for reading, searching, and writing:
+  - **Passive:** `list_discussions`, `read_discussion`, `search_discussions`, `list_entities`, `search_memories`, `query_knowledge_graph`, `list_documents`, `read_document`, `search_documents`
+  - **Active:** `store_memory`, `delete_memory`, `assert_knowledge`, `run_discussion`
+- **Persistent agent memory** — the coding agent gets its own entity ("Claude Code Agent") with private long-term memory that persists across sessions
+- **Run full discussions programmatically** — `run_discussion` creates, moderates, and concludes an AI discussion on any topic, returning the synthesised result
+- **Memory deletion safeguards** — agents can only delete their own memories; ownership is hardcoded and double-enforced at the DB layer
+- **Graceful degradation** — listing and reading tools work without an embedding service; semantic search tools return helpful errors if Ollama is unavailable
+
 ### Evaluation Framework
 - **Ablation study platform** for testing multi-agent discussion configurations against medical case vignettes
 - **10 seed cases** with gold diagnoses, key findings, and differential diagnoses
@@ -191,6 +201,30 @@ consensus --web --multi-user --host 0.0.0.0 --port 8080
 consensus --web --debug
 ```
 
+### MCP Server for AI Agents
+
+Consensus includes an MCP server that lets external AI agents (like Claude Code) search discussions, query memories, and even trigger full discussions:
+
+```bash
+# Install (if not already)
+uv pip install -e ".[all]"
+
+# Test the server
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | consensus-mcp
+```
+
+To configure in Claude Code, add to your MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "consensus": {
+      "command": "consensus-mcp"
+    }
+  }
+}
+```
+
 ### Setting Up AI Providers
 
 API keys are configured via environment variables. Set the relevant variables before launching:
@@ -248,6 +282,12 @@ ConsensusApp — orchestrator, state management, event emitter
     ├── AskUser (tools_ask_user.py) — interactive user input during AI turns
     ├── Migrator — file-based SQL migration runner
     └── Evaluation — ablation study framework (cases, runner, scorer)
+
+MCP server (consensus-mcp):
+    ConsensusMCPServer (mcp_server.py)
+        ├── Database — direct SQLite access (read/search/write)
+        ├── EmbeddingClient — semantic search via Ollama
+        └── ConsensusApp — programmatic discussion orchestration
 
 Multi-user mode:
     SessionManager (session.py)
