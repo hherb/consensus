@@ -57,6 +57,7 @@ class DesktopAPI {
     // --- Discussion lifecycle ---
     async submitMessage(eid, content) { return await window.pywebview.api.submit_human_message(eid, content); }
     async submitModeratorMessage(content) { return await window.pywebview.api.submit_moderator_message(content); }
+    async submitUserInput(requestId, content) { return await window.pywebview.api.submit_user_input(requestId, content); }
     async generateAiTurn() { return await window.pywebview.api.generate_ai_turn(); }
     async completeTurn(summary) { return await window.pywebview.api.complete_turn(summary || ''); }
     async reassignTurn(eid) { return await window.pywebview.api.reassign_turn(eid); }
@@ -186,6 +187,7 @@ class WebAPI {
     async startDiscussion(modPart, maxRounds=0) { return await this._post('start_discussion', { moderator_participates: !!modPart, max_rounds: maxRounds }); }
     async submitMessage(eid, content) { return await this._post('submit_human_message', { entity_id: eid, content }); }
     async submitModeratorMessage(content) { return await this._post('submit_moderator_message', { content }); }
+    async submitUserInput(requestId, content) { return await this._post('submit_user_input', { request_id: requestId, content }); }
     async generateAiTurn() { return await this._post('generate_ai_turn'); }
     async completeTurn(summary) { return await this._post('complete_turn', { moderator_summary: summary || '' }); }
     async reassignTurn(eid) { return await this._post('reassign_turn', { entity_id: eid }); }

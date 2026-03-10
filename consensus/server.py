@@ -395,6 +395,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             "pause_discussion": lambda: app.pause_discussion(),
             "resume_discussion": lambda: app.resume_discussion(),
             "reopen_discussion": lambda: app.reopen_discussion(),
+            "submit_user_input": lambda: app.submit_user_input(
+                data["request_id"], data["content"]),
             # Export
             "get_export_data": lambda: app.get_export_data(
                 data["discussion_id"]),
@@ -1078,15 +1080,21 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
         queue: asyncio.Queue = asyncio.Queue()
 
-        def on_event(data: dict) -> None:
-            queue.put_nowait(data)
+        def on_tool_progress(data: dict) -> None:
+            queue.put_nowait(("tool_progress", data))
 
-        app_instance.on("tool_progress", on_event)
+        def on_user_input_request(data: dict) -> None:
+            queue.put_nowait(("user_input_request", data))
+
+        app_instance.on("tool_progress", on_tool_progress)
+        app_instance.on("user_input_request", on_user_input_request)
         try:
             while True:
                 try:
-                    data = await asyncio.wait_for(queue.get(), timeout=30)
-                    event_str = f"event: tool_progress\ndata: {json.dumps(data)}\n\n"
+                    event_type, data = await asyncio.wait_for(
+                        queue.get(), timeout=30,
+                    )
+                    event_str = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
                     await resp.write(event_str.encode())
                 except asyncio.TimeoutError:
                     # Send keepalive comment
@@ -1094,7 +1102,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         except (asyncio.CancelledError, ConnectionResetError):
             pass
         finally:
-            app_instance.off("tool_progress", on_event)
+            app_instance.off("tool_progress", on_tool_progress)
+            app_instance.off("user_input_request", on_user_input_request)
 
         return resp
 

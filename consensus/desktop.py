@@ -38,6 +38,7 @@ class DesktopBridge:
         threading.Thread(target=self._loop.run_forever, daemon=True).start()
         app.set_update_callback(self._push_state)
         app.on("tool_progress", self._push_progress)
+        app.on("user_input_request", self._push_user_input_request)
 
     def _push_state(self, state: dict) -> None:
         """Push state updates to the frontend via evaluate_js."""
@@ -60,6 +61,18 @@ class DesktopBridge:
             self._window.evaluate_js(f"if(window.onToolProgress) onToolProgress({payload})")
         except Exception:
             logger.debug("Failed to push progress event")
+
+    def _push_user_input_request(self, data: dict) -> None:
+        """Forward ask_user input request events to the JS frontend."""
+        if self._window is None:
+            return
+        try:
+            payload = json.dumps(data)
+            self._window.evaluate_js(
+                f"if(window.onUserInputRequest) onUserInputRequest({payload})"
+            )
+        except Exception:
+            logger.debug("Failed to push user input request event")
 
     def _run_async(self, coro: object) -> object:
         """Run an async coroutine on the background event loop and block for result."""
@@ -184,6 +197,10 @@ class DesktopBridge:
     def submit_moderator_message(self, content: str) -> dict:
         """Submit a message from the human moderator."""
         return self.app.submit_moderator_message(content)
+
+    def submit_user_input(self, request_id: str, content: str) -> dict:
+        """Submit user's response to an ask_user tool request."""
+        return self.app.submit_user_input(request_id, content)
 
     def generate_ai_turn(self) -> dict:
         """Generate the current AI speaker's contribution."""

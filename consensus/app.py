@@ -44,10 +44,12 @@ class ConsensusApp:
         self._on_update: Optional[Callable] = None
         self._event_listeners: dict[str, list[Callable]] = {}
         self._mcp_providers: dict[int, Any] = {}
+        self._pending_user_inputs: dict[str, tuple[asyncio.Future, dict]] = {}
         self.memory_available = False
         self.documents_available = False
         self.images_available = False
         self._init_builtin_tools()
+        self._init_interactive_tools()
         self._init_memory_tools()
         self._init_document_tools()
         self._init_image_tools()
@@ -87,6 +89,13 @@ class ConsensusApp:
         )
         expert_provider.register(expert_tool_def, self._handle_consult_expert)
         self.tool_registry.register_provider(expert_provider)
+
+    def _init_interactive_tools(self) -> None:
+        """Register interactive tool providers (ask_user)."""
+        from .tools_ask_user import create_ask_user_provider
+        provider = create_ask_user_provider(self)
+        self.tool_registry.register_provider(provider)
+        self.db.add_tool_provider("interactive", "python")
 
     def _init_memory_tools(self) -> None:
         """Register institutional memory tool provider (requires [memory] extras)."""
@@ -417,6 +426,12 @@ class ConsensusApp:
         state["experts"] = self.db.get_expert_definitions()
         # Include discussion images (from DB if active, from pending list during setup)
         state["discussion_images"] = self.get_discussion_images()
+        # Expose pending user-input request for reconnection scenarios
+        if self._pending_user_inputs:
+            _rid, (_fut, _data) = next(iter(self._pending_user_inputs.items()))
+            state["pending_user_input"] = _data
+        else:
+            state["pending_user_input"] = None
         return state
 
     # ------------------------------------------------------------------
@@ -651,6 +666,7 @@ class ConsensusApp:
 
     async def conclude_discussion(self) -> dict:
         """End the discussion, generating a final synthesis if the moderator is AI."""
+        self._cancel_pending_user_inputs()
         await app_discussion_flow.conclude_discussion(
             self.discussion, self.moderator, self.db, self.db.pricing,
         )
@@ -691,6 +707,7 @@ class ConsensusApp:
 
     def pause_discussion(self) -> dict:
         """Pause the current active discussion."""
+        self._cancel_pending_user_inputs()
         result = app_discussion_state.pause_discussion(self.discussion, self.db)
         if "error" not in result:
             self._notify()
@@ -709,6 +726,38 @@ class ConsensusApp:
         if "error" not in result:
             self._notify()
         return result
+
+    # ------------------------------------------------------------------
+    # Interactive user input (ask_user tool)
+    # ------------------------------------------------------------------
+
+    def submit_user_input(self, request_id: str, content: str) -> dict:
+        """Resolve a pending ask_user request with the user's response."""
+        entry = self._pending_user_inputs.get(request_id)
+        if not entry:
+            return {"error": "No pending input request with that ID"}
+        future, _data = entry
+        if future.done():
+            return {"error": "Request already resolved"}
+        future.set_result(content)
+        return {"ok": True}
+
+    def cancel_user_input(self, request_id: str) -> dict:
+        """Cancel a pending ask_user request."""
+        entry = self._pending_user_inputs.pop(request_id, None)
+        if not entry:
+            return {"error": "No pending input request with that ID"}
+        future, _data = entry
+        if not future.done():
+            future.cancel()
+        return {"ok": True}
+
+    def _cancel_pending_user_inputs(self) -> None:
+        """Cancel all pending user-input futures (e.g. on pause/conclude)."""
+        for request_id, (future, _data) in list(self._pending_user_inputs.items()):
+            if not future.done():
+                future.cancel()
+        self._pending_user_inputs.clear()
 
     def reset(self) -> bool:
         """Reset to a clean state."""

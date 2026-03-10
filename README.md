@@ -114,6 +114,14 @@ Methods are selected per-discussion at setup time. The architecture is extensibl
 - **Model aliases** for known name mappings (e.g. `deepseek-reasoner` → `deepseek/deepseek-r1`)
 - **Per-message and per-discussion cost display** in the UI
 
+### Interactive User Input
+- **`ask_user` tool** — AI participants can pause mid-turn to request input from the human user
+- **Inline input bubble** — question appears in the message flow with a textarea and submit button
+- **Seamless continuation** — the user's response is fed back as a tool result; the AI continues its turn incorporating the answer
+- **Reconnection-safe** — pending input requests survive page reloads via state synchronization
+- **5-minute timeout** — graceful handling if the user doesn't respond
+- Assign the `ask_user` tool to AI entities via the Profiles tab
+
 ### MCP Expert Plugins
 - **MCP (Model Context Protocol) server integration** — register external MCP servers via JSON-RPC 2.0 over stdio (local processes) or Streamable HTTP (remote servers)
 - **Dual transport** — stdio for local MCP servers (subprocess) and HTTP+SSE for remote MCP servers with session management (`Mcp-Session-Id`), retry with exponential backoff
@@ -237,6 +245,7 @@ ConsensusApp — orchestrator, state management, event emitter
     ├── MCPToolProvider — MCP stdio transport (JSON-RPC 2.0 over subprocess)
     ├── MCPHTTPToolProvider — MCP Streamable HTTP transport (JSON-RPC 2.0 over HTTP+SSE)
     ├── DocumentRAG (tools_document.py) — document ingestion, chunking, RAG Q&A
+    ├── AskUser (tools_ask_user.py) — interactive user input during AI turns
     ├── Migrator — file-based SQL migration runner
     └── Evaluation — ablation study framework (cases, runner, scorer)
 

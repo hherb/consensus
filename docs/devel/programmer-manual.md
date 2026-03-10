@@ -53,6 +53,9 @@ ConsensusApp (app.py + app_*.py domain modules)
     +-- DocumentRAG (tools_document.py)
     |     Document ingestion, chunking, RAG Q&A, summarization
     |
+    +-- AskUser (tools_ask_user.py)
+    |     Interactive user input during AI turns (Future-based blocking)
+    |
     +-- ImageTools (tools_image.py)
     |     Image storage, vision-model description, multimodal context
     |
@@ -91,6 +94,9 @@ ConsensusApp (app.py + app_*.py domain modules)
 - **Institutional memory (optional).** AI entities can persist observations,
   search past discussions semantically, and maintain a knowledge graph across
   sessions. Implemented as tool providers requiring `[memory]` extras + Ollama.
+- **Interactive user input.** AI participants can pause mid-turn to request input
+  from the human user via the `ask_user` tool. Uses `asyncio.Future` to block
+  the tool loop until the frontend submits the response.
 - **MCP expert plugins.** External tools exposed via MCP servers can be wrapped
   as consultable expert entities, extending capabilities without modifying core
   code.

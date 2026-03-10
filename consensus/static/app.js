@@ -16,6 +16,7 @@ import { onStartDiscussion, onSendMessage, onConfirmModeratorInput, onReassign, 
 import { exportAsJson, exportAsHtml, exportAsPdf, toggleExportMenu, closeExportMenu, toggleHistoryExportMenu, closeAllHistoryMenus, exportHistoryDiscussion } from './export.js';
 import { openMcpServerDialog, confirmMcpServer, toggleMcpServer, deleteMcpServer, testMcpConnection, initMcpTransportToggle } from './mcp.js';
 import { showConsultExpertDialog, onToolProgress } from './experts.js';
+import { onUserInputRequest, checkPendingUserInput } from './ask-user.js';
 import { loadMemoryConfig, saveMemoryConfig, testMemoryConnection } from './memory.js';
 import { renderDocumentPanel, uploadDocument, addDocumentByUrl } from './documents.js';
 import { renderImagePanel, uploadImage, addImageByUrl } from './images.js';
@@ -235,6 +236,8 @@ function init() {
     api.getState().then(s => {
         onStateUpdate(s);
         renderSetupTab();
+        // Re-show ask_user input bubble if there's a pending request
+        if (s && s.pending_user_input) checkPendingUserInput(s.pending_user_input);
     });
 }
 
@@ -263,11 +266,15 @@ async function bootstrap() {
         // Expose callbacks for pywebview Python→JS evaluate_js() calls
         window.onStateUpdate = onStateUpdate;
         window.onToolProgress = onToolProgress;
+        window.onUserInputRequest = onUserInputRequest;
     } else {
-        // SSE connection for real-time tool progress events (web mode only)
+        // SSE connection for real-time events (web mode only)
         const evtSource = new EventSource('/api/events');
         evtSource.addEventListener('tool_progress', (e) => {
             onToolProgress(JSON.parse(e.data));
+        });
+        evtSource.addEventListener('user_input_request', (e) => {
+            onUserInputRequest(JSON.parse(e.data));
         });
         evtSource.onerror = () => console.debug('SSE reconnecting...');
     }

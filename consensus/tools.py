@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 TOOL_EXECUTION_TIMEOUT = 30.0  # seconds
 MAX_TOOL_ITERATIONS = 5
 
+# Tools that require user interaction and bypass the standard execution timeout
+INTERACTIVE_TOOL_NAMES = {"ask_user"}
+
 
 @dataclass
 class ToolDefinition:
@@ -313,13 +316,14 @@ class ToolRegistry:
             access_mode=access_mode,
         )
 
-        # Execute with timeout
+        # Execute with timeout (interactive tools manage their own timeout)
         try:
-            result = await asyncio.wait_for(
-                provider.execute(tool_name, arguments, context,
-                                 progress_callback=progress_callback),
-                timeout=TOOL_EXECUTION_TIMEOUT,
-            )
+            coro = provider.execute(tool_name, arguments, context,
+                                    progress_callback=progress_callback)
+            if tool_name in INTERACTIVE_TOOL_NAMES:
+                result = await coro
+            else:
+                result = await asyncio.wait_for(coro, timeout=TOOL_EXECUTION_TIMEOUT)
             return result
         except asyncio.TimeoutError:
             return ToolResult(

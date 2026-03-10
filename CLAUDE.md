@@ -47,6 +47,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
     ├── PricingCache (pricing.py) — model cost lookup via OpenRouter
     ├── MCPToolProvider (mcp_client.py) — MCP server communication (JSON-RPC 2.0)
     ├── DocumentRAG (tools_document.py) — document ingestion, chunking, RAG Q&A
+    ├── AskUser (tools_ask_user.py) — interactive user input during AI turns
     └── Database (db/) — thread-safe SQLite persistence (domain-specific mixins)
 ```
 
@@ -60,6 +61,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
 - `pricing.py` — `PricingCache` for per-message cost calculation using OpenRouter pricing data; fuzzy model name matching with aliases and variant generation
 - `mcp_client.py` — `MCPToolProvider` for JSON-RPC 2.0 communication with MCP server subprocesses; expert entity consultation
 - `tools_document.py` — Document RAG tool provider: ingestion (URL/text/PDF/HTML), chunking, embedding, RAG Q&A, section navigation, map-reduce summarization
+- `tools_ask_user.py` — Interactive user-input tool: AI pauses mid-turn, frontend shows input bubble, user response fed back via `asyncio.Future`
 - `db/` — Database subpackage with domain-specific mixins: `providers.py`, `entities.py`, `discussions.py`, `messages.py`, `prompts.py`, `tools.py`, `mcp.py`, `memory.py`, `documents.py`
 
 **Database schema (SQLite, 15+ tables + auth):** `providers`, `entities` (types: human/ai/expert), `prompts`, `discussions`, `discussion_members`, `messages` (includes `cost` column), `storyboard_entries`, `model_pricing`, `mcp_servers`, `expert_definitions`, `tool_providers`, `entity_tools`, `discussion_tool_overrides`, `documents`, `document_chunks`, `document_chunk_embeddings`, `discussion_documents`, `images`, `discussion_images`, `message_images`. Auth tables (in separate `auth.db` for multi-user): `users`, `auth_tokens`, `user_oauth_identities`, `oauth_states`. Seeded with default moderator/participant prompt templates on first run.

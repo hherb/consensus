@@ -20,6 +20,10 @@ ConsensusApp
     |     |     +-- web_search (tools_builtin.py)
     |     |     +-- consult_expert (app.py)
     |     |
+    |     +-- PythonToolProvider ("interactive")
+    |     |     |
+    |     |     +-- ask_user (tools_ask_user.py)
+    |     |
     |     +-- PythonToolProvider ("documents")  [optional, requires pdfplumber]
     |     |     |
     |     |     +-- doc_add, doc_list, doc_get_length, doc_get_text
@@ -232,6 +236,9 @@ Access is checked during `get_tools_for_entity()`:
 ### Safety limits
 
 - **Execution timeout:** 30 seconds per tool call (`TOOL_EXECUTION_TIMEOUT`)
+- **Interactive tools bypass:** Tools listed in `INTERACTIVE_TOOL_NAMES`
+  (currently `ask_user`) are exempt from the 30-second timeout and manage their
+  own timeout internally (5 minutes for `ask_user`)
 - **Iteration cap:** Maximum 5 tool call rounds per turn (`MAX_TOOL_ITERATIONS`)
 - On the final iteration, tool definitions are removed from the API call to
   force the LLM to produce a text response
@@ -486,6 +493,91 @@ vision-capable model (falling back to the moderator's model).
 - **MIME validation:** Only PNG, JPEG, GIF, WebP, SVG accepted
 - **Auto-resize:** Images larger than 2048px in either dimension are
   thumbnailed down (requires Pillow)
+
+---
+
+## Interactive User Input Tool (ask_user)
+
+Defined in `tools_ask_user.py`. Created via `create_ask_user_provider(app)` and
+registered in `ConsensusApp._init_interactive_tools()`. No optional dependencies
+required.
+
+### Architecture
+
+```
+ConsensusApp._init_interactive_tools()
+    |
+    +-- create_ask_user_provider(app)
+          |
+          +-- ask_user handler (async, Future-based blocking)
+          +-- PythonToolProvider("interactive")
+```
+
+### How it works
+
+1. AI calls `ask_user(question="...", context="...")`
+2. Handler creates an `asyncio.Future`, stores it in `app._pending_user_inputs`
+3. Handler emits `"user_input_request"` event with `{request_id, entity_name, question, context}`
+4. Event reaches frontend via SSE (web) or `evaluate_js` (desktop)
+5. Frontend removes the typing indicator and renders an inline input bubble
+6. User types an answer and clicks Submit
+7. Frontend calls `api.submitUserInput(requestId, content)`
+8. Backend resolves the Future with the user's answer
+9. Handler returns `ToolResult(content=answer)` — the moderator's tool loop continues
+
+### Timeout and cancellation
+
+- **Timeout:** 5 minutes (`ASK_USER_TIMEOUT = 300`). If exceeded, returns an error ToolResult.
+- **Cancellation:** `app._cancel_pending_user_inputs()` cancels all pending futures.
+  Called automatically when discussions are paused or concluded.
+- **Reconnection:** `get_state()` includes `pending_user_input` data so the frontend
+  can re-render the input bubble after a page reload.
+
+### Interactive tool timeout bypass
+
+The `ask_user` tool is listed in `INTERACTIVE_TOOL_NAMES` (in `tools.py`).
+`ToolRegistry.execute()` checks this set and skips `asyncio.wait_for()` for
+these tools, allowing them to manage their own timeout internally.
+
+### Frontend components
+
+- **`ask-user.js`** — handles `user_input_request` events, renders the input bubble,
+  submits responses via `api.submitUserInput()`
+- **`app.js`** — wires `onUserInputRequest` for both pywebview and SSE modes
+- **`api.js`** — `submitUserInput()` method on both `DesktopAPI` and `WebAPI`
+- **`style.css`** — `.user-input-request` styles with dashed border and subtle pulse animation
+
+### Schema
+
+```json
+{
+    "type": "object",
+    "properties": {
+        "question": {
+            "type": "string",
+            "description": "The question or request to present to the human user"
+        },
+        "context": {
+            "type": "string",
+            "description": "Optional additional context explaining why the input is needed"
+        }
+    },
+    "required": ["question"]
+}
+```
+
+### Backend endpoints
+
+| Mode | Method | Details |
+|------|--------|---------|
+| Desktop | `window.pywebview.api.submit_user_input(request_id, content)` | Direct bridge call |
+| Web | `POST /api/submit_user_input` `{request_id, content}` | Via dispatch table |
+
+### Event flow
+
+| Event | Desktop | Web |
+|-------|---------|-----|
+| `user_input_request` | `DesktopBridge._push_user_input_request()` → `evaluate_js("onUserInputRequest(...)")` | SSE `event: user_input_request` |
 
 ---
 
