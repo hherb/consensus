@@ -222,3 +222,5 @@ docs/drafts/
 .worktrees/
 .codelibrarian/index.db
 .codelibrarian/config.toml
+.codelibrarian/index.db-shm
+.codelibrarian/index.db-wal
