@@ -40,6 +40,21 @@ class ProvidersMixin:
                 "api_key_env": "DEEPSEEK_API_KEY",
             },
             {
+                "name": "Google Gemini",
+                "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                "api_key_env": "GEMINI_API_KEY",
+            },
+            {
+                "name": "Groq",
+                "base_url": "https://api.groq.com/openai/v1",
+                "api_key_env": "GROQ_API_KEY",
+            },
+            {
+                "name": "Kimi (Moonshot)",
+                "base_url": "https://api.moonshot.ai/v1",
+                "api_key_env": "MOONSHOT_API_KEY",
+            },
+            {
                 "name": "Mistral",
                 "base_url": "https://api.mistral.ai/v1",
                 "api_key_env": "MISTRAL_API_KEY",
@@ -48,6 +63,21 @@ class ProvidersMixin:
                 "name": "OpenAI",
                 "base_url": "https://api.openai.com/v1",
                 "api_key_env": "OPENAI_API_KEY",
+            },
+            {
+                "name": "OpenRouter",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+            },
+            {
+                "name": "xAI (Grok)",
+                "base_url": "https://api.x.ai/v1",
+                "api_key_env": "XAI_API_KEY",
+            },
+            {
+                "name": "Zhipu AI (GLM)",
+                "base_url": "https://open.bigmodel.cn/api/paas/v4",
+                "api_key_env": "ZHIPU_API_KEY",
             },
         ]
 
@@ -75,17 +105,33 @@ class ProvidersMixin:
                 "UPDATE providers SET base_url = ? WHERE base_url = ?",
                 ("https://api.deepseek.com", "https://api.deepseek.com/v1"),
             )
-            # Add Mistral if not already present
-            has_mistral = self.conn.execute(
-                "SELECT COUNT(*) FROM providers WHERE base_url LIKE '%api.mistral.ai%'"
-            ).fetchone()[0]
-            if not has_mistral:
-                self.conn.execute(
-                    "INSERT INTO providers (name, base_url, api_key_env, "
-                    "created_at) VALUES (?,?,?,?)",
-                    ("Mistral", "https://api.mistral.ai/v1",
-                     "MISTRAL_API_KEY", time.time()),
-                )
+            # Fix Moonshot base_url: .cn endpoint requires China-issued keys;
+            # global .ai endpoint works with all keys.
+            self.conn.execute(
+                "UPDATE providers SET base_url = ? WHERE base_url = ?",
+                ("https://api.moonshot.ai/v1", "https://api.moonshot.cn/v1"),
+            )
+            # Add missing providers to existing databases
+            new_providers = [
+                ("Mistral", "api.mistral.ai", "https://api.mistral.ai/v1", "MISTRAL_API_KEY"),
+                ("Google Gemini", "generativelanguage.googleapis.com", "https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY"),
+                ("Groq", "api.groq.com", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
+                ("Kimi (Moonshot)", "api.moonshot.ai", "https://api.moonshot.ai/v1", "MOONSHOT_API_KEY"),
+                ("OpenRouter", "openrouter.ai", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+                ("xAI (Grok)", "api.x.ai", "https://api.x.ai/v1", "XAI_API_KEY"),
+                ("Zhipu AI (GLM)", "open.bigmodel.cn", "https://open.bigmodel.cn/api/paas/v4", "ZHIPU_API_KEY"),
+            ]
+            for name, domain, base_url, api_key_env in new_providers:
+                exists = self.conn.execute(
+                    "SELECT COUNT(*) FROM providers WHERE base_url LIKE ?",
+                    (f"%{domain}%",),
+                ).fetchone()[0]
+                if not exists:
+                    self.conn.execute(
+                        "INSERT INTO providers (name, base_url, api_key_env, "
+                        "created_at) VALUES (?,?,?,?)",
+                        (name, base_url, api_key_env, time.time()),
+                    )
 
             # Migrate literal API keys out of api_key_env into ~/.consensus/.env
             rows = self.conn.execute(

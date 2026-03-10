@@ -241,14 +241,30 @@ class DelphiMethod(DiscussionMethod):
         if phase.name == "estimate":
             return (
                 f"It is your turn, {entity.name}.  Provide your "
-                "independent estimate with the JSON block and reasoning."
+                "independent estimate with reasoning.\n\n"
+                "CRITICAL: Your response MUST start with a JSON code block "
+                "containing your estimate.  Place it as the VERY FIRST "
+                "thing in your response, before any other text:\n"
+                "```json\n"
+                '{"estimate": <number>, "confidence": "<HIGH/MEDIUM/LOW>", '
+                '"unit": "<what the number represents>"}\n'
+                "```\n"
+                "Then provide your detailed reasoning below the JSON block."
             )
 
         if phase.name == "revise":
             round_num = discussion.method_state.get("revise_round", 0) + 1
             return (
                 f"Revision round {round_num}, {entity.name}.  Review the "
-                "group distribution and provide your revised estimate."
+                "group distribution and provide your revised estimate.\n\n"
+                "CRITICAL: Your response MUST start with a JSON code block "
+                "containing your revised estimate.  Place it as the VERY "
+                "FIRST thing in your response, before any other text:\n"
+                "```json\n"
+                '{"estimate": <number>, "confidence": "<HIGH/MEDIUM/LOW>", '
+                '"unit": "<what the number represents>"}\n'
+                "```\n"
+                "Then explain how and why your estimate has or hasn't changed."
             )
 
         return ""
@@ -262,17 +278,59 @@ class DelphiMethod(DiscussionMethod):
 
         if phase.name == "estimate":
             return (
-                f"An estimate has been received (details withheld to "
-                f"preserve anonymity).  Next: {next_speaker_name}."
+                f"An estimate has been received.  Do NOT reveal or "
+                f"discuss the content, reasoning, or identity of any "
+                f"panelist — anonymity is essential to the Delphi method.  "
+                f"Simply invite the next participant.\n\n"
+                f"{next_speaker_name}, please present your analysis on "
+                f"the same topic.  Your response should include your "
+                f"reasoned assessment, key evidence or uncertainties "
+                f"considered, and what might significantly revise your "
+                f"estimate."
             )
 
         if phase.name == "revise":
             return (
-                f"A revised estimate has been received.  "
-                f"Next: {next_speaker_name}."
+                f"A revised estimate has been received.  Do NOT reveal "
+                f"or summarise individual estimates or reasoning — "
+                f"anonymity must be preserved.  Simply invite the next "
+                f"participant to provide their revised estimate.\n\n"
+                f"{next_speaker_name}, please provide your revised "
+                f"estimate."
             )
 
         return ""
+
+    def filter_context_message(self, entity_name: str, content: str,
+                               role: str, discussion: Discussion) -> str:
+        """Anonymise participant names in context messages.
+
+        Delphi requires anonymous estimates — replace real names with
+        'Panelist N' labels so the moderator cannot attribute responses.
+        """
+        phase = self.current_phase(discussion)
+        if not phase or phase.name == "synthesise":
+            # Synthesis phase reveals identities
+            return content
+
+        # Build a stable name → panelist mapping from entity order,
+        # stored in method_state so it's consistent across calls.
+        state = discussion.method_state
+        panelist_map = state.get("_panelist_map")
+        if not panelist_map:
+            panelist_map = {}
+            mod_id = discussion.moderator_id
+            idx = 1
+            for e in discussion.entities:
+                if e.id != mod_id:
+                    panelist_map[e.name] = f"Panelist {idx}"
+                    idx += 1
+            state["_panelist_map"] = panelist_map
+
+        for name, alias in panelist_map.items():
+            content = content.replace(name, alias)
+
+        return content
 
     def get_conclusion_prompt(self, discussion: Discussion) -> str:
         state = discussion.method_state
@@ -388,7 +446,7 @@ class DelphiMethod(DiscussionMethod):
             except (json.JSONDecodeError, ValueError, TypeError):
                 pass
 
-        # Fallback: inline JSON
+        # Fallback: inline JSON with "estimate" key
         match = re.search(r'\{"estimate"\s*:.+?\}', content, re.DOTALL)
         if match:
             try:
@@ -396,6 +454,24 @@ class DelphiMethod(DiscussionMethod):
                 data["estimate"] = float(data["estimate"])
                 return data
             except (json.JSONDecodeError, ValueError, TypeError):
+                pass
+
+        # Last resort: find "estimate" or "Estimate" followed by a number
+        # in natural language (e.g. "my estimate is 0.85" or "Estimate: 0.90")
+        num_match = re.search(
+            r'(?:my\s+)?(?:revised?\s+)?estimate[:\s]+(?:is\s+)?'
+            r'(\d+(?:\.\d+)?)',
+            content, re.IGNORECASE,
+        )
+        if num_match:
+            try:
+                value = float(num_match.group(1))
+                logger.info(
+                    "Extracted estimate %.4g from natural language fallback",
+                    value,
+                )
+                return {"estimate": value, "confidence": "", "unit": ""}
+            except (ValueError, TypeError):
                 pass
 
         return {}

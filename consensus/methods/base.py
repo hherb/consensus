@@ -131,6 +131,25 @@ class DiscussionMethod(ABC):
         """
         return ""
 
+    def filter_context_message(self, entity_name: str, content: str,
+                               role: str, discussion: Discussion) -> str:
+        """Transform a context message before it's sent to the AI.
+
+        Called by the moderator when building the message context for both
+        participant turns and moderator summaries.  Methods can use this
+        to anonymise speaker names, redact content, etc.
+
+        Args:
+            entity_name: The speaker's name in the original message.
+            content: The formatted message content (may include speaker prefix).
+            role: The OpenAI message role ("user", "assistant", "system").
+            discussion: The current discussion.
+
+        Returns:
+            The (possibly transformed) content string.
+        """
+        return content
+
     def get_conclusion_prompt(self, discussion: Discussion) -> str:
         """Return the final conclusion prompt.
 

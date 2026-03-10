@@ -68,7 +68,11 @@ class Moderator:
 
         Uses role-based formatting: messages from the current entity become
         'assistant' role, all others become 'user' role with speaker prefix.
+
+        If a discussion method provides a ``filter_context_message`` hook,
+        each message is passed through it (e.g. for Delphi anonymisation).
         """
+        method = get_active_method(self.discussion)
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
         # Add discussion topic as initial user context
@@ -84,6 +88,12 @@ class Moderator:
             else:
                 role = "user"
                 content = f"[{msg.entity_name}]: {msg.content}"
+
+            # Let the method filter/transform context messages
+            if method:
+                content = method.filter_context_message(
+                    msg.entity_name, content, role, self.discussion)
+
             messages.append({"role": role, "content": content})
 
         messages.append({"role": "user", "content": task})
@@ -99,6 +109,7 @@ class Moderator:
         Same structure as _build_context but injects discussion images
         as image_url content blocks for vision-capable models.
         """
+        method = get_active_method(self.discussion)
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
         messages.append({
@@ -119,6 +130,11 @@ class Moderator:
             else:
                 role = "user"
                 content = f"[{msg.entity_name}]: {msg.content}"
+
+            if method:
+                content = method.filter_context_message(
+                    msg.entity_name, content, role, self.discussion)
+
             messages.append({"role": role, "content": content})
 
         messages.append({"role": "user", "content": task})
