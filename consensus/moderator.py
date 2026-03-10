@@ -94,6 +94,10 @@ class Moderator:
                 content = method.filter_context_message(
                     msg.entity_name, content, role, self.discussion)
 
+            # Skip empty assistant messages — some APIs (e.g. Kimi) reject them
+            if not content and role == "assistant":
+                continue
+
             messages.append({"role": role, "content": content})
 
         messages.append({"role": "user", "content": task})
@@ -134,6 +138,10 @@ class Moderator:
             if method:
                 content = method.filter_context_message(
                     msg.entity_name, content, role, self.discussion)
+
+            # Skip empty assistant messages — some APIs (e.g. Kimi) reject them
+            if not content and role == "assistant":
+                continue
 
             messages.append({"role": role, "content": content})
 
@@ -373,9 +381,13 @@ class Moderator:
             if is_dsml:
                 # Keep only content (already DSML-stripped) for the
                 # assistant turn; drop the synthetic tool_calls.
+                dsml_content = msg_dict.get("content") or ""
+                # Use placeholder if empty — some APIs reject empty assistant messages
+                if not dsml_content.strip():
+                    dsml_content = "(Calling tools...)"
                 messages.append({
                     "role": "assistant",
-                    "content": msg_dict.get("content", ""),
+                    "content": dsml_content,
                 })
             else:
                 messages.append(msg_dict)
