@@ -710,7 +710,8 @@ class TestDelphi:
             {"round": 2, "entity_id": 4, "entity_name": "D",
              "value": 49.5, "confidence": "HIGH"},
         ]
-        assert method._check_convergence(disc) is True
+        from consensus.methods.phases._delphi_helpers import check_convergence
+        assert check_convergence(disc) is True
 
     def test_no_convergence_with_spread(self):
         method = get_method("delphi")
@@ -729,7 +730,8 @@ class TestDelphi:
             {"round": 1, "entity_id": 4, "entity_name": "D",
              "value": 70.0, "confidence": "MEDIUM"},
         ]
-        assert method._check_convergence(disc) is False
+        from consensus.methods.phases._delphi_helpers import check_convergence
+        assert check_convergence(disc) is False
 
     def test_distribution_summary(self):
         method = get_method("delphi")
@@ -741,7 +743,8 @@ class TestDelphi:
             {"round": 0, "entity_id": 2, "entity_name": "B",
              "value": 30.0, "confidence": "LOW", "unit": "percent"},
         ]
-        summary = method._build_distribution_summary(disc)
+        from consensus.methods.phases._delphi_helpers import build_distribution_summary
+        summary = build_distribution_summary(disc)
         assert "Mean" in summary
         assert "Median" in summary
         assert "Panelist 1" in summary
@@ -759,7 +762,8 @@ class TestDelphi:
             {"round": 0, "entity_id": 2, "entity_name": "B",
              "value": 50.0, "confidence": "LOW", "unit": "percent"},
         ]
-        summary = method._build_distribution_summary(disc)
+        from consensus.methods.phases._delphi_helpers import build_distribution_summary
+        summary = build_distribution_summary(disc)
         # Both should appear with their own confidence
         assert "HIGH" in summary
         assert "LOW" in summary

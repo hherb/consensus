@@ -22,6 +22,9 @@ from .hypothesize import HypothesizeHandler
 from .gather_evidence import GatherEvidenceHandler
 from .evaluate_matrix import EvaluateMatrixHandler
 from .analyse_ach import AnalyseACHHandler
+from .estimate import EstimateHandler
+from .revise_delphi import ReviseDelphiHandler
+from .synthesise_delphi import SynthesiseDelphiHandler
 
 __all__ = [
     "SurfaceAssumptionsHandler",
@@ -42,4 +45,7 @@ __all__ = [
     "GatherEvidenceHandler",
     "EvaluateMatrixHandler",
     "AnalyseACHHandler",
+    "EstimateHandler",
+    "ReviseDelphiHandler",
+    "SynthesiseDelphiHandler",
 ]
