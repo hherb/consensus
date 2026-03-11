@@ -290,3 +290,92 @@ class TestExtractClaimsHandler:
         handler.process_response(content, entity, cf_discussion)
         assert cf_discussion.method_state["extraction_failed"] is False
         assert len(cf_discussion.method_state["claims"]) == 2
+
+
+from consensus.methods.phases.counterfactual_stress import StressTestHandler
+
+
+class TestStressTestHandler:
+    @pytest.fixture
+    def handler(self):
+        return StressTestHandler()
+
+    @pytest.fixture
+    def stress_discussion(self, cf_discussion):
+        cf_discussion.method_state["current_phase"] = "stress_test"
+        cf_discussion.method_state["claims"] = [
+            {"id": 1, "text": "Cars cause significant urban pollution"},
+            {"id": 2, "text": "Public transit can replace personal cars"},
+            {"id": 3, "text": "Car bans reduce traffic fatalities"},
+        ]
+        cf_discussion.method_state["claim_results"] = [
+            {"claim_id": 1, "claim_text": "Cars cause significant urban pollution",
+             "scores": {}, "avg_score": None, "classification": None},
+            {"claim_id": 2, "claim_text": "Public transit can replace personal cars",
+             "scores": {}, "avg_score": None, "classification": None},
+            {"claim_id": 3, "claim_text": "Car bans reduce traffic fatalities",
+             "scores": {}, "avg_score": None, "classification": None},
+        ]
+        cf_discussion.method_state["current_claim_index"] = 0
+        cf_discussion.method_state["preliminary_conclusion"] = "Cars should be banned."
+        return cf_discussion
+
+    def test_phase_metadata(self, handler):
+        assert handler.phase.name == "stress_test"
+        assert handler.phase.rounds == 0
+        assert handler.phase.allow_tools is True
+
+    def test_system_prompt_includes_claim(self, handler, entity, stress_discussion):
+        prompt = handler.get_system_prompt(entity, stress_discussion)
+        assert "Cars cause significant urban pollution" in prompt
+        assert "FALSE" in prompt
+        assert "must argue" in prompt.lower()
+
+    def test_system_prompt_changes_with_index(self, handler, entity, stress_discussion):
+        stress_discussion.method_state["current_claim_index"] = 1
+        prompt = handler.get_system_prompt(entity, stress_discussion)
+        assert "Public transit can replace personal cars" in prompt
+
+    def test_turn_prompt_includes_claim_and_impact_tag(self, handler, entity, stress_discussion):
+        prompt = handler.get_turn_prompt(entity, stress_discussion)
+        assert "Cars cause significant urban pollution" in prompt
+        assert "[IMPACT:" in prompt
+        assert "1 of 3" in prompt
+
+    def test_turn_prompt_second_claim(self, handler, entity, stress_discussion):
+        stress_discussion.method_state["current_claim_index"] = 1
+        prompt = handler.get_turn_prompt(entity, stress_discussion)
+        assert "Public transit" in prompt
+        assert "2 of 3" in prompt
+
+    def test_process_response_extracts_score(self, handler, entity, stress_discussion):
+        content = "If this claim is false, the conclusion weakens significantly. [IMPACT: 4]"
+        result = handler.process_response(content, entity, stress_discussion)
+        scores = stress_discussion.method_state["claim_results"][0]["scores"]
+        assert scores["Analyst_1"] == 4
+
+    def test_process_response_no_score(self, handler, entity, stress_discussion):
+        content = "The conclusion still mostly holds without this."
+        result = handler.process_response(content, entity, stress_discussion)
+        scores = stress_discussion.method_state["claim_results"][0]["scores"]
+        assert "Analyst_1" not in scores
+
+    def test_process_response_skips_moderator(self, handler, stress_discussion):
+        mod = Entity(name="Moderator", entity_type=EntityType.AI, id=100)
+        content = "Summary of the discussion. [IMPACT: 3]"
+        handler.process_response(content, mod, stress_discussion)
+        scores = stress_discussion.method_state["claim_results"][0]["scores"]
+        assert "Moderator" not in scores
+
+    def test_should_advance_not_done(self, handler, stress_discussion):
+        stress_discussion.method_state["current_claim_index"] = 1
+        assert handler.should_advance(stress_discussion) is False
+
+    def test_should_advance_all_done(self, handler, stress_discussion):
+        stress_discussion.method_state["current_claim_index"] = 3
+        assert handler.should_advance(stress_discussion) is True
+
+    def test_transition_message(self, handler, stress_discussion):
+        msg = handler.get_transition_message(stress_discussion)
+        assert "Counterfactual" in msg or "stress" in msg.lower()
+        assert "Cars cause significant urban pollution" in msg
