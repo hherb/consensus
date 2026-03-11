@@ -173,7 +173,8 @@ class TestVotingPhaseTransitions:
             {"entity_id": 3, "motion_id": 1, "vote": "against"},
         ]
 
-        tally = method._tally_votes(disc)
+        from consensus.methods.phases._voting_helpers import tally_votes
+        tally = tally_votes(disc)
         assert tally[1]["for"] == 2
         assert tally[1]["against"] == 1
 
