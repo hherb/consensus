@@ -282,12 +282,12 @@ class TestACH:
         assert "matrix" in prompt.lower() or "rating" in prompt.lower()
 
     def test_similar_hypothesis_dedup(self):
-        method = get_method("ach")
-        assert method._similar(
+        from consensus.methods.parsing import word_overlap_similar
+        assert word_overlap_similar(
             "The server crashed due to memory issues",
             "The server crashed due to memory problems",
         ) is True
-        assert method._similar(
+        assert word_overlap_similar(
             "The server crashed due to memory issues",
             "A network outage caused the downtime",
         ) is False

@@ -18,6 +18,10 @@ from .construct import ConstructHandler
 from .attack import AttackHandler
 from .revise_red_team import ReviseRedTeamHandler
 from .assess_red_team import AssessRedTeamHandler
+from .hypothesize import HypothesizeHandler
+from .gather_evidence import GatherEvidenceHandler
+from .evaluate_matrix import EvaluateMatrixHandler
+from .analyse_ach import AnalyseACHHandler
 
 __all__ = [
     "SurfaceAssumptionsHandler",
@@ -34,4 +38,8 @@ __all__ = [
     "AttackHandler",
     "ReviseRedTeamHandler",
     "AssessRedTeamHandler",
+    "HypothesizeHandler",
+    "GatherEvidenceHandler",
+    "EvaluateMatrixHandler",
+    "AnalyseACHHandler",
 ]
