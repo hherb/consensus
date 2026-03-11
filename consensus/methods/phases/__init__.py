@@ -32,6 +32,10 @@ from .diagnose_beliefs import DiagnoseHandler
 from .deliberate import DeliberateHandler
 from .vote import VoteHandler
 from .tally import TallyHandler
+from .decompose import DecomposeHandler
+from .analyze_subquestions import AnalyzeSubquestionsHandler
+from .integrate_subquestions import IntegrateSubquestionsHandler
+from .recompose import RecomposeHandler
 
 __all__ = [
     "SurfaceAssumptionsHandler",
@@ -62,4 +66,8 @@ __all__ = [
     "DeliberateHandler",
     "VoteHandler",
     "TallyHandler",
+    "DecomposeHandler",
+    "AnalyzeSubquestionsHandler",
+    "IntegrateSubquestionsHandler",
+    "RecomposeHandler",
 ]

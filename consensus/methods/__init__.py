@@ -20,6 +20,7 @@ from .red_team import RedTeamBlueTeam
 from .delphi import DelphiMethod
 from .voting import VotingMethod
 from .counterfactual import CounterfactualStressTest
+from .recursive_decomposition import RecursiveDecomposition
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ _METHODS: dict[str, type[DiscussionMethod]] = {
     "delphi": DelphiMethod,
     "voting": VotingMethod,
     "counterfactual": CounterfactualStressTest,
+    "recursive_decomposition": RecursiveDecomposition,
 }
 _INSTANCES: dict[str, DiscussionMethod] = {}
 _METHODS_METADATA: list[dict] | None = None
@@ -100,4 +102,5 @@ __all__ = [
     "AdversarialCollaboration", "RedTeamBlueTeam", "DelphiMethod",
     "VotingMethod",
     "CounterfactualStressTest",
+    "RecursiveDecomposition",
 ]

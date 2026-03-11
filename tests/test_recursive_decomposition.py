@@ -208,3 +208,106 @@ class TestRecomposeHandler:
         result = handler.process_response("My synthesis.", ai_entity, disc)
         assert result.display_content == "My synthesis."
         assert result.extracted_data == {}
+
+
+class TestRecursiveDecompositionMethod:
+    def test_registered_in_registry(self):
+        from consensus.methods import get_method, list_methods
+        method = get_method("recursive_decomposition")
+        assert method.name == "recursive_decomposition"
+        assert method.display_name == "Recursive Decomposition"
+
+        names = [m["name"] for m in list_methods()]
+        assert "recursive_decomposition" in names
+
+    def test_has_four_phases(self):
+        from consensus.methods import get_method
+        method = get_method("recursive_decomposition")
+        assert len(method.default_phases) == 4
+        assert [p.name for p in method.default_phases] == [
+            "decompose", "analyze", "integrate", "recompose"
+        ]
+
+    def test_init_state(self):
+        from consensus.methods import get_method
+        method = get_method("recursive_decomposition")
+        disc = Discussion(topic="test", discussion_method="recursive_decomposition")
+        state = method.init_state(disc)
+        assert state["current_phase"] == "decompose"
+        assert state["sub_questions"] == []
+        assert state["sub_question_analyses"] == {}
+
+    def test_phase_transitions(self):
+        from consensus.methods import get_method
+        method = get_method("recursive_decomposition")
+        disc = Discussion(topic="test", discussion_method="recursive_decomposition")
+        disc.method_state = method.init_state(disc)
+
+        disc.method_state["sub_questions"] = ["Q1", "Q2"]
+        disc.method_state["phase_round"] = 2
+        assert method.should_advance_phase(disc) is True
+        new_phase = method.advance_phase(disc)
+        assert new_phase.name == "analyze"
+
+        disc.method_state["phase_round"] = 2
+        assert method.should_advance_phase(disc) is True
+        new_phase = method.advance_phase(disc)
+        assert new_phase.name == "integrate"
+
+        disc.method_state["phase_round"] = 2
+        assert method.should_advance_phase(disc) is True
+        new_phase = method.advance_phase(disc)
+        assert new_phase.name == "recompose"
+
+        disc.method_state["phase_round"] = 2
+        assert method.should_advance_phase(disc) is True
+        result = method.advance_phase(disc)
+        assert result is None
+
+    def test_conclusion_prompt_includes_subquestions(self):
+        from consensus.methods import get_method
+        method = get_method("recursive_decomposition")
+        disc = Discussion(topic="Why is the sky blue?",
+                          discussion_method="recursive_decomposition")
+        disc.method_state = {
+            "sub_questions": [
+                "What is Rayleigh scattering?",
+                "How does wavelength affect scattering?",
+            ],
+        }
+        prompt = method.get_conclusion_prompt(disc)
+        assert "Why is the sky blue?" in prompt
+        assert "Rayleigh scattering" in prompt
+        assert "wavelength" in prompt
+        assert "Sub-question findings" in prompt
+
+    def test_system_prompts_delegate_to_handlers(self, ai_entity):
+        from consensus.methods import get_method
+        method = get_method("recursive_decomposition")
+        disc = Discussion(topic="Test topic?",
+                          discussion_method="recursive_decomposition")
+        disc.method_state = method.init_state(disc)
+
+        prompt = method.get_system_prompt(ai_entity, disc)
+        assert "DECOMPOSITION" in prompt
+
+        disc.method_state["current_phase"] = "analyze"
+        disc.method_state["sub_questions"] = ["Q1?"]
+        prompt = method.get_system_prompt(ai_entity, disc)
+        assert "SUB-QUESTION ANALYSIS" in prompt
+
+        disc.method_state["current_phase"] = "integrate"
+        prompt = method.get_system_prompt(ai_entity, disc)
+        assert "INTEGRATION" in prompt
+
+        disc.method_state["current_phase"] = "recompose"
+        prompt = method.get_system_prompt(ai_entity, disc)
+        assert "RECOMPOSITION" in prompt
+
+    def test_to_dict(self):
+        from consensus.methods import get_method
+        method = get_method("recursive_decomposition")
+        d = method.to_dict()
+        assert d["name"] == "recursive_decomposition"
+        assert d["display_name"] == "Recursive Decomposition"
+        assert len(d["phases"]) == 4
