@@ -57,5 +57,5 @@ def _split_on_headers(content: str, pattern: str) -> list[str]:
     """Split content on header patterns, returning the text after each."""
     parts = re.split(pattern, content, flags=re.IGNORECASE)
     # First element is text before the first header (preamble) — skip it
-    sections = [p for p in parts[1:] if p.strip()] if len(parts) > 1 else []
-    return sections
+    # Preserve all sections including blank ones to maintain index alignment
+    return parts[1:] if len(parts) > 1 else []

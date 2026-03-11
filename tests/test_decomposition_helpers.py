@@ -77,6 +77,17 @@ class TestExtractSubquestionAnalyses:
         assert "Continued analysis" in result[0]
         assert "Even more detail" in result[0]
 
+    def test_blank_body_header_preserves_index(self):
+        content = (
+            "**Sub-question 1:** \n\n"
+            "**Sub-question 2:** Second analysis here."
+        )
+        result = extract_subquestion_analyses(content, 2)
+        assert len(result) == 2
+        # Index 0 should be empty (blank body), index 1 should have content
+        assert result[0].strip() == ""
+        assert "Second analysis" in result[1]
+
     def test_zero_subquestions_returns_empty(self):
         result = extract_subquestion_analyses("Some content", 0)
         assert result == {}
