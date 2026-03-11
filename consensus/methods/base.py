@@ -47,7 +47,6 @@ class ProcessedResponse:
 
     display_content: str  # what gets stored as the message content
     extracted_data: dict = field(default_factory=dict)
-    phase_complete: bool = False  # hint that this phase should end
 
 
 class DiscussionMethod(ABC):
