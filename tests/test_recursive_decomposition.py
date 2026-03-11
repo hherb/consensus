@@ -148,3 +148,63 @@ class TestAnalyzeHandler:
         assert handler.should_advance(disc) is False
         disc.method_state["phase_round"] = 2
         assert handler.should_advance(disc) is True
+
+
+class TestIntegrateHandler:
+    def test_system_prompt_mentions_reinforcements_and_conflicts(self, ai_entity):
+        from consensus.methods.phases.integrate_subquestions import IntegrateSubquestionsHandler
+        handler = IntegrateSubquestionsHandler()
+        disc = Discussion(topic="Big question?",
+                          discussion_method="recursive_decomposition")
+        disc.method_state = {"current_phase": "integrate"}
+        prompt = handler.get_system_prompt(ai_entity, disc)
+        assert "Big question?" in prompt
+        assert "Reinforcements" in prompt
+        assert "Conflicts" in prompt
+        assert "Gaps" in prompt
+
+    def test_turn_prompt(self, ai_entity):
+        from consensus.methods.phases.integrate_subquestions import IntegrateSubquestionsHandler
+        handler = IntegrateSubquestionsHandler()
+        disc = Discussion(topic="test", discussion_method="recursive_decomposition")
+        prompt = handler.get_turn_prompt(ai_entity, disc)
+        assert "TestAI" in prompt
+        assert "patterns" in prompt.lower() or "contradictions" in prompt.lower()
+
+    def test_no_structured_extraction(self, ai_entity):
+        from consensus.methods.phases.integrate_subquestions import IntegrateSubquestionsHandler
+        handler = IntegrateSubquestionsHandler()
+        disc = Discussion(topic="test", discussion_method="recursive_decomposition")
+        disc.method_state = {}
+        result = handler.process_response("Prose integration.", ai_entity, disc)
+        assert result.display_content == "Prose integration."
+        assert result.extracted_data == {}
+
+
+class TestRecomposeHandler:
+    def test_system_prompt_mentions_synthesis(self, ai_entity):
+        from consensus.methods.phases.recompose import RecomposeHandler
+        handler = RecomposeHandler()
+        disc = Discussion(topic="Original question?",
+                          discussion_method="recursive_decomposition")
+        disc.method_state = {"current_phase": "recompose"}
+        prompt = handler.get_system_prompt(ai_entity, disc)
+        assert "Original question?" in prompt
+        assert "synthesize" in prompt.lower() or "synthesis" in prompt.lower()
+
+    def test_turn_prompt(self, ai_entity):
+        from consensus.methods.phases.recompose import RecomposeHandler
+        handler = RecomposeHandler()
+        disc = Discussion(topic="test", discussion_method="recursive_decomposition")
+        prompt = handler.get_turn_prompt(ai_entity, disc)
+        assert "TestAI" in prompt
+        assert "coherent" in prompt.lower() or "synthesize" in prompt.lower()
+
+    def test_no_structured_extraction(self, ai_entity):
+        from consensus.methods.phases.recompose import RecomposeHandler
+        handler = RecomposeHandler()
+        disc = Discussion(topic="test", discussion_method="recursive_decomposition")
+        disc.method_state = {}
+        result = handler.process_response("My synthesis.", ai_entity, disc)
+        assert result.display_content == "My synthesis."
+        assert result.extracted_data == {}
