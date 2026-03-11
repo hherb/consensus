@@ -21,11 +21,15 @@ This method was proposed during a consensus discussion (discussion #25) about ex
 
 ### Phase 1: Decompose (1 round)
 
-Each participant proposes 3-7 independent, answerable sub-questions that collectively address the main question. Sub-questions are extracted from responses using `parse_numbered_list`, deduplicated via `word_overlap_similar`, and stored in `method_state["sub_questions"]`.
+Each participant proposes 3-7 independent, answerable sub-questions that collectively address the main question. Sub-questions are extracted from responses using `parse_numbered_list`, deduplicated via `word_overlap_similar` (threshold: 0.7, matching ACH), and stored in `method_state["sub_questions"]`.
 
 The moderator's summary after this phase consolidates proposed sub-questions and notes overlaps/complements. The parsed list in `method_state` becomes the canonical set for subsequent phases.
 
-**Advancement**: When `sub_questions` is non-empty and `phase_round > 1`.
+**State initialization**: `DecomposeHandler.init_state()` returns `{"sub_questions": [], "sub_question_analyses": {}}` — all cross-phase state keys.
+
+**Advancement**: When `sub_questions` is non-empty and `phase_round > 1` (i.e., after at least one complete round).
+
+**Transition messages**: Default `PhaseHandler.get_transition_message()` is sufficient for all phases — the `phase.description` text provides adequate context.
 
 ### Phase 2: Analyze (1 round)
 
@@ -89,6 +93,7 @@ The moderator's conclusion prompt directs it to: (1) state the sub-questions ana
 | File | Change |
 |------|--------|
 | `consensus/methods/__init__.py` | Import and register `RecursiveDecomposition` in `_METHODS` and `__all__` |
+| `consensus/methods/phases/__init__.py` | Import and export new phase handlers |
 
 ### No Other Changes Required
 
@@ -98,19 +103,39 @@ The moderator's conclusion prompt directs it to: (1) state the sub-questions ana
 
 ## Helper: `_decomposition_helpers.py`
 
-### `extract_subquestion_analyses(content: str, sub_questions: list[str]) -> dict[int, str]`
+### `extract_subquestion_analyses(content: str, num_subquestions: int) -> dict[int, str]`
 
-Parses a response addressing multiple sub-questions in sequence. Splits on headers matching patterns like:
+Parses a single participant's response addressing multiple sub-questions in sequence. Splits on headers matching patterns like:
 - `**Sub-question 1:**`
 - `**Q1:**`
 - `**1.**` (bold numbered)
 
-Returns a mapping of sub-question index (0-based) to analysis text. Falls back to associating the entire response with all sub-questions if no structure is detected (graceful degradation — the analysis is still captured, just not segmented).
+Returns a mapping of sub-question index (0-based) to analysis text.
+
+**Fallback**: If no structured headers are detected, the entire response is associated with every sub-question index (i.e., returns `{0: full_text, 1: full_text, ...}`). This ensures analyses are never silently lost — they're captured unsegmented rather than discarded.
+
+### Accumulation logic in `AnalyzeHandler.process_response()`
+
+The handler calls `extract_subquestion_analyses()` to get per-sub-question text for the current entity, then appends to the state's accumulator:
+
+```python
+extractions = extract_subquestion_analyses(content, len(sub_questions))
+for idx, analysis_text in extractions.items():
+    key = str(idx)  # string keys for JSON serialization
+    analyses = state["sub_question_analyses"]
+    analyses.setdefault(key, []).append({
+        "entity": entity.name,
+        "analysis": analysis_text,
+    })
+```
+
+String keys are used in `sub_question_analyses` because `method_state` is JSON-serialized to SQLite.
 
 ## Prompt Design
 
-### Decompose — System Prompt
+### Decompose Phase
 
+**System prompt:**
 ```
 You are {name}, participating in a Recursive Decomposition analysis.
 Topic: {topic}
@@ -136,8 +161,22 @@ For each, provide 1-2 sentences explaining why this sub-question matters
 for answering the main question.
 ```
 
-### Analyze — System Prompt
+**Turn prompt:**
+```
+It is your turn, {name}. Propose 3-7 sub-questions that, if each were
+answered thoroughly, would collectively address the main question.
+```
 
+**Summary prompt:**
+```
+{speaker_name} has proposed their sub-questions. Briefly note the
+sub-questions proposed and how they complement or overlap with previously
+proposed ones. Next: {next_speaker_name}.
+```
+
+### Analyze Phase
+
+**System prompt:**
 ```
 You are {name}, participating in a Recursive Decomposition analysis.
 Topic: {topic}
@@ -159,8 +198,22 @@ For each sub-question, provide your best reasoning, evidence, and any
 caveats or uncertainties.
 ```
 
-### Integrate — System Prompt
+**Turn prompt:**
+```
+It is your turn, {name}. Address each of the {n} sub-questions below
+with substantive analysis. Use the **Sub-question N:** format for each.
+```
 
+**Summary prompt:**
+```
+{speaker_name} has provided their analysis of all sub-questions.
+Briefly note key points and any notable differences from prior analyses.
+Next: {next_speaker_name}.
+```
+
+### Integrate Phase
+
+**System prompt:**
 ```
 You are {name}, participating in a Recursive Decomposition analysis.
 Topic: {topic}
@@ -180,8 +233,21 @@ history. Examine them as a whole and identify:
    all sub-questions together?
 ```
 
-### Recompose — System Prompt
+**Turn prompt:**
+```
+It is your turn, {name}. Examine all sub-question analyses as a whole.
+What patterns, contradictions, or gaps emerge?
+```
 
+**Summary prompt:**
+```
+{speaker_name} has identified cross-cutting patterns. Briefly note the
+key reinforcements, conflicts, and gaps found. Next: {next_speaker_name}.
+```
+
+### Recompose Phase
+
+**System prompt:**
 ```
 You are {name}, participating in a Recursive Decomposition analysis.
 Topic: {topic}
@@ -198,6 +264,47 @@ Your synthesis should:
 - Present a clear, well-structured answer to: "{topic}"
 - Note any aspects that remain unresolved or would benefit from deeper
   decomposition
+```
+
+**Turn prompt:**
+```
+It is your turn, {name}. Synthesize everything into a coherent answer
+to the original question.
+```
+
+**Summary prompt:**
+```
+{speaker_name} has proposed their synthesis. Briefly note how it
+compares to prior syntheses and what new perspectives it brings.
+Next: {next_speaker_name}.
+```
+
+### Conclusion Prompt (method-level override)
+
+The `RecursiveDecomposition` class overrides `get_conclusion_prompt()`:
+
+```
+The Recursive Decomposition analysis is complete.
+
+Original question: "{topic}"
+
+The group decomposed this into the following sub-questions:
+{numbered list of sub_questions}
+
+Provide a comprehensive final synthesis:
+1. **Sub-question findings** — Summarize the key findings for each
+   sub-question, noting where participants agreed and diverged
+2. **Cross-cutting patterns** — What reinforcements, conflicts, and
+   emergent insights were identified during integration?
+3. **Consolidated answer** — Provide a clear, unified answer to the
+   original question that accounts for all sub-analyses
+4. **Confidence and caveats** — What aspects of the answer are well-
+   supported vs. uncertain?
+5. **Decomposition assessment** — Were any sub-questions too complex for
+   single-level analysis and would benefit from further decomposition?
+
+Ground your synthesis in the specific analyses and integrations provided
+by participants.
 ```
 
 ## Roadmap
