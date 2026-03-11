@@ -25,6 +25,10 @@ from .analyse_ach import AnalyseACHHandler
 from .estimate import EstimateHandler
 from .revise_delphi import ReviseDelphiHandler
 from .synthesise_delphi import SynthesiseDelphiHandler
+from .frame_hypotheses import FrameHypothesesHandler
+from .prior_beliefs import PriorBeliefsHandler
+from .diffuse_beliefs import DiffuseBeliefsHandler
+from .diagnose_beliefs import DiagnoseHandler
 
 __all__ = [
     "SurfaceAssumptionsHandler",
@@ -48,4 +52,8 @@ __all__ = [
     "EstimateHandler",
     "ReviseDelphiHandler",
     "SynthesiseDelphiHandler",
+    "FrameHypothesesHandler",
+    "PriorBeliefsHandler",
+    "DiffuseBeliefsHandler",
+    "DiagnoseHandler",
 ]

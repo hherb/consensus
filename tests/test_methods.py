@@ -5,6 +5,10 @@ import pytest
 
 from consensus.methods import get_method, list_methods
 from consensus.methods.base import Phase, ProcessedResponse
+from consensus.methods.phases._belief_helpers import (
+    check_convergence,
+    extract_hypotheses_from_framing,
+)
 from consensus.models import Discussion, Entity, EntityType
 
 
@@ -131,7 +135,7 @@ class TestBeliefDiffusion:
             {"round": 3, "entity_id": 1, "entity_name": "A",
              "beliefs": {"H1": 0.72, "H2": 0.28}},
         ]
-        assert method._check_convergence(disc) is True
+        assert check_convergence(disc) is True
 
     def test_no_convergence_with_large_shift(self):
         method = get_method("belief_diffusion")
@@ -145,7 +149,7 @@ class TestBeliefDiffusion:
             {"round": 3, "entity_id": 1, "entity_name": "A",
              "beliefs": {"H1": 0.4, "H2": 0.6}},
         ]
-        assert method._check_convergence(disc) is False
+        assert check_convergence(disc) is False
 
     def test_phase_system_prompts(self, ai_entity):
         method = get_method("belief_diffusion")
@@ -177,7 +181,7 @@ class TestBeliefDiffusion:
             "2. Climate change is primarily natural\n"
             "3. Climate change is a combination of both factors"
         )
-        hyps = method.extract_hypotheses_from_framing(content)
+        hyps = extract_hypotheses_from_framing(content)
         assert len(hyps) == 3
         assert "human-caused" in hyps[0].lower()
 
