@@ -7,12 +7,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..base import Phase
+import logging
+
+from ..base import Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
 from ._belief_helpers import (
     DEFAULT_CONVERGENCE_THRESHOLD,
     MAX_DIFFUSE_ROUNDS,
+    extract_hypotheses_from_framing,
 )
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ...models import Discussion, Entity
@@ -47,6 +52,15 @@ class FrameHypothesesHandler(PhaseHandler):
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
         return ""
+
+    def process_response(self, content: str, entity: Entity,
+                         discussion: Discussion) -> ProcessedResponse:
+        """Extract hypotheses from the moderator's framing response."""
+        hypotheses = extract_hypotheses_from_framing(content)
+        if hypotheses:
+            discussion.method_state["hypotheses"] = hypotheses
+            logger.info("Extracted %d hypotheses from framing", len(hypotheses))
+        return ProcessedResponse(display_content=content)
 
     def should_advance(self, discussion: Discussion) -> bool:
         return bool(discussion.method_state.get("hypotheses"))

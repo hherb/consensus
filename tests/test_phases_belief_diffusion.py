@@ -265,6 +265,28 @@ class TestFrameHypothesesHandler:
         discussion.method_state["hypotheses"] = ["H1", "H2"]
         assert handler.should_advance(discussion) is True
 
+    def test_process_response_extracts_hypotheses(self, entity, discussion):
+        handler = FrameHypothesesHandler()
+        discussion.method_state["hypotheses"] = []
+        content = (
+            "I've identified these hypotheses:\n"
+            "1. Climate change is primarily human-caused\n"
+            "2. Climate change is primarily natural cycles\n"
+            "3. Climate change is a mix of both factors\n"
+        )
+        result = handler.process_response(content, entity, discussion)
+        assert len(discussion.method_state["hypotheses"]) == 3
+        assert "human-caused" in discussion.method_state["hypotheses"][0]
+        assert result.display_content == content
+
+    def test_process_response_no_hypotheses_found(self, entity, discussion):
+        handler = FrameHypothesesHandler()
+        discussion.method_state["hypotheses"] = []
+        content = "Let me think about this topic..."
+        result = handler.process_response(content, entity, discussion)
+        assert discussion.method_state["hypotheses"] == []
+        assert result.display_content == content
+
 
 # -- PriorBeliefsHandler tests --
 
