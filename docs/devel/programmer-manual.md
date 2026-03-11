@@ -25,6 +25,7 @@ document for detailed coverage.
 | 12 | [Cost Tracking](12-cost-tracking.md) | PricingCache, OpenRouter integration, per-message cost, model name matching |
 | 13 | [MCP Expert Plugins](13-mcp-expert-plugins.md) | MCPToolProvider, expert entities, consult_expert meta-tool, SSE progress events |
 | 14 | [MCP Server](14-mcp-server.md) | ConsensusMCPServer, 13 tools for external AI agents, agent memory, run_discussion |
+| 15 | [Discussion Methods](15-discussion-methods.md) | DiscussionMethod ABC, composable PhaseHandler architecture, method registry, creating new methods |
 
 ## Quick Architecture Diagram
 
@@ -59,6 +60,10 @@ ConsensusApp (app.py + app_*.py domain modules)
     |
     +-- ImageTools (tools_image.py)
     |     Image storage, vision-model description, multimodal context
+    |
+    +-- DiscussionMethod (methods/)
+    |     Pluggable analytical frameworks, composable PhaseHandler instances
+    |     9 methods assembled from 27 reusable phase handlers
     |
     +-- PricingCache (pricing.py)
     |     Model cost lookup via OpenRouter, fuzzy name matching
@@ -113,6 +118,10 @@ ConsensusMCPServer (mcp_server.py)  ← external AI agents connect here
   the knowledge graph, and the ability to trigger full automated discussions.
 - **Cost tracking.** Per-message cost calculation using OpenRouter pricing data,
   with fuzzy model name matching and automatic cache refresh.
+- **Composable discussion methods.** Structured methods are assembled
+  declaratively from reusable `PhaseHandler` instances. Each handler
+  encapsulates prompts, response processing, state init, and advancement logic
+  for one phase. New methods can be created by composing existing handlers.
 
 ---
 

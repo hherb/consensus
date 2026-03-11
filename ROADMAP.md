@@ -13,6 +13,7 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ✅ Done  | Knowledge graph | Extract and query concepts, positions, and relationships from discussion history |
 | **Discussion Methods** | | |
 | ✅ Done | Pluggable discussion method system | `consensus/methods/` — `DiscussionMethod` ABC with phase management, prompt hooks, response post-processing, round lifecycle hooks, turn ordering, and serialisation. Method registry in `__init__.py`. Integrated into moderator and discussion flow |
+| ✅ Done | Composable phase library | All 8 structured methods refactored from monolithic classes into declarative assemblies of reusable `PhaseHandler` instances. 27 handlers + 3 shared helper modules in `consensus/methods/phases/`. `__init_subclass__` auto-derives phases from handlers. Zero changes to engine call sites — purely internal refactoring with full backward compatibility |
 | ✅ Done | Open Discussion method | Default round-robin with optional Devil's Advocate — wraps existing behaviour as a method |
 | ✅ Done | Analysis of Competing Hypotheses (ACH) | Intelligence-analysis method: enumerate hypotheses → gather evidence → rate each hypothesis against each evidence piece → identify diagnostic evidence. Four phases with hypothesis matrix tracking |
 | ✅ Done | Belief State Diffusion | LLM-native method: participants maintain explicit probability distributions over hypotheses, update beliefs each round with justification, automatic convergence detection. Produces graphable belief trajectories |
@@ -52,7 +53,7 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ✅ Done | OpenAI API compatibility | Uses `max_completion_tokens` for newer models, DeepSeek DSML tool-call parsing |
 | **Code Quality & Maintainability** | | |
 | ✅ Done | Database migration system | File-based SQL migrations in `consensus/migrations/`, tracked in `migrations` table, run idempotently on startup (`migrator.py`) |
-| ✅ Done | Comprehensive test suite | 425 tests across 20+ modules covering database, app, config, models, moderator, sessions, tools, documents, MCP client/server, pricing, methods |
+| ✅ Done | Comprehensive test suite | 857 tests across 20+ modules covering database, app, config, models, moderator, sessions, tools, documents, MCP client/server, pricing, methods, and composable phase handlers |
 | ✅ Done | Refactor large modules | `ConsensusApp` split into `app_providers.py`, `app_entities.py`, `app_discussion_setup.py`, `app_discussion_flow.py`, `app_discussion_state.py`; `Database` split into `db/` subpackage with 9 domain-specific mixins; `app.js` refactored into ES modules |
 | **Specialist Plugins** | | |
 | ✅ Done | MCP client (stdio transport) | MCPToolProvider class connecting to external MCP servers via stdio; expert entities that get one turn when invoked then step back |

@@ -36,6 +36,10 @@ ConsensusApp (app.py + app_*.py domain modules)
     +-- ImageTools (tools_image.py)
     |     Image storage, vision-model description, multimodal context blocks
     |
+    +-- DiscussionMethod (methods/)
+    |     Pluggable analytical frameworks via composable PhaseHandler instances
+    |     9 methods assembled from 27 reusable handlers in methods/phases/
+    |
     +-- PricingCache (pricing.py)
     |     Model cost lookup via OpenRouter, fuzzy name matching, SQLite cache
     |
@@ -100,7 +104,7 @@ class MessageRole(Enum):
 | `Entity` | A discussion participant | `name`, `entity_type`, `ai_config`, `id`, `avatar_color` |
 | `Message` | A single message in a discussion | `entity_id`, `entity_name`, `content`, `role`, `timestamp`, plus AI metadata (tokens, latency, cost), `tool_calls_json` |
 | `StoryboardEntry` | A moderator summary after a turn | `turn_number`, `summary`, `speaker_name`, `timestamp` |
-| `Discussion` | Full in-memory discussion state | `entities`, `messages`, `storyboard`, `turn_order`, `current_turn_index`, `turn_number`, `is_active` |
+| `Discussion` | Full in-memory discussion state | `entities`, `messages`, `storyboard`, `turn_order`, `current_turn_index`, `turn_number`, `is_active`, `discussion_method`, `method_state` |
 
 The `Discussion` class has two important computed properties:
 

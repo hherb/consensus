@@ -36,6 +36,21 @@ Different problems demand different reasoning structures. Consensus provides a `
 
 Methods are selected per-discussion at setup time. The architecture is extensible — new methods implement the `DiscussionMethod` ABC and register in the method registry.
 
+#### Composable Phase Library
+
+Internally, all structured methods are built from **composable `PhaseHandler` instances** — self-contained units that encapsulate prompts, response processing, state initialization, and advancement logic for a single phase. Methods are assembled declaratively as ordered tuples of handlers:
+
+```python
+class KeyAssumptionsCheck(DiscussionMethod):
+    phase_handlers = (
+        SurfaceAssumptionsHandler(),
+        ChallengeAssumptionsHandler(),
+        AssessAssumptionsHandler(),
+    )
+```
+
+This design means phases can be reused across methods (e.g. the same `SurfaceAssumptionsHandler` could serve as a first phase in another method), and new methods can be created by composing existing handlers without writing boilerplate. The library includes 27 handlers and 3 shared helper modules in `consensus/methods/phases/`.
+
 ### Multi-Provider AI Support
 - **OpenAI-compatible API** support — works with OpenAI, Anthropic, Ollama, DeepSeek, LMStudio, vLLM, and any compatible endpoint
 - **Provider registry** with pre-seeded defaults (Ollama, Anthropic, DeepSeek, OpenAI)
@@ -273,6 +288,10 @@ ConsensusApp — orchestrator, state management, event emitter
     ├── app_discussion_flow.py — turn flow operations
     ├── app_discussion_state.py — discussion state management
     ├── Moderator — turn flow, AI generation, summaries
+    ├── DiscussionMethod (methods/) — pluggable analytical frameworks
+    │     ├── PhaseHandler (methods/phase_handler.py) — composable phase ABC
+    │     ├── 9 method classes assembled from 27 phase handlers
+    │     └── methods/phases/ — reusable handler implementations + helpers
     ├── AIClient — async OpenAI-compatible HTTP client (httpx)
     ├── Database (db/) — thread-safe SQLite persistence (domain-specific mixins)
     ├── PricingCache — model cost lookup via OpenRouter
