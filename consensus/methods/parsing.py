@@ -14,8 +14,9 @@ from typing import Optional, Union
 def extract_json_block(content: str) -> Optional[Union[dict, list]]:
     """Extract the first JSON object or array from a fenced code block.
 
-    Handles both ```json and ``` fences.  Returns None if no valid
-    JSON block is found.
+    Handles both ```json and ``` fences.  If the response contains
+    multiple JSON blocks, only the first is returned.  Returns None if
+    no valid JSON block is found.
     """
     match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```',
                       content, re.DOTALL)

@@ -107,12 +107,20 @@ class DiscussionMethod(ABC):
         set, merges each handler's ``init_state`` into the base state.
         Subclasses can override to populate hypothesis lists, etc.
         """
-        state = {
+        state: dict[str, Any] = {
             "current_phase": self.default_phases[0].name if self.default_phases else "",
             "phase_round": 1,
         }
         for handler in self.phase_handlers:
-            state.update(handler.init_state(discussion))
+            handler_state = handler.init_state(discussion)
+            for key in handler_state:
+                if key in state:
+                    logger.warning(
+                        "Handler %s.init_state key %r overwrites existing "
+                        "state from a previous handler",
+                        type(handler).__name__, key,
+                    )
+            state.update(handler_state)
         return state
 
     def current_phase(self, discussion: Discussion) -> Optional[Phase]:

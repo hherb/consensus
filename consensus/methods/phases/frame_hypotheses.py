@@ -45,6 +45,9 @@ class FrameHypothesesHandler(PhaseHandler):
             "diffuse_round": 0,
         }
 
+    # Moderator-only phase — prompts are empty because the moderator
+    # uses its own framing logic; participants do not speak.
+
     def get_system_prompt(self, entity: Entity,
                           discussion: Discussion) -> str:
         return ""

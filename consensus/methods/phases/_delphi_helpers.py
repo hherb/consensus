@@ -116,11 +116,13 @@ def check_convergence(discussion: Discussion) -> bool:
         return False
 
     current_values.sort()
+    # Use index-based median and quartiles (upper-middle for even
+    # lengths) — sufficient for Delphi convergence detection where
+    # approximate spread matters more than statistical precision.
     median = current_values[len(current_values) // 2]
     if median == 0:
         return False
 
-    # IQR / median
     q1 = current_values[len(current_values) // 4]
     q3 = current_values[3 * len(current_values) // 4]
     iqr = q3 - q1

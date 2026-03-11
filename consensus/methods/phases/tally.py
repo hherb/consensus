@@ -27,9 +27,8 @@ class TallyHandler(PhaseHandler):
         rounds=1,
     )
 
-    # ------------------------------------------------------------------
-    # Prompts — moderator handles tally, so these are empty
-    # ------------------------------------------------------------------
+    # Moderator-only phase — prompts are empty because the moderator
+    # tallies and announces results; participants do not speak.
 
     def get_system_prompt(self, entity: Entity,
                           discussion: Discussion) -> str:

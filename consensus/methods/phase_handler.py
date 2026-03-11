@@ -8,7 +8,7 @@ initialization.  Methods assemble ordered sequences of handlers.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from .base import Phase, ProcessedResponse
 
@@ -24,7 +24,7 @@ class PhaseHandler(ABC):
     have sensible defaults.
     """
 
-    phase: Phase  # metadata — set as class attribute on each subclass
+    phase: ClassVar[Phase]  # metadata — set as class attribute on each subclass
 
     # ------------------------------------------------------------------
     # Prompt hooks
