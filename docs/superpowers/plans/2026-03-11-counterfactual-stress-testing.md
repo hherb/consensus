@@ -229,8 +229,6 @@ git commit -m "feat(methods): add counterfactual stress testing helpers with tes
 
 ## Chunk 2: CounterfactualDeliberateHandler
 
-## Chunk 2: CounterfactualDeliberateHandler
-
 ### Task 2: Deliberate phase handler
 
 **Files:**
