@@ -14,6 +14,10 @@ from .state_positions import StatePositionsHandler
 from .define_criteria import DefineCriteriaHandler
 from .present_evidence import PresentEvidenceHandler
 from .adjudicate import AdjudicateHandler
+from .construct import ConstructHandler
+from .attack import AttackHandler
+from .revise_red_team import ReviseRedTeamHandler
+from .assess_red_team import AssessRedTeamHandler
 
 __all__ = [
     "SurfaceAssumptionsHandler",
@@ -26,4 +30,8 @@ __all__ = [
     "DefineCriteriaHandler",
     "PresentEvidenceHandler",
     "AdjudicateHandler",
+    "ConstructHandler",
+    "AttackHandler",
+    "ReviseRedTeamHandler",
+    "AssessRedTeamHandler",
 ]
