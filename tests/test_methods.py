@@ -40,6 +40,7 @@ class TestRegistry:
         assert "adversarial_collab" in names
         assert "red_team" in names
         assert "delphi" in names
+        assert "recursive_decomposition" in names
 
     def test_get_method_known(self):
         method = get_method("ach")
