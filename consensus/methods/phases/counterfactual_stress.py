@@ -34,6 +34,11 @@ class StressTestHandler(PhaseHandler):
         allow_tools=True,
     )
 
+    def get_turn_order(self, entity_ids: list[int],
+                       discussion: Discussion) -> list[int]:
+        """Exclude moderator — only participants score impact."""
+        return [eid for eid in entity_ids if eid != discussion.moderator_id]
+
     def _current_claim(self, discussion: Discussion) -> dict | None:
         """Return the claim currently under test, or None."""
         state = discussion.method_state

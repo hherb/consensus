@@ -615,6 +615,15 @@ class TestMethodRegistration:
         assert d["phases"][0]["name"] == "cf_deliberate"
 
 
+class TestStressTestTurnOrder:
+    def test_stress_test_excludes_moderator(self, cf_discussion):
+        handler = StressTestHandler()
+        entity_ids = [100, 1, 2, 3]  # 100 is moderator
+        result = handler.get_turn_order(entity_ids, cf_discussion)
+        assert 100 not in result
+        assert result == [1, 2, 3]
+
+
 class TestDeliberatePreliminaryConclusion:
     """Test that preliminary_conclusion is captured from moderator summary."""
 
