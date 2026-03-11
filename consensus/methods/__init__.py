@@ -19,6 +19,7 @@ from .adversarial_collab import AdversarialCollaboration
 from .red_team import RedTeamBlueTeam
 from .delphi import DelphiMethod
 from .voting import VotingMethod
+from .counterfactual import CounterfactualStressTest
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ _METHODS: dict[str, type[DiscussionMethod]] = {
     "red_team": RedTeamBlueTeam,
     "delphi": DelphiMethod,
     "voting": VotingMethod,
+    "counterfactual": CounterfactualStressTest,
 }
 _INSTANCES: dict[str, DiscussionMethod] = {}
 _METHODS_METADATA: list[dict] | None = None
@@ -97,4 +99,5 @@ __all__ = [
     "PremortemAnalysis", "KeyAssumptionsCheck",
     "AdversarialCollaboration", "RedTeamBlueTeam", "DelphiMethod",
     "VotingMethod",
+    "CounterfactualStressTest",
 ]

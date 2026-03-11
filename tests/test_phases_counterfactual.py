@@ -379,3 +379,233 @@ class TestStressTestHandler:
         msg = handler.get_transition_message(stress_discussion)
         assert "Counterfactual" in msg or "stress" in msg.lower()
         assert "Cars cause significant urban pollution" in msg
+
+
+from consensus.methods.phases.counterfactual_synthesize import SynthesizeHandler
+from consensus.methods.counterfactual import CounterfactualStressTest
+from consensus.methods.phases._counterfactual_helpers import (
+    classify_claim,
+    format_results_table,
+)
+import consensus.methods as _methods_module
+from consensus.methods import get_method, list_methods
+
+
+class TestSynthesizeHandler:
+    @pytest.fixture
+    def handler(self):
+        return SynthesizeHandler()
+
+    def test_phase_metadata(self, handler):
+        assert handler.phase.name == "synthesize"
+        assert handler.phase.rounds == 1
+        assert handler.phase.allow_tools is False
+
+    def test_turn_order_moderator_only(self, handler, cf_discussion):
+        entity_ids = [1, 2, 3]
+        result = handler.get_turn_order(entity_ids, cf_discussion)
+        assert result == [cf_discussion.moderator_id]
+
+    def test_system_prompt_empty(self, handler, entity, cf_discussion):
+        assert handler.get_system_prompt(entity, cf_discussion) == ""
+
+    def test_turn_prompt_empty(self, handler, entity, cf_discussion):
+        assert handler.get_turn_prompt(entity, cf_discussion) == ""
+
+    def test_transition_message(self, handler, cf_discussion):
+        msg = handler.get_transition_message(cf_discussion)
+        assert "Synthesis" in msg
+
+
+class TestCounterfactualStressTestIntegration:
+    @pytest.fixture
+    def method(self):
+        return CounterfactualStressTest()
+
+    @pytest.fixture
+    def discussion(self, method):
+        disc, _ = _make_discussion()
+        disc.method_state = method.init_state(disc)
+        return disc
+
+    # -- Phase auto-derivation --
+
+    def test_phases_auto_derived(self, method):
+        assert len(method.default_phases) == 4
+        assert method.default_phases[0].name == "cf_deliberate"
+        assert method.default_phases[1].name == "extract"
+        assert method.default_phases[2].name == "stress_test"
+        assert method.default_phases[3].name == "synthesize"
+
+    # -- init_state --
+
+    def test_init_state_default(self, method, discussion):
+        state = discussion.method_state
+        assert state["current_phase"] == "cf_deliberate"
+        assert state["phase_round"] == 1
+        assert state["preliminary_conclusion"] is None
+        assert state["prior_conclusion"] is None
+        assert state["claims"] == []
+        assert state["claim_results"] == []
+        assert state["current_claim_index"] == 0
+        assert state["extraction_failed"] is False
+        assert state["extraction_attempts"] == 0
+
+    def test_init_state_with_prior_conclusion(self, method):
+        """Test that prior_conclusion skips deliberation and populates state."""
+        disc, _ = _make_discussion()
+        disc.method_state = {"prior_conclusion": "AI will dominate."}
+        state = method.init_state(disc)
+        assert state["current_phase"] == "extract"
+        assert state["preliminary_conclusion"] == "AI will dominate."
+        assert state["prior_conclusion"] == "AI will dominate."
+
+    # -- on_round_complete --
+
+    def test_on_round_complete_non_stress(self, method, discussion):
+        discussion.method_state["phase_round"] = 1
+        method.on_round_complete(discussion)
+        assert discussion.method_state["phase_round"] == 2
+        assert discussion.method_state["current_claim_index"] == 0
+
+    def test_on_round_complete_stress_test(self, method, discussion):
+        discussion.method_state["current_phase"] = "stress_test"
+        discussion.method_state["phase_round"] = 1
+        discussion.method_state["claims"] = [
+            {"id": 1, "text": "Claim A"},
+            {"id": 2, "text": "Claim B"},
+        ]
+        discussion.method_state["claim_results"] = [
+            {"claim_id": 1, "claim_text": "Claim A",
+             "scores": {"Analyst_1": 4, "Analyst_2": 5},
+             "avg_score": None, "classification": None},
+            {"claim_id": 2, "claim_text": "Claim B",
+             "scores": {}, "avg_score": None, "classification": None},
+        ]
+        discussion.method_state["current_claim_index"] = 0
+
+        method.on_round_complete(discussion)
+
+        assert discussion.method_state["phase_round"] == 2
+        assert discussion.method_state["current_claim_index"] == 1
+        assert discussion.method_state["claim_results"][0]["avg_score"] == 4.5
+        assert discussion.method_state["claim_results"][0]["classification"] == "LOAD-BEARING"
+
+    def test_on_round_complete_stress_empty_scores(self, method, discussion):
+        discussion.method_state["current_phase"] = "stress_test"
+        discussion.method_state["claims"] = [{"id": 1, "text": "C"}]
+        discussion.method_state["claim_results"] = [
+            {"claim_id": 1, "claim_text": "C",
+             "scores": {}, "avg_score": None, "classification": None},
+        ]
+        discussion.method_state["current_claim_index"] = 0
+
+        method.on_round_complete(discussion)
+
+        assert discussion.method_state["current_claim_index"] == 1
+        assert discussion.method_state["claim_results"][0]["avg_score"] is None
+
+    # -- get_conclusion_prompt --
+
+    def test_get_conclusion_prompt(self, method, discussion):
+        discussion.method_state["preliminary_conclusion"] = "Cars should be banned."
+        discussion.method_state["claim_results"] = [
+            {"claim_id": 1, "claim_text": "Pollution claim",
+             "scores": {"A": 5}, "avg_score": 5.0, "classification": "LOAD-BEARING"},
+            {"claim_id": 2, "claim_text": "Transit claim",
+             "scores": {"A": 1}, "avg_score": 1.0, "classification": "DECORATIVE"},
+        ]
+        prompt = method.get_conclusion_prompt(discussion)
+        assert "Cars should be banned" in prompt
+        assert "Pollution claim" in prompt
+        assert "LOAD-BEARING" in prompt
+        assert "DECORATIVE" in prompt
+        assert "robustness" in prompt.lower() or "robust" in prompt.lower()
+
+    def test_get_conclusion_prompt_no_claims(self, method, discussion):
+        discussion.method_state["claims"] = []
+        prompt = method.get_conclusion_prompt(discussion)
+        assert "no claims" in prompt.lower() or "could not" in prompt.lower()
+
+    # -- Method delegation --
+
+    def test_system_prompt_deliberate(self, method, discussion):
+        entity = Entity(name="Analyst_1", entity_type=EntityType.AI, id=1)
+        prompt = method.get_system_prompt(entity, discussion)
+        assert "preliminary" in prompt.lower()
+        assert discussion.topic in prompt
+
+    def test_system_prompt_stress(self, method, discussion):
+        entity = Entity(name="Analyst_1", entity_type=EntityType.AI, id=1)
+        discussion.method_state["current_phase"] = "stress_test"
+        discussion.method_state["claims"] = [{"id": 1, "text": "Test claim"}]
+        discussion.method_state["current_claim_index"] = 0
+        prompt = method.get_system_prompt(entity, discussion)
+        assert "Test claim" in prompt
+        assert "FALSE" in prompt
+
+    # -- Phase advancement --
+
+    def test_advance_deliberate_to_extract(self, method, discussion):
+        discussion.method_state["phase_round"] = 3
+        assert method.should_advance_phase(discussion) is True
+        new = method.advance_phase(discussion)
+        assert new.name == "extract"
+
+    def test_advance_extract_to_stress(self, method, discussion):
+        discussion.method_state["current_phase"] = "extract"
+        discussion.method_state["claims"] = [{"id": 1, "text": "C"}]
+        assert method.should_advance_phase(discussion) is True
+        new = method.advance_phase(discussion)
+        assert new.name == "stress_test"
+
+    def test_advance_stress_to_synthesize(self, method, discussion):
+        discussion.method_state["current_phase"] = "stress_test"
+        discussion.method_state["claims"] = [{"id": 1, "text": "C"}]
+        discussion.method_state["current_claim_index"] = 1
+        assert method.should_advance_phase(discussion) is True
+        new = method.advance_phase(discussion)
+        assert new.name == "synthesize"
+
+    def test_advance_chain_with_no_claims(self, method, discussion):
+        """3 failed extractions -> stress_test immediately advances -> synthesize."""
+        discussion.method_state["current_phase"] = "extract"
+        discussion.method_state["claims"] = []
+        discussion.method_state["extraction_attempts"] = 3
+        assert method.should_advance_phase(discussion) is True
+        new = method.advance_phase(discussion)
+        assert new.name == "stress_test"
+        assert method.should_advance_phase(discussion) is True
+        new = method.advance_phase(discussion)
+        assert new.name == "synthesize"
+
+    def test_advance_synthesize_to_none(self, method, discussion):
+        discussion.method_state["current_phase"] = "synthesize"
+        discussion.method_state["phase_round"] = 2
+        assert method.should_advance_phase(discussion) is True
+        new = method.advance_phase(discussion)
+        assert new is None
+
+
+class TestMethodRegistration:
+    def setup_method(self):
+        """Clear cached singletons to avoid stale test state."""
+        _methods_module._METHODS_METADATA = None
+        _methods_module._INSTANCES.pop("counterfactual", None)
+
+    def test_get_method(self):
+        method = get_method("counterfactual")
+        assert isinstance(method, CounterfactualStressTest)
+        assert method.name == "counterfactual"
+
+    def test_list_methods_includes_counterfactual(self):
+        methods = list_methods()
+        names = [m["name"] for m in methods]
+        assert "counterfactual" in names
+
+    def test_method_to_dict(self):
+        method = CounterfactualStressTest()
+        d = method.to_dict()
+        assert d["name"] == "counterfactual"
+        assert len(d["phases"]) == 4
+        assert d["phases"][0]["name"] == "cf_deliberate"
