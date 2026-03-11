@@ -26,26 +26,29 @@ Open discussion to establish a preliminary conclusion. Skipped if `prior_conclus
 - **Turn prompt:** Ask participants to share perspective, build on others' contributions.
 - **Summary:** Standard moderator summary. Final-round summary captured as `method_state["preliminary_conclusion"]`.
 - **Advancement:** After 2 rounds, or immediately if `prior_conclusion` exists.
+- **Skip mechanism:** When `prior_conclusion` is set, `CounterfactualStressTest.init_state()` sets `current_phase` directly to `"extract"` (bypassing the deliberate phase entirely), and copies `prior_conclusion` into `preliminary_conclusion`. This avoids the framework limitation where `should_advance` only fires after a turn is taken.
 
 ### Phase 2: Extract (1 round, moderator-driven)
 
 Moderator extracts 3-7 key falsifiable claims from the deliberation or prior conclusion.
 
+- **Turn order:** `get_turn_order` returns only the moderator entity ID (first entity), so participants do not speak in this phase.
 - **Turn prompt:** Instructs moderator to review discussion and list 3-7 specific, falsifiable claims as a numbered list.
 - **`process_response`:** Uses `parse_numbered_list()` to extract claims. Stores in `method_state["claims"]` as `[{id, text}, ...]`. Initializes `method_state["claim_results"]` with one entry per claim.
-- **Advancement:** After 1 round (all claims extracted).
+- **Zero-claims guard:** If `parse_numbered_list` returns 0 items (malformed moderator output), `process_response` sets `method_state["extraction_failed"] = True` and `claims` remains empty. `should_advance` checks this flag and if set, does NOT advance — instead the phase stays active for another round (retry). The turn prompt on retry explicitly tells the moderator the extraction failed and to try again with a numbered list. After 3 failed attempts, advance anyway and `get_conclusion_prompt` produces an error message explaining no claims could be extracted.
+- **Advancement:** After 1 round with at least 1 claim extracted.
 
 ### Phase 3: Stress Test (condition-based, one iteration per claim)
 
 For each claim, all participants argue from the premise that it is false and score the impact.
 
 - **Iteration:** Uses `method_state["current_claim_index"]` (0-indexed) to track which claim is under test.
-- **Transition message:** Posted at the start of each claim's round: `"--- Counterfactual Test #K of N --- Assume the following claim is FALSE: '[claim text]'. All participants must argue from this premise."`
-- **System prompt:** Forces counterfactual premise — participants MUST argue as if the claim is false, even if they believe it.
-- **Turn prompt:** Asks participants to assess damage to the conclusion and rate impact with `[IMPACT: N]` tag (1=unaffected, 5=collapses).
-- **`process_response`:** Extracts `[IMPACT: N]` via regex. Stores score in `method_state["claim_results"][current_claim_index]["scores"][entity_name]`.
-- **Round completion:** After all participants speak for a claim, compute `avg_score` and increment `current_claim_index`.
-- **Advancement:** When `current_claim_index >= len(claims)` (all claims tested).
+- **Per-claim banner:** The current claim under test is embedded directly in `get_system_prompt` and `get_turn_prompt` (both read `current_claim_index` each time they're called). The `get_transition_message` fires once on phase entry for the first claim. Subsequent claim transitions are announced via a banner in the turn prompt: `"--- Counterfactual Test #K of N --- Assume the following claim is FALSE: '[claim text]'"`. This avoids needing a framework hook for mid-phase transitions.
+- **System prompt:** Forces counterfactual premise — participants MUST argue as if the claim is false, even if they believe it. Includes the current claim text.
+- **Turn prompt:** Asks participants to assess damage to the conclusion and rate impact with `[IMPACT: N]` tag (1=unaffected, 5=collapses). Includes the current claim text.
+- **`process_response`:** Extracts `[IMPACT: N]` via regex. Only stores scores for non-moderator entities (moderator summaries are excluded from scoring). Stores score in `method_state["claim_results"][current_claim_index]["scores"][entity_name]`.
+- **Round completion:** `CounterfactualStressTest` overrides `on_round_complete` (method-level, same pattern as `BeliefDiffusion`). After all participants speak for a claim: compute `avg_score` from non-moderator scores, apply `classify_claim()`, increment `current_claim_index`, and increment `phase_round`.
+- **Advancement:** `should_advance` returns `True` when `current_claim_index >= len(claims)` (all claims tested).
 
 ### Phase 4: Synthesize (1 round, moderator conclusion)
 
@@ -75,6 +78,8 @@ method_state = {
     "claims": [
         {"id": 1, "text": "..."},        # 3-7 falsifiable claims
     ],
+    "extraction_failed": False,           # set True if parse fails
+    "extraction_attempts": 0,             # retry counter (max 3)
 
     # Stress test tracking
     "current_claim_index": 0,             # 0-indexed, which claim is under test
@@ -95,7 +100,7 @@ method_state = {
 | File | Contents |
 |------|----------|
 | `consensus/methods/counterfactual.py` | `CounterfactualStressTest` method class, registration |
-| `consensus/methods/phases/counterfactual_deliberate.py` | `DeliberateHandler` |
+| `consensus/methods/phases/counterfactual_deliberate.py` | `CounterfactualDeliberateHandler` |
 | `consensus/methods/phases/counterfactual_extract.py` | `ExtractClaimsHandler` |
 | `consensus/methods/phases/counterfactual_stress.py` | `StressTestHandler` |
 | `consensus/methods/phases/counterfactual_synthesize.py` | `SynthesizeHandler` |
@@ -103,16 +108,22 @@ method_state = {
 
 ## Handler Details
 
-### DeliberateHandler
-- `phase = Phase(name="deliberate", display_name="Deliberation", description="Open discussion to establish preliminary conclusion", rounds=2, allow_tools=True)`
+### CounterfactualDeliberateHandler
+- Named `CounterfactualDeliberateHandler` to avoid collision with the existing `DeliberateHandler` in the Voting method.
+- `phase = Phase(name="cf_deliberate", display_name="Deliberation", description="Open discussion to establish preliminary conclusion", rounds=2, allow_tools=True)`
+- Phase name is `cf_deliberate` (not `deliberate`) to avoid phase-name collision with Voting's deliberate phase.
 - `init_state`: `{"preliminary_conclusion": None, "prior_conclusion": None}`
-- `should_advance`: Returns `True` immediately if `prior_conclusion` is set; otherwise default round-based.
-- After phase completes (if not skipped), moderator summary is stored as `preliminary_conclusion`.
+- `should_advance`: Default round-based (skip is handled in `CounterfactualStressTest.init_state()`, not here).
+- After phase completes, moderator summary is stored as `preliminary_conclusion`.
 
 ### ExtractClaimsHandler
-- `phase = Phase(name="extract", display_name="Claim Extraction", description="Moderator extracts key falsifiable claims", rounds=1, allow_tools=False)`
-- `init_state`: `{"claims": [], "claim_results": [], "current_claim_index": 0}`
-- `process_response`: `parse_numbered_list(content)` → build claims list → initialize `claim_results`.
+- `phase = Phase(name="extract", display_name="Claim Extraction", description="Moderator extracts key falsifiable claims", rounds=0, allow_tools=False)`
+- `rounds=0` (condition-based advancement only — the retry mechanism controls when to advance).
+- `init_state`: `{"claims": [], "claim_results": [], "current_claim_index": 0, "extraction_failed": False, "extraction_attempts": 0}`
+- `get_turn_order`: Returns only the moderator entity ID (first entity). Participants do not speak in this phase.
+- `process_response`: `parse_numbered_list(content)` → build claims list → initialize `claim_results`. If 0 claims extracted, sets `extraction_failed = True` and increments `extraction_attempts`.
+- `should_advance`: Returns `True` if `len(claims) > 0`. Returns `True` if `extraction_attempts >= 3` (give up). Returns `False` otherwise (retry). The `rounds` field is irrelevant — advancement is entirely condition-based.
+- `get_turn_prompt`: On retry (`extraction_failed` and `extraction_attempts > 0`), explicitly tells the moderator the extraction failed and to try again with a numbered list format.
 - Prompt references `preliminary_conclusion` or `prior_conclusion`.
 
 ### StressTestHandler
@@ -125,7 +136,16 @@ method_state = {
 
 ### SynthesizeHandler
 - `phase = Phase(name="synthesize", display_name="Synthesis", description="Final classification and robustness assessment", rounds=1, allow_tools=False)`
-- Conclusion prompt builds from `claim_results`: ranked table, classifications, overall robustness statement.
+- `get_turn_order`: Returns only the moderator entity ID (moderator-only phase). No participants speak.
+- This handler provides prompts for the synthesis round. After the round completes and the phase advances to `None` (no next phase), the framework triggers `get_conclusion_prompt`. The actual conclusion is driven by `CounterfactualStressTest.get_conclusion_prompt()` (method-level override, same pattern as `BeliefDiffusion` and `PremortemAnalysis`), which injects `format_results_table(claim_results)` into the prompt.
+
+## Method-Level Overrides (`CounterfactualStressTest`)
+
+The method class overrides the following `DiscussionMethod` methods:
+
+- **`init_state(discussion)`:** Calls `super().init_state()` to merge handler states. If `prior_conclusion` is set (e.g., passed in from discussion setup), sets `current_phase = "extract"` and copies `prior_conclusion` into `preliminary_conclusion`, bypassing the deliberate phase entirely.
+- **`on_round_complete(discussion)`:** Calls `super().on_round_complete()` which increments `phase_round` — no additional `phase_round` increment in the method body. If the current phase is `stress_test`, additionally computes `avg_score` for the current claim from non-moderator scores, applies `classify_claim()`, and increments `current_claim_index`. Same delegation pattern as `BeliefDiffusion.on_round_complete`.
+- **`get_conclusion_prompt(discussion)`:** Builds the final synthesis prompt by injecting `format_results_table(claim_results)` and the `preliminary_conclusion`. Asks the moderator to rank claims, classify each, and assess overall robustness.
 
 ## Helpers Module (`_counterfactual_helpers.py`)
 
