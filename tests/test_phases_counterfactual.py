@@ -193,3 +193,100 @@ class TestCounterfactualDeliberateHandler:
     def test_transition_message(self, deliberate_handler, cf_discussion):
         msg = deliberate_handler.get_transition_message(cf_discussion)
         assert "Deliberation" in msg
+
+
+from consensus.methods.phases.counterfactual_extract import ExtractClaimsHandler
+
+
+class TestExtractClaimsHandler:
+    @pytest.fixture
+    def handler(self):
+        return ExtractClaimsHandler()
+
+    def test_phase_metadata(self, handler):
+        assert handler.phase.name == "extract"
+        assert handler.phase.rounds == 0
+        assert handler.phase.allow_tools is False
+
+    def test_init_state(self, handler, cf_discussion):
+        state = handler.init_state(cf_discussion)
+        assert state["claims"] == []
+        assert state["claim_results"] == []
+        assert state["current_claim_index"] == 0
+        assert state["extraction_failed"] is False
+        assert state["extraction_attempts"] == 0
+
+    def test_turn_order_moderator_only(self, handler, cf_discussion):
+        entity_ids = [1, 2, 3]
+        result = handler.get_turn_order(entity_ids, cf_discussion)
+        assert result == [cf_discussion.moderator_id]
+
+    def test_turn_prompt_includes_conclusion(self, handler, entity, cf_discussion):
+        cf_discussion.method_state["current_phase"] = "extract"
+        cf_discussion.method_state["preliminary_conclusion"] = "Cars should be banned."
+        prompt = handler.get_turn_prompt(entity, cf_discussion)
+        assert "Cars should be banned" in prompt
+        assert "3-7" in prompt
+        assert "numbered" in prompt.lower()
+
+    def test_turn_prompt_uses_prior_conclusion(self, handler, entity, cf_discussion):
+        cf_discussion.method_state["current_phase"] = "extract"
+        cf_discussion.method_state["prior_conclusion"] = "AI will surpass humans."
+        prompt = handler.get_turn_prompt(entity, cf_discussion)
+        assert "AI will surpass humans" in prompt
+
+    def test_turn_prompt_retry(self, handler, entity, cf_discussion):
+        cf_discussion.method_state["current_phase"] = "extract"
+        cf_discussion.method_state["preliminary_conclusion"] = "Some conclusion."
+        cf_discussion.method_state["extraction_failed"] = True
+        cf_discussion.method_state["extraction_attempts"] = 1
+        prompt = handler.get_turn_prompt(entity, cf_discussion)
+        assert "failed" in prompt.lower() or "try again" in prompt.lower()
+        assert "numbered" in prompt.lower()
+
+    def test_process_response_extracts_claims(self, handler, entity, cf_discussion):
+        cf_discussion.method_state["current_phase"] = "extract"
+        content = (
+            "Key claims:\n"
+            "1. Personal cars contribute significantly to urban pollution\n"
+            "2. Public transit can fully replace personal car usage\n"
+            "3. Car bans would reduce traffic fatalities substantially\n"
+        )
+        result = handler.process_response(content, entity, cf_discussion)
+        claims = cf_discussion.method_state["claims"]
+        assert len(claims) == 3
+        assert claims[0]["id"] == 1
+        assert "urban pollution" in claims[0]["text"]
+        assert len(cf_discussion.method_state["claim_results"]) == 3
+        assert cf_discussion.method_state["extraction_failed"] is False
+
+    def test_process_response_no_claims_sets_failed(self, handler, entity, cf_discussion):
+        cf_discussion.method_state["current_phase"] = "extract"
+        content = "I think there are many factors to consider."
+        result = handler.process_response(content, entity, cf_discussion)
+        assert cf_discussion.method_state["extraction_failed"] is True
+        assert cf_discussion.method_state["extraction_attempts"] == 1
+        assert cf_discussion.method_state["claims"] == []
+
+    def test_should_advance_with_claims(self, handler, cf_discussion):
+        cf_discussion.method_state["claims"] = [{"id": 1, "text": "A claim"}]
+        assert handler.should_advance(cf_discussion) is True
+
+    def test_should_advance_no_claims_no_advance(self, handler, cf_discussion):
+        cf_discussion.method_state["claims"] = []
+        cf_discussion.method_state["extraction_attempts"] = 1
+        assert handler.should_advance(cf_discussion) is False
+
+    def test_should_advance_gives_up_after_3(self, handler, cf_discussion):
+        cf_discussion.method_state["claims"] = []
+        cf_discussion.method_state["extraction_attempts"] = 3
+        assert handler.should_advance(cf_discussion) is True
+
+    def test_process_response_retry_then_success_clears_failed(self, handler, entity, cf_discussion):
+        cf_discussion.method_state["current_phase"] = "extract"
+        cf_discussion.method_state["extraction_failed"] = True
+        cf_discussion.method_state["extraction_attempts"] = 1
+        content = "1. Cars cause significant urban pollution\n2. Public transit is viable\n"
+        handler.process_response(content, entity, cf_discussion)
+        assert cf_discussion.method_state["extraction_failed"] is False
+        assert len(cf_discussion.method_state["claims"]) == 2
