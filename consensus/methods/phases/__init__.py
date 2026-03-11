@@ -29,6 +29,9 @@ from .frame_hypotheses import FrameHypothesesHandler
 from .prior_beliefs import PriorBeliefsHandler
 from .diffuse_beliefs import DiffuseBeliefsHandler
 from .diagnose_beliefs import DiagnoseHandler
+from .deliberate import DeliberateHandler
+from .vote import VoteHandler
+from .tally import TallyHandler
 
 __all__ = [
     "SurfaceAssumptionsHandler",
@@ -56,4 +59,7 @@ __all__ = [
     "PriorBeliefsHandler",
     "DiffuseBeliefsHandler",
     "DiagnoseHandler",
+    "DeliberateHandler",
+    "VoteHandler",
+    "TallyHandler",
 ]
