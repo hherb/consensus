@@ -10,6 +10,10 @@ from .assess_assumptions import AssessAssumptionsHandler
 from .frame_premortem import FramePremortemHandler
 from .premortem_imagine import PremortemImagineHandler
 from .consolidate_premortem import ConsolidatePremortemHandler
+from .state_positions import StatePositionsHandler
+from .define_criteria import DefineCriteriaHandler
+from .present_evidence import PresentEvidenceHandler
+from .adjudicate import AdjudicateHandler
 
 __all__ = [
     "SurfaceAssumptionsHandler",
@@ -18,4 +22,8 @@ __all__ = [
     "FramePremortemHandler",
     "PremortemImagineHandler",
     "ConsolidatePremortemHandler",
+    "StatePositionsHandler",
+    "DefineCriteriaHandler",
+    "PresentEvidenceHandler",
+    "AdjudicateHandler",
 ]

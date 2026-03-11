@@ -1,0 +1,154 @@
+"""Define Criteria phase handler for Adversarial Collaboration.
+
+Participants jointly define the specific, concrete criteria that would
+settle the disagreement.  Criteria are locked before evidence gathering.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING
+
+from ..base import Phase, ProcessedResponse
+from ..phase_handler import PhaseHandler
+
+if TYPE_CHECKING:
+    from ...models import Discussion, Entity
+
+
+class DefineCriteriaHandler(PhaseHandler):
+    """Phase 2: Jointly define settlement criteria."""
+
+    phase = Phase(
+        name="criteria",
+        display_name="Define Settlement Criteria",
+        description=(
+            "Participants jointly define the specific, concrete "
+            "criteria that would settle the disagreement.  What "
+            "evidence, if found, would change your mind?  Both sides "
+            "must agree on the criteria BEFORE examining evidence."
+        ),
+        rounds=2,
+    )
+
+    # ------------------------------------------------------------------
+    # State
+    # ------------------------------------------------------------------
+
+    def init_state(self, discussion: Discussion) -> dict:
+        return {"criteria": []}
+
+    # ------------------------------------------------------------------
+    # Prompts
+    # ------------------------------------------------------------------
+
+    def get_system_prompt(self, entity: Entity,
+                          discussion: Discussion) -> str:
+        state = discussion.method_state
+        base = (
+            f"You are {entity.name}, participating in an Adversarial "
+            f"Collaboration.\n"
+            f"Topic: {discussion.topic}\n\n"
+        )
+        positions = state.get("positions", {})
+        pos_text = "\n".join(
+            f"  - {eid}: {pos}"
+            for eid, pos in positions.items()
+        )
+        return base + (
+            "CRITERIA DEFINITION PHASE\n\n"
+            f"Positions stated:\n{pos_text}\n\n"
+            "Now you must jointly define the SETTLEMENT CRITERIA — "
+            "specific, concrete, testable conditions that would "
+            "resolve the disagreement.\n\n"
+            "For each criterion, specify:\n"
+            "1. The criterion itself (specific and measurable)\n"
+            "2. What finding would support Position A\n"
+            "3. What finding would support Position B\n\n"
+            "Format:\n"
+            "**C1:** <criterion>\n"
+            "  - If <finding A> → supports Position A\n"
+            "  - If <finding B> → supports Position B\n\n"
+            "CRITICAL: These criteria will be LOCKED before evidence "
+            "gathering.  You cannot change them later.  Design criteria "
+            "that you believe are fair to BOTH sides."
+        )
+
+    def get_turn_prompt(self, entity: Entity,
+                        discussion: Discussion) -> str:
+        round_num = discussion.method_state.get("phase_round", 1)
+        if round_num == 1:
+            return (
+                f"It is your turn, {entity.name}.  Propose settlement "
+                "criteria that would be fair to both sides."
+            )
+        return (
+            f"Round {round_num}, {entity.name}.  Review the proposed "
+            "criteria and suggest refinements.  Do you accept these "
+            "criteria as fair?"
+        )
+
+    def get_summary_prompt(self, discussion: Discussion,
+                           speaker_name: str,
+                           next_speaker_name: str) -> str:
+        return (
+            f"{speaker_name} has proposed/refined settlement criteria.  "
+            "Note which criteria seem acceptable to both sides and "
+            f"which need further negotiation.  Next: {next_speaker_name}."
+        )
+
+    # ------------------------------------------------------------------
+    # Transition message
+    # ------------------------------------------------------------------
+
+    def get_transition_message(self, discussion: Discussion) -> str:
+        return (
+            f"**Phase: {self.phase.display_name}**\n\n"
+            "All positions are on the table.  Participants will now "
+            "jointly define specific, testable criteria that would "
+            "settle the disagreement.  These criteria will be LOCKED "
+            "before evidence gathering begins."
+        )
+
+    # ------------------------------------------------------------------
+    # Response processing
+    # ------------------------------------------------------------------
+
+    def process_response(self, content: str, entity: Entity,
+                         discussion: Discussion) -> ProcessedResponse:
+        state = discussion.method_state
+        new_criteria = self._parse_criteria(content)
+        if new_criteria:
+            existing = state.get("criteria", [])
+            for c in new_criteria:
+                if c not in existing:
+                    existing.append(c)
+            state["criteria"] = existing
+        return ProcessedResponse(display_content=content)
+
+    # ------------------------------------------------------------------
+    # Parsing helpers
+    # ------------------------------------------------------------------
+
+    def _parse_criteria(self, content: str) -> list[str]:
+        """Extract criteria from content."""
+        patterns = [
+            r'\*\*C\d+:\*\*\s*(.+?)(?=\n\s*[-*]|\n\*\*C\d+|\n\n|$)',
+            r'^\s*C\d+[\.\):]\s*(.+)',
+            r'^\s*\d+[\.\)]\s*(.+)',
+        ]
+        for pattern in patterns:
+            matches = re.findall(pattern, content, re.MULTILINE | re.DOTALL)
+            if matches:
+                return [m.strip().rstrip('.') for m in matches
+                        if len(m.strip()) > 10]
+        return []
+
+    # ------------------------------------------------------------------
+    # Phase advancement
+    # ------------------------------------------------------------------
+
+    def should_advance(self, discussion: Discussion) -> bool:
+        state = discussion.method_state
+        return (bool(state.get("criteria"))
+                and state.get("phase_round", 1) > self.phase.rounds)
