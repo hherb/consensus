@@ -105,7 +105,7 @@ class CounterfactualStressTest(DiscussionMethod):
                       or state.get("prior_conclusion")
                       or "(no conclusion)")
 
-        if not claims and not claim_results:
+        if not claims:
             return (
                 "The counterfactual stress test could not extract any "
                 "claims from the discussion. Please provide a qualitative "

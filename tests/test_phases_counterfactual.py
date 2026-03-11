@@ -509,6 +509,10 @@ class TestCounterfactualStressTestIntegration:
 
     def test_get_conclusion_prompt(self, method, discussion):
         discussion.method_state["preliminary_conclusion"] = "Cars should be banned."
+        discussion.method_state["claims"] = [
+            {"id": 1, "text": "Pollution claim"},
+            {"id": 2, "text": "Transit claim"},
+        ]
         discussion.method_state["claim_results"] = [
             {"claim_id": 1, "claim_text": "Pollution claim",
              "scores": {"A": 5}, "avg_score": 5.0, "classification": "LOAD-BEARING"},
@@ -609,3 +613,28 @@ class TestMethodRegistration:
         assert d["name"] == "counterfactual"
         assert len(d["phases"]) == 4
         assert d["phases"][0]["name"] == "cf_deliberate"
+
+
+class TestDeliberatePreliminaryConclusion:
+    """Test that preliminary_conclusion is captured from moderator summary."""
+
+    def test_moderator_response_captures_conclusion(self, deliberate_handler, cf_discussion):
+        mod = Entity(name="Moderator", entity_type=EntityType.AI, id=100)
+        cf_discussion.method_state["phase_round"] = 2  # final round
+        result = deliberate_handler.process_response(
+            "After discussion, the group concludes that cars should be banned.",
+            mod, cf_discussion
+        )
+        assert cf_discussion.method_state["preliminary_conclusion"] == \
+            "After discussion, the group concludes that cars should be banned."
+
+    def test_non_moderator_does_not_set_conclusion(self, deliberate_handler, entity, cf_discussion):
+        cf_discussion.method_state["phase_round"] = 2
+        deliberate_handler.process_response("My opinion.", entity, cf_discussion)
+        assert cf_discussion.method_state["preliminary_conclusion"] is None
+
+    def test_early_round_does_not_set_conclusion(self, deliberate_handler, cf_discussion):
+        mod = Entity(name="Moderator", entity_type=EntityType.AI, id=100)
+        cf_discussion.method_state["phase_round"] = 1
+        deliberate_handler.process_response("Early summary.", mod, cf_discussion)
+        assert cf_discussion.method_state["preliminary_conclusion"] is None

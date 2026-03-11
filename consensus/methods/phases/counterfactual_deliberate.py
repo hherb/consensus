@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..base import Phase
+from ..base import Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
 
 if TYPE_CHECKING:
@@ -63,3 +63,12 @@ class CounterfactualDeliberateHandler(PhaseHandler):
             "Briefly summarize their key points and note areas of "
             f"agreement or disagreement. Next: {next_speaker_name}."
         )
+
+    def process_response(self, content: str, entity: Entity,
+                         discussion: Discussion) -> ProcessedResponse:
+        """Capture moderator's final-round summary as preliminary_conclusion."""
+        state = discussion.method_state
+        if (entity.id == discussion.moderator_id
+                and state.get("phase_round", 1) >= self.phase.rounds):
+            state["preliminary_conclusion"] = content
+        return ProcessedResponse(display_content=content)
