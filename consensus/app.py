@@ -599,6 +599,30 @@ class ConsensusApp:
         from .methods import list_methods
         return list_methods()
 
+    async def recommend_method(self, topic: str, answer_type: str) -> dict:
+        """Get LLM-based method recommendations for a topic."""
+        mod = self.discussion.moderator
+        if not mod or not mod.ai_config:
+            return {"error": "No AI moderator configured for recommendations"}
+        api_key = self._resolve_key_for_moderator(
+            mod.ai_config.provider_id, mod.ai_config.api_key_env,
+        )
+        from .ai_client import AIClient
+        ai_client = AIClient(
+            base_url=mod.ai_config.base_url, api_key=api_key,
+        )
+        provider = {"model": mod.ai_config.model}
+        try:
+            recs = await app_discussion_setup.recommend_method(
+                topic, answer_type, ai_client, provider,
+            )
+            return {"recommendations": recs}
+        except Exception as e:
+            logger.exception("Method recommendation failed")
+            return {"error": str(e)}
+        finally:
+            await ai_client.close()
+
     # ------------------------------------------------------------------
     # Discussion lifecycle
     # ------------------------------------------------------------------

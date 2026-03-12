@@ -378,6 +378,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             "set_discussion_method": lambda: app.set_discussion_method(
                 data["method_name"]),
             "list_discussion_methods": lambda: app.list_discussion_methods(),
+            "recommend_method": lambda: app.recommend_method(
+                data.get("topic", ""), data.get("answer_type", "")),
             # Discussion lifecycle
             "start_discussion": lambda: app.start_discussion(
                 data.get("moderator_participates", False),

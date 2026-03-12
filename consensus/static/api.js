@@ -51,6 +51,7 @@ class DesktopAPI {
     async setParticipantRole(eid, role) { return await window.pywebview.api.set_participant_role(eid, role); }
     async setTopic(t) { return await window.pywebview.api.set_topic(t); }
     async listDiscussionMethods() { return await window.pywebview.api.list_discussion_methods(); }
+    async recommendMethod(topic, answerType) { return await window.pywebview.api.recommend_method(topic, answerType); }
     async setDiscussionMethod(name) { return await window.pywebview.api.set_discussion_method(name); }
     async startDiscussion(modPart, maxRounds=0, costLimit=0) { return await window.pywebview.api.start_discussion(!!modPart, maxRounds, costLimit); }
 
@@ -187,6 +188,7 @@ class WebAPI {
     async setParticipantRole(eid, role) { return await this._post('set_participant_role', { entity_id: eid, participant_role: role }); }
     async setTopic(t) { return await this._post('set_topic', { topic: t }); }
     async listDiscussionMethods() { return await this._post('list_discussion_methods'); }
+    async recommendMethod(topic, answerType) { return await this._post('recommend_method', { topic, answer_type: answerType }); }
     async setDiscussionMethod(name) { return await this._post('set_discussion_method', { method_name: name }); }
     async startDiscussion(modPart, maxRounds=0, costLimit=0) { return await this._post('start_discussion', { moderator_participates: !!modPart, max_rounds: maxRounds, cost_limit: costLimit }); }
     async setCostLimit(limit) { return await this._post('set_cost_limit', { cost_limit: limit }); }

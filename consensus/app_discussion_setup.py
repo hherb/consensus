@@ -265,6 +265,31 @@ def set_discussion_method(
     return method.to_dict()
 
 
+async def recommend_method(
+    topic: str,
+    answer_type: str,
+    ai_client,
+    provider: dict,
+) -> list[dict]:
+    """Get LLM-based method recommendations for a topic.
+
+    Returns a list of recommendation dicts.
+    """
+    from .methods import list_methods
+    from .methods.recommender import MethodRecommender
+
+    recommender = MethodRecommender()
+    catalog = list_methods()
+    recommendations = await recommender.recommend(
+        topic=topic,
+        answer_type=answer_type,
+        method_catalog=catalog,
+        ai_client=ai_client,
+        provider=provider,
+    )
+    return [r.to_dict() for r in recommendations]
+
+
 def start_discussion(
     discussion: Discussion,
     db: Database,

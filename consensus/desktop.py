@@ -195,6 +195,10 @@ class DesktopBridge:
         """Return metadata for all available discussion methods."""
         return self.app.list_discussion_methods()
 
+    def recommend_method(self, topic: str, answer_type: str) -> dict:
+        """Get LLM-based method recommendations."""
+        return self._run_async(self.app.recommend_method(topic, answer_type))
+
     # -- Discussion lifecycle --
     def start_discussion(self, moderator_participates: bool = False,
                          max_rounds: int = 0,
