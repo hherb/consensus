@@ -41,7 +41,7 @@ class MethodRecommender:
         answer_type: str,
         method_catalog: list[dict],
         ai_client: AIClient,
-        provider: dict,
+        provider: dict,             # must contain "base_url", "api_key", "model"
         num_recommendations: int = 3,
         additional_context: str = "",   # intake responses for guided mode
     ) -> list[MethodRecommendation]: ...
@@ -63,7 +63,14 @@ class MethodRecommender:
   - Decision-making with formal consensus → Voting
   - General exploration → Open Discussion (fallback only)
 - User message provides topic, answer_type, and optional additional_context
-- Requests structured JSON response with top N recommendations
+- Requests structured JSON response with top N recommendations matching this schema:
+  ```json
+  { "recommendations": [
+    { "method_name": "ach", "display_name": "Analysis of Competing Hypotheses",
+      "confidence": 0.85, "reasoning": "...", "fit_factors": ["...", "..."] }
+  ]}
+  ```
+- JSON parsing uses `methods/parsing.py` utilities (consistent with existing methods). On parse failure, falls back to `open_discussion`.
 
 ### Answer Type Options
 
@@ -83,6 +90,7 @@ If the LLM call fails (network error, parsing failure, etc.), return:
 ```python
 [MethodRecommendation(
     method_name="open_discussion",
+    display_name="Open Discussion",
     confidence=0.5,
     reasoning="Could not reach AI for recommendation. Open Discussion is a safe default.",
     fit_factors=["fallback"],
@@ -136,17 +144,19 @@ The moderator asks human participants 3-4 structured questions:
 3. What's the uncertainty structure? (known unknowns, disagreement between experts, quantifiable uncertainty, poorly defined problem space, etc.)
 4. Is there a preliminary conclusion or position to examine? (optional — enables methods like Counterfactual Stress Test or Premortem)
 
-Only human participants respond. AI entities are silent during this phase.
+Only human participants respond. AI entities are silent during this phase. This is enforced via `TriageIntakeHandler.get_turn_order()`, which filters `entity_ids` by cross-referencing `discussion.entities` to include only those with `entity_type == EntityType.HUMAN`. If no human participants exist (all-AI discussion), the phase is skipped and RECOMMEND proceeds using only the topic text.
 
 **Handler:** `TriageIntakeHandler`
 
 ### Phase 2: RECOMMEND (1 round, moderator only)
 
-The moderator:
-1. Synthesizes intake answers into a problem characterization
-2. Calls `MethodRecommender.recommend()` with the full intake context (not just topic + answer_type, but all intake responses as `additional_context`)
-3. Presents top 2-3 recommendations with reasoning to the group
-4. Explicitly states its recommendation and rationale
+This is a moderator-only phase (similar to `ExtractClaimsHandler` in Counterfactual Stress Test). `get_turn_order()` returns `[discussion.moderator_id]` only.
+
+The flow:
+1. The moderator AI generates a turn that synthesizes intake answers into a problem characterization
+2. `TriageRecommendHandler.process_response()` programmatically calls `MethodRecommender.recommend()` with the full intake context as `additional_context`, passing the moderator's provider/model
+3. The recommendations are stored in `method_state["recommendations"]` (list of dicts) and `method_state["recommended_method"]` (top pick's `method_name`)
+4. The handler's `process_response()` appends the recommendation summary to the display content, presenting top 2-3 methods with reasoning
 
 **Handler:** `TriageRecommendHandler`
 
@@ -159,13 +169,15 @@ All participants (including AI entities) get one round to:
 
 The moderator evaluates responses and makes the final selection. If a human participant explicitly requests a different method, the moderator honors that.
 
+`TriageConfirmHandler.process_response()` parses the moderator's final summary to extract the chosen method name and stores it in `method_state["chosen_method"]`. This key is read by the transition mechanism. If parsing fails, falls back to `method_state["recommended_method"]` (set during RECOMMEND phase).
+
 **Handler:** `TriageConfirmHandler`
 
 ### Method Transition
 
-After CONFIRM completes, the triage method triggers a method switch:
+After CONFIRM completes, the discussion flow detects that the triage method is complete (via `advance_phase()` returning `None`) and checks `method_state["chosen_method"]`. If present, `app_discussion_flow.py` calls `switch_discussion_method()` instead of ending the discussion. This is analogous to how `method_complete` is already detected after phase advancement.
 
-1. Calls `switch_discussion_method(discussion, chosen_method_name)`
+1. Calls `switch_discussion_method(discussion, method_state["chosen_method"])`
 2. This function:
    - Sets `discussion.discussion_method` to the chosen method
    - Calls `new_method.init_state(discussion)` for fresh state
@@ -228,6 +240,9 @@ This is the only place method switching happens. It:
 | User overrides triage recommendation | CONFIRM phase respects explicit human override |
 | Method transition preserves messages | All triage messages stay in history as context |
 | Triage recommends itself | Prevented — "triage" excluded from recommendation candidates |
+| Fallback to open_discussion | Means no structured phases — discussion proceeds as standard moderated round-robin. This is intentional. |
+| All-AI participants (no humans, human moderator) | Same as "no human participants" — INTAKE phase is skipped, RECOMMEND uses topic text only |
+| Desktop bridge return type | `recommend_method()` returns list of dicts (serialized `MethodRecommendation`), JSON-serializable for pywebview |
 
 ## Out of Scope (Future Work)
 
