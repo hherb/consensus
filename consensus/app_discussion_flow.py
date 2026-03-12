@@ -84,9 +84,52 @@ def submit_moderator_message(
     return msg.to_dict()
 
 
+async def _run_triage_recommender(
+    discussion: Discussion, moderator_entity: Entity, key_resolver,
+) -> None:
+    """Call MethodRecommender after the triage moderator's synthesis turn."""
+    from .ai_client import AIClient
+    from .methods import list_methods
+    from .methods.recommender import MethodRecommender
+
+    state = discussion.method_state
+    characterization = state.get("moderator_characterization", "")
+    if not moderator_entity.ai_config:
+        return
+
+    api_key = key_resolver(
+        moderator_entity.ai_config.provider_id,
+        moderator_entity.ai_config.api_key_env,
+    )
+    ai_client = AIClient(
+        base_url=moderator_entity.ai_config.base_url,
+        api_key=api_key,
+    )
+    provider = {"model": moderator_entity.ai_config.model}
+
+    recommender = MethodRecommender()
+    try:
+        recs = await recommender.recommend(
+            topic=discussion.topic,
+            answer_type="",
+            method_catalog=list_methods(),
+            ai_client=ai_client,
+            provider=provider,
+            additional_context=characterization,
+        )
+        state["recommendations"] = [r.to_dict() for r in recs]
+        state["recommended_method"] = recs[0].method_name if recs else None
+    except Exception:
+        logger.exception("Triage recommender call failed")
+        state["recommendations"] = []
+        state["recommended_method"] = "open_discussion"
+    finally:
+        await ai_client.close()
+
+
 async def generate_ai_turn(
     discussion: Discussion, moderator: Moderator, db: Database,
-    pricing: PricingCache,
+    pricing: PricingCache, key_resolver=None,
 ) -> dict:
     """Generate an AI participant's contribution for the current turn.
 
@@ -129,6 +172,16 @@ async def generate_ai_turn(
                     discussion.id,
                     method_state=serialize_method_state(discussion.method_state),
                 )
+            # Triage recommend phase: run async MethodRecommender
+            if (discussion.discussion_method == "triage"
+                    and discussion.method_state.get("current_phase") == "recommend"
+                    and key_resolver):
+                await _run_triage_recommender(discussion, current, key_resolver)
+                if discussion.id:
+                    db.update_discussion(
+                        discussion.id,
+                        method_state=serialize_method_state(discussion.method_state),
+                    )
         else:
             content = resp.content
 

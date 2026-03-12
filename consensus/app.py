@@ -668,6 +668,7 @@ class ConsensusApp:
         """Generate an AI participant's contribution for the current turn."""
         result = await app_discussion_flow.generate_ai_turn(
             self.discussion, self.moderator, self.db, self.db.pricing,
+            key_resolver=self._resolve_key_for_moderator,
         )
         self._notify()
         return result
