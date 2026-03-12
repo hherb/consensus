@@ -36,6 +36,9 @@ from .decompose import DecomposeHandler
 from .analyze_subquestions import AnalyzeSubquestionsHandler
 from .integrate_subquestions import IntegrateSubquestionsHandler
 from .recompose import RecomposeHandler
+from .triage_intake import TriageIntakeHandler
+from .triage_recommend import TriageRecommendHandler
+from .triage_confirm import TriageConfirmHandler
 
 __all__ = [
     "SurfaceAssumptionsHandler",
@@ -70,4 +73,7 @@ __all__ = [
     "AnalyzeSubquestionsHandler",
     "IntegrateSubquestionsHandler",
     "RecomposeHandler",
+    "TriageIntakeHandler",
+    "TriageRecommendHandler",
+    "TriageConfirmHandler",
 ]
