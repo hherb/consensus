@@ -1,6 +1,6 @@
 # Consensus
 
-A collaborative intelligence platform that orchestrates structured reasoning between (optional) humans and AI models. Multiple participants — each with their own knowledge, tools, and analytical methods — work together under moderation to investigate questions, stress-test hypotheses, and synthesize conclusions. Supports nine analytical frameworks from Delphi estimation to adversarial red-teaming, with built-in web search, document RAG, vision, persistent memory, and extensible tooling via MCP.
+A collaborative intelligence platform that orchestrates structured reasoning between (optional) humans and AI models. Multiple participants — each with their own knowledge, tools, and analytical methods — work together under moderation to investigate questions, stress-test hypotheses, and synthesize conclusions. Supports twelve analytical frameworks from Delphi estimation to adversarial red-teaming, with built-in web search, document RAG, vision, persistent memory, and extensible tooling via MCP.
 
 <p align="center">
   <img src="assets/screenshot.png" alt="Consensus screenshot">
@@ -33,8 +33,11 @@ Different problems demand different reasoning structures. Consensus provides a `
 - **Adversarial Collaboration** (Kahneman-style) — participants who genuinely disagree jointly design the criteria that would settle the question *before* gathering evidence. Prevents post-hoc rationalisation. Phases: Positions → Criteria → Evidence → Adjudicate
 - **Red Team / Blue Team** — rotating adversarial role each round; red team sees only the current conclusion and tries to break it. Phases: Construct → Attack → Revise → Assess
 - **Participant Voting** — structured deliberation followed by formal voting. Participants propose motions during deliberation, then vote for/against/abstain on each motion. Configurable thresholds (simple majority, supermajority, unanimous). Double-vote prevention, tally with pass/fail. Phases: Deliberate → Vote → Tally
+- **Counterfactual Stress Testing** — systematically tests which beliefs are load-bearing vs. decorative in a developing consensus. For each key claim, participants argue from the premise that it is false and score the impact. Produces a ranked classification of claims by structural importance. Phases: Deliberate → Extract Claims → Stress Test → Synthesize
+- **Recursive Decomposition** — breaks complex multi-faceted questions into manageable sub-questions, analyses each independently, then recomposes findings into a coherent synthesis. Phases: Decompose → Analyze Sub-questions → Integrate → Recompose
+- **Guided Triage** — a meta-method for collaborative method selection. The moderator interviews human participants about the problem type, decision context, and uncertainty structure, then an LLM-based recommender suggests the most appropriate method. The group confirms or adjusts before the discussion switches to the chosen method automatically. Phases: Intake → Recommend → Confirm
 
-Methods are selected per-discussion at setup time. The architecture is extensible — new methods implement the `DiscussionMethod` ABC and register in the method registry.
+Methods are selected per-discussion at setup time, or recommended by the built-in **Method Recommender** — an LLM-based classifier that suggests the best method given a topic and answer type. The architecture is extensible — new methods implement the `DiscussionMethod` ABC and register in the method registry.
 
 #### Composable Phase Library
 
@@ -49,7 +52,7 @@ class KeyAssumptionsCheck(DiscussionMethod):
     )
 ```
 
-This design means phases can be reused across methods (e.g. the same `SurfaceAssumptionsHandler` could serve as a first phase in another method), and new methods can be created by composing existing handlers without writing boilerplate. The library includes 27 handlers and 3 shared helper modules in `consensus/methods/phases/`.
+This design means phases can be reused across methods (e.g. the same `SurfaceAssumptionsHandler` could serve as a first phase in another method), and new methods can be created by composing existing handlers without writing boilerplate. The library includes 34 handlers and 4 shared helper modules in `consensus/methods/phases/`.
 
 ### Multi-Provider AI Support
 - **OpenAI-compatible API** support — works with OpenAI, Anthropic, Ollama, DeepSeek, LMStudio, vLLM, and any compatible endpoint
@@ -290,7 +293,7 @@ ConsensusApp — orchestrator, state management, event emitter
     ├── Moderator — turn flow, AI generation, summaries
     ├── DiscussionMethod (methods/) — pluggable analytical frameworks
     │     ├── PhaseHandler (methods/phase_handler.py) — composable phase ABC
-    │     ├── 9 method classes assembled from 27 phase handlers
+    │     ├── 12 method classes assembled from 34 phase handlers
     │     └── methods/phases/ — reusable handler implementations + helpers
     ├── AIClient — async OpenAI-compatible HTTP client (httpx)
     ├── Database (db/) — thread-safe SQLite persistence (domain-specific mixins)

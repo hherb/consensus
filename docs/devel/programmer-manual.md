@@ -63,7 +63,8 @@ ConsensusApp (app.py + app_*.py domain modules)
     |
     +-- DiscussionMethod (methods/)
     |     Pluggable analytical frameworks, composable PhaseHandler instances
-    |     9 methods assembled from 27 reusable phase handlers
+    |     12 methods assembled from 34 reusable phase handlers
+    |     Includes MethodRecommender (LLM-based method classification)
     |
     +-- PricingCache (pricing.py)
     |     Model cost lookup via OpenRouter, fuzzy name matching

@@ -6,7 +6,7 @@
 
 ## Overview
 
-Consensus supports nine analytical discussion methods, each imposing a
+Consensus supports twelve analytical discussion methods, each imposing a
 different reasoning structure on the conversation. The method framework lives
 in `consensus/methods/` and integrates with the moderator and discussion flow
 without changing core engine call sites.
@@ -34,11 +34,16 @@ consensus/methods/
     delphi.py            — DelphiMethod
     belief_diffusion.py  — BeliefDiffusion
     voting.py            — VotingMethod
-    phases/              — 27 PhaseHandler implementations + 3 helper modules
+    counterfactual.py    — CounterfactualStressTest
+    recursive_decomposition.py — RecursiveDecomposition
+    triage.py            — TriageMethod (Guided Triage meta-method)
+    recommender.py       — MethodRecommender (LLM-based method classification)
+    phases/              — 34 PhaseHandler implementations + 4 helper modules
         __init__.py
         _belief_helpers.py
         _delphi_helpers.py
         _voting_helpers.py
+        _counterfactual_helpers.py
         surface_assumptions.py, challenge_assumptions.py, assess_assumptions.py
         frame_premortem.py, premortem_imagine.py, consolidate_premortem.py
         state_positions.py, define_criteria.py, present_evidence.py, adjudicate.py
@@ -47,6 +52,10 @@ consensus/methods/
         estimate.py, revise_delphi.py, synthesise_delphi.py
         frame_hypotheses.py, prior_beliefs.py, diffuse_beliefs.py, diagnose_beliefs.py
         deliberate.py, vote.py, tally.py
+        counterfactual_deliberate.py, counterfactual_extract.py
+        counterfactual_stress.py, counterfactual_synthesize.py
+        decompose.py, analyze_subquestions.py, integrate_subquestions.py, recompose.py
+        triage_intake.py, triage_recommend.py, triage_confirm.py
 ```
 
 ---
@@ -247,6 +256,64 @@ phase in a custom analytical method.
 | Delphi Method | 3 | Estimate → Revise → Synthesise |
 | Belief State Diffusion | 4 | Frame → Prior → Diffuse → Diagnose |
 | Participant Voting | 3 | Deliberate → Vote → Tally |
+| Counterfactual Stress Testing | 4 | Deliberate → Extract Claims → Stress Test → Synthesize |
+| Recursive Decomposition | 4 | Decompose → Analyze Sub-questions → Integrate → Recompose |
+| Guided Triage | 3 | Intake → Recommend → Confirm |
+
+---
+
+## Method Triage & Recommendation
+
+Consensus includes a two-tier method recommendation system:
+
+### Tier 1: Quick Recommender (`MethodRecommender`)
+
+A stateless LLM-based classification engine in `consensus/methods/recommender.py`.
+At discussion setup time, the user provides a topic and selects an answer type
+(explore, decide, forecast, identify risks, test hypothesis, resolve disagreement,
+or other). The recommender sends this to an LLM along with the method catalog and
+a problem-type taxonomy, then returns ranked `MethodRecommendation` objects.
+
+**Key types:**
+- `MethodRecommendation` — dataclass with `method_name`, `display_name`,
+  `confidence` (0–1), `reasoning`, and `fit_factors`
+- `MethodRecommender` — stateless class with `_filter_catalog()`,
+  `_build_system_prompt()`, `_build_user_prompt()`, `_parse_response()`,
+  and `async recommend()`
+- `ANSWER_TYPES` — list of answer type strings presented to users
+- `_EXCLUDED_METHODS` — methods excluded from recommendations (`triage`,
+  `open_discussion`)
+
+**Integration:** `ConsensusApp.recommend_method(topic, answer_type)` creates an
+`AIClient` using the moderator's provider config, calls `recommend()`, and returns
+the results. Exposed via the `recommend_method` API route and desktop bridge.
+
+**Frontend:** The setup tab has radio buttons for answer type selection and a
+"Suggest Method" button. Clicking a recommendation selects it in the method
+dropdown.
+
+### Tier 2: Guided Triage (`TriageMethod`)
+
+A three-phase meta-method for ambiguous cases where the best method isn't obvious.
+
+| Phase | Handler | Turn Order | Purpose |
+|-------|---------|------------|---------|
+| Intake | `TriageIntakeHandler` | Human participants only | Structured questions about problem type, decision context, uncertainty |
+| Recommend | `TriageRecommendHandler` | Moderator only | Synthesizes intake, triggers async `MethodRecommender` |
+| Confirm | `TriageConfirmHandler` | All participants | Reviews recommendations, moderator makes final selection |
+
+**Method transition:** When triage completes, `complete_turn()` detects
+`method_state["chosen_method"]` and calls `switch_discussion_method()` in
+`app_discussion_flow.py`. This reinitializes method state for the chosen method,
+posts a system message, and returns `{"method_switched": True}` instead of
+`{"method_complete": True}`.
+
+**Async recommender wiring:** The `TriageRecommendHandler.process_response()` is
+sync, so it stores `moderator_characterization` in method state. After
+`process_response()` runs, `generate_ai_turn()` detects the triage recommend
+phase and calls `_run_triage_recommender()` to make the async `MethodRecommender`
+call. Results are stored in `method_state["recommendations"]` and
+`method_state["recommended_method"]`.
 
 ---
 
