@@ -21,6 +21,7 @@ from .delphi import DelphiMethod
 from .voting import VotingMethod
 from .counterfactual import CounterfactualStressTest
 from .recursive_decomposition import RecursiveDecomposition
+from .triage import TriageMethod
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ _METHODS: dict[str, type[DiscussionMethod]] = {
     "voting": VotingMethod,
     "counterfactual": CounterfactualStressTest,
     "recursive_decomposition": RecursiveDecomposition,
+    "triage": TriageMethod,
 }
 _INSTANCES: dict[str, DiscussionMethod] = {}
 _METHODS_METADATA: list[dict] | None = None
@@ -103,4 +105,5 @@ __all__ = [
     "VotingMethod",
     "CounterfactualStressTest",
     "RecursiveDecomposition",
+    "TriageMethod",
 ]

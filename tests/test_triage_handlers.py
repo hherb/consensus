@@ -169,3 +169,85 @@ class TestTriageConfirmHandler:
         }
         handler.process_response("I agree with ach", ai_entity, disc)
         assert disc.method_state["chosen_method"] is None
+
+
+from unittest.mock import MagicMock
+
+
+class TestTriageMethod:
+    def test_has_three_phases(self):
+        from consensus.methods.triage import TriageMethod
+        method = TriageMethod()
+        assert len(method.default_phases) == 3
+        names = [p.name for p in method.default_phases]
+        assert names == ["intake", "recommend", "confirm"]
+
+    def test_init_state_has_required_keys(self):
+        from consensus.methods.triage import TriageMethod
+        method = TriageMethod()
+        disc = Discussion(topic="test", discussion_method="triage")
+        state = method.init_state(disc)
+        assert state["current_phase"] == "intake"
+        assert "recommendations" in state
+        assert "recommended_method" in state
+        assert "chosen_method" in state
+
+    def test_to_dict_metadata(self):
+        from consensus.methods.triage import TriageMethod
+        method = TriageMethod()
+        d = method.to_dict()
+        assert d["name"] == "triage"
+        assert d["display_name"] == "Guided Triage"
+        assert len(d["phases"]) == 3
+
+    def test_registered_in_registry(self):
+        from consensus.methods import get_method
+        method = get_method("triage")
+        assert method.name == "triage"
+
+
+class TestSwitchDiscussionMethod:
+    def _make_discussion(self):
+        disc = Discussion(topic="test", discussion_method="triage")
+        disc.id = 1
+        disc.is_active = True
+        disc.status = "active"
+        disc.method_state = {
+            "current_phase": "confirm",
+            "chosen_method": "ach",
+        }
+        disc.moderator_id = 3
+        mod = Entity(name="Mod", entity_type=EntityType.AI, id=3)
+        disc.entities = [mod]
+        return disc
+
+    def test_switches_method_and_reinitializes_state(self):
+        from consensus.app_discussion_flow import switch_discussion_method
+        disc = self._make_discussion()
+        db = MagicMock()
+        result = switch_discussion_method(disc, db, "ach")
+        assert disc.discussion_method == "ach"
+        assert disc.method_state.get("current_phase") == "hypothesize"
+        assert result["name"] == "ach"
+
+    def test_rejects_switching_to_triage(self):
+        from consensus.app_discussion_flow import switch_discussion_method
+        disc = self._make_discussion()
+        db = MagicMock()
+        result = switch_discussion_method(disc, db, "triage")
+        assert "error" in result
+
+    def test_rejects_unknown_method(self):
+        from consensus.app_discussion_flow import switch_discussion_method
+        disc = self._make_discussion()
+        db = MagicMock()
+        result = switch_discussion_method(disc, db, "nonexistent")
+        assert "error" in result
+
+    def test_persists_to_db(self):
+        from consensus.app_discussion_flow import switch_discussion_method
+        disc = self._make_discussion()
+        db = MagicMock()
+        switch_discussion_method(disc, db, "ach")
+        db.update_discussion.assert_called()
+        db.add_message.assert_called()

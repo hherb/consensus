@@ -6,7 +6,7 @@ import time
 from typing import Callable, Optional
 
 from .database import Database
-from .methods import get_active_method, serialize_method_state
+from .methods import get_active_method, get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole, StoryboardEntry
 from .moderator import Moderator
 from .pricing import PricingCache
@@ -205,6 +205,54 @@ async def generate_ai_turn(
         return result
 
 
+def switch_discussion_method(
+    discussion: Discussion, db: Database, method_name: str,
+) -> dict:
+    """Switch the discussion to a new method (used by triage).
+
+    Reinitializes method_state, persists to DB, and adds a system
+    message announcing the transition. Returns the new method's
+    metadata dict, or an error dict.
+    """
+    if method_name == "triage":
+        return {"error": "Cannot switch to triage method"}
+
+    try:
+        method = get_method(method_name)
+    except KeyError:
+        return {"error": f"Unknown method: {method_name!r}"}
+
+    discussion.discussion_method = method_name
+    discussion.method_state = method.init_state(discussion)
+
+    if discussion.id:
+        db.update_discussion(
+            discussion.id,
+            discussion_method=method_name,
+            method_state=serialize_method_state(discussion.method_state),
+        )
+
+    # System message announcing the transition
+    first_phase = method.default_phases[0] if method.default_phases else None
+    phase_info = f" Beginning {first_phase.display_name} phase." if first_phase else ""
+    transition_text = (
+        f"**Discussion method set to {method.display_name}.**{phase_info}"
+    )
+    mod = discussion.moderator
+    if mod and discussion.id:
+        msg = Message(
+            entity_id=mod.id, entity_name=mod.name,
+            content=transition_text, role=MessageRole.SYSTEM,
+        )
+        discussion.messages.append(msg)
+        db.add_message(
+            discussion.id, mod.id, transition_text, "system",
+            turn_number=discussion.turn_number,
+        )
+
+    return method.to_dict()
+
+
 async def complete_turn(
     discussion: Discussion, moderator: Moderator, db: Database,
     pricing: PricingCache, get_state_fn: Callable[[], dict],
@@ -341,12 +389,34 @@ async def complete_turn(
                         turn_number=discussion.turn_number,
                     )
             else:
-                # All phases exhausted — conclude
+                # All phases exhausted
                 if discussion.id:
                     db.update_discussion(
                         discussion.id,
                         method_state=serialize_method_state(discussion.method_state),
                     )
+                # Triage special case: switch to chosen method
+                chosen = discussion.method_state.get("chosen_method")
+                if (discussion.discussion_method == "triage"
+                        and chosen):
+                    switch_result = switch_discussion_method(
+                        discussion, db, chosen)
+                    if "error" not in switch_result:
+                        # Reorder turns for the new method
+                        new_method = get_active_method(discussion)
+                        if new_method:
+                            new_order = new_method.get_turn_order(
+                                list(discussion.turn_order), discussion)
+                            if new_order != list(discussion.turn_order):
+                                discussion.turn_order = new_order
+                                discussion.current_turn_index = 0
+                        return {
+                            "method_switched": True,
+                            "new_method": switch_result,
+                            "turn_number": discussion.turn_number,
+                            "current_round": discussion.current_round,
+                            "state": get_state_fn(),
+                        }
                 return {
                     "method_complete": True,
                     "turn_number": discussion.turn_number,
