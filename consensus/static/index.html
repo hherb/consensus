@@ -145,6 +145,20 @@
                     </label>
                     <span id="method-description" class="text-muted" style="font-size: 0.8rem; flex-basis: 100%;"></span>
                 </div>
+                <div id="method-recommendation-section" class="form-group">
+                  <label>What kind of answer are you looking for?</label>
+                  <div id="answer-type-options" class="answer-type-group">
+                    <label><input type="radio" name="answer_type" value="explore"> Explore from multiple perspectives</label>
+                    <label><input type="radio" name="answer_type" value="decide"> Make a decision between options</label>
+                    <label><input type="radio" name="answer_type" value="forecast"> Forecast or estimate something</label>
+                    <label><input type="radio" name="answer_type" value="risks"> Identify risks or failure modes</label>
+                    <label><input type="radio" name="answer_type" value="hypothesis"> Test a hypothesis or claim</label>
+                    <label><input type="radio" name="answer_type" value="disagreement"> Resolve a disagreement</label>
+                    <label><input type="radio" name="answer_type" value="other"> Something else / not sure</label>
+                  </div>
+                  <button id="suggest-method-btn" class="btn btn-secondary" disabled>Suggest Method</button>
+                  <div id="method-recommendations" class="recommendations-panel" style="display:none;"></div>
+                </div>
 
                 <div class="card">
                     <h2>Reference Documents</h2>

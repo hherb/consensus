@@ -21,6 +21,7 @@ export function renderSetupTab() {
     renderDiscussionRoster();
     updateStartButton();
     loadDiscussionMethods();
+    initMethodRecommendation();
 }
 
 /**
@@ -205,6 +206,83 @@ export async function onMethodChange() {
     updateMethodDescription();
     const result = await api.setDiscussionMethod(select.value);
     if (result?.error) showToast(result.error);
+}
+
+// --- Method Recommendation ---
+
+const ANSWER_TYPE_MAP = {
+    explore: "Explore a topic from multiple perspectives",
+    decide: "Make a decision between options",
+    forecast: "Forecast or estimate something",
+    risks: "Identify risks or failure modes",
+    hypothesis: "Test a hypothesis or claim",
+    disagreement: "Resolve a disagreement",
+    other: "Something else / not sure",
+};
+
+export function initMethodRecommendation() {
+    const btn = $('#suggest-method-btn');
+    const radios = document.querySelectorAll('input[name="answer_type"]');
+    if (!btn) return;
+
+    radios.forEach(r => r.addEventListener('change', () => {
+        const topic = $('#topic')?.value?.trim();
+        btn.disabled = !topic;
+    }));
+
+    btn.addEventListener('click', requestRecommendation);
+}
+
+async function requestRecommendation() {
+    const topic = $('#topic')?.value?.trim();
+    const selected = document.querySelector('input[name="answer_type"]:checked');
+    if (!topic || !selected) return;
+
+    const btn = $('#suggest-method-btn');
+    const panel = $('#method-recommendations');
+    btn.disabled = true;
+    btn.textContent = 'Analyzing...';
+
+    const answerType = ANSWER_TYPE_MAP[selected.value] || selected.value;
+
+    try {
+        const result = await api.recommendMethod(topic, answerType);
+        if (result?.error) {
+            panel.innerHTML = `<p class="error">${escHtml(result.error)}</p>`;
+        } else if (result?.recommendations) {
+            renderRecommendations(result.recommendations);
+        }
+    } catch (e) {
+        panel.innerHTML = '<p class="error">Recommendation failed.</p>';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Suggest Method';
+        panel.style.display = '';
+    }
+}
+
+function renderRecommendations(recs) {
+    const panel = $('#method-recommendations');
+    if (!panel || !recs.length) return;
+
+    panel.innerHTML = recs.map((r, i) => `
+        <div class="recommendation-item ${i === 0 ? 'top-pick' : ''}"
+             data-method="${escHtml(r.method_name)}">
+            <strong>${escHtml(r.display_name)}</strong>
+            <span class="confidence">${Math.round(r.confidence * 100)}% match</span>
+            <div class="reasoning">${escHtml(r.reasoning)}</div>
+        </div>
+    `).join('');
+
+    panel.querySelectorAll('.recommendation-item').forEach(el => {
+        el.addEventListener('click', () => {
+            const select = $('#discussion-method');
+            if (select) {
+                select.value = el.dataset.method;
+                select.dispatchEvent(new Event('change'));
+            }
+        });
+    });
 }
 
 function updateMethodDescription() {
