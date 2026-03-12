@@ -22,6 +22,7 @@ from .voting import VotingMethod
 from .counterfactual import CounterfactualStressTest
 from .recursive_decomposition import RecursiveDecomposition
 from .triage import TriageMethod
+from .self_distillation import RecursiveSelfDistillation
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ _METHODS: dict[str, type[DiscussionMethod]] = {
     "counterfactual": CounterfactualStressTest,
     "recursive_decomposition": RecursiveDecomposition,
     "triage": TriageMethod,
+    "self_distillation": RecursiveSelfDistillation,
 }
 _INSTANCES: dict[str, DiscussionMethod] = {}
 _METHODS_METADATA: list[dict] | None = None
@@ -106,4 +108,5 @@ __all__ = [
     "CounterfactualStressTest",
     "RecursiveDecomposition",
     "TriageMethod",
+    "RecursiveSelfDistillation",
 ]
