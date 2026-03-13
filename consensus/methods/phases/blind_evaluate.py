@@ -54,18 +54,36 @@ class BlindEvaluateHandler(PhaseHandler):
     def filter_context_message(self, entity_name: str, content: str,
                                role: str,
                                discussion: Discussion) -> str:
-        """Strip ALL prior messages to ensure blind evaluation.
+        """Strip pre-evaluation messages to ensure blind evaluation.
 
         The skeleton is delivered entirely through get_system_prompt.
-        Returning empty string causes assistant messages to be skipped
-        by the moderator's _build_context (line 98) and user messages
-        to carry no meaningful content.
+        Messages from Phase 3 itself (containing validity tags or the
+        phase transition marker) are preserved so participants can see
+        prior evaluations within this phase. All earlier messages are
+        blanked — empty assistant messages are skipped by the
+        moderator's _build_context, and empty user messages carry no
+        meaningful content.
         """
+        # Keep Phase 3 messages: evaluations and phase transition
+        if "[VALIDITY" in content.upper():
+            return content
+        if self.phase.display_name in content:
+            return content
         return ""
 
     # ------------------------------------------------------------------
     # Prompts
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _eval_item_ids(skeleton: dict) -> list[str]:
+        """Return IDs of all inference and conclusion steps to evaluate."""
+        ids: list[str] = []
+        for inf in skeleton.get("inferences", []):
+            ids.append(inf["id"])
+        for con in skeleton.get("conclusions", []):
+            ids.append(con["id"])
+        return ids
 
     def get_system_prompt(self, entity: Entity,
                           discussion: Discussion) -> str:
@@ -80,12 +98,7 @@ class BlindEvaluateHandler(PhaseHandler):
             )
 
         skeleton = state.get("skeleton", {})
-        # Build the list of items to evaluate
-        eval_items: list[str] = []
-        for inf in skeleton.get("inferences", []):
-            eval_items.append(inf["id"])
-        for con in skeleton.get("conclusions", []):
-            eval_items.append(con["id"])
+        eval_items = self._eval_item_ids(skeleton)
         items_str = ", ".join(eval_items)
 
         return (
@@ -119,15 +132,8 @@ class BlindEvaluateHandler(PhaseHandler):
 
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
-        state = discussion.method_state
-        skeleton = state.get("skeleton", {})
-
-        eval_items: list[str] = []
-        for inf in skeleton.get("inferences", []):
-            eval_items.append(inf["id"])
-        for con in skeleton.get("conclusions", []):
-            eval_items.append(con["id"])
-
+        skeleton = discussion.method_state.get("skeleton", {})
+        eval_items = self._eval_item_ids(skeleton)
         tags = " ".join(f"`[VALIDITY {eid}: ?]`" for eid in eval_items)
 
         return (

@@ -33,12 +33,22 @@ def validate_skeleton(data: dict) -> bool:
             if not item.get("id") or not item.get("text"):
                 return False
 
-    # Inferences and conclusions must have "from" lists
+    # Collect all valid IDs for reference checking
+    valid_ids: set[str] = set()
+    for p in data["premises"]:
+        valid_ids.add(p["id"])
+
+    # Inferences and conclusions must have "from" lists pointing to real IDs
     for key in ("inferences", "conclusions"):
         for item in data[key]:
             refs = item.get("from")
             if not isinstance(refs, list) or not refs:
                 return False
+            if not all(ref in valid_ids for ref in refs):
+                return False
+            # Inferences become valid targets for later references
+            if key == "inferences":
+                valid_ids.add(item["id"])
 
     return True
 
