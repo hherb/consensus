@@ -8,6 +8,16 @@ Get Consensus running in under five minutes.
 - **[uv](https://docs.astral.sh/uv/getting-started/installation/)** — fast Python package manager
 - An OpenAI-compatible API endpoint (OpenAI, Ollama, LMStudio, vLLM, etc.)
 
+### Linux system dependencies (desktop mode only)
+
+Desktop mode uses [pywebview](https://pywebview.flowrl.com/), which requires GTK or QT. On Debian/Ubuntu:
+
+```bash
+sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1
+```
+
+> **Headless servers (DGX, cloud VMs, WSL without GUI):** Skip these dependencies and use **web mode** instead (`consensus --web`). No system GUI libraries are needed for web mode.
+
 If you want to use local AI models, install [Ollama](https://ollama.com) and pull a model:
 
 ```bash
@@ -261,5 +271,17 @@ uv tool install -e ".[desktop]"    # or ".[all]" for both modes
 ```bash
 curl http://localhost:11434/v1/models
 ```
+
+**"You must have either QT or GTK" / "No module named 'gi'"** — Desktop mode needs GTK or QT system libraries. Install them (see [Prerequisites](#linux-system-dependencies-desktop-mode-only)) or use web mode:
+```bash
+consensus --web
+```
+
+**Headless server / no display** — On servers without a GUI (DGX, cloud VMs, WSL), always use web mode:
+```bash
+consensus --web --host 0.0.0.0
+```
+
+**"Failed to fetch pricing from OpenRouter"** — Non-fatal warning. Pricing data is used for cost tracking only. Check your network/DNS if you need cost estimates.
 
 **Blank window in desktop mode** — Try web mode instead, or run with `--debug` to see errors.
