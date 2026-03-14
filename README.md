@@ -1,6 +1,6 @@
 # Consensus
 
-A collaborative intelligence platform that orchestrates structured reasoning between (optional) humans and AI models. Multiple participants — each with their own knowledge, tools, and analytical methods — work together under moderation to investigate questions, stress-test hypotheses, and synthesize conclusions. Supports twelve analytical frameworks from Delphi estimation to adversarial red-teaming, with built-in web search, document RAG, vision, persistent memory, and extensible tooling via MCP.
+A collaborative intelligence platform that orchestrates structured reasoning between (optional) humans and AI models. Multiple participants — each with their own knowledge, tools, and analytical methods — work together under moderation to investigate questions, stress-test hypotheses, and synthesize conclusions. Supports thirteen analytical frameworks from Delphi estimation to adversarial red-teaming, with built-in web search, document RAG, vision, persistent memory, and extensible tooling via MCP.
 
 <p align="center">
   <img src="assets/screenshot.png" alt="Consensus screenshot">
@@ -16,7 +16,7 @@ A collaborative intelligence platform that orchestrates structured reasoning bet
 - **Devil's Advocate role** — assign participants a constructive-critic role with dedicated prompt templates that challenge assumptions and identify weaknesses
 - **Storyboard panel** showing running summaries and conclusions alongside the conversation
 - **AI-to-AI conversations** run automatically without manual intervention
-- **Context-aware AI responses** with configurable context window (last N messages)
+- **Participant-driven context loading** — each AI participant loads context from the database using a configurable strategy (full history, sliding window, or summary-compressed). Per-entity configuration with discussion-level defaults
 - **Pause & resume** — pause discussions and resume them later, even after conclusion
 - **Dynamic participation** — add or remove participants mid-discussion
 - **Export** — save discussions as JSON or HTML (desktop mode uses native save dialog)
@@ -35,6 +35,7 @@ Different problems demand different reasoning structures. Consensus provides a `
 - **Participant Voting** — structured deliberation followed by formal voting. Participants propose motions during deliberation, then vote for/against/abstain on each motion. Configurable thresholds (simple majority, supermajority, unanimous). Double-vote prevention, tally with pass/fail. Phases: Deliberate → Vote → Tally
 - **Counterfactual Stress Testing** — systematically tests which beliefs are load-bearing vs. decorative in a developing consensus. For each key claim, participants argue from the premise that it is false and score the impact. Produces a ranked classification of claims by structural importance. Phases: Deliberate → Extract Claims → Stress Test → Synthesize
 - **Recursive Decomposition** — breaks complex multi-faceted questions into manageable sub-questions, analyses each independently, then recomposes findings into a coherent synthesis. Phases: Decompose → Analyze Sub-questions → Integrate → Recompose
+- **Recursive Self-Distillation** — an LLM-native method that separates persuasiveness from validity. Participants generate rich reasoning, then strip it to a pure logical skeleton (premises → inferences → conclusion). A blind evaluator assesses only the skeleton, preventing rhetorical flourishes from masking weak logic. Phases: Generate → Distill → Evaluate → Synthesize
 - **Guided Triage** — a meta-method for collaborative method selection. The moderator interviews human participants about the problem type, decision context, and uncertainty structure, then an LLM-based recommender suggests the most appropriate method. The group confirms or adjusts before the discussion switches to the chosen method automatically. Phases: Intake → Recommend → Confirm
 
 Methods are selected per-discussion at setup time, or recommended by the built-in **Method Recommender** — an LLM-based classifier that suggests the best method given a topic and answer type. The architecture is extensible — new methods implement the `DiscussionMethod` ABC and register in the method registry.
@@ -52,7 +53,7 @@ class KeyAssumptionsCheck(DiscussionMethod):
     )
 ```
 
-This design means phases can be reused across methods (e.g. the same `SurfaceAssumptionsHandler` could serve as a first phase in another method), and new methods can be created by composing existing handlers without writing boilerplate. The library includes 34 handlers and 4 shared helper modules in `consensus/methods/phases/`.
+This design means phases can be reused across methods (e.g. the same `SurfaceAssumptionsHandler` could serve as a first phase in another method), and new methods can be created by composing existing handlers without writing boilerplate. The library includes 43 handlers and 4 shared helper modules in `consensus/methods/phases/`.
 
 ### Multi-Provider AI Support
 - **OpenAI-compatible API** support — works with OpenAI, Anthropic, Ollama, DeepSeek, LMStudio, vLLM, and any compatible endpoint
@@ -293,8 +294,9 @@ ConsensusApp — orchestrator, state management, event emitter
     ├── Moderator — turn flow, AI generation, summaries
     ├── DiscussionMethod (methods/) — pluggable analytical frameworks
     │     ├── PhaseHandler (methods/phase_handler.py) — composable phase ABC
-    │     ├── 12 method classes assembled from 34 phase handlers
+    │     ├── 13 method classes assembled from 43 phase handlers
     │     └── methods/phases/ — reusable handler implementations + helpers
+    ├── ContextStrategies (context_strategies.py) — per-participant DB context loading
     ├── AIClient — async OpenAI-compatible HTTP client (httpx)
     ├── Database (db/) — thread-safe SQLite persistence (domain-specific mixins)
     ├── PricingCache — model cost lookup via OpenRouter

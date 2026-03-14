@@ -27,7 +27,7 @@ python -m consensus --web --port 8080 --debug
 consensus                      # via pyproject.toml [project.scripts]
 ```
 
-Initial pytest test suite in `tests/`. No linter or build system configured yet.
+1110 tests in `tests/`. No linter or build system configured yet.
 
 ## Architecture
 
@@ -46,7 +46,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
     ├── DiscussionMethod (methods/) — pluggable analytical frameworks
     │     ├── PhaseHandler (methods/phase_handler.py) — composable phase ABC
     │     ├── MethodRecommender (methods/recommender.py) — LLM-based method classification
-    │     └── methods/phases/ — 34 reusable handler implementations + helpers
+    │     └── methods/phases/ — 43 reusable handler implementations + helpers
     ├── AIClient (ai_client.py) — async OpenAI-compatible HTTP client
     ├── PricingCache (pricing.py) — model cost lookup via OpenRouter
     ├── MCPToolProvider (mcp_client.py) — MCP server communication (JSON-RPC 2.0)
@@ -66,10 +66,11 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
 - `mcp_client.py` — `MCPToolProvider` for JSON-RPC 2.0 communication with MCP server subprocesses; expert entity consultation
 - `tools_document.py` — Document RAG tool provider: ingestion (URL/text/PDF/HTML), chunking, embedding, RAG Q&A, section navigation, map-reduce summarization
 - `tools_ask_user.py` — Interactive user-input tool: AI pauses mid-turn, frontend shows input bubble, user response fed back via `asyncio.Future`
-- `methods/` — Discussion method subpackage: `base.py` (`DiscussionMethod` ABC, `Phase`, `ProcessedResponse`), `phase_handler.py` (`PhaseHandler` ABC), `parsing.py` (shared parsing utilities), `recommender.py` (`MethodRecommender` — LLM-based method classification engine), 12 method classes including `triage.py` (Guided Triage meta-method), `phases/` subpackage with 34 composable handler implementations + 4 helper modules
+- `context_strategies.py` — Per-participant context loading: `ContextStrategy` enum (full/sliding_window/summary), `ContextConfig` dataclass, `load_context_messages()` function. Each participant queries DB with its own strategy instead of reading from the shared in-memory message list
+- `methods/` — Discussion method subpackage: `base.py` (`DiscussionMethod` ABC, `Phase`, `ProcessedResponse`), `phase_handler.py` (`PhaseHandler` ABC), `parsing.py` (shared parsing utilities), `recommender.py` (`MethodRecommender` — LLM-based method classification engine), 13 method classes including `triage.py` (Guided Triage meta-method) and `self_distillation.py` (Recursive Self-Distillation), `phases/` subpackage with 43 composable handler implementations + 4 helper modules
 - `db/` — Database subpackage with domain-specific mixins: `providers.py`, `entities.py`, `discussions.py`, `messages.py`, `prompts.py`, `tools.py`, `mcp.py`, `memory.py`, `documents.py`
 
-**Database schema (SQLite, 15+ tables + auth):** `providers`, `entities` (types: human/ai/expert), `prompts`, `discussions`, `discussion_members`, `messages` (includes `cost` column), `storyboard_entries`, `model_pricing`, `mcp_servers`, `expert_definitions`, `tool_providers`, `entity_tools`, `discussion_tool_overrides`, `documents`, `document_chunks`, `document_chunk_embeddings`, `discussion_documents`, `images`, `discussion_images`, `message_images`. Auth tables (in separate `auth.db` for multi-user): `users`, `auth_tokens`, `user_oauth_identities`, `oauth_states`. Seeded with default moderator/participant prompt templates on first run.
+**Database schema (SQLite, 15+ tables + auth):** `providers`, `entities` (types: human/ai/expert), `prompts`, `discussions` (includes `default_context_strategy`, `default_context_window_size`), `discussion_members` (includes `context_strategy`, `context_window_size` for per-entity context loading), `messages` (includes `cost` column), `storyboard_entries`, `model_pricing`, `mcp_servers`, `expert_definitions`, `tool_providers`, `entity_tools`, `discussion_tool_overrides`, `documents`, `document_chunks`, `document_chunk_embeddings`, `discussion_documents`, `images`, `discussion_images`, `message_images`. Auth tables (in separate `auth.db` for multi-user): `users`, `auth_tokens`, `user_oauth_identities`, `oauth_states`. Seeded with default moderator/participant prompt templates on first run.
 
 **Migrations:** Numbered SQL files in `consensus/migrations/` (e.g. `007_images.sql`) are auto-discovered and applied by `migrator.py`. The migrator uses regex `^(\d{3})_.*\.sql$` to find files, tracks applied versions in a `migrations` table, and applies each migration exactly once in version order. New migrations only need to be added as files — no registration required.
 

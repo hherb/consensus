@@ -8,6 +8,9 @@ from typing import Callable, Optional
 
 from .models import Discussion, Entity, EntityType
 from .ai_client import AIClient, AIResponse
+from .context_strategies import (
+    ContextConfig, DEFAULT_WINDOW_SIZE, load_context_messages,
+)
 from .database import Database
 from .methods import get_active_method
 from .tools import ToolCallRecord, ToolRegistry, MAX_TOOL_ITERATIONS
@@ -15,8 +18,9 @@ from .tools_image import is_vision_capable, build_image_content_blocks
 
 logger = logging.getLogger(__name__)
 
-# How many recent messages to include in AI context
-CONTEXT_MESSAGE_LIMIT = 20
+# Legacy constant — kept for backward compatibility with tests/docs.
+# Actual window size is now per-participant via ContextConfig.
+CONTEXT_MESSAGE_LIMIT = DEFAULT_WINDOW_SIZE
 
 # Moderator AI generation settings
 MODERATOR_TEMPERATURE = 0.5
@@ -62,56 +66,41 @@ class Moderator:
             for e in self.discussion.entities
         )
 
-    def _build_context(self, system_prompt: str, task: str,
-                        current_entity_id: Optional[int] = None) -> list[dict]:
-        """Build a proper OpenAI message array from discussion history.
+    def _get_context_config(self, entity_id: Optional[int]) -> ContextConfig:
+        """Look up the context strategy for a participant.
+
+        Checks the ``discussion_members`` row first, falls back to the
+        discussion-level default (read from the in-memory Discussion
+        object to avoid an extra DB query), then to the hard-coded
+        default (sliding_window of 20).
+        """
+        disc_defaults = {
+            "default_context_strategy": self.discussion.default_context_strategy,
+            "default_context_window_size": self.discussion.default_context_window_size,
+        }
+        if entity_id and self.discussion.id:
+            member = self.db.get_discussion_member(self.discussion.id, entity_id)
+            if member:
+                return ContextConfig.from_member_row(member, disc_defaults)
+        return ContextConfig()
+
+    def _load_context_messages(self, entity_id: Optional[int]) -> list:
+        """Load messages from DB using the entity's context strategy."""
+        config = self._get_context_config(entity_id)
+        return load_context_messages(self.db, self.discussion.id, config)
+
+    def _format_messages(
+        self, raw_messages: list, system_prompt: str, task: str,
+        current_entity_id: Optional[int] = None,
+        images: Optional[list[dict]] = None,
+    ) -> list[dict]:
+        """Format Message objects into an OpenAI message array.
 
         Uses role-based formatting: messages from the current entity become
         'assistant' role, all others become 'user' role with speaker prefix.
 
         If a discussion method provides a ``filter_context_message`` hook,
         each message is passed through it (e.g. for Delphi anonymisation).
-        """
-        method = get_active_method(self.discussion)
-        messages: list[dict] = [{"role": "system", "content": system_prompt}]
-
-        # Add discussion topic as initial user context
-        messages.append({
-            "role": "user",
-            "content": f"Discussion topic: {self.discussion.topic}",
-        })
-
-        for msg in self.discussion.messages[-CONTEXT_MESSAGE_LIMIT:]:
-            if current_entity_id and msg.entity_id == current_entity_id:
-                role = "assistant"
-                content = msg.content
-            else:
-                role = "user"
-                content = f"[{msg.entity_name}]: {msg.content}"
-
-            # Let the method filter/transform context messages
-            if method:
-                content = method.filter_context_message(
-                    msg.entity_name, content, role, self.discussion)
-
-            # Skip empty assistant messages — some APIs (e.g. Kimi) reject them
-            if not content and role == "assistant":
-                continue
-
-            messages.append({"role": role, "content": content})
-
-        messages.append({"role": "user", "content": task})
-        return messages
-
-    def _build_multimodal_context(
-        self, system_prompt: str, task: str,
-        current_entity_id: Optional[int] = None,
-        images: Optional[list[dict]] = None,
-    ) -> list[dict]:
-        """Build context with images as multimodal content blocks.
-
-        Same structure as _build_context but injects discussion images
-        as image_url content blocks for vision-capable models.
         """
         method = get_active_method(self.discussion)
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
@@ -127,7 +116,7 @@ class Moderator:
             if content_blocks:
                 messages.append({"role": "user", "content": content_blocks})
 
-        for msg in self.discussion.messages[-CONTEXT_MESSAGE_LIMIT:]:
+        for msg in raw_messages:
             if current_entity_id and msg.entity_id == current_entity_id:
                 role = "assistant"
                 content = msg.content
@@ -147,6 +136,32 @@ class Moderator:
 
         messages.append({"role": "user", "content": task})
         return messages
+
+    def _build_context(self, system_prompt: str, task: str,
+                        current_entity_id: Optional[int] = None) -> list[dict]:
+        """Build an OpenAI message array from DB-loaded discussion history.
+
+        Loads context using the participant's configured strategy
+        (full / sliding_window / summary), then formats into role-based
+        messages.
+        """
+        raw = self._load_context_messages(current_entity_id)
+        return self._format_messages(raw, system_prompt, task,
+                                     current_entity_id)
+
+    def _build_multimodal_context(
+        self, system_prompt: str, task: str,
+        current_entity_id: Optional[int] = None,
+        images: Optional[list[dict]] = None,
+    ) -> list[dict]:
+        """Build context with images as multimodal content blocks.
+
+        Same as ``_build_context`` but injects discussion images as
+        ``image_url`` content blocks for vision-capable models.
+        """
+        raw = self._load_context_messages(current_entity_id)
+        return self._format_messages(raw, system_prompt, task,
+                                     current_entity_id, images=images)
 
     def _resolve_api_key(self, entity: Entity) -> str:
         """Resolve the API key for an entity, using BYOK resolver if available."""

@@ -136,6 +136,8 @@ def load_discussion(
         discussion_method=discussion_method,
         method_state=method_state,
         cost_limit=disc.get("cost_limit", 0.0),
+        default_context_strategy=disc.get("default_context_strategy", "sliding_window"),
+        default_context_window_size=disc.get("default_context_window_size", 20),
     )
     moderator = Moderator(
         discussion, db,

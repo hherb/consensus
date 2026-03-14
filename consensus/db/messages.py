@@ -28,7 +28,8 @@ class MessagesMixin:
                     latency_ms: int = 0, temperature_used: float = 0,
                     prompt_id: int = 0,
                     tool_calls_json: str = "",
-                    cost: Optional[float] = None) -> int:
+                    cost: Optional[float] = None,
+                    timestamp: Optional[float] = None) -> int:
         """Store a message and return its generated ID."""
         cur = self._execute_write(
             "INSERT INTO messages "
@@ -38,7 +39,8 @@ class MessagesMixin:
             "tool_calls_json,cost) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (discussion_id, entity_id, content, role, turn_number,
-             time.time(), model_used or None, prompt_tokens or None,
+             timestamp if timestamp is not None else time.time(),
+             model_used or None, prompt_tokens or None,
              completion_tokens or None, total_tokens or None,
              latency_ms or None, temperature_used or None,
              prompt_id or None, tool_calls_json or None, cost),
@@ -55,6 +57,34 @@ class MessagesMixin:
                     "WHERE m.discussion_id=? ORDER BY m.timestamp",
                     (discussion_id,),
                 ).fetchall()]
+
+    def get_messages_windowed(self, discussion_id: int, limit: int,
+                              offset: int = 0) -> list[dict]:
+        """Return the last *limit* messages for a discussion (chronological).
+
+        Uses a subquery to select the most recent rows, then re-sorts them
+        in ascending timestamp order so the caller gets a natural sequence.
+        """
+        return [dict(r) for r in
+                self.conn.execute(
+                    "SELECT * FROM ("
+                    "  SELECT m.*, e.name AS entity_name, e.avatar_color "
+                    "  FROM messages m "
+                    "  JOIN entities e ON m.entity_id=e.id "
+                    "  WHERE m.discussion_id=? "
+                    "  ORDER BY m.timestamp DESC "
+                    "  LIMIT ? OFFSET ?"
+                    ") sub ORDER BY sub.timestamp",
+                    (discussion_id, limit, offset),
+                ).fetchall()]
+
+    def get_messages_count(self, discussion_id: int) -> int:
+        """Return the total number of messages in a discussion."""
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE discussion_id=?",
+            (discussion_id,),
+        ).fetchone()
+        return row[0] if row else 0
 
     def add_storyboard_entry(self, discussion_id: int, turn_number: int,
                              summary: str,

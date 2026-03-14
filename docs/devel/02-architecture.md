@@ -38,7 +38,10 @@ ConsensusApp (app.py + app_*.py domain modules)
     |
     +-- DiscussionMethod (methods/)
     |     Pluggable analytical frameworks via composable PhaseHandler instances
-    |     9 methods assembled from 27 reusable handlers in methods/phases/
+    |     13 methods assembled from 43 reusable handlers in methods/phases/
+    |
+    +-- ContextStrategies (context_strategies.py)
+    |     Per-participant DB context loading (full / sliding_window / summary)
     |
     +-- PricingCache (pricing.py)
     |     Model cost lookup via OpenRouter, fuzzy name matching, SQLite cache
@@ -69,6 +72,10 @@ ConsensusApp (app.py + app_*.py domain modules)
 - **Persistent state:** Everything that should survive restarts lives in the
   SQLite database. The `Discussion` object is rebuilt from DB rows when loading
   a past discussion.
+- **AI context:** Loaded directly from the database per-participant turn via
+  `context_strategies.py`, not from the in-memory `Discussion.messages` list.
+  This decoupling enables arbitrarily long discussions without memory pressure
+  and allows each participant to use a different context strategy.
 
 ---
 
@@ -104,7 +111,7 @@ class MessageRole(Enum):
 | `Entity` | A discussion participant | `name`, `entity_type`, `ai_config`, `id`, `avatar_color` |
 | `Message` | A single message in a discussion | `entity_id`, `entity_name`, `content`, `role`, `timestamp`, plus AI metadata (tokens, latency, cost), `tool_calls_json` |
 | `StoryboardEntry` | A moderator summary after a turn | `turn_number`, `summary`, `speaker_name`, `timestamp` |
-| `Discussion` | Full in-memory discussion state | `entities`, `messages`, `storyboard`, `turn_order`, `current_turn_index`, `turn_number`, `is_active`, `discussion_method`, `method_state` |
+| `Discussion` | Full in-memory discussion state | `entities`, `messages`, `storyboard`, `turn_order`, `current_turn_index`, `turn_number`, `is_active`, `discussion_method`, `method_state`, `default_context_strategy`, `default_context_window_size` |
 
 The `Discussion` class has two important computed properties:
 
@@ -251,8 +258,19 @@ Template variables include: `{entity_name}`, `{topic}`, `{participants}`,
 **Context building:** `_build_context(system_prompt, task)` constructs the
 message list sent to the AI in OpenAI message format:
 1. A `system` message with the system prompt
-2. Discussion history messages (last `CONTEXT_MESSAGE_LIMIT` = 20)
+2. Discussion history messages loaded from DB per participant's strategy
 3. A `user` message containing the task prompt
+
+Context is loaded from the database per-participant using the
+`context_strategies.py` module. Each entity can use a different strategy:
+- **full** — all messages (for short discussions)
+- **sliding_window** — last N messages (default: 20, matches legacy behaviour)
+- **summary** — storyboard summaries for older turns + last N full messages
+
+Configuration is stored in `discussion_members.context_strategy` and
+`discussion_members.context_window_size`, with discussion-level defaults in
+`discussions.default_context_strategy` and
+`discussions.default_context_window_size`.
 
 **AI client caching:** `_get_client(entity)` maintains a dict of `AIClient`
 instances keyed by entity ID, so a client is created once per entity and

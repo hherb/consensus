@@ -244,6 +244,9 @@ class Discussion:
     method_state: dict = field(default_factory=dict)
     # Cost limit in USD (0 = unlimited)
     cost_limit: float = 0.0
+    # Default context strategy for participants in this discussion
+    default_context_strategy: str = "sliding_window"
+    default_context_window_size: int = 20
 
     @property
     def current_round(self) -> int:
@@ -302,4 +305,6 @@ class Discussion:
             "discussion_method": self.discussion_method,
             "method_state": self.method_state,
             "cost_limit": self.cost_limit,
+            "default_context_strategy": self.default_context_strategy,
+            "default_context_window_size": self.default_context_window_size,
         }

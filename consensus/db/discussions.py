@@ -49,7 +49,8 @@ class DiscussionsMixin:
             "discussions", discussion_id,
             allowed={"topic", "moderator_id", "status", "ended_at", "started_at",
                      "max_rounds", "discussion_method", "method_state",
-                     "cost_limit"},
+                     "cost_limit", "default_context_strategy",
+                     "default_context_window_size"},
             **kwargs,
         )
 
@@ -102,11 +103,20 @@ class DiscussionsMixin:
                               also_participant: bool = False,
                               turn_position: Optional[int] = None,
                               participant_role: str = "standard") -> None:
-        """Add or update a discussion member record."""
+        """Add or update a discussion member record.
+
+        Uses INSERT ... ON CONFLICT DO UPDATE to preserve columns not
+        listed here (e.g. context_strategy, context_window_size).
+        """
         self._execute_write(
-            "INSERT OR REPLACE INTO discussion_members "
+            "INSERT INTO discussion_members "
             "(discussion_id,entity_id,is_moderator,also_participant,"
-            "turn_position,participant_role) VALUES (?,?,?,?,?,?)",
+            "turn_position,participant_role) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(discussion_id,entity_id) DO UPDATE SET "
+            "is_moderator=excluded.is_moderator,"
+            "also_participant=excluded.also_participant,"
+            "turn_position=excluded.turn_position,"
+            "participant_role=excluded.participant_role",
             (discussion_id, entity_id, int(is_moderator),
              int(also_participant), turn_position, participant_role),
         )
@@ -152,4 +162,16 @@ class DiscussionsMixin:
             "DELETE FROM discussion_members "
             "WHERE discussion_id=? AND entity_id=?",
             (discussion_id, entity_id),
+        )
+
+    def update_member_context_strategy(self, discussion_id: int,
+                                       entity_id: int,
+                                       strategy: str,
+                                       window_size: int = 20) -> None:
+        """Update the context strategy for a discussion member."""
+        self._execute_write(
+            "UPDATE discussion_members "
+            "SET context_strategy=?, context_window_size=? "
+            "WHERE discussion_id=? AND entity_id=?",
+            (strategy, window_size, discussion_id, entity_id),
         )
