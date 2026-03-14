@@ -86,6 +86,27 @@ class MemoryMixin:
         ).fetchall()
         return [{"id": r[0], "content": r[1], "embedding": r[2]} for r in rows]
 
+    def get_messages_with_embeddings_for_discussion(
+        self, discussion_id: int,
+    ) -> list[dict]:
+        """Return messages with embeddings for a specific discussion.
+
+        Returns id, content, embedding, entity_id, entity_name, timestamp,
+        and role — the fields needed to reconstruct Message objects.
+        """
+        rows = self.conn.execute(
+            "SELECT m.id, m.content, e.embedding, m.entity_id, "
+            "       ent.name AS entity_name, m.timestamp, m.role "
+            "FROM messages m "
+            "JOIN message_embeddings e ON e.message_id = m.id "
+            "JOIN entities ent ON ent.id = m.entity_id "
+            "WHERE m.discussion_id = ?",
+            (discussion_id,),
+        ).fetchall()
+        return [{"id": r[0], "content": r[1], "embedding": r[2],
+                 "entity_id": r[3], "entity_name": r[4],
+                 "timestamp": r[5], "role": r[6]} for r in rows]
+
     def set_message_embedding(self, message_id: str, embedding: bytes) -> None:
         """Store or replace an embedding for a message."""
         self._execute_write(

@@ -108,6 +108,11 @@ ConsensusMCPServer (mcp_server.py)  ← external AI agents connect here
 - **Institutional memory (optional).** AI entities can persist observations,
   search past discussions semantically, and maintain a knowledge graph across
   sessions. Implemented as tool providers requiring `[memory]` extras + Ollama.
+- **Participant-driven context loading.** Each AI participant loads discussion
+  history from the database using a configurable strategy (full, sliding_window,
+  summary, or semantic). The semantic strategy uses embedding-based RAG to
+  include the most relevant older messages alongside recent ones, rather than
+  relying purely on recency. Per-entity config with discussion-level defaults.
 - **Interactive user input.** AI participants can pause mid-turn to request input
   from the human user via the `ask_user` tool. Uses `asyncio.Future` to block
   the tool loop until the frontend submits the response.

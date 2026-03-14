@@ -84,15 +84,16 @@ class TestReassignTurn:
 
 
 class TestBuildContext:
-    def test_basic_structure(self, mod_setup):
+    @pytest.mark.asyncio
+    async def test_basic_structure(self, mod_setup):
         moderator, disc, ai, human = mod_setup
         # Create a persisted discussion so DB-driven context loading works
         did = moderator.db.create_discussion("AI ethics", ai.id)
         disc.id = did
         moderator.db.add_discussion_member(did, ai.id, is_moderator=True, turn_position=0)
         moderator.db.add_discussion_member(did, human.id, turn_position=1)
-        msgs = moderator._build_context("You are a moderator.", "Summarize.",
-                                        current_entity_id=ai.id)
+        msgs = await moderator._build_context("You are a moderator.", "Summarize.",
+                                               current_entity_id=ai.id)
         assert msgs[0]["role"] == "system"
         assert msgs[0]["content"] == "You are a moderator."
         assert msgs[1]["role"] == "user"
@@ -100,7 +101,8 @@ class TestBuildContext:
         assert msgs[-1]["role"] == "user"
         assert msgs[-1]["content"] == "Summarize."
 
-    def test_message_roles_assigned_correctly(self, mod_setup):
+    @pytest.mark.asyncio
+    async def test_message_roles_assigned_correctly(self, mod_setup):
         moderator, disc, ai, human = mod_setup
         # Persist messages to DB so DB-driven context loading picks them up
         did = moderator.db.create_discussion("AI ethics", ai.id)
@@ -109,7 +111,7 @@ class TestBuildContext:
         moderator.db.add_discussion_member(did, human.id, turn_position=1)
         moderator.db.add_message(did, ai.id, "I think...", "participant", turn_number=1)
         moderator.db.add_message(did, human.id, "I disagree.", "participant", turn_number=2)
-        msgs = moderator._build_context("sys", "task", current_entity_id=ai.id)
+        msgs = await moderator._build_context("sys", "task", current_entity_id=ai.id)
         # ai's message -> "assistant", human's -> "user" with prefix
         ai_msg = msgs[2]  # after system + topic
         human_msg = msgs[3]
@@ -118,7 +120,8 @@ class TestBuildContext:
         assert human_msg["role"] == "user"
         assert f"[{human.name}]" in human_msg["content"]
 
-    def test_context_limited_to_recent_messages(self, mod_setup):
+    @pytest.mark.asyncio
+    async def test_context_limited_to_recent_messages(self, mod_setup):
         moderator, disc, ai, human = mod_setup
         # Create a persisted discussion so DB-driven context loading works
         did = moderator.db.create_discussion("AI ethics", ai.id)
@@ -130,7 +133,7 @@ class TestBuildContext:
             moderator.db.add_message(
                 did, human.id, f"msg-{i}", "participant", turn_number=i,
             )
-        msgs = moderator._build_context("sys", "task")
+        msgs = await moderator._build_context("sys", "task")
         # system + topic + CONTEXT_MESSAGE_LIMIT messages + task
         assert len(msgs) == 2 + CONTEXT_MESSAGE_LIMIT + 1
 

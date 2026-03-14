@@ -74,10 +74,10 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ✅ Done | Map-reduce summarization | `doc_summary` handles arbitrarily long documents by summarizing chunks then synthesizing |
 | **Architecture & Scalability** | | |
 | ✅ Done | Participant-driven context loading | `context_strategies.py`: Each participant loads context from DB using a configurable strategy (full / sliding_window / summary) instead of a shared in-memory message list. Per-entity config via `discussion_members` columns, discussion-level defaults. Summary strategy uses storyboard entries for older turns. Migration `011_context_strategy.sql` |
-| ⬜ Planned | Context strategy UI | Frontend controls for per-entity context strategy selection (full / sliding_window / summary) and window size configuration |
+| ⬜ Planned | Context strategy UI | Frontend controls for per-entity context strategy selection (full / sliding_window / summary / semantic) and window size configuration |
 | ⬜ Planned | Lazy discussion message loading | Defer loading `Discussion.messages` until needed (frontend display, export). Active discussions only hold recent messages in memory |
 | ⬜ Planned | Token-aware context windowing | Dynamic window size based on model context length — fill available token budget rather than using a fixed message count |
-| ⬜ Planned | Semantic context retrieval | Embedding-based RAG over discussion history — retrieve the most relevant past messages rather than just the most recent |
+| ✅ Done | Semantic context retrieval | Embedding-based RAG over discussion history — retrieve the most relevant past messages rather than just the most recent. `context_strategies.py`: `ContextStrategy.SEMANTIC`, hybrid recency + cosine-similarity retrieval using `message_embeddings`, lazy background indexing, graceful fallback to sliding_window |
 | **Training Data & Model Development** | | |
 | ⬜ Planned | Open-source reasoning datasets | Harvest high-quality discussion outcomes as open datasets for reasoning AI research |
 | ⬜ Planned | Small moderator models | Train lightweight moderator models from collected data, targeting local consumer hardware |

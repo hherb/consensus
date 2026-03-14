@@ -41,7 +41,7 @@ ConsensusApp (app.py + app_*.py domain modules)
     |     13 methods assembled from 43 reusable handlers in methods/phases/
     |
     +-- ContextStrategies (context_strategies.py)
-    |     Per-participant DB context loading (full / sliding_window / summary)
+    |     Per-participant DB context loading (full / sliding_window / summary / semantic)
     |
     +-- PricingCache (pricing.py)
     |     Model cost lookup via OpenRouter, fuzzy name matching, SQLite cache
@@ -266,6 +266,7 @@ Context is loaded from the database per-participant using the
 - **full** — all messages (for short discussions)
 - **sliding_window** — last N messages (default: 20, matches legacy behaviour)
 - **summary** — storyboard summaries for older turns + last N full messages
+- **semantic** — embedding-based RAG: a recency window (last N/4 messages, minimum 3) plus the most semantically relevant older messages found via cosine similarity over `message_embeddings`. Requires `EmbeddingClient` (Ollama). Falls back to `sliding_window` when embeddings are unavailable. Uses `load_context_messages_async()` since embedding queries are async
 
 Configuration is stored in `discussion_members.context_strategy` and
 `discussion_members.context_window_size`, with discussion-level defaults in

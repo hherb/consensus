@@ -16,7 +16,7 @@ A collaborative intelligence platform that orchestrates structured reasoning bet
 - **Devil's Advocate role** — assign participants a constructive-critic role with dedicated prompt templates that challenge assumptions and identify weaknesses
 - **Storyboard panel** showing running summaries and conclusions alongside the conversation
 - **AI-to-AI conversations** run automatically without manual intervention
-- **Participant-driven context loading** — each AI participant loads context from the database using a configurable strategy (full history, sliding window, or summary-compressed). Per-entity configuration with discussion-level defaults
+- **Participant-driven context loading** — each AI participant loads context from the database using a configurable strategy (full history, sliding window, summary-compressed, or semantic RAG). The semantic strategy uses embedding-based retrieval to include the most relevant older messages alongside recent ones. Per-entity configuration with discussion-level defaults
 - **Pause & resume** — pause discussions and resume them later, even after conclusion
 - **Dynamic participation** — add or remove participants mid-discussion
 - **Export** — save discussions as JSON or HTML (desktop mode uses native save dialog)
@@ -302,7 +302,7 @@ ConsensusApp — orchestrator, state management, event emitter
     │     ├── PhaseHandler (methods/phase_handler.py) — composable phase ABC
     │     ├── 13 method classes assembled from 43 phase handlers
     │     └── methods/phases/ — reusable handler implementations + helpers
-    ├── ContextStrategies (context_strategies.py) — per-participant DB context loading
+    ├── ContextStrategies (context_strategies.py) — per-participant DB context loading (incl. semantic RAG)
     ├── AIClient — async OpenAI-compatible HTTP client (httpx)
     ├── Database (db/) — thread-safe SQLite persistence (domain-specific mixins)
     ├── PricingCache — model cost lookup via OpenRouter

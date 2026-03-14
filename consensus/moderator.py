@@ -9,7 +9,8 @@ from typing import Callable, Optional
 from .models import Discussion, Entity, EntityType
 from .ai_client import AIClient, AIResponse
 from .context_strategies import (
-    ContextConfig, DEFAULT_WINDOW_SIZE, load_context_messages,
+    ContextConfig, ContextStrategy, DEFAULT_WINDOW_SIZE,
+    load_context_messages, load_context_messages_async,
 )
 from .database import Database
 from .methods import get_active_method
@@ -84,9 +85,14 @@ class Moderator:
                 return ContextConfig.from_member_row(member, disc_defaults)
         return ContextConfig()
 
-    def _load_context_messages(self, entity_id: Optional[int]) -> list:
+    async def _load_context_messages(self, entity_id: Optional[int]) -> list:
         """Load messages from DB using the entity's context strategy."""
         config = self._get_context_config(entity_id)
+        if config.strategy == ContextStrategy.SEMANTIC:
+            from .tools_memory import EmbeddingClient
+            embed_client = EmbeddingClient(self.db)
+            return await load_context_messages_async(
+                self.db, self.discussion.id, config, embed_client)
         return load_context_messages(self.db, self.discussion.id, config)
 
     def _format_messages(
@@ -137,19 +143,19 @@ class Moderator:
         messages.append({"role": "user", "content": task})
         return messages
 
-    def _build_context(self, system_prompt: str, task: str,
-                        current_entity_id: Optional[int] = None) -> list[dict]:
+    async def _build_context(self, system_prompt: str, task: str,
+                              current_entity_id: Optional[int] = None) -> list[dict]:
         """Build an OpenAI message array from DB-loaded discussion history.
 
         Loads context using the participant's configured strategy
-        (full / sliding_window / summary), then formats into role-based
-        messages.
+        (full / sliding_window / summary / semantic), then formats into
+        role-based messages.
         """
-        raw = self._load_context_messages(current_entity_id)
+        raw = await self._load_context_messages(current_entity_id)
         return self._format_messages(raw, system_prompt, task,
                                      current_entity_id)
 
-    def _build_multimodal_context(
+    async def _build_multimodal_context(
         self, system_prompt: str, task: str,
         current_entity_id: Optional[int] = None,
         images: Optional[list[dict]] = None,
@@ -159,7 +165,7 @@ class Moderator:
         Same as ``_build_context`` but injects discussion images as
         ``image_url`` content blocks for vision-capable models.
         """
-        raw = self._load_context_messages(current_entity_id)
+        raw = await self._load_context_messages(current_entity_id)
         return self._format_messages(raw, system_prompt, task,
                                      current_entity_id, images=images)
 
@@ -269,14 +275,14 @@ class Moderator:
         if discussion_images and is_vision_capable(
             cfg.model, pricing_cache=self.db.pricing, base_url=cfg.base_url,
         ):
-            messages = self._build_multimodal_context(
+            messages = await self._build_multimodal_context(
                 system_prompt, task,
                 current_entity_id=entity.id,
                 images=discussion_images,
             )
         else:
-            messages = self._build_context(system_prompt, task,
-                                           current_entity_id=entity.id)
+            messages = await self._build_context(system_prompt, task,
+                                                 current_entity_id=entity.id)
 
         # Get tools for this entity
         tool_schemas: list[dict] = []
@@ -548,8 +554,8 @@ class Moderator:
             task = f"Summarize turn {self.discussion.turn_number} by {speaker}."
 
         return await client.complete(
-            messages=self._build_context(system_prompt, task,
-                                         current_entity_id=mod.id),
+            messages=await self._build_context(system_prompt, task,
+                                               current_entity_id=mod.id),
             model=mod.ai_config.model,
             temperature=MODERATOR_TEMPERATURE,
             max_tokens=SUMMARY_MAX_TOKENS,
@@ -590,8 +596,8 @@ class Moderator:
             task = f"Conclude the discussion on '{self.discussion.topic}'."
 
         return await client.complete(
-            messages=self._build_context(system_prompt, task,
-                                         current_entity_id=mod.id),
+            messages=await self._build_context(system_prompt, task,
+                                               current_entity_id=mod.id),
             model=mod.ai_config.model,
             temperature=MODERATOR_TEMPERATURE,
             max_tokens=CONCLUSION_MAX_TOKENS,
@@ -623,8 +629,8 @@ class Moderator:
             task = f"Mediate: {context or 'A disagreement has arisen.'}"
 
         return await client.complete(
-            messages=self._build_context(system_prompt, task,
-                                         current_entity_id=mod.id),
+            messages=await self._build_context(system_prompt, task,
+                                               current_entity_id=mod.id),
             model=mod.ai_config.model,
             temperature=MODERATOR_TEMPERATURE,
             max_tokens=MEDIATION_MAX_TOKENS,
