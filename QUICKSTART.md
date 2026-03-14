@@ -10,11 +10,13 @@ Get Consensus running in under five minutes.
 
 ### Linux system dependencies (desktop mode only)
 
-Desktop mode uses [pywebview](https://pywebview.flowrl.com/), which requires GTK or QT. On Debian/Ubuntu:
+Desktop mode uses [pywebview](https://pywebview.flowrl.com/), which requires GTK and GObject Introspection libraries. On Debian/Ubuntu:
 
 ```bash
-sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-webkit2-4.1
+sudo apt install libgirepository1.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0 gir1.2-webkit2-4.1
 ```
+
+These are the **development headers** needed to compile PyGObject inside the uv virtual environment. The `python3-gi` system package alone is not sufficient because `uv tool install` uses an isolated environment.
 
 > **Headless servers (DGX, cloud VMs, WSL without GUI):** Skip these dependencies and use **web mode** instead (`consensus --web`). No system GUI libraries are needed for web mode.
 
@@ -272,7 +274,12 @@ uv tool install -e ".[desktop]"    # or ".[all]" for both modes
 curl http://localhost:11434/v1/models
 ```
 
-**"You must have either QT or GTK" / "No module named 'gi'"** — Desktop mode needs GTK or QT system libraries. Install them (see [Prerequisites](#linux-system-dependencies-desktop-mode-only)) or use web mode:
+**"You must have either QT or GTK" / "No module named 'gi'"** — Desktop mode needs GTK dev libraries so PyGObject can be compiled inside the uv venv. Install them (see [Prerequisites](#linux-system-dependencies-desktop-mode-only)), then reinstall:
+```bash
+sudo apt install libgirepository1.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0 gir1.2-webkit2-4.1
+uv tool install -e ".[desktop]" --force
+```
+Or use web mode instead:
 ```bash
 consensus --web
 ```
