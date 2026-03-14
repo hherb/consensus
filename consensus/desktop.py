@@ -211,6 +211,16 @@ class DesktopBridge:
         """Update the cost limit for the current discussion."""
         return self.app.set_cost_limit(cost_limit)
 
+    def set_default_context_strategy(self, strategy: str,
+                                     window_size: int = 20) -> dict:
+        """Set the discussion-level default context strategy."""
+        return self.app.set_default_context_strategy(strategy, int(window_size))
+
+    def set_member_context_strategy(self, entity_id: int, strategy: str,
+                                    window_size: int = 20) -> dict:
+        """Set a per-entity context strategy override."""
+        return self.app.set_member_context_strategy(entity_id, strategy, int(window_size))
+
     def submit_human_message(self, entity_id: int, content: str) -> dict:
         """Submit a message from a human participant."""
         return self.app.submit_human_message(entity_id, content)

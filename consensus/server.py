@@ -387,6 +387,13 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                 float(data.get("cost_limit", 0.0))),
             "set_cost_limit": lambda: app.set_cost_limit(
                 float(data.get("cost_limit", 0.0))),
+            "set_default_context_strategy": lambda: app.set_default_context_strategy(
+                data.get("strategy", "sliding_window"),
+                int(data.get("window_size", 20))),
+            "set_member_context_strategy": lambda: app.set_member_context_strategy(
+                data["entity_id"],
+                data.get("strategy", "sliding_window"),
+                int(data.get("window_size", 20))),
             "submit_human_message": lambda: app.submit_human_message(
                 data["entity_id"], data["content"]),
             "submit_moderator_message": lambda: app.submit_moderator_message(

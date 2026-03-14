@@ -247,6 +247,8 @@ class Discussion:
     # Default context strategy for participants in this discussion
     default_context_strategy: str = "sliding_window"
     default_context_window_size: int = 20
+    # Per-entity context strategy overrides (entity_id -> {strategy, window_size})
+    member_context_configs: dict[int, dict] = field(default_factory=dict)
 
     @property
     def current_round(self) -> int:

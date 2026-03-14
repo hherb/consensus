@@ -380,14 +380,23 @@ def start_discussion(
     discussion.is_active = True
     discussion.status = "active"
 
-    # Persist max_rounds and cost_limit
-    limits = {}
+    # Persist max_rounds, cost_limit, and context strategy defaults
+    updates = {}
     if max_rounds > 0:
-        limits["max_rounds"] = max_rounds
+        updates["max_rounds"] = max_rounds
     if cost_limit > 0:
-        limits["cost_limit"] = cost_limit
-    if limits:
-        db.update_discussion(did, **limits)
+        updates["cost_limit"] = cost_limit
+    updates["default_context_strategy"] = discussion.default_context_strategy
+    updates["default_context_window_size"] = discussion.default_context_window_size
+    db.update_discussion(did, **updates)
+
+    # Flush per-member context strategy overrides set during setup
+    for entity_id, cfg in discussion.member_context_configs.items():
+        db.update_member_context_strategy(
+            did, entity_id,
+            cfg.get("strategy", "sliding_window"),
+            cfg.get("window_size", 20),
+        )
 
     # Initialise method state
     try:

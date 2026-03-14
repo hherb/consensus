@@ -48,6 +48,12 @@ class ConsensusApp:
         self.memory_available = False
         self.documents_available = False
         self.images_available = False
+        # Cache embedding availability (static for session lifetime)
+        try:
+            mem_cfg = self.db.get_memory_config()
+            self._embedding_available = bool(mem_cfg.get("embedding_endpoint"))
+        except Exception:
+            self._embedding_available = False
         self._init_builtin_tools()
         self._init_interactive_tools()
         self._init_memory_tools()
@@ -426,6 +432,24 @@ class ConsensusApp:
         state["experts"] = self.db.get_expert_definitions()
         # Include discussion images (from DB if active, from pending list during setup)
         state["discussion_images"] = self.get_discussion_images()
+        # Per-member context strategy configs (for the roster UI)
+        if self.discussion.id:
+            members = self.db.get_discussion_members(self.discussion.id)
+            state["member_context_configs"] = {
+                str(m["entity_id"]): {
+                    "strategy": m.get("context_strategy") if m.get("context_strategy") is not None else "sliding_window",
+                    "window_size": m.get("context_window_size") if m.get("context_window_size") is not None else 20,
+                }
+                for m in members
+            }
+        else:
+            # During setup, use in-memory overrides
+            state["member_context_configs"] = {
+                str(eid): cfg
+                for eid, cfg in self.discussion.member_context_configs.items()
+            }
+        # Whether embedding service is configured (for semantic strategy availability)
+        state["embedding_available"] = self._embedding_available
         # Expose pending user-input request for reconnection scenarios
         if self._pending_user_inputs:
             _rid, (_fut, _data) = next(iter(self._pending_user_inputs.items()))
@@ -645,6 +669,47 @@ class ConsensusApp:
         self.discussion.cost_limit = cost_limit
         if self.discussion.id:
             self.db.update_discussion(self.discussion.id, cost_limit=cost_limit)
+        self._notify()
+        return self.get_state()
+
+    def set_default_context_strategy(self, strategy: str,
+                                     window_size: int = 20) -> dict:
+        """Set the discussion-level default context strategy."""
+        from .context_strategies import ContextStrategy
+        try:
+            ContextStrategy(strategy)
+        except ValueError:
+            return {"error": f"Unknown context strategy: {strategy!r}"}
+        self.discussion.default_context_strategy = strategy
+        self.discussion.default_context_window_size = int(window_size)
+        if self.discussion.id:
+            self.db.update_discussion(
+                self.discussion.id,
+                default_context_strategy=strategy,
+                default_context_window_size=int(window_size),
+            )
+        self._notify()
+        return self.get_state()
+
+    def set_member_context_strategy(self, entity_id: int, strategy: str,
+                                    window_size: int = 20) -> dict:
+        """Set a per-entity context strategy override."""
+        from .context_strategies import ContextStrategy
+        try:
+            ContextStrategy(strategy)
+        except ValueError:
+            return {"error": f"Unknown context strategy: {strategy!r}"}
+        entity = self.discussion.get_entity(entity_id)
+        if not entity:
+            return {"error": "Entity not in discussion"}
+        # Always store in memory (for setup phase before discussion.id exists)
+        self.discussion.member_context_configs[entity_id] = {
+            "strategy": strategy, "window_size": int(window_size),
+        }
+        if self.discussion.id:
+            self.db.update_member_context_strategy(
+                self.discussion.id, entity_id, strategy, int(window_size),
+            )
         self._notify()
         return self.get_state()
 

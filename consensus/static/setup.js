@@ -13,6 +13,13 @@ const MOST_RECENT_ENTITIES = 6;
 /** Cached list of discussion method metadata from the backend. */
 let _methodsCache = null;
 
+const STRATEGY_LABELS = {
+    full: 'Full history',
+    sliding_window: 'Sliding window',
+    summary: 'Summary + recent',
+    semantic: 'Semantic (RAG)',
+};
+
 /**
  * Render the full setup tab (available entities, roster, start button).
  */
@@ -21,6 +28,7 @@ export function renderSetupTab() {
     renderDiscussionRoster();
     updateStartButton();
     loadDiscussionMethods();
+    syncDefaultContextControls();
     initMethodRecommendation();
 }
 
@@ -86,9 +94,15 @@ export function renderDiscussionRoster() {
         return;
     }
     const roles = state.member_roles || {};
+    const configs = state.member_context_configs || {};
+    const embeddingAvailable = !!state.embedding_available;
     container.innerHTML = state.entities.map(e => {
         const isMod = e.id === state.moderator_id;
         const isDA = roles[String(e.id)] === 'devils_advocate';
+        const cfg = configs[String(e.id)] || {};
+        const strategy = cfg.strategy || state.default_context_strategy || 'sliding_window';
+        const windowSize = cfg.window_size ?? state.default_context_window_size ?? 20;
+        const showWindow = strategy !== 'full';
         return `
         <div class="entity-item">
             <div class="entity-avatar" style="background:${e.avatar_color}">${getInitials(e.name)}</div>
@@ -98,7 +112,17 @@ export function renderDiscussionRoster() {
                 ${isDA ? '<span class="da-badge">DA</span>' : ''}
                 <div class="entity-type">${e.entity_type === 'ai' ? 'AI - ' + (e.ai_config?.model || 'LLM') : 'Human'}</div>
             </div>
-            <div class="entity-actions">
+            <div class="entity-actions" style="display:flex;align-items:center;gap:0.25rem;flex-wrap:wrap;">
+                <select class="context-strategy-select" data-entity-id="${e.id}"
+                        style="font-size:0.75rem;padding:0.15rem 0.25rem;" title="Context loading strategy">
+                    ${Object.entries(STRATEGY_LABELS).map(([val, label]) => {
+                        const disabled = val === 'semantic' && !embeddingAvailable;
+                        return `<option value="${val}"${val === strategy ? ' selected' : ''}${disabled ? ' disabled' : ''}>${label}${disabled ? ' (no embeddings)' : ''}</option>`;
+                    }).join('')}
+                </select>
+                ${showWindow ? `<input type="number" class="context-window-input" data-entity-id="${e.id}"
+                    value="${windowSize}" min="3" max="200"
+                    style="width:3rem;font-size:0.75rem;padding:0.15rem 0.25rem;" title="Context window size">` : ''}
                 ${!isMod ? `<button class="btn btn-ghost btn-sm" data-action="set-moderator" data-id="${e.id}">Set Mod</button>` : ''}
                 ${!isMod && e.entity_type === 'ai'
                     ? `<button class="btn btn-ghost btn-sm" data-action="set-devils-advocate" data-id="${e.id}">${isDA ? 'Unset DA' : 'Set DA'}</button>`
@@ -107,6 +131,14 @@ export function renderDiscussionRoster() {
             </div>
         </div>`;
     }).join('');
+
+    // Attach change listeners for per-entity context strategy
+    container.querySelectorAll('.context-strategy-select').forEach(sel => {
+        sel.addEventListener('change', () => onMemberContextChange(Number(sel.dataset.entityId)));
+    });
+    container.querySelectorAll('.context-window-input').forEach(inp => {
+        inp.addEventListener('change', () => onMemberContextChange(Number(inp.dataset.entityId)));
+    });
 }
 
 /**
@@ -291,4 +323,65 @@ function updateMethodDescription() {
     if (!select || !desc || !_methodsCache) return;
     const method = _methodsCache.find(m => m.name === select.value);
     desc.textContent = method?.description || '';
+}
+
+// --- Context Strategy Controls ---
+
+/**
+ * Sync the discussion-level default context strategy controls with state.
+ */
+function syncDefaultContextControls() {
+    const strategySelect = $('#default-context-strategy');
+    const windowInput = $('#default-context-window');
+    const windowLabel = $('#default-window-size-label');
+    if (!strategySelect) return;
+
+    strategySelect.value = state.default_context_strategy || 'sliding_window';
+    if (windowInput) windowInput.value = state.default_context_window_size ?? 20;
+
+    // Hide window input when strategy is 'full'
+    if (windowLabel) windowLabel.style.display = strategySelect.value === 'full' ? 'none' : '';
+
+    // Disable semantic if embedding not available
+    const semanticOpt = strategySelect.querySelector('option[value="semantic"]');
+    if (semanticOpt) {
+        const unavailable = !state.embedding_available;
+        semanticOpt.disabled = unavailable;
+        semanticOpt.textContent = unavailable ? 'Semantic (RAG) — no embeddings' : 'Semantic (RAG)';
+    }
+}
+
+/**
+ * Handle change of the discussion-level default context strategy or window size.
+ */
+export async function onDefaultContextChange() {
+    const strategySelect = $('#default-context-strategy');
+    const windowInput = $('#default-context-window');
+    const windowLabel = $('#default-window-size-label');
+    if (!strategySelect) return;
+
+    const strategy = strategySelect.value;
+    const windowSize = windowInput ? parseInt(windowInput.value, 10) || 20 : 20;
+
+    // Show/hide window input
+    if (windowLabel) windowLabel.style.display = strategy === 'full' ? 'none' : '';
+
+    const result = await api.setDefaultContextStrategy(strategy, windowSize);
+    if (result?.error) showToast(result.error);
+}
+
+/**
+ * Handle per-entity context strategy or window size change.
+ */
+async function onMemberContextChange(entityId) {
+    const sel = $(`.context-strategy-select[data-entity-id="${entityId}"]`);
+    const inp = $(`.context-window-input[data-entity-id="${entityId}"]`);
+    if (!sel) return;
+
+    const strategy = sel.value;
+    const windowSize = inp ? parseInt(inp.value, 10) || 20 : 20;
+
+    const result = await api.setMemberContextStrategy(entityId, strategy, windowSize);
+    if (result?.error) showToast(result.error);
+    else renderDiscussionRoster(); // re-render to show/hide window input
 }
