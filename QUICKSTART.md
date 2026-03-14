@@ -13,10 +13,12 @@ Get Consensus running in under five minutes.
 Desktop mode uses [pywebview](https://pywebview.flowrl.com/), which requires GTK and GObject Introspection libraries. On Debian/Ubuntu:
 
 ```bash
-sudo apt install libgirepository1.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0 gir1.2-webkit2-4.1
+sudo apt install libgirepository-2.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0 gir1.2-webkit2-4.1
 ```
 
 These are the **development headers** needed to compile PyGObject inside the uv virtual environment. The `python3-gi` system package alone is not sufficient because `uv tool install` uses an isolated environment.
+
+> **Ubuntu 22.04 or older:** Use `libgirepository1.0-dev` instead of `libgirepository-2.0-dev`.
 
 > **Headless servers (DGX, cloud VMs, WSL without GUI):** Skip these dependencies and use **web mode** instead (`consensus --web`). No system GUI libraries are needed for web mode.
 
@@ -276,7 +278,7 @@ curl http://localhost:11434/v1/models
 
 **"You must have either QT or GTK" / "No module named 'gi'"** — Desktop mode needs GTK dev libraries so PyGObject can be compiled inside the uv venv. Install them (see [Prerequisites](#linux-system-dependencies-desktop-mode-only)), then reinstall:
 ```bash
-sudo apt install libgirepository1.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0 gir1.2-webkit2-4.1
+sudo apt install libgirepository-2.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0 gir1.2-webkit2-4.1
 uv tool install -e ".[desktop]" --force
 ```
 Or use web mode instead:
@@ -291,4 +293,8 @@ consensus --web --host 0.0.0.0
 
 **"Failed to fetch pricing from OpenRouter"** — Non-fatal warning. Pricing data is used for cost tracking only. Check your network/DNS if you need cost estimates.
 
-**Blank window in desktop mode** — Try web mode instead, or run with `--debug` to see errors.
+**Blank window in desktop mode** — Usually caused by WebKit failing to use GPU-accelerated rendering (common on DGX, VMs, containers, or when the user lacks GPU permissions). The app sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` automatically on Linux, but if you still see a blank window try:
+```bash
+WEBKIT_DISABLE_COMPOSITING_MODE=1 consensus
+```
+Or use web mode instead: `consensus --web`

@@ -544,6 +544,12 @@ class DesktopBridge:
 
 def launch_desktop(debug: bool = False) -> None:
     """Launch the desktop application using pywebview."""
+    # On Linux, disable WebKit DMA-BUF renderer to avoid blank windows
+    # on systems where GPU/DRM access is restricted (e.g. DGX, VMs,
+    # containers, or users not in the 'render'/'video' group).
+    if sys.platform.startswith("linux"):
+        os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+
     import webview
     from .config import load_env
     load_env()

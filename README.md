@@ -197,6 +197,12 @@ uv tool install -e ".[web]"        # web server only
 
 This installs the `consensus` command into `~/.local/bin/` so it works from anywhere. The `-e` flag keeps it editable — source changes take effect immediately.
 
+> **Linux desktop mode:** Install GTK dev libraries first so PyGObject can compile inside the uv venv:
+> ```bash
+> sudo apt install libgirepository-2.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0 gir1.2-webkit2-4.1
+> ```
+> On Ubuntu 22.04 or older, use `libgirepository1.0-dev` instead of `libgirepository-2.0-dev`.
+
 > **Alternative: pip**
 > ```bash
 > pip install ".[all]"    # installs into current venv
