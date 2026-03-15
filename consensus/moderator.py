@@ -74,6 +74,9 @@ class Moderator:
         discussion-level default (read from the in-memory Discussion
         object to avoid an extra DB query), then to the hard-coded
         default (sliding_window of 20).
+
+        For TOKEN_WINDOW strategy, populates model_context_length and
+        reserved_output_tokens from the entity's AI config and pricing cache.
         """
         disc_defaults = {
             "default_context_strategy": self.discussion.default_context_strategy,
@@ -82,12 +85,30 @@ class Moderator:
         if entity_id and self.discussion.id:
             member = self.db.get_discussion_member(self.discussion.id, entity_id)
             if member:
-                return ContextConfig.from_member_row(member, disc_defaults)
-        return ContextConfig()
+                config = ContextConfig.from_member_row(member, disc_defaults)
+            else:
+                config = ContextConfig()
+        else:
+            config = ContextConfig()
 
-    async def _load_context_messages(self, entity_id: Optional[int]) -> list:
+        # Populate token-aware fields when TOKEN_WINDOW is selected
+        if config.strategy == ContextStrategy.TOKEN_WINDOW and entity_id:
+            entity = next(
+                (e for e in self.discussion.entities if e.id == entity_id),
+                None,
+            )
+            if entity and entity.ai_config and self.db.pricing:
+                config.model_context_length = self.db.pricing.get_context_length(
+                    entity.ai_config.model, entity.ai_config.base_url)
+                config.reserved_output_tokens = entity.ai_config.max_tokens
+
+        return config
+
+    async def _load_context_messages(self, entity_id: Optional[int],
+                                      config: Optional[ContextConfig] = None) -> list:
         """Load messages from DB using the entity's context strategy."""
-        config = self._get_context_config(entity_id)
+        if config is None:
+            config = self._get_context_config(entity_id)
         if config.strategy == ContextStrategy.SEMANTIC:
             from .tools_memory import EmbeddingClient
             embed_client = EmbeddingClient(self.db)
@@ -143,15 +164,38 @@ class Moderator:
         messages.append({"role": "user", "content": task})
         return messages
 
+    def _enrich_token_window_config(self, config: ContextConfig,
+                                     system_prompt: str, task: str) -> None:
+        """Pre-compute system overhead tokens for TOKEN_WINDOW strategy.
+
+        Estimates tokens consumed by system prompt, topic, and task
+        instruction so the context loader can calculate the remaining
+        budget for discussion messages.  Image blocks are not counted
+        here — the 200-token safety margin in _load_token_window covers
+        that gap.
+        """
+        if config.strategy != ContextStrategy.TOKEN_WINDOW:
+            return
+        from .token_utils import estimate_tokens
+        config.system_tokens = (
+            estimate_tokens(system_prompt) + 4
+            + estimate_tokens(f"Discussion topic: {self.discussion.topic}") + 4
+            + estimate_tokens(task) + 4
+            + 3  # priming
+        )
+
     async def _build_context(self, system_prompt: str, task: str,
                               current_entity_id: Optional[int] = None) -> list[dict]:
         """Build an OpenAI message array from DB-loaded discussion history.
 
         Loads context using the participant's configured strategy
-        (full / sliding_window / summary / semantic), then formats into
-        role-based messages.
+        (full / sliding_window / summary / semantic / token_window),
+        then formats into role-based messages.
         """
-        raw = await self._load_context_messages(current_entity_id)
+        config = self._get_context_config(current_entity_id)
+        self._enrich_token_window_config(config, system_prompt, task)
+
+        raw = await self._load_context_messages(current_entity_id, config)
         return self._format_messages(raw, system_prompt, task,
                                      current_entity_id)
 
@@ -165,7 +209,10 @@ class Moderator:
         Same as ``_build_context`` but injects discussion images as
         ``image_url`` content blocks for vision-capable models.
         """
-        raw = await self._load_context_messages(current_entity_id)
+        config = self._get_context_config(current_entity_id)
+        self._enrich_token_window_config(config, system_prompt, task)
+
+        raw = await self._load_context_messages(current_entity_id, config)
         return self._format_messages(raw, system_prompt, task,
                                      current_entity_id, images=images)
 

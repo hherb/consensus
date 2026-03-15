@@ -38,6 +38,7 @@ class ContextStrategy(str, Enum):
     SLIDING_WINDOW = "sliding_window"
     SUMMARY = "summary"
     SEMANTIC = "semantic"
+    TOKEN_WINDOW = "token_window"
 
 
 @dataclass
@@ -46,6 +47,10 @@ class ContextConfig:
 
     strategy: ContextStrategy = ContextStrategy.SLIDING_WINDOW
     window_size: int = DEFAULT_WINDOW_SIZE
+    # Token-aware windowing fields (populated by Moderator)
+    model_context_length: Optional[int] = None
+    reserved_output_tokens: int = 0
+    system_tokens: int = 0
 
     @classmethod
     def from_member_row(cls, member: dict, discussion: dict) -> ContextConfig:
@@ -93,6 +98,8 @@ def load_context_messages(
         return _load_full(db, discussion_id)
     if config.strategy == ContextStrategy.SUMMARY:
         return _load_summary(db, discussion_id, config.window_size)
+    if config.strategy == ContextStrategy.TOKEN_WINDOW:
+        return _load_token_window(db, discussion_id, config)
     # Default: sliding_window (SEMANTIC is handled by load_context_messages_async)
     return _load_sliding_window(db, discussion_id, config.window_size)
 
@@ -109,6 +116,57 @@ def _load_sliding_window(
     """Return the last *window_size* messages."""
     rows = db.get_messages_windowed(discussion_id, window_size)
     return [Message.from_db_row(r) for r in rows]
+
+
+# Safety margin for token estimation inaccuracy
+_TOKEN_SAFETY_MARGIN = 200
+
+
+def _load_token_window(
+    db: Database, discussion_id: int, config: ContextConfig,
+) -> list[Message]:
+    """Fill context window based on token budget rather than message count.
+
+    Falls back to sliding_window if the model's context length is unknown.
+    """
+    from .token_utils import estimate_tokens
+
+    if not config.model_context_length:
+        logger.info("No context_length for model; falling back to sliding_window")
+        return _load_sliding_window(db, discussion_id, config.window_size)
+
+    available = (config.model_context_length
+                 - config.reserved_output_tokens
+                 - config.system_tokens
+                 - _TOKEN_SAFETY_MARGIN)
+
+    if available <= 0:
+        logger.warning("No token budget remaining for context messages")
+        return []
+
+    # Load all messages (v1 simplicity; batched loading is a future optimisation)
+    all_rows = db.get_messages(discussion_id)
+    if not all_rows:
+        return []
+
+    # Walk backwards, accumulating tokens until budget is exhausted
+    selected: list[dict] = []
+    tokens_used = 0
+    for row in reversed(all_rows):
+        content = row.get("content", "")
+        entity_name = row.get("entity_name", "")
+        # Estimate as it will appear in the formatted message
+        msg_text = f"[{entity_name}]: {content}"
+        msg_tokens = estimate_tokens(msg_text) + 4  # per-message overhead
+        if tokens_used + msg_tokens > available:
+            break
+        selected.append(row)
+        tokens_used += msg_tokens
+
+    selected.reverse()  # back to chronological order
+    logger.debug("Token window: used ~%d tokens of %d budget, selected %d messages",
+                 tokens_used, available, len(selected))
+    return [Message.from_db_row(r) for r in selected]
 
 
 def _load_summary(

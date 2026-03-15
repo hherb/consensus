@@ -18,6 +18,7 @@ const STRATEGY_LABELS = {
     sliding_window: 'Sliding window',
     summary: 'Summary + recent',
     semantic: 'Semantic (RAG)',
+    token_window: 'Token-aware (auto)',
 };
 
 /**
@@ -102,7 +103,7 @@ export function renderDiscussionRoster() {
         const cfg = configs[String(e.id)] || {};
         const strategy = cfg.strategy || state.default_context_strategy || 'sliding_window';
         const windowSize = cfg.window_size ?? state.default_context_window_size ?? 20;
-        const showWindow = strategy !== 'full';
+        const showWindow = strategy !== 'full' && strategy !== 'token_window';
         return `
         <div class="entity-item">
             <div class="entity-avatar" style="background:${e.avatar_color}">${getInitials(e.name)}</div>
@@ -339,8 +340,9 @@ function syncDefaultContextControls() {
     strategySelect.value = state.default_context_strategy || 'sliding_window';
     if (windowInput) windowInput.value = state.default_context_window_size ?? 20;
 
-    // Hide window input when strategy is 'full'
-    if (windowLabel) windowLabel.style.display = strategySelect.value === 'full' ? 'none' : '';
+    // Hide window input when strategy doesn't use a fixed window
+    if (windowLabel) windowLabel.style.display =
+        (strategySelect.value === 'full' || strategySelect.value === 'token_window') ? 'none' : '';
 
     // Disable semantic if embedding not available
     const semanticOpt = strategySelect.querySelector('option[value="semantic"]');
@@ -364,7 +366,8 @@ export async function onDefaultContextChange() {
     const windowSize = windowInput ? parseInt(windowInput.value, 10) || 20 : 20;
 
     // Show/hide window input
-    if (windowLabel) windowLabel.style.display = strategy === 'full' ? 'none' : '';
+    if (windowLabel) windowLabel.style.display =
+        (strategy === 'full' || strategy === 'token_window') ? 'none' : '';
 
     const result = await api.setDefaultContextStrategy(strategy, windowSize);
     if (result?.error) showToast(result.error);

@@ -96,10 +96,11 @@ class PricingCache:
             arch = m.get("architecture") or {}
             input_mods = arch.get("input_modalities") or ["text"]
             input_modalities = ",".join(input_mods)
+            context_length = m.get("context_length")
             if model_id:
                 rows.append((
                     model_id, prompt_cost, completion_cost, now,
-                    input_modalities,
+                    input_modalities, context_length,
                 ))
 
         if not rows:
@@ -109,8 +110,8 @@ class PricingCache:
             self._conn.executemany(
                 "INSERT OR REPLACE INTO model_pricing "
                 "(model_id, prompt_cost, completion_cost, last_updated,"
-                " input_modalities) "
-                "VALUES (?, ?, ?, ?, ?)",
+                " input_modalities, context_length) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 rows,
             )
             self._conn.commit()
@@ -187,12 +188,27 @@ class PricingCache:
         modalities = (row["input_modalities"] or "text").lower().split(",")
         return modality.lower() in modalities
 
+    def get_context_length(self, model_name: str,
+                           base_url: str = "") -> Optional[int]:
+        """Return the context window size (in tokens) for a model, or None.
+
+        Uses the same fuzzy matching logic as ``lookup()``.
+        Refreshes the cache once if the model is unknown.
+        """
+        row = self._lookup_row(model_name, base_url)
+        if row is None and self.needs_refresh_for_model(model_name):
+            self.refresh()
+            row = self._lookup_row(model_name, base_url)
+        if row is None:
+            return None
+        return row.get("context_length")
+
     def _lookup_row(self, model_name: str,
                     base_url: str = "") -> Optional[dict]:
         """Look up the full model_pricing row for a model name.
 
         Returns a dict with model_id, prompt_cost, completion_cost,
-        input_modalities — or None if not found.
+        input_modalities, context_length — or None if not found.
         """
         model_name = _strip_date_suffix(model_name)
 
@@ -200,7 +216,7 @@ class PricingCache:
         if alias:
             cur = self._conn.execute(
                 "SELECT model_id, prompt_cost, completion_cost, "
-                "input_modalities FROM model_pricing WHERE model_id = ?",
+                "input_modalities, context_length FROM model_pricing WHERE model_id = ?",
                 (alias,),
             )
             row = cur.fetchone()
@@ -209,7 +225,7 @@ class PricingCache:
 
         cur = self._conn.execute(
             "SELECT model_id, prompt_cost, completion_cost, "
-            "input_modalities FROM model_pricing WHERE model_id = ?",
+            "input_modalities, context_length FROM model_pricing WHERE model_id = ?",
             (model_name,),
         )
         row = cur.fetchone()
@@ -222,7 +238,7 @@ class PricingCache:
         for name in variants:
             cur = self._conn.execute(
                 "SELECT model_id, prompt_cost, completion_cost, "
-                "input_modalities FROM model_pricing "
+                "input_modalities, context_length FROM model_pricing "
                 "WHERE model_id LIKE ?",
                 (f"%/{name}",),
             )
@@ -234,7 +250,7 @@ class PricingCache:
             for name in variants:
                 cur = self._conn.execute(
                     "SELECT model_id, prompt_cost, completion_cost, "
-                    "input_modalities FROM model_pricing "
+                    "input_modalities, context_length FROM model_pricing "
                     "WHERE model_id LIKE ?",
                     (f"%/{name}%",),
                 )

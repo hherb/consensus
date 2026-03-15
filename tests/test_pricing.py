@@ -20,7 +20,7 @@ def pricing_cache(tmp_path):
         "CREATE TABLE IF NOT EXISTS model_pricing "
         "(model_id TEXT PRIMARY KEY, prompt_cost REAL NOT NULL DEFAULT 0, "
         "completion_cost REAL NOT NULL DEFAULT 0, last_updated REAL NOT NULL DEFAULT 0, "
-        "input_modalities TEXT DEFAULT 'text')"
+        "input_modalities TEXT DEFAULT 'text', context_length INTEGER)"
     )
     conn.commit()
     cache = PricingCache(conn, threading.Lock())
@@ -145,3 +145,31 @@ class TestHasInputModality:
 
         assert pricing_cache.has_input_modality("null-mod", "text") is True
         assert pricing_cache.has_input_modality("null-mod", "image") is False
+
+
+class TestGetContextLength:
+    """Tests for the get_context_length method."""
+
+    def test_returns_context_length(self, pricing_cache):
+        pricing_cache._conn.execute(
+            "INSERT INTO model_pricing "
+            "(model_id, prompt_cost, completion_cost, last_updated, context_length) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("provider/test-model", 0.001, 0.002, time.time(), 128000),
+        )
+        pricing_cache._conn.commit()
+        assert pricing_cache.get_context_length("test-model") == 128000
+
+    def test_returns_none_for_unknown_model(self, pricing_cache):
+        with patch.object(pricing_cache, "refresh", return_value=False):
+            assert pricing_cache.get_context_length("unknown-model") is None
+
+    def test_returns_none_when_context_length_not_set(self, pricing_cache):
+        pricing_cache._conn.execute(
+            "INSERT INTO model_pricing "
+            "(model_id, prompt_cost, completion_cost, last_updated) "
+            "VALUES (?, ?, ?, ?)",
+            ("provider/no-ctx", 0.001, 0.002, time.time()),
+        )
+        pricing_cache._conn.commit()
+        assert pricing_cache.get_context_length("no-ctx") is None

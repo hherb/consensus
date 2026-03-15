@@ -257,6 +257,131 @@ def _pack(vec: list[float]) -> bytes:
 # ---------------------------------------------------------------------------
 
 
+class TestTokenWindowEnum:
+    def test_token_window_value_exists(self):
+        assert ContextStrategy.TOKEN_WINDOW == "token_window"
+        assert ContextStrategy("token_window") == ContextStrategy.TOKEN_WINDOW
+
+    def test_from_member_row_accepts_token_window(self):
+        member = {"context_strategy": "token_window", "context_window_size": 20}
+        cfg = ContextConfig.from_member_row(member, {})
+        assert cfg.strategy == ContextStrategy.TOKEN_WINDOW
+        assert cfg.window_size == 20
+
+
+class TestLoadTokenWindow:
+    def test_fills_budget(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        # Each message: "[Alice]: msg-X" = ~15 chars -> ~3 tokens + 4 overhead = ~7 tokens
+        for i in range(20):
+            tmp_db.add_message(did, sample_ai_entity, f"msg-{i}",
+                               "participant", turn_number=i)
+        config = ContextConfig(
+            strategy=ContextStrategy.TOKEN_WINDOW,
+            model_context_length=2000,
+            reserved_output_tokens=100,
+            system_tokens=100,
+        )
+        # Available: 2000 - 100 - 100 - 200 = 1600 tokens
+        # Each msg ~7 tokens, so should fit all 20
+        msgs = load_context_messages(tmp_db, did, config)
+        assert len(msgs) == 20
+
+    def test_budget_limits_messages(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        # Create messages with substantial content to consume budget faster
+        for i in range(20):
+            content = f"This is message number {i} with some extra content to make it longer"
+            tmp_db.add_message(did, sample_ai_entity, content,
+                               "participant", turn_number=i)
+        # Very tight budget — should get fewer than 20 messages
+        config = ContextConfig(
+            strategy=ContextStrategy.TOKEN_WINDOW,
+            model_context_length=500,
+            reserved_output_tokens=100,
+            system_tokens=100,
+        )
+        # Available: 500 - 100 - 100 - 200 = 100 tokens
+        msgs = load_context_messages(tmp_db, did, config)
+        assert 0 < len(msgs) < 20
+
+    def test_falls_back_without_context_length(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        for i in range(10):
+            tmp_db.add_message(did, sample_ai_entity, f"msg-{i}",
+                               "participant", turn_number=i)
+        config = ContextConfig(
+            strategy=ContextStrategy.TOKEN_WINDOW,
+            window_size=5,
+            model_context_length=None,
+        )
+        # Falls back to sliding_window with window_size=5
+        msgs = load_context_messages(tmp_db, did, config)
+        assert len(msgs) == 5
+        assert msgs[0].content == "msg-5"
+
+    def test_empty_discussion(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        config = ContextConfig(
+            strategy=ContextStrategy.TOKEN_WINDOW,
+            model_context_length=2000,
+            reserved_output_tokens=100,
+            system_tokens=100,
+        )
+        msgs = load_context_messages(tmp_db, did, config)
+        assert msgs == []
+
+    def test_no_budget_returns_empty(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        for i in range(5):
+            tmp_db.add_message(did, sample_ai_entity, f"msg-{i}",
+                               "participant", turn_number=i)
+        # Budget exhausted by overhead alone
+        config = ContextConfig(
+            strategy=ContextStrategy.TOKEN_WINDOW,
+            model_context_length=500,
+            reserved_output_tokens=200,
+            system_tokens=200,
+        )
+        # Available: 500 - 200 - 200 - 200 = -100 -> empty
+        msgs = load_context_messages(tmp_db, did, config)
+        assert msgs == []
+
+    def test_chronological_order(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        for i in range(10):
+            tmp_db.add_message(did, sample_ai_entity, f"msg-{i}",
+                               "participant", turn_number=i)
+        config = ContextConfig(
+            strategy=ContextStrategy.TOKEN_WINDOW,
+            model_context_length=2000,
+            reserved_output_tokens=100,
+            system_tokens=100,
+        )
+        msgs = load_context_messages(tmp_db, did, config)
+        timestamps = [m.timestamp for m in msgs]
+        assert timestamps == sorted(timestamps)
+
+    def test_selects_most_recent_messages(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        for i in range(20):
+            content = "x" * 200  # ~50 tokens + overhead per message
+            tmp_db.add_message(did, sample_ai_entity, content,
+                               "participant", turn_number=i)
+        config = ContextConfig(
+            strategy=ContextStrategy.TOKEN_WINDOW,
+            model_context_length=1000,
+            reserved_output_tokens=100,
+            system_tokens=100,
+        )
+        # Available: 1000 - 100 - 100 - 200 = 600 tokens
+        # Each msg ~54 tokens, so ~11 messages
+        msgs = load_context_messages(tmp_db, did, config)
+        assert len(msgs) > 0
+        # The most recent message should always be included
+        assert msgs[-1].content == "x" * 200
+
+
 class TestSemanticEnum:
     def test_semantic_value_exists(self):
         assert ContextStrategy.SEMANTIC == "semantic"
