@@ -38,6 +38,24 @@ export async function onSendMessage() {
     const content = input.value.trim();
     if (!content) return;
 
+    if (state.status === 'concluded') {
+        input.value = '';
+        input.disabled = true;
+        $('#send-btn').disabled = true;
+        try {
+            const result = await api.continueDiscussion(content);
+            if (result?.error) { showToast(result.error); input.disabled = false; $('#send-btn').disabled = false; return; }
+            onStateUpdate(result);
+            renderDiscussion();
+            processCurrentTurn();
+        } catch (e) {
+            showToast('Failed to continue: ' + e.message);
+            input.disabled = false;
+            $('#send-btn').disabled = false;
+        }
+        return;
+    }
+
     if (state.status === 'paused') {
         const speaker = getEntity(state.current_speaker_id);
         if (speaker && speaker.entity_type === 'human' && speaker.id !== state.moderator_id) {

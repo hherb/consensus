@@ -291,6 +291,99 @@ def reopen_discussion(discussion: Discussion, db: Database) -> dict:
     return discussion.to_dict()
 
 
+def continue_discussion(discussion: Discussion, db: Database, content: str) -> dict:
+    """Continue a concluded discussion with a new user contribution.
+
+    Reopens the discussion, adds the user's message as a participant,
+    and increases the round budget so the moderator picks it up.
+
+    Args:
+        discussion: The concluded discussion to continue.
+        db: Database instance.
+        content: The user's new message/prompt.
+
+    Returns:
+        ``discussion.to_dict()`` on success, or ``{"error": ...}`` dict.
+    """
+    if not discussion.id:
+        return {"error": "No discussion loaded"}
+    if discussion.status != "concluded":
+        return {"error": "Discussion is not concluded"}
+    if not content or not content.strip():
+        return {"error": "Message content cannot be empty"}
+
+    # Find the human participant (non-moderator) to attribute the message to.
+    # Fall back to the moderator if no human participant exists.
+    human_entity = None
+    for e in discussion.entities:
+        if e.entity_type.value == "human" and e.id != discussion.moderator_id:
+            human_entity = e
+            break
+    if not human_entity:
+        # Use moderator as fallback
+        human_entity = discussion.moderator
+    if not human_entity:
+        return {"error": "No entity available to attribute message to"}
+
+    # Track continuation count and original budget in method_state
+    continuation_count = discussion.method_state.get("_continuation_count", 1)
+    continuation_count += 1
+    discussion.method_state["_continuation_count"] = continuation_count
+
+    # Increase the round budget: original_budget * continuation_count
+    # Store original budget on first continuation so subsequent ones scale correctly
+    if discussion.max_rounds > 0:
+        original_budget = discussion.method_state.get("_original_max_rounds")
+        if original_budget is None:
+            original_budget = discussion.max_rounds
+            discussion.method_state["_original_max_rounds"] = original_budget
+        if original_budget > 0:
+            discussion.max_rounds = original_budget * continuation_count
+            db.update_discussion(discussion.id, max_rounds=discussion.max_rounds)
+
+    # Reopen: set active and restore turn state
+    discussion.status = "active"
+    discussion.is_active = True
+    db.update_discussion(discussion.id, status="active", ended_at=None)
+
+    # Persist updated method_state
+    db.update_discussion(
+        discussion.id, method_state=json.dumps(discussion.method_state),
+    )
+
+    # Restore turn state so the discussion can continue
+    if discussion.turn_order:
+        discussion.current_turn_index = 0
+    discussion.turn_number = db.get_max_turn_number(discussion.id) + 1
+
+    # Add system message about continuation
+    mod_id = discussion.moderator_id or 0
+    sys_msg = Message(
+        entity_id=mod_id, entity_name="System",
+        content="-- Discussion continued by user --",
+        role=MessageRole.SYSTEM,
+    )
+    discussion.messages.append(sys_msg)
+    db.add_message(
+        discussion.id, mod_id,
+        "-- Discussion continued by user --", "system",
+        turn_number=discussion.turn_number,
+    )
+
+    # Add the user's message as a participant contribution
+    user_msg = Message(
+        entity_id=human_entity.id, entity_name=human_entity.name,
+        content=content, role=MessageRole.PARTICIPANT,
+    )
+    discussion.messages.append(user_msg)
+    db.add_message(
+        discussion.id, human_entity.id, content, "participant",
+        turn_number=discussion.turn_number,
+    )
+
+    return discussion.to_dict()
+
+
 def reset_discussion(
     db: Database,
     key_resolver: Callable,

@@ -263,8 +263,14 @@ function updateInputArea() {
         input.placeholder = 'Optional: Enter a prompt to guide the resumed discussion...';
         return;
     }
+    if (!state.is_active && state.status === 'concluded') {
+        turnInfo.textContent = 'Discussion has concluded. You can continue it below.';
+        input.disabled = false; sendBtn.disabled = false;
+        input.placeholder = 'Type a message to continue the discussion...';
+        return;
+    }
     if (!state.is_active) {
-        turnInfo.textContent = 'Discussion has concluded.';
+        turnInfo.textContent = 'Discussion is not active.';
         input.disabled = true; sendBtn.disabled = true;
         return;
     }

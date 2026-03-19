@@ -500,6 +500,10 @@ class DesktopBridge:
         """Reopen a concluded discussion for continuation."""
         return self.app.reopen_discussion()
 
+    def continue_discussion(self, content: str) -> dict:
+        """Continue a concluded discussion with a new user contribution."""
+        return self.app.continue_discussion(content)
+
     # -- History --
     def load_discussion(self, discussion_id: int) -> dict:
         """Load a past discussion for review."""

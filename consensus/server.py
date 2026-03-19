@@ -407,6 +407,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             "pause_discussion": lambda: app.pause_discussion(),
             "resume_discussion": lambda: app.resume_discussion(),
             "reopen_discussion": lambda: app.reopen_discussion(),
+            "continue_discussion": lambda: app.continue_discussion(
+                data.get("content", "")),
             "submit_user_input": lambda: app.submit_user_input(
                 data["request_id"], data["content"]),
             # Export

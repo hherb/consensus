@@ -826,6 +826,16 @@ class ConsensusApp:
             self._notify()
         return result
 
+    def continue_discussion(self, content: str) -> dict:
+        """Continue a concluded discussion with a new user contribution."""
+        result = app_discussion_state.continue_discussion(
+            self.discussion, self.db, content,
+        )
+        if "error" in result:
+            return result
+        self._notify()
+        return self.get_state()
+
     # ------------------------------------------------------------------
     # Interactive user input (ask_user tool)
     # ------------------------------------------------------------------

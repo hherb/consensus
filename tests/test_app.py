@@ -261,6 +261,63 @@ class TestReopenDiscussion:
         result = app.reopen_discussion()
         assert "error" in result
 
+    @pytest.mark.asyncio
+    async def test_continue_concluded(self, app_with_entities):
+        app, mod_id, p1_id, p2_id = app_with_entities
+        app.start_discussion()
+        original_max = app.discussion.max_rounds
+        with patch.object(app.moderator, 'generate_conclusion',
+                          new_callable=AsyncMock,
+                          return_value=AIResponse(content="Done.")):
+            await app.conclude_discussion()
+        assert app.discussion.status == "concluded"
+
+        result = app.continue_discussion("Let's explore this further")
+        assert "error" not in result
+        assert app.discussion.status == "active"
+        assert app.discussion.is_active is True
+        # User message should be in messages
+        user_msgs = [m for m in app.discussion.messages
+                     if m.content == "Let's explore this further"]
+        assert len(user_msgs) == 1
+        assert user_msgs[0].role == MessageRole.PARTICIPANT
+        # If max_rounds was set, it should have increased
+        if original_max > 0:
+            assert app.discussion.max_rounds == original_max * 2
+
+    @pytest.mark.asyncio
+    async def test_continue_budget_scales_correctly(self, app_with_entities):
+        """Budget should scale as original * n, not compound."""
+        app, mod_id, p1_id, p2_id = app_with_entities
+        app.start_discussion()
+        original_max = app.discussion.max_rounds
+
+        for i in range(3):
+            with patch.object(app.moderator, 'generate_conclusion',
+                              new_callable=AsyncMock,
+                              return_value=AIResponse(content="Done.")):
+                await app.conclude_discussion()
+            app.continue_discussion(f"Continue round {i + 1}")
+
+        if original_max > 0:
+            # After 3 continuations: original * 4 (count starts at 1, increments each time)
+            assert app.discussion.max_rounds == original_max * 4
+
+    def test_continue_not_concluded(self, app_with_entities):
+        app, mod_id, p1_id, p2_id = app_with_entities
+        app.start_discussion()
+        result = app.continue_discussion("More please")
+        assert "error" in result
+
+    def test_continue_empty_content(self, app_with_entities):
+        app, mod_id, p1_id, p2_id = app_with_entities
+        app.start_discussion()
+        app.discussion.status = "concluded"
+        result = app.continue_discussion("")
+        assert "error" in result
+        result = app.continue_discussion("   ")
+        assert "error" in result
+
 
 # --- Add/remove during active discussion ---
 
