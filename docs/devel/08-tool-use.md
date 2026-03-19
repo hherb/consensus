@@ -33,6 +33,11 @@ ConsensusApp
     |     |     |
     |     |     +-- describe_image, list_images, add_image_url
     |     |
+    |     +-- PythonToolProvider ("python_exec")
+    |     |     |
+    |     |     +-- execute_python (tools_python.py → sandbox_worker.py subprocess)
+    |     |     +-- install_python_package (tools_python.py, user-approval flow)
+    |     |
     |     +-- PythonToolProvider ("memory")     [optional, requires sqlite-vec]
     |     |     |
     |     |     +-- memory_store, memory_recall, memory_forget
@@ -578,6 +583,95 @@ these tools, allowing them to manage their own timeout internally.
 | Event | Desktop | Web |
 |-------|---------|-----|
 | `user_input_request` | `DesktopBridge._push_user_input_request()` → `evaluate_js("onUserInputRequest(...)")` | SSE `event: user_input_request` |
+
+---
+
+## Sandboxed Python Code Execution
+
+Defined in `tools_python.py` and `sandbox_worker.py`. Created via
+`create_python_provider(app)` and registered in
+`ConsensusApp._init_python_tools()`. No optional dependencies required — uses
+only Python stdlib.
+
+### Architecture
+
+```
+ConsensusApp._init_python_tools()
+    |
+    +-- create_python_provider(app)
+          |
+          +-- execute_python handler (async, subprocess-based)
+          +-- install_python_package handler (async, Future-based approval)
+          +-- PythonToolProvider("python_exec")
+                    |
+                    +-- sandbox_worker.py (standalone subprocess)
+                          |
+                          +-- RLIMIT_AS (70% free RAM)
+                          +-- RLIMIT_CPU (70% of cores × 30s)
+                          +-- restricted builtins
+                          +-- whitelisted import hook
+                          +-- sandboxed open() + patched io.open
+                          +-- REPL-like last-expression capture
+```
+
+### Security layers
+
+| Layer | Mechanism | Scope |
+|-------|-----------|-------|
+| **1. AST pre-analysis** | `_analyze_ast()` walks the AST before execution | Rejects blocked imports, `exec()`/`eval()`/`compile()` calls, dangerous dunder access (`__subclasses__`, `__globals__`, `__builtins__`, etc.) |
+| **2. Subprocess isolation** | Code runs in a separate process via `asyncio.create_subprocess_exec` | Process crash or OOM kill cannot affect the host |
+| **3. Restricted builtins** | `_make_safe_builtins()` removes dangerous functions | No `exec`, `eval`, `compile`, `__import__`, `breakpoint`, `getattr`, `setattr`, `delattr`, `memoryview` |
+| **4. Import whitelist** | `_make_restricted_import()` only allows `ALLOWED_MODULES` | Blocks `os`, `sys`, `subprocess`, `socket`, `shutil`, `ctypes`, etc. |
+| **5. File I/O sandbox** | `_make_sandboxed_open()` restricts `open()` to temp dir; `io.open`/`io.FileIO` patched | No filesystem access outside the per-execution temp directory |
+| **6. Resource limits** | `RLIMIT_AS` (memory) and `RLIMIT_CPU` (CPU time) via `resource.setrlimit()` | Dynamic: 70% of free RAM, 70% of CPU cores × 30s base. Floors: 256 MB, 10s |
+| **7. Wall-clock timeout** | `asyncio.wait_for()` with `CPU_limit × 1.5` (min 30s) | Kills runaway processes even if RLIMIT_CPU isn't reached |
+| **8. macOS sandbox-exec** | Optional Seatbelt profile denying network and non-sandbox writes | OS-level enforcement on macOS; graceful fallback on other platforms |
+
+### Tools
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `execute_python` | Execute Python code in a sandboxed subprocess | `code: str`, `description?: str` |
+| `install_python_package` | Request PyPI package installation with user approval | `package_name: str`, `reason: str` |
+
+### Allowed modules
+
+**Standard library:** math, cmath, statistics, decimal, fractions, numbers,
+random, collections, itertools, functools, operator, copy, json, csv, struct,
+re, string, textwrap, difflib, unicodedata, datetime, time, calendar, hashlib,
+base64, uuid, zlib, bisect, heapq, array, pprint, dataclasses, typing, enum,
+abc, contextlib, io (StringIO/BytesIO only), html
+
+**Scientific/ML (if installed):** numpy, scipy, pandas, sklearn, torch,
+torchvision, torchaudio, tensorflow, keras, jax, flax, sympy, mpmath,
+matplotlib, seaborn, plotly, hypercomplex, networkx, igraph, PIL, cv2, astropy,
+Bio, shapely, pyproj, pint, uncertainties, regex
+
+### Package installation flow
+
+1. AI calls `install_python_package(package_name="hypercomplex", reason="...")`
+2. Handler validates package name against strict regex (prevents command injection)
+3. Handler checks if package is already importable (skips if yes)
+4. Handler emits `user_input_request` event via `app._pending_user_inputs` (same pattern as `ask_user`)
+5. Frontend shows approval prompt with package name, reason, and exact `uv pip install` command
+6. User approves or denies
+7. On approval, handler runs `uv pip install <package>` with 2-minute timeout
+8. Returns success/failure as ToolResult
+
+### Dynamic resource limits
+
+Resource limits are computed at execution time from the host system, not
+hardcoded:
+
+```python
+MEMORY_FRACTION = 0.70    # 70% of available (free) memory
+CPU_FRACTION = 0.70       # 70% of CPU cores
+MIN_MEMORY_BYTES = 256 MB # Floor for constrained systems
+MIN_CPU_TIME_SECONDS = 10 # Floor for single-core systems
+```
+
+Memory detection order: `psutil.virtual_memory().available` → macOS `vm_stat`
+(free + inactive pages) → Linux `/proc/meminfo` `MemAvailable` → 8 GB fallback.
 
 ---
 

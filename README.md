@@ -141,6 +141,16 @@ This design means phases can be reused across methods (e.g. the same `SurfaceAss
 - **5-minute timeout** — graceful handling if the user doesn't respond
 - Assign the `ask_user` tool to AI entities via the Profiles tab
 
+### Sandboxed Python Code Execution
+- **`execute_python` tool** — AI participants can write and run Python code during discussions for calculations, data analysis, and ML experiments
+- **Multi-layered sandbox** — AST pre-analysis, subprocess isolation, restricted builtins, whitelisted imports, sandboxed file I/O, and optional macOS `sandbox-exec`
+- **Dynamic resource limits** — allocates 70% of available free RAM and 70% of CPU cores, scaling automatically with the host machine
+- **Scientific/ML libraries** — numpy, scipy, pandas, torch, hypercomplex, matplotlib, sympy, and many more are allowed if installed
+- **REPL-like output** — captures stdout, stderr, and the last expression value (like a Jupyter cell)
+- **`install_python_package` tool** — participants can request missing PyPI packages; the user sees an approval prompt before `uv pip install` runs
+- **Command injection protection** — package names validated against a strict PEP 508 regex; code passed via stdin (not shell args)
+- Assign `execute_python` and `install_python_package` to AI entities via the Profiles tab
+
 ### MCP Expert Plugins
 - **MCP (Model Context Protocol) server integration** — register external MCP servers via JSON-RPC 2.0 over stdio (local processes) or Streamable HTTP (remote servers)
 - **Dual transport** — stdio for local MCP servers (subprocess) and HTTP+SSE for remote MCP servers with session management (`Mcp-Session-Id`), retry with exponential backoff
@@ -310,6 +320,7 @@ ConsensusApp — orchestrator, state management, event emitter
     ├── MCPHTTPToolProvider — MCP Streamable HTTP transport (JSON-RPC 2.0 over HTTP+SSE)
     ├── DocumentRAG (tools_document.py) — document ingestion, chunking, RAG Q&A
     ├── AskUser (tools_ask_user.py) — interactive user input during AI turns
+    ├── PythonExec (tools_python.py) — sandboxed Python code execution + package install
     ├── Migrator — file-based SQL migration runner
     └── Evaluation — ablation study framework (cases, runner, scorer)
 
