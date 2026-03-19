@@ -52,6 +52,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
     ├── MCPToolProvider (mcp_client.py) — MCP server communication (JSON-RPC 2.0)
     ├── DocumentRAG (tools_document.py) — document ingestion, chunking, RAG Q&A
     ├── AskUser (tools_ask_user.py) — interactive user input during AI turns
+    ├── PythonExec (tools_python.py) — sandboxed Python code execution + package install
     └── Database (db/) — thread-safe SQLite persistence (domain-specific mixins)
 ```
 
@@ -66,6 +67,8 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
 - `mcp_client.py` — `MCPToolProvider` for JSON-RPC 2.0 communication with MCP server subprocesses; expert entity consultation
 - `tools_document.py` — Document RAG tool provider: ingestion (URL/text/PDF/HTML), chunking, embedding, RAG Q&A, section navigation, map-reduce summarization
 - `tools_ask_user.py` — Interactive user-input tool: AI pauses mid-turn, frontend shows input bubble, user response fed back via `asyncio.Future`
+- `tools_python.py` — Sandboxed Python code execution tool provider: `execute_python` runs code in a subprocess with AST pre-analysis, restricted builtins/imports, resource limits (dynamic: 70% of free RAM, 70% of CPU cores), and optional macOS `sandbox-exec`. `install_python_package` lets participants request PyPI package installation with user approval via the ask_user event pattern. Allowed modules include stdlib (math, json, re, etc.) plus scientific/ML libraries (numpy, scipy, pandas, torch, hypercomplex, etc.)
+- `sandbox_worker.py` — Standalone subprocess entry point for sandboxed code execution. Applies `RLIMIT_AS`/`RLIMIT_CPU`, restricts builtins, whitelists imports, sandboxes `open()` to a temp directory, patches `io.open`/`io.FileIO`, captures stdout/stderr + last expression value (REPL-like), outputs JSON results
 - `context_strategies.py` — Per-participant context loading: `ContextStrategy` enum (full/sliding_window/summary/semantic), `ContextConfig` dataclass, `load_context_messages()` (sync) and `load_context_messages_async()` (async, required for semantic strategy). Semantic strategy uses embedding-based RAG: hybrid recency window + cosine-similarity retrieval over `message_embeddings`, with lazy background indexing and graceful fallback to sliding_window. Each participant queries DB with its own strategy instead of reading from the shared in-memory message list
 - `methods/` — Discussion method subpackage: `base.py` (`DiscussionMethod` ABC, `Phase`, `ProcessedResponse`), `phase_handler.py` (`PhaseHandler` ABC), `parsing.py` (shared parsing utilities), `recommender.py` (`MethodRecommender` — LLM-based method classification engine), 13 method classes including `triage.py` (Guided Triage meta-method) and `self_distillation.py` (Recursive Self-Distillation), `phases/` subpackage with 43 composable handler implementations + 4 helper modules
 - `db/` — Database subpackage with domain-specific mixins: `providers.py`, `entities.py`, `discussions.py`, `messages.py`, `prompts.py`, `tools.py`, `mcp.py`, `memory.py`, `documents.py`

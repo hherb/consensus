@@ -59,6 +59,7 @@ class ConsensusApp:
         self._init_memory_tools()
         self._init_document_tools()
         self._init_image_tools()
+        self._init_python_tools()
         self._load_mcp_config()
 
     def _refresh_pricing_if_needed(self) -> None:
@@ -141,6 +142,17 @@ class ConsensusApp:
         except ImportError as e:
             self.images_available = False
             logger.info("Image tools not available: %s", e)
+
+    def _init_python_tools(self) -> None:
+        """Register Python code execution tool provider."""
+        try:
+            from .tools_python import create_python_provider
+            provider = create_python_provider(app=self)
+            self.tool_registry.register_provider(provider)
+            self.db.add_tool_provider("python_exec", "python")
+            logger.debug("Python execution tools registered")
+        except Exception as e:
+            logger.info("Python execution tools not available: %s", e)
 
     def _load_mcp_config(self) -> None:
         """Load MCP server definitions from config files on startup."""
