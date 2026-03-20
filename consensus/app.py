@@ -95,6 +95,13 @@ class ConsensusApp:
             },
         )
         expert_provider.register(expert_tool_def, self._handle_consult_expert)
+
+        list_experts_def = ToolDefinition(
+            name="list_available_experts",
+            description="List all specialist experts available for consultation. Call this before consult_expert to discover which experts exist.",
+            parameters={"type": "object", "properties": {}},
+        )
+        expert_provider.register(list_experts_def, self._handle_list_experts)
         self.tool_registry.register_provider(expert_provider)
 
     def _init_interactive_tools(self) -> None:
@@ -349,6 +356,23 @@ class ConsensusApp:
     # ------------------------------------------------------------------
     # Consult Expert
     # ------------------------------------------------------------------
+
+    async def _handle_list_experts(self, args: dict, context: ToolContext) -> ToolResult:
+        """Tool handler: list available specialist experts."""
+        entities = self.db.get_entities()
+        experts = [e for e in entities if e.get("entity_type") == "expert"]
+        if not experts:
+            return ToolResult(content="No experts are currently configured.")
+        lines = []
+        for e in experts:
+            defn = self.db.get_expert_definition(e["id"])
+            desc = defn.get("description", "") if defn else ""
+            status = "ready" if defn and self._mcp_providers.get(defn["mcp_server_id"]) else "unavailable"
+            entry = f"- **{e['name']}** [{status}]"
+            if desc:
+                entry += f": {desc}"
+            lines.append(entry)
+        return ToolResult(content="Available experts:\n" + "\n".join(lines))
 
     async def _handle_consult_expert(self, args: dict, context: ToolContext) -> ToolResult:
         """Tool handler: consult a specialist expert via its MCP server."""

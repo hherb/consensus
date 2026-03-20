@@ -236,6 +236,11 @@ class ToolRegistry:
 
         # Enrich consult_expert with available expert names so models
         # can only request existing experts (enum constraint).
+        # Auto-pair list_available_experts whenever consult_expert is present.
+        has_consult = any(t.name == "consult_expert" for t in result)
+        if has_consult and "list_available_experts" in all_tools:
+            if not any(t.name == "list_available_experts" for t in result):
+                result.append(all_tools["list_available_experts"])
         result = [self._enrich_expert_tool(t) if t.name == "consult_expert" else t
                   for t in result]
 
