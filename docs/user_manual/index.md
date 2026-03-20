@@ -30,8 +30,8 @@ This manual walks you through everything you need to get started and make the mo
 ## Quick Start
 
 ```bash
-# Install with all extras
-uv pip install -e ".[all]"
+# Install as a CLI tool (makes the `consensus` command available)
+uv tool install ".[all]"
 
 # Launch in desktop mode
 consensus

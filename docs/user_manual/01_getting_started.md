@@ -8,23 +8,30 @@
 
 ## Installation
 
-Consensus offers several installation extras depending on how you plan to use it:
+Consensus offers several installation extras depending on how you plan to use it.
+
+### As a CLI tool (recommended for users)
 
 ```bash
-# Base install (HTTP client only — for embedding in other apps)
-uv pip install -e .
+# Install with all extras — makes the `consensus` command available globally
+uv tool install ".[all]"
+```
 
-# Desktop mode (native window via pywebview)
-uv pip install -e ".[desktop]"
+You can also install with only the extras you need:
 
-# Web server mode (aiohttp)
-uv pip install -e ".[web]"
+```bash
+uv tool install ".[desktop]"   # desktop mode only
+uv tool install ".[web]"       # web server mode only
+```
 
-# Everything
+### For development
+
+```bash
+# Editable install into the current virtual environment
 uv pip install -e ".[all]"
 ```
 
-> **Note:** Always use `uv pip install`, not plain `pip`. The project is configured for uv-based dependency management.
+> **Note:** Always use `uv`, not plain `pip`. The project is configured for uv-based dependency management.
 
 ## Launch Modes
 
