@@ -341,6 +341,17 @@ def continue_discussion(discussion: Discussion, db: Database, content: str) -> d
             discussion.max_rounds = original_budget * continuation_count
             db.update_discussion(discussion.id, max_rounds=discussion.max_rounds)
 
+    # Increase the cost limit proportionally so accumulated costs don't
+    # immediately trigger the limit on continuation
+    if discussion.cost_limit > 0:
+        original_cost_limit = discussion.method_state.get("_original_cost_limit")
+        if original_cost_limit is None:
+            original_cost_limit = discussion.cost_limit
+            discussion.method_state["_original_cost_limit"] = original_cost_limit
+        if original_cost_limit > 0:
+            discussion.cost_limit = original_cost_limit * continuation_count
+            db.update_discussion(discussion.id, cost_limit=discussion.cost_limit)
+
     # Reopen: set active and restore turn state
     discussion.status = "active"
     discussion.is_active = True

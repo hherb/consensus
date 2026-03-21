@@ -607,6 +607,7 @@ def launch_desktop(debug: bool = False) -> None:
         width=WINDOW_WIDTH,
         height=WINDOW_HEIGHT,
         min_size=(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT),
+        text_select=True,
     )
     bridge._window = window
 

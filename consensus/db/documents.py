@@ -192,6 +192,15 @@ class DocumentsMixin:
             for r in rows
         ]
 
+    def delete_document_chunk(self, chunk_id: int) -> None:
+        """Delete a document chunk and its embedding."""
+        self._execute_write(
+            "DELETE FROM document_chunk_embeddings WHERE chunk_id=?",
+            (chunk_id,))
+        self._execute_write(
+            "DELETE FROM document_chunks WHERE id=?",
+            (chunk_id,))
+
     def set_chunk_embedding(self, chunk_id: int, embedding: bytes) -> None:
         """Store or replace an embedding for a document chunk."""
         self._execute_write(

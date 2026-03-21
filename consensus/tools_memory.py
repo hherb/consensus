@@ -30,7 +30,11 @@ SEARCH_DEFAULT_LIMIT = 5
 
 
 class MemoryUnavailableError(Exception):
-    """Raised when the embedding backend is unreachable."""
+    """Raised when the embedding service is unreachable or persistently failing."""
+
+
+class EmbeddingContextLengthError(Exception):
+    """Raised when input text exceeds the embedding model's context window."""
 
 
 class EmbeddingClient:
@@ -80,6 +84,17 @@ class EmbeddingClient:
                     raise MemoryUnavailableError(
                         f"Embedding request failed: {e}"
                     ) from e
+                # Detect non-transient context length errors from Ollama
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 500:
+                    try:
+                        body = e.response.json()
+                        if "context length" in body.get("error", ""):
+                            raise EmbeddingContextLengthError(
+                                f"Input exceeds embedding model context: "
+                                f"{body['error']}"
+                            ) from e
+                    except (ValueError, KeyError):
+                        pass  # not JSON or no error field — treat as transient
                 delay = EMBED_BASE_DELAY * (2 ** attempt)
                 logger.warning(
                     "Embedding attempt %d/%d failed (%s), retrying in %.1fs",

@@ -30,8 +30,8 @@ from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolResult
 logger = logging.getLogger(__name__)
 
 # Chunking defaults
-DEFAULT_CHUNK_SIZE = 1500  # characters
-DEFAULT_CHUNK_OVERLAP = 200  # characters
+DEFAULT_CHUNK_SIZE = 500  # characters
+DEFAULT_CHUNK_OVERLAP = 100  # characters
 
 # RAG defaults
 RAG_TOP_K = 5
@@ -448,27 +448,107 @@ _DOC_SUMMARY_SCHEMA = {
 
 _embedding_docs: set[int] = set()  # track documents currently being embedded
 
+def _split_into_sub_chunks(text: str, size: int = DEFAULT_CHUNK_SIZE,
+                           overlap: int = DEFAULT_CHUNK_OVERLAP
+                           ) -> list[str]:
+    """Split text into overlapping sub-chunks of at most *size* characters."""
+    if len(text) <= size:
+        return [text]
+    sub_chunks = []
+    start = 0
+    while start < len(text):
+        end = min(start + size, len(text))
+        sub_chunks.append(text[start:end])
+        start += size - overlap
+    return sub_chunks
+
+
+async def _embed_single_chunk(chunk, doc_id: int, db, embed_client) -> bool:
+    """Embed a single chunk, re-chunking if it exceeds the model context.
+
+    On context-length errors the chunk is split into smaller overlapping
+    sub-chunks which are stored as new DB rows and embedded individually.
+    Transient errors are retried with exponential backoff.
+
+    Returns True on success, False if all attempts exhausted.
+    """
+    from .tools_memory import EmbeddingContextLengthError
+
+    try:
+        vec = await embed_client.embed(chunk["content"])
+        blob = _pack_embedding(vec)
+        db.set_chunk_embedding(chunk["id"], blob)
+        return True
+
+    except EmbeddingContextLengthError:
+        # Re-chunk into smaller overlapping pieces
+        sub_texts = _split_into_sub_chunks(chunk["content"])
+        logger.info(
+            "Chunk %d of doc %d exceeds context — splitting into "
+            "%d sub-chunks (%d char / %d overlap)",
+            chunk["id"], doc_id, len(sub_texts),
+            DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP,
+        )
+
+        # Get the next available chunk_index for this document
+        existing_chunks = db.get_document_chunks(doc_id)
+        next_index = max(c["chunk_index"] for c in existing_chunks) + 1
+
+        all_ok = True
+        step = DEFAULT_CHUNK_SIZE - DEFAULT_CHUNK_OVERLAP
+        for i, sub_text in enumerate(sub_texts):
+            # Store sub-chunk in DB with position relative to parent
+            from_char = chunk["from_char"] + i * step
+            to_char = min(from_char + len(sub_text), chunk["to_char"])
+            sub_id = db.add_document_chunk(
+                doc_id, next_index + i, sub_text,
+                from_char, to_char, chunk["section_header"],
+            )
+            try:
+                vec = await embed_client.embed(sub_text)
+                blob = _pack_embedding(vec)
+                db.set_chunk_embedding(sub_id, blob)
+            except Exception as e:
+                logger.error(
+                    "Failed to embed sub-chunk %d (from chunk %d) "
+                    "of doc %d: %s", sub_id, chunk["id"], doc_id, e,
+                )
+                all_ok = False
+
+        # Remove the original oversized chunk since it's been replaced
+        db.delete_document_chunk(chunk["id"])
+        return all_ok
+
+    except Exception as e:
+        logger.error(
+            "Embed chunk %d of doc %d failed: %s",
+            chunk["id"], doc_id, e,
+        )
+        return False
+
 
 async def _embed_document_chunks(doc_id: int, db, embed_client) -> None:
     """Background task: embed all unembedded chunks for a document."""
     try:
         chunks = db.get_document_chunks(doc_id)
+        existing = db.get_chunks_with_embeddings(doc_id)
+        embedded_ids = {c["id"] for c in existing}
+
+        failed_chunks = []
         for chunk in chunks:
-            try:
-                # Check if already embedded
-                existing = db.get_chunks_with_embeddings(doc_id)
-                embedded_ids = {c["id"] for c in existing}
-                if chunk["id"] in embedded_ids:
-                    continue
-                vec = await embed_client.embed(chunk["content"][:1000])
-                blob = _pack_embedding(vec)
-                db.set_chunk_embedding(chunk["id"], blob)
-            except Exception as e:
-                logger.warning(
-                    "Failed to embed chunk %d of doc %d: %s",
-                    chunk["id"], doc_id, e,
-                )
-                break  # Stop if embedding service is down
+            if chunk["id"] in embedded_ids:
+                continue
+            ok = await _embed_single_chunk(chunk, doc_id, db, embed_client)
+            if ok:
+                embedded_ids.add(chunk["id"])
+            else:
+                failed_chunks.append(chunk)
+
+        if failed_chunks:
+            logger.warning(
+                "Doc %d: %d/%d chunks failed to embed",
+                doc_id, len(failed_chunks), len(chunks),
+            )
     finally:
         _embedding_docs.discard(doc_id)
 
