@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "consensus"
-version = "1.0.0"
+dynamic = ["version"]
 description = "A moderated discussion platform for humans and AI"
 license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.11"
@@ -40,6 +40,9 @@ all = [
 [project.scripts]
 consensus = "consensus.__main__:main"
 consensus-mcp = "consensus.mcp_server:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "consensus.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["consensus*", "evaluation*"]

@@ -8,12 +8,13 @@ import sys
 import threading
 from typing import Optional
 
+from . import __version__
 from .app import ConsensusApp
 
 logger = logging.getLogger(__name__)
 
 # Desktop window configuration
-WINDOW_TITLE = "Consensus - Discussion Moderator"
+WINDOW_TITLE = f"Consensus v{__version__}"
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 800
 WINDOW_MIN_WIDTH = 900

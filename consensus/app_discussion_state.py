@@ -210,11 +210,47 @@ def pause_discussion(discussion: Discussion, db: Database) -> dict:
     return discussion.to_dict()
 
 
+def _increase_budgets(discussion: Discussion, db: Database) -> None:
+    """Increase round and cost budgets for a discussion being continued.
+
+    Tracks continuation count in ``method_state`` and scales both
+    ``max_rounds`` and ``cost_limit`` proportionally so that accumulated
+    progress doesn't immediately trigger the limit on resumption.
+    """
+    continuation_count = discussion.method_state.get("_continuation_count", 1)
+    continuation_count += 1
+    discussion.method_state["_continuation_count"] = continuation_count
+
+    updates: dict = {}
+
+    if discussion.max_rounds > 0:
+        original_budget = discussion.method_state.get("_original_max_rounds")
+        if original_budget is None:
+            original_budget = discussion.max_rounds
+            discussion.method_state["_original_max_rounds"] = original_budget
+        if original_budget > 0:
+            discussion.max_rounds = original_budget * continuation_count
+            updates["max_rounds"] = discussion.max_rounds
+
+    if discussion.cost_limit > 0:
+        original_cost_limit = discussion.method_state.get("_original_cost_limit")
+        if original_cost_limit is None:
+            original_cost_limit = discussion.cost_limit
+            discussion.method_state["_original_cost_limit"] = original_cost_limit
+        if original_cost_limit > 0:
+            discussion.cost_limit = original_cost_limit * continuation_count
+            updates["cost_limit"] = discussion.cost_limit
+
+    updates["method_state"] = json.dumps(discussion.method_state)
+    db.update_discussion(discussion.id, **updates)
+
+
 def resume_discussion(discussion: Discussion, db: Database) -> dict:
     """Resume a paused discussion.
 
     Mutates the discussion in-place: sets status to ``"active"`` and appends
-    a system message.
+    a system message.  If rounds or cost limits have been exhausted,
+    increases the budgets so the discussion can continue.
 
     Args:
         discussion: The paused discussion to resume.
@@ -225,6 +261,18 @@ def resume_discussion(discussion: Discussion, db: Database) -> dict:
     """
     if not discussion.id or discussion.status != "paused":
         return {"error": "Discussion is not paused"}
+
+    # If rounds or cost are already at the limit, increase the budgets
+    rounds_exhausted = (
+        discussion.max_rounds > 0
+        and discussion.current_round > discussion.max_rounds
+    )
+    cost_exhausted = False
+    if discussion.cost_limit > 0:
+        from .app_discussion_flow import calculate_discussion_cost
+        cost_exhausted = calculate_discussion_cost(discussion) >= discussion.cost_limit
+    if rounds_exhausted or cost_exhausted:
+        _increase_budgets(discussion, db)
 
     discussion.status = "active"
     discussion.is_active = True
@@ -262,6 +310,9 @@ def reopen_discussion(discussion: Discussion, db: Database) -> dict:
         return {"error": "No discussion loaded"}
     if discussion.status != "concluded":
         return {"error": "Discussion is not concluded"}
+
+    # Increase budgets so exhausted rounds/cost don't immediately re-trigger
+    _increase_budgets(discussion, db)
 
     discussion.status = "paused"
     discussion.is_active = False
@@ -325,42 +376,13 @@ def continue_discussion(discussion: Discussion, db: Database, content: str) -> d
     if not human_entity:
         return {"error": "No entity available to attribute message to"}
 
-    # Track continuation count and original budget in method_state
-    continuation_count = discussion.method_state.get("_continuation_count", 1)
-    continuation_count += 1
-    discussion.method_state["_continuation_count"] = continuation_count
-
-    # Increase the round budget: original_budget * continuation_count
-    # Store original budget on first continuation so subsequent ones scale correctly
-    if discussion.max_rounds > 0:
-        original_budget = discussion.method_state.get("_original_max_rounds")
-        if original_budget is None:
-            original_budget = discussion.max_rounds
-            discussion.method_state["_original_max_rounds"] = original_budget
-        if original_budget > 0:
-            discussion.max_rounds = original_budget * continuation_count
-            db.update_discussion(discussion.id, max_rounds=discussion.max_rounds)
-
-    # Increase the cost limit proportionally so accumulated costs don't
-    # immediately trigger the limit on continuation
-    if discussion.cost_limit > 0:
-        original_cost_limit = discussion.method_state.get("_original_cost_limit")
-        if original_cost_limit is None:
-            original_cost_limit = discussion.cost_limit
-            discussion.method_state["_original_cost_limit"] = original_cost_limit
-        if original_cost_limit > 0:
-            discussion.cost_limit = original_cost_limit * continuation_count
-            db.update_discussion(discussion.id, cost_limit=discussion.cost_limit)
+    # Increase round and cost budgets so the discussion can continue
+    _increase_budgets(discussion, db)
 
     # Reopen: set active and restore turn state
     discussion.status = "active"
     discussion.is_active = True
     db.update_discussion(discussion.id, status="active", ended_at=None)
-
-    # Persist updated method_state
-    db.update_discussion(
-        discussion.id, method_state=json.dumps(discussion.method_state),
-    )
 
     # Restore turn state so the discussion can continue
     if discussion.turn_order:
