@@ -39,6 +39,11 @@ from .recompose import RecomposeHandler
 from .triage_intake import TriageIntakeHandler
 from .triage_recommend import TriageRecommendHandler
 from .triage_confirm import TriageConfirmHandler
+from .arraignment import ArraignmentHandler
+from .opening_statements import OpeningStatementsHandler
+from .prosecution_case import ProsecutionCaseHandler
+from .defense_case import DefenseCaseHandler
+from .closing_arguments import ClosingArgumentsHandler
 
 __all__ = [
     "SurfaceAssumptionsHandler",
@@ -76,4 +81,9 @@ __all__ = [
     "TriageIntakeHandler",
     "TriageRecommendHandler",
     "TriageConfirmHandler",
+    "ArraignmentHandler",
+    "OpeningStatementsHandler",
+    "ProsecutionCaseHandler",
+    "DefenseCaseHandler",
+    "ClosingArgumentsHandler",
 ]

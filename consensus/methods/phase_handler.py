@@ -51,8 +51,16 @@ class PhaseHandler(ABC):
 
     def filter_context_message(self, entity_name: str, content: str,
                                role: str,
-                               discussion: Discussion) -> str:
+                               discussion: Discussion, *,
+                               current_entity_id: int | None = None) -> str:
         """Transform a context message before sending to the AI.
+
+        Args:
+            entity_name: The speaker's name in the original message.
+            content: The formatted message content.
+            role: The OpenAI message role.
+            discussion: The current discussion.
+            current_entity_id: The entity being prompted (for selective filtering).
 
         Default: no transformation.
         """
@@ -99,6 +107,17 @@ class PhaseHandler(ABC):
             f"**Phase transition:** Moving to *{self.phase.display_name}*."
             f"\n\n{self.phase.description}"
         )
+
+    # ------------------------------------------------------------------
+    # Round lifecycle
+    # ------------------------------------------------------------------
+
+    def on_round_complete(self, discussion: Discussion) -> None:
+        """Called after ``phase_round`` is incremented by the method.
+
+        Handlers can override to update internal sub-state (e.g. huddle
+        round progression).  Default: no-op.
+        """
 
     # ------------------------------------------------------------------
     # Turn order

@@ -97,20 +97,42 @@ export function renderDiscussionRoster() {
     const roles = state.member_roles || {};
     const configs = state.member_context_configs || {};
     const embeddingAvailable = !!state.embedding_available;
+    const isCourtMethod = state.discussion_method === 'court_of_law';
     container.innerHTML = state.entities.map(e => {
         const isMod = e.id === state.moderator_id;
         const isDA = roles[String(e.id)] === 'devils_advocate';
+        const courtRole = roles[String(e.id)] || 'standard';
         const cfg = configs[String(e.id)] || {};
         const strategy = cfg.strategy || state.default_context_strategy || 'sliding_window';
         const windowSize = cfg.window_size ?? state.default_context_window_size ?? 20;
         const showWindow = strategy !== 'full' && strategy !== 'token_window';
+
+        // Court role badge
+        const courtBadgeMap = {
+            prosecutor: '<span class="da-badge" style="background:var(--error-color,#d32f2f)">PROS</span>',
+            plaintiff: '<span class="da-badge" style="background:var(--warning-color,#f57c00)">PLNT</span>',
+            defense: '<span class="da-badge" style="background:var(--info-color,#1976d2)">DEF</span>',
+        };
+        const courtBadge = isCourtMethod && !isMod ? (courtBadgeMap[courtRole] || '') : '';
+
+        // Court role selector (replaces DA button when court_of_law is active)
+        const courtRoleSelect = isCourtMethod && !isMod ? `
+            <select class="court-role-select" data-entity-id="${e.id}"
+                    style="font-size:0.75rem;padding:0.15rem 0.25rem;" title="Court role">
+                <option value="standard"${courtRole === 'standard' ? ' selected' : ''}>No role</option>
+                <option value="prosecutor"${courtRole === 'prosecutor' ? ' selected' : ''}>Prosecutor</option>
+                <option value="plaintiff"${courtRole === 'plaintiff' ? ' selected' : ''}>Plaintiff</option>
+                <option value="defense"${courtRole === 'defense' ? ' selected' : ''}>Defense</option>
+            </select>` : '';
+
         return `
         <div class="entity-item">
             <div class="entity-avatar" style="background:${e.avatar_color}">${getInitials(e.name)}</div>
             <div class="entity-info">
                 <span class="entity-name">${escHtml(e.name)}</span>
                 ${isMod ? '<span class="moderator-badge">MOD</span>' : ''}
-                ${isDA ? '<span class="da-badge">DA</span>' : ''}
+                ${!isCourtMethod && isDA ? '<span class="da-badge">DA</span>' : ''}
+                ${courtBadge}
                 <div class="entity-type">${e.entity_type === 'ai' ? 'AI - ' + (e.ai_config?.model || 'LLM') : 'Human'}</div>
             </div>
             <div class="entity-actions" style="display:flex;align-items:center;gap:0.25rem;flex-wrap:wrap;">
@@ -125,7 +147,8 @@ export function renderDiscussionRoster() {
                     value="${windowSize}" min="3" max="200"
                     style="width:3rem;font-size:0.75rem;padding:0.15rem 0.25rem;" title="Context window size">` : ''}
                 ${!isMod ? `<button class="btn btn-ghost btn-sm" data-action="set-moderator" data-id="${e.id}">Set Mod</button>` : ''}
-                ${!isMod && e.entity_type === 'ai'
+                ${courtRoleSelect}
+                ${!isCourtMethod && !isMod && e.entity_type === 'ai'
                     ? `<button class="btn btn-ghost btn-sm" data-action="set-devils-advocate" data-id="${e.id}">${isDA ? 'Unset DA' : 'Set DA'}</button>`
                     : ''}
                 <button class="btn btn-ghost btn-sm" data-action="remove-from-discussion" data-id="${e.id}">Remove</button>
@@ -139,6 +162,10 @@ export function renderDiscussionRoster() {
     });
     container.querySelectorAll('.context-window-input').forEach(inp => {
         inp.addEventListener('change', () => onMemberContextChange(Number(inp.dataset.entityId)));
+    });
+    // Court role dropdowns
+    container.querySelectorAll('.court-role-select').forEach(sel => {
+        sel.addEventListener('change', () => setCourtRole(Number(sel.dataset.entityId), sel.value));
     });
 }
 
@@ -215,6 +242,19 @@ export async function setDevilsAdvocate(entityId) {
 }
 
 /**
+ * Set a court role for an entity (prosecutor, plaintiff, defense, standard).
+ * @param {number} entityId
+ * @param {string} role
+ */
+async function setCourtRole(entityId, role) {
+    const result = await api.setParticipantRole(entityId, role);
+    if (result?.error) return showToast(result.error);
+    const s = await api.getState();
+    onStateUpdate(s);
+    renderSetupTab();
+}
+
+/**
  * Fetch available discussion methods and populate the selector dropdown.
  */
 export async function loadDiscussionMethods() {
@@ -239,6 +279,10 @@ export async function onMethodChange() {
     updateMethodDescription();
     const result = await api.setDiscussionMethod(select.value);
     if (result?.error) showToast(result.error);
+    // Re-render roster — method change may show/hide role controls
+    const s = await api.getState();
+    onStateUpdate(s);
+    renderDiscussionRoster();
 }
 
 // --- Method Recommendation ---

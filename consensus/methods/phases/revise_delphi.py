@@ -110,7 +110,8 @@ class ReviseDelphiHandler(PhaseHandler):
 
     def filter_context_message(self, entity_name: str, content: str,
                                role: str,
-                               discussion: Discussion) -> str:
+                               discussion: Discussion, *,
+                               current_entity_id: int | None = None) -> str:
         return anonymise_content(content, discussion)
 
     # ------------------------------------------------------------------

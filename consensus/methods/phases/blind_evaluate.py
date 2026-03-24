@@ -53,7 +53,8 @@ class BlindEvaluateHandler(PhaseHandler):
 
     def filter_context_message(self, entity_name: str, content: str,
                                role: str,
-                               discussion: Discussion) -> str:
+                               discussion: Discussion, *,
+                               current_entity_id: int | None = None) -> str:
         """Strip pre-evaluation messages to ensure blind evaluation.
 
         The skeleton is delivered entirely through get_system_prompt.

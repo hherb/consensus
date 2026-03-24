@@ -23,6 +23,7 @@ from .counterfactual import CounterfactualStressTest
 from .recursive_decomposition import RecursiveDecomposition
 from .triage import TriageMethod
 from .self_distillation import RecursiveSelfDistillation
+from .court_of_law import CourtOfLaw
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ _METHODS: dict[str, type[DiscussionMethod]] = {
     "recursive_decomposition": RecursiveDecomposition,
     "triage": TriageMethod,
     "self_distillation": RecursiveSelfDistillation,
+    "court_of_law": CourtOfLaw,
 }
 _INSTANCES: dict[str, DiscussionMethod] = {}
 _METHODS_METADATA: list[dict] | None = None
@@ -109,4 +111,5 @@ __all__ = [
     "RecursiveDecomposition",
     "TriageMethod",
     "RecursiveSelfDistillation",
+    "CourtOfLaw",
 ]

@@ -320,6 +320,19 @@ def start_discussion(
         if not db.get_entity(e.id):
             return {"error": f"Entity '{e.name}' (id={e.id}) no longer exists"}
 
+    # Court of Law role validation (before DB writes)
+    if discussion.discussion_method == "court_of_law":
+        roles = discussion.member_roles
+        has_prosecutor = any(r == "prosecutor" for r in roles.values())
+        has_plaintiff = any(r == "plaintiff" for r in roles.values())
+        has_defense = any(r == "defense" for r in roles.values())
+        if not has_prosecutor and not has_plaintiff:
+            return {"error": "Court of Law requires at least one Prosecutor "
+                    "(criminal) or Plaintiff (civil) participant"}
+        if not has_defense:
+            return {"error": "Court of Law requires at least one Defense "
+                    "participant"}
+
     # Clear any stale state from a previous discussion
     discussion.messages.clear()
     discussion.storyboard.clear()

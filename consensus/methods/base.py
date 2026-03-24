@@ -203,7 +203,8 @@ class DiscussionMethod(ABC):
         return ""
 
     def filter_context_message(self, entity_name: str, content: str,
-                               role: str, discussion: Discussion) -> str:
+                               role: str, discussion: Discussion, *,
+                               current_entity_id: int | None = None) -> str:
         """Transform a context message before it's sent to the AI.
 
         Called by the moderator when building the message context for both
@@ -217,14 +218,16 @@ class DiscussionMethod(ABC):
             content: The formatted message content (may include speaker prefix).
             role: The OpenAI message role ("user", "assistant", "system").
             discussion: The current discussion.
+            current_entity_id: The entity being prompted (for selective filtering).
 
         Returns:
             The (possibly transformed) content string.
         """
         handler = self._active_handler(discussion)
         if handler is not None:
-            return handler.filter_context_message(entity_name, content,
-                                                  role, discussion)
+            return handler.filter_context_message(
+                entity_name, content, role, discussion,
+                current_entity_id=current_entity_id)
         return content
 
     def get_conclusion_prompt(self, discussion: Discussion) -> str:
@@ -274,11 +277,14 @@ class DiscussionMethod(ABC):
 
         Subclasses can override to update method-specific counters
         (e.g. diffusion round tracking).  The base implementation
-        increments ``phase_round``.
+        increments ``phase_round`` and delegates to the active handler.
         """
         discussion.method_state["phase_round"] = (
             discussion.method_state.get("phase_round", 1) + 1
         )
+        handler = self._active_handler(discussion)
+        if handler is not None:
+            handler.on_round_complete(discussion)
 
     # ------------------------------------------------------------------
     # Turn order

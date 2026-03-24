@@ -153,7 +153,8 @@ class Moderator:
 
             if method:
                 content = method.filter_context_message(
-                    msg.entity_name, content, role, self.discussion)
+                    msg.entity_name, content, role, self.discussion,
+                    current_entity_id=current_entity_id)
 
             # Skip empty assistant messages — some APIs (e.g. Kimi) reject them
             if not content and role == "assistant":
