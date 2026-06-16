@@ -133,6 +133,11 @@ def _unpack_embedding(blob: bytes) -> list[float]:
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    # Differing dimensions mean the vectors came from different embedding
+    # models; zip() would silently truncate and yield a meaningless score, so
+    # treat them as unrelated instead.
+    if len(a) != len(b):
+        return 0.0
     dot = sum(x * y for x, y in zip(a, b))
     mag_a = math.sqrt(sum(x * x for x in a))
     mag_b = math.sqrt(sum(x * x for x in b))
