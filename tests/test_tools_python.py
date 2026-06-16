@@ -192,6 +192,21 @@ avg
         assert result["error"] is None
         assert '"a"' in result["last_expr"]
 
+    def test_io_module_restored_after_run(self):
+        """In-process execution must not permanently corrupt the io module.
+
+        The restricted importer deletes io.FileIO and io.RawIOBase; both must
+        be restored so unrelated in-process code keeps working.
+        """
+        import io as _io
+
+        assert hasattr(_io, "FileIO")
+        assert hasattr(_io, "RawIOBase")
+        result = execute_code("import io\nio.StringIO")
+        assert result["error"] is None
+        assert hasattr(_io, "FileIO")
+        assert hasattr(_io, "RawIOBase")
+
     def test_safe_import_collections(self):
         """Importing collections should work."""
         result = execute_code(

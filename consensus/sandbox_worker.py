@@ -285,6 +285,7 @@ def execute_code(code: str) -> dict[str, Any]:
     # (important when execute_code is called in-process, e.g. tests)
     _orig_io_open = io.open
     _orig_io_fileio = getattr(io, "FileIO", None)
+    _orig_io_rawiobase = getattr(io, "RawIOBase", None)
 
     try:
         # Prepare restricted builtins
@@ -335,10 +336,15 @@ def execute_code(code: str) -> dict[str, Any]:
             result["stderr"] = captured_stderr.getvalue()
 
     finally:
-        # Restore io module to prevent leaking sandbox restrictions
+        # Restore io module to prevent leaking sandbox restrictions.  The
+        # restricted importer deletes io.FileIO and io.RawIOBase, so both
+        # must be restored or in-process callers (e.g. tests) permanently
+        # corrupt the shared io module.
         io.open = _orig_io_open
         if _orig_io_fileio is not None:
             io.FileIO = _orig_io_fileio
+        if _orig_io_rawiobase is not None:
+            io.RawIOBase = _orig_io_rawiobase
         # Clean up sandbox directory
         try:
             import shutil
