@@ -21,6 +21,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Safety cap: the vote phase advances once every participant has voted on
+# every motion, but if some votes can never be parsed (e.g. a model that
+# refuses to emit valid JSON) this guarantees the phase still terminates
+# instead of stalling the discussion forever.  Each round is one full
+# rotation of all participants, so a few rounds is ample headroom.
+MAX_VOTE_ROUNDS = 3
+
 
 class VoteHandler(PhaseHandler):
     """Phase 2: Formal voting on pending motions."""
@@ -112,6 +119,17 @@ class VoteHandler(PhaseHandler):
                     vote_val, entity.name,
                 )
                 continue
+            # Motion ids are stored as ints; models sometimes emit them as
+            # JSON strings ("1").  Coerce so the membership test below does
+            # not silently drop an otherwise-valid vote.
+            try:
+                motion_id = int(motion_id)
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Vote with non-numeric motion_id %r from %s, skipping",
+                    motion_id, entity.name,
+                )
+                continue
             if motion_id not in valid_motion_ids:
                 logger.warning(
                     "Vote for unknown motion %s from %s, skipping",
@@ -153,8 +171,24 @@ class VoteHandler(PhaseHandler):
     # ------------------------------------------------------------------
 
     def should_advance(self, discussion: Discussion) -> bool:
-        """Advance when all participants have voted on all motions."""
-        return _all_votes_in(discussion)
+        """Advance when all participants have voted on all motions.
+
+        Falls back to a ``phase_round`` safety cap so the phase always
+        terminates even if some votes can never be recorded, preventing
+        the discussion from stalling indefinitely in the voting phase.
+        """
+        if _all_votes_in(discussion):
+            return True
+        phase_round = discussion.method_state.get("phase_round", 1)
+        if phase_round > MAX_VOTE_ROUNDS:
+            logger.warning(
+                "Vote phase reached round %d without all votes recorded; "
+                "advancing with %d vote(s) collected.",
+                phase_round,
+                len(discussion.method_state.get("votes", [])),
+            )
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Transition message (when transitioning TO this phase)
