@@ -271,7 +271,19 @@ class PricingCache:
                     if m["model_id"].startswith(preferred + "/"):
                         return dict(m)
 
-        return dict(matches[0])
+        # Multiple candidates and the provider did not disambiguate.  If they
+        # all agree on price the ambiguity is harmless; otherwise refuse to
+        # guess rather than report a materially wrong cost.
+        prices = {
+            (m["prompt_cost"], m["completion_cost"]) for m in matches
+        }
+        if len(prices) == 1:
+            return dict(matches[0])
+        logger.warning(
+            "Ambiguous pricing for %r: %d candidates with differing prices; "
+            "cost unavailable.", model_name, len(matches),
+        )
+        return None
 
 
 def _strip_date_suffix(model_name: str) -> str:

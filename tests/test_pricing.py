@@ -45,6 +45,35 @@ class TestCalculateCostWithRefresh:
         assert cost is not None
         assert abs(cost - (100 * 0.001 + 50 * 0.002)) < 1e-10
 
+    def test_ambiguous_differing_prices_returns_none(self, pricing_cache):
+        """Two providers with the same model name but different prices is
+        ambiguous; refuse to guess rather than report a wrong cost."""
+        now = time.time()
+        pricing_cache._conn.executemany(
+            "INSERT INTO model_pricing (model_id, prompt_cost, completion_cost, "
+            "last_updated) VALUES (?, ?, ?, ?)",
+            [
+                ("providera/shared-model", 0.001, 0.002, now),
+                ("providerb/shared-model", 0.010, 0.020, now),
+            ],
+        )
+        pricing_cache._conn.commit()
+        assert pricing_cache.lookup("shared-model") is None
+
+    def test_ambiguous_same_price_returns_match(self, pricing_cache):
+        """When ambiguous candidates agree on price, the match is returned."""
+        now = time.time()
+        pricing_cache._conn.executemany(
+            "INSERT INTO model_pricing (model_id, prompt_cost, completion_cost, "
+            "last_updated) VALUES (?, ?, ?, ?)",
+            [
+                ("providera/same-model", 0.001, 0.002, now),
+                ("providerb/same-model", 0.001, 0.002, now),
+            ],
+        )
+        pricing_cache._conn.commit()
+        assert pricing_cache.lookup("same-model") == (0.001, 0.002)
+
     def test_returns_none_when_model_unknown_and_refresh_fails(self, pricing_cache):
         """Should return None if model unknown and refresh doesn't help."""
         with patch.object(pricing_cache, "refresh", return_value=False) as mock_refresh:
