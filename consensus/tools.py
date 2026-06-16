@@ -22,8 +22,16 @@ logger = logging.getLogger(__name__)
 TOOL_EXECUTION_TIMEOUT = 30.0  # seconds
 MAX_TOOL_ITERATIONS = 5
 
-# Tools that require user interaction and bypass the standard execution timeout
-INTERACTIVE_TOOL_NAMES = {"ask_user"}
+# Tools that block on user interaction and bypass the standard execution
+# timeout (e.g. they wait on an approval/answer Future).  Capping these with
+# the generic timeout would cancel the handler mid-wait and orphan the
+# pending user-input request.
+INTERACTIVE_TOOL_NAMES = {"ask_user", "install_python_package"}
+
+# Tools that enforce their own internal timeout / resource limits.  They are
+# expected to run longer than TOOL_EXECUTION_TIMEOUT and must not be capped by
+# the registry's generic timeout (which would cancel them mid-flight).
+SELF_TIMED_TOOL_NAMES = {"execute_python", "doc_ask", "doc_summary"}
 
 
 @dataclass
@@ -325,7 +333,10 @@ class ToolRegistry:
         try:
             coro = provider.execute(tool_name, arguments, context,
                                     progress_callback=progress_callback)
-            if tool_name in INTERACTIVE_TOOL_NAMES:
+            if (tool_name in INTERACTIVE_TOOL_NAMES
+                    or tool_name in SELF_TIMED_TOOL_NAMES):
+                # These manage their own timeout (or block on user input);
+                # the generic cap would cancel them prematurely.
                 result = await coro
             else:
                 result = await asyncio.wait_for(coro, timeout=TOOL_EXECUTION_TIMEOUT)
