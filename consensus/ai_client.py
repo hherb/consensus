@@ -151,7 +151,11 @@ class AIClient:
         client = self._get_client()
         last_exc: Optional[Exception] = None
 
-        for attempt in range(MAX_RETRIES):
+        # Manual attempt counter so a one-shot temperature drop does not
+        # consume a retry slot (which would otherwise return the 400 when the
+        # rejection happens on the final attempt).
+        attempt = 0
+        while True:
             try:
                 response = await client.post(url, json=payload)
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
@@ -163,13 +167,16 @@ class AIClient:
                         "Retrying in %.1fs...",
                         model, attempt + 1, MAX_RETRIES, exc, delay,
                     )
+                    attempt += 1
                     await asyncio.sleep(delay)
                     continue
                 raise
 
             # Some models reject non-default temperature values (e.g.
-            # Kimi K2.5 only accepts temperature=1).  Drop temperature
-            # from the payload and retry immediately.
+            # Kimi K2.5 only accepts temperature=1).  Drop temperature from
+            # the payload and retry immediately.  This is a one-shot fix (the
+            # payload no longer carries "temperature" afterwards) so it does
+            # not increment ``attempt`` and cannot exhaust the retry budget.
             if (response.status_code == 400
                     and "temperature" in payload
                     and "invalid temperature" in response.text.lower()):
@@ -180,7 +187,8 @@ class AIClient:
                 payload.pop("temperature", None)
                 continue
 
-            if response.status_code in RETRYABLE_STATUS_CODES:
+            if (response.status_code in RETRYABLE_STATUS_CODES
+                    and attempt < MAX_RETRIES - 1):
                 delay = RETRY_BASE_DELAY * (2 ** attempt)
                 # Respect Retry-After header if present
                 retry_after = response.headers.get("retry-after")
@@ -195,9 +203,9 @@ class AIClient:
                     response.status_code, model,
                     attempt + 1, MAX_RETRIES, delay,
                 )
-                if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(delay)
-                    continue
+                attempt += 1
+                await asyncio.sleep(delay)
+                continue
 
             if response.status_code >= 400:
                 logger.error(
@@ -205,10 +213,6 @@ class AIClient:
                     response.status_code, model, response.text,
                 )
             return response
-
-        # All retries exhausted with retryable status — return last response
-        # so caller gets the proper HTTPStatusError
-        return response  # type: ignore[possibly-undefined]
 
     def _get_client(self) -> httpx.AsyncClient:
         """Return the shared AsyncClient, creating it lazily."""
