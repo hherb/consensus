@@ -153,12 +153,12 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         if not request.path.startswith("/api/"):
             return await handler(request)
 
-        # Use session ID if available, fall back to IP
-        client_key = request.cookies.get(SESSION_COOKIE, "")
-        if not client_key:
-            transport = request.transport
-            peername = transport.get_extra_info("peername") if transport else None
-            client_key = peername[0] if peername else "unknown"
+        # Key on the peer IP only.  A client-supplied cookie must never be
+        # the rate-limit key: an unauthenticated caller could otherwise rotate
+        # the cookie to get a fresh bucket per request and bypass the limit.
+        transport = request.transport
+        peername = transport.get_extra_info("peername") if transport else None
+        client_key = peername[0] if peername else "unknown"
 
         now = time.time()
         window_start = now - RATE_LIMIT_WINDOW
