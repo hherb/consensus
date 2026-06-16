@@ -175,14 +175,17 @@ class MCPHTTPToolProvider(ToolProvider):
                         request=response.request,
                         response=response,
                     )
-                    wait = RETRY_BACKOFF_BASE * (2 ** attempt)
-                    logger.warning(
-                        "MCP HTTP %s: %d, retrying in %.1fs (attempt %d/%d)",
-                        self.name, response.status_code, wait,
-                        attempt + 1, MAX_RETRIES,
-                    )
-                    await asyncio.sleep(wait)
-                    continue
+                    if attempt < MAX_RETRIES - 1:
+                        wait = RETRY_BACKOFF_BASE * (2 ** attempt)
+                        logger.warning(
+                            "MCP HTTP %s: %d, retrying in %.1fs (attempt %d/%d)",
+                            self.name, response.status_code, wait,
+                            attempt + 1, MAX_RETRIES,
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+                    # Retries exhausted — raise last_error after the loop.
+                    break
 
                 response.raise_for_status()
 
