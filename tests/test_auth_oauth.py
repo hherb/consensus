@@ -35,6 +35,15 @@ def test_coerce_verified(value, expected):
     assert _coerce_verified(value) is expected
 
 
+def test_oauth_state_is_single_use(manager):
+    # Consuming a state must atomically delete it so it cannot be replayed.
+    manager.db.store_oauth_state("state-1", "google", "https://x/cb")
+    first = manager.db.consume_oauth_state("state-1")
+    second = manager.db.consume_oauth_state("state-1")
+    assert first == {"provider": "google", "redirect_uri": "https://x/cb"}
+    assert second is None
+
+
 @pytest.mark.asyncio
 async def test_unverified_email_does_not_link_existing_account(manager, monkeypatch):
     # Pre-existing password account.

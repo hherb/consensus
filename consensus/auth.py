@@ -406,13 +406,23 @@ class AuthDatabase:
         )
 
     def consume_oauth_state(self, state: str) -> Optional[dict]:
-        """Validate and consume an OAuth state token. Returns provider info or None."""
-        row = self.conn.execute(
-            "SELECT * FROM oauth_states WHERE state = ?", (state,),
-        ).fetchone()
+        """Atomically validate and consume an OAuth state token.
+
+        The delete-and-return runs as a single statement under the lock, so
+        two concurrent callbacks with the same state cannot both succeed
+        (which would weaken CSRF/replay protection).  Returns provider info,
+        or None if the state was unknown, already consumed, or expired.
+        """
+        with self._lock:
+            cur = self.conn.execute(
+                "DELETE FROM oauth_states WHERE state = ? "
+                "RETURNING provider, redirect_uri, created_at",
+                (state,),
+            )
+            row = cur.fetchone()
+            self.conn.commit()
         if not row:
             return None
-        self._execute_write("DELETE FROM oauth_states WHERE state = ?", (state,))
         if time.time() - row["created_at"] > OAUTH_STATE_TTL:
             return None
         return {"provider": row["provider"], "redirect_uri": row["redirect_uri"]}
