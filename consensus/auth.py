@@ -534,6 +534,19 @@ async def exchange_oauth_code(provider: str, code: str,
         return await _extract_user_info(provider, userinfo, client, auth_headers)
 
 
+def _coerce_verified(value: object) -> bool:
+    """Coerce a provider's email-verified flag (bool or string) to bool.
+
+    Providers report this inconsistently — Google/LinkedIn send a JSON
+    boolean while Apple sends the string ``"true"``.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return bool(value)
+
+
 async def _extract_user_info(provider: str, userinfo: dict,
                               client: "httpx.AsyncClient",
                               auth_headers: dict[str, str]) -> Optional[dict]:
@@ -551,28 +564,40 @@ async def _extract_user_info(provider: str, userinfo: dict,
     """
     if provider == "github":
         email = userinfo.get("email") or ""
-        # GitHub may not return email in profile; fetch from emails endpoint
-        if not email:
-            cfg = OAUTH_PROVIDERS["github"]
-            email_url = cfg.get("userinfo_email_url", "")
-            if email_url:
-                try:
-                    resp = await client.get(email_url, headers=auth_headers)
-                    if resp.status_code == 200:
-                        emails = resp.json()
+        # The profile email field's verification status is unknown, so
+        # confirm it against the emails endpoint, which carries a per-email
+        # ``verified`` flag.  Default to unverified.
+        email_verified = False
+        cfg = OAUTH_PROVIDERS["github"]
+        email_url = cfg.get("userinfo_email_url", "")
+        if email_url:
+            try:
+                resp = await client.get(email_url, headers=auth_headers)
+                if resp.status_code == 200:
+                    emails = resp.json()
+                    for e in emails:
+                        if e.get("primary") and e.get("verified"):
+                            email = e["email"]
+                            email_verified = True
+                            break
+                    if not email and emails:
+                        email = emails[0].get("email", "")
+                        email_verified = bool(emails[0].get("verified"))
+                    elif email and not email_verified:
+                        # Reconcile the profile email with the endpoint's
+                        # verified flag for that address.
                         for e in emails:
-                            if e.get("primary") and e.get("verified"):
-                                email = e["email"]
+                            if e.get("email") == email:
+                                email_verified = bool(e.get("verified"))
                                 break
-                        if not email and emails:
-                            email = emails[0].get("email", "")
-                except Exception:
-                    pass
+            except Exception:
+                pass
         return {
             "email": email,
             "name": userinfo.get("name") or userinfo.get("login", ""),
             "avatar_url": userinfo.get("avatar_url", ""),
             "oauth_id": str(userinfo.get("id", "")),
+            "email_verified": email_verified,
         }
 
     elif provider == "google":
@@ -581,6 +606,9 @@ async def _extract_user_info(provider: str, userinfo: dict,
             "name": userinfo.get("name", ""),
             "avatar_url": userinfo.get("picture", ""),
             "oauth_id": str(userinfo.get("id", "")),
+            "email_verified": _coerce_verified(
+                userinfo.get("email_verified", userinfo.get("verified_email"))
+            ),
         }
 
     elif provider == "linkedin":
@@ -589,6 +617,7 @@ async def _extract_user_info(provider: str, userinfo: dict,
             "name": userinfo.get("name", ""),
             "avatar_url": userinfo.get("picture", ""),
             "oauth_id": str(userinfo.get("sub", "")),
+            "email_verified": _coerce_verified(userinfo.get("email_verified")),
         }
 
     return None
@@ -622,6 +651,7 @@ def _parse_apple_id_token(token_resp: dict) -> Optional[dict]:
             "name": payload.get("name", payload.get("email", "").split("@")[0]),
             "avatar_url": "",
             "oauth_id": payload.get("sub", ""),
+            "email_verified": _coerce_verified(payload.get("email_verified")),
         }
     except Exception as e:
         logger.error("Apple ID token parse error: %s", e)
@@ -711,9 +741,19 @@ class AuthManager:
             token = self.db.create_token(user.id)
             return user, token
 
-        # Try to find existing user by email and link OAuth
+        # Try to find existing user by email and link OAuth.  Only auto-link
+        # when the provider asserts the email is verified — otherwise an
+        # attacker controlling a provider account with the victim's email
+        # could take over an existing (e.g. password) account.
         user = self.db.get_user_by_email(email)
         if user:
+            if not _coerce_verified(userinfo.get("email_verified")):
+                raise ValueError(
+                    f"An account already exists for {email}, but {provider} "
+                    "did not confirm this email is verified.  Sign in with "
+                    "your existing method, then link this provider from your "
+                    "account settings."
+                )
             self.db.link_oauth(
                 user.id, provider, oauth_id,
                 avatar_url=userinfo.get("avatar_url", ""),
