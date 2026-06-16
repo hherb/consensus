@@ -806,7 +806,8 @@ async def _doc_list_handler(
         )
         lines = [f"Library search for '{query}' — {len(docs_list)} document(s):\n"]
         for doc in docs_list:
-            summary_snippet = (doc["summary"][:150] + "...") if len(doc["summary"]) > 150 else doc["summary"]
+            _summary = doc["summary"] or ""
+            summary_snippet = (_summary[:150] + "...") if len(_summary) > 150 else _summary
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars, "
                 f"score: {doc['best_score']:.2f})\n    {summary_snippet}"
@@ -820,7 +821,8 @@ async def _doc_list_handler(
             return ToolResult(content="No documents in the library.")
         lines = [f"All documents in library — {len(docs)} total:\n"]
         for doc in docs:
-            summary_snippet = (doc["summary"][:150] + "...") if len(doc["summary"]) > 150 else doc["summary"]
+            _summary = doc["summary"] or ""
+            summary_snippet = (_summary[:150] + "...") if len(_summary) > 150 else _summary
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars)\n"
                 f"    {summary_snippet}"
@@ -834,7 +836,8 @@ async def _doc_list_handler(
             return ToolResult(content="No documents attached to this discussion.")
         lines = [f"Documents in this discussion — {len(docs)} total:\n"]
         for doc in docs:
-            summary_snippet = (doc["summary"][:150] + "...") if len(doc["summary"]) > 150 else doc["summary"]
+            _summary = doc["summary"] or ""
+            summary_snippet = (_summary[:150] + "...") if len(_summary) > 150 else _summary
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars)\n"
                 f"    {summary_snippet}"
