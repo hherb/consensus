@@ -41,6 +41,12 @@ class TestIsPass:
         """Bold markdown around [PASS] is recognised."""
         assert is_pass("**[PASS]**") is True
 
+    def test_phrase_mid_sentence_is_not_pass(self):
+        """The pass phrase inside a longer contribution is not a pass."""
+        assert is_pass(
+            "I disagree that everyone passed this round. Here is my view: ..."
+        ) is False
+
 
 class TestSubmitHumanMessage:
     """Tests for submit_human_message."""

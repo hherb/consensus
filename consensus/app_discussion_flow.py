@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import time
 from typing import Callable, Optional
 
@@ -13,18 +14,24 @@ from .pricing import PricingCache
 
 logger = logging.getLogger(__name__)
 
+# Matches the *entire* formatted pass message ("*Name passed this round.*"),
+# anchored so the phrase appearing inside a longer real contribution does not
+# count as a pass.
+_FORMATTED_PASS_RE = re.compile(r"^.+ passed this round\.$")
+
 
 def is_pass(content: str) -> bool:
     """Check if a participant's response is a pass (raw AI output or formatted).
 
     Recognises bracket notation ([PASS]), plain PASS, and the formatted
-    '*Name passed this round.*' variant.
+    '*Name passed this round.*' variant (which must be the whole message).
     """
     stripped = content.strip().strip("*_").strip()
     if stripped.upper() in ("[PASS]", "PASS"):
         return True
-    # Also match the formatted version: *Name passed this round.*
-    return "passed this round." in content.lower()
+    # Match the formatted version only when it is the entire message, so a
+    # participant mentioning the phrase mid-sentence is not misread as a pass.
+    return bool(_FORMATTED_PASS_RE.match(stripped))
 
 
 def calculate_discussion_cost(discussion: Discussion) -> float:
@@ -327,10 +334,16 @@ async def complete_turn(
     speaker_name = current.name if current else "Unknown"
     speaker_id = current.id if current else 0
 
-    # Check if the last participant message was a pass
-    last_msg = discussion.messages[-1] if discussion.messages else None
-    participant_passed = (last_msg and last_msg.role == MessageRole.PARTICIPANT
-                          and is_pass(last_msg.content))
+    # Check if the most recent participant message was a pass.  Scan back for
+    # the last PARTICIPANT message rather than trusting messages[-1], which
+    # may be a system/moderator message appended after the turn.
+    last_participant_msg = next(
+        (m for m in reversed(discussion.messages)
+         if m.role == MessageRole.PARTICIPANT),
+        None,
+    )
+    participant_passed = (last_participant_msg is not None
+                          and is_pass(last_participant_msg.content))
 
     if participant_passed and mod:
         # No AI summary needed — just note the pass
