@@ -490,9 +490,13 @@ async def _embed_single_chunk(chunk, doc_id: int, db, embed_client) -> bool:
             DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP,
         )
 
-        # Get the next available chunk_index for this document
+        # Get the next available chunk_index for this document.  Guard the
+        # empty case so an absent chunk list cannot raise ValueError and
+        # abort the whole background embedding pass.
         existing_chunks = db.get_document_chunks(doc_id)
-        next_index = max(c["chunk_index"] for c in existing_chunks) + 1
+        next_index = max(
+            (c["chunk_index"] for c in existing_chunks), default=-1,
+        ) + 1
 
         all_ok = True
         step = DEFAULT_CHUNK_SIZE - DEFAULT_CHUNK_OVERLAP
@@ -989,6 +993,13 @@ async def _doc_ask_handler(
     # Check if embeddings are ready
     unembedded = db.count_unembedded_chunks(doc_id)
     if unembedded > 0:
+        # Re-kick the background embedding pass if it is not already running,
+        # so a previously failed/interrupted chunk is retried instead of
+        # leaving the document permanently stuck as "still being indexed".
+        if embed_client and doc_id not in _embedding_docs:
+            _embedding_docs.add(doc_id)
+            asyncio.create_task(
+                _embed_document_chunks(doc_id, db, embed_client))
         total_chunks = len(db.get_document_chunks(doc_id))
         embedded = total_chunks - unembedded
         return ToolResult(
