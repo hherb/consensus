@@ -562,13 +562,11 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         return resp
 
     async def handle_auth_logout(request: web.Request) -> web.StreamResponse:
-        """Revoke the current auth token."""
-        if not auth_mgr:
-            return web.json_response({"ok": True})
-
-        token = _extract_auth_token(request)
-        if token:
-            auth_mgr.logout(token)
+        """Revoke the current auth token and always clear the auth cookie."""
+        if auth_mgr:
+            token = _extract_auth_token(request)
+            if token:
+                auth_mgr.logout(token)
 
         resp = web.json_response({"ok": True})
         resp.del_cookie(AUTH_COOKIE)

@@ -58,7 +58,7 @@ class MessagesMixin:
                     "SELECT m.*, e.name AS entity_name, e.avatar_color "
                     "FROM messages m "
                     "JOIN entities e ON m.entity_id=e.id "
-                    "WHERE m.discussion_id=? ORDER BY m.timestamp",
+                    "WHERE m.discussion_id=? ORDER BY m.timestamp, m.id",
                     (discussion_id,),
                 ).fetchall()]
 
@@ -76,9 +76,9 @@ class MessagesMixin:
                     "  FROM messages m "
                     "  JOIN entities e ON m.entity_id=e.id "
                     "  WHERE m.discussion_id=? "
-                    "  ORDER BY m.timestamp DESC "
+                    "  ORDER BY m.timestamp DESC, m.id DESC "
                     "  LIMIT ? OFFSET ?"
-                    ") sub ORDER BY sub.timestamp",
+                    ") sub ORDER BY sub.timestamp, sub.id",
                     (discussion_id, limit, offset),
                 ).fetchall()]
 
