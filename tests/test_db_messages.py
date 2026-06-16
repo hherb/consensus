@@ -54,6 +54,22 @@ class TestMessages:
         msgs = tmp_db.get_messages(did)
         assert msgs[0]["cost"] is None
 
+    def test_explicit_zero_temperature_preserved(self, tmp_db, sample_ai_entity):
+        # A deterministic temperature of 0.0 must not be coerced to NULL.
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.add_message(
+            did, sample_ai_entity, "Deterministic", "participant",
+            turn_number=1, temperature_used=0.0,
+        )
+        msgs = tmp_db.get_messages(did)
+        assert msgs[0]["temperature_used"] == 0.0
+
+    def test_omitted_temperature_is_none(self, tmp_db, sample_ai_entity):
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.add_message(did, sample_ai_entity, "msg", "participant", turn_number=1)
+        msgs = tmp_db.get_messages(did)
+        assert msgs[0]["temperature_used"] is None
+
 
 class TestStoryboard:
     def test_add_and_get_storyboard(self, tmp_db, sample_ai_entity):

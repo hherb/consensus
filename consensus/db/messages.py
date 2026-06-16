@@ -25,7 +25,8 @@ class MessagesMixin:
                     content: str, role: str, turn_number: int = 0,
                     model_used: str = "", prompt_tokens: int = 0,
                     completion_tokens: int = 0, total_tokens: int = 0,
-                    latency_ms: int = 0, temperature_used: float = 0,
+                    latency_ms: int = 0,
+                    temperature_used: Optional[float] = None,
                     prompt_id: int = 0,
                     tool_calls_json: str = "",
                     cost: Optional[float] = None,
@@ -42,7 +43,10 @@ class MessagesMixin:
              timestamp if timestamp is not None else time.time(),
              model_used or None, prompt_tokens or None,
              completion_tokens or None, total_tokens or None,
-             latency_ms or None, temperature_used or None,
+             latency_ms or None,
+             # Preserve an explicit temperature of 0.0 (deterministic); only
+             # store NULL when no temperature was provided.
+             temperature_used,
              prompt_id or None, tool_calls_json or None, cost),
         )
         return cur.lastrowid

@@ -231,7 +231,7 @@ async def generate_ai_turn(
             completion_tokens=resp.completion_tokens,
             total_tokens=resp.total_tokens,
             latency_ms=resp.latency_ms,
-            temperature_used=current.ai_config.temperature if current.ai_config else 0,
+            temperature_used=current.ai_config.temperature if current.ai_config else None,
             prompt_id=prompt_id,
             tool_calls_json=tool_calls_json,
             cost=cost,
