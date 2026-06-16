@@ -280,6 +280,18 @@ _KG_QUERY_SCHEMA = {
 # Tracks discussion IDs currently being indexed to prevent duplicate tasks
 _indexing_discussions: set[int] = set()
 
+# Hold strong references to background tasks: asyncio only keeps a weak
+# reference, so an un-retained task can be garbage-collected mid-run.
+_background_tasks: set = set()
+
+
+def _spawn_background(coro) -> None:
+    """Schedule a fire-and-forget coroutine, retaining a strong reference."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
 async def _memory_store_handler(
     arguments: dict, context: ToolContext,
     db, embed_client: EmbeddingClient,
@@ -312,7 +324,7 @@ async def _memory_store_handler(
         except Exception as e:
             logger.warning("Unexpected error embedding memory %s: %s", memory_id, e)
 
-    asyncio.create_task(_embed_and_store())
+    _spawn_background(_embed_and_store())
 
     return ToolResult(
         content=f"Memory stored (id: {memory_id}).",
@@ -389,7 +401,7 @@ async def _discussion_search_handler(
             unindexed = db.get_unindexed_message_ids(disc_id)
             if unindexed:
                 _indexing_discussions.add(disc_id)
-                asyncio.create_task(_index_messages(unindexed, db, embed_client, disc_id))
+                _spawn_background(_index_messages(unindexed, db, embed_client, disc_id))
         except Exception as e:
             logger.warning("Could not check unindexed messages: %s", e)
 
@@ -495,7 +507,7 @@ async def _kg_assert_handler(
             except Exception as e:
                 logger.warning("Failed to embed kg node %s: %s", node_id, e)
 
-    asyncio.create_task(_embed_nodes())
+    _spawn_background(_embed_nodes())
 
     return ToolResult(
         content=f"Asserted: {subject} --[{relation}]--> {obj}",

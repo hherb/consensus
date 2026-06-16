@@ -451,6 +451,17 @@ _DOC_SUMMARY_SCHEMA = {
 # Background embedding task
 # ---------------------------------------------------------------------------
 
+# Hold strong references to background tasks: asyncio only keeps a weak
+# reference, so an un-retained task can be garbage-collected mid-run.
+_background_tasks: set = set()
+
+
+def _spawn_background(coro) -> None:
+    """Schedule a fire-and-forget coroutine, retaining a strong reference."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 _embedding_docs: set[int] = set()  # track documents currently being embedded
 
 def _split_into_sub_chunks(text: str, size: int = DEFAULT_CHUNK_SIZE,
@@ -690,7 +701,7 @@ async def ingest_document(
     # Background embedding
     if embed_client and doc_id not in _embedding_docs:
         _embedding_docs.add(doc_id)
-        asyncio.create_task(_embed_document_chunks(doc_id, db, embed_client))
+        _spawn_background(_embed_document_chunks(doc_id, db, embed_client))
 
     return {
         "document_id": doc_id,
@@ -1006,7 +1017,7 @@ async def _doc_ask_handler(
         # leaving the document permanently stuck as "still being indexed".
         if embed_client and doc_id not in _embedding_docs:
             _embedding_docs.add(doc_id)
-            asyncio.create_task(
+            _spawn_background(
                 _embed_document_chunks(doc_id, db, embed_client))
         total_chunks = len(db.get_document_chunks(doc_id))
         embedded = total_chunks - unembedded
