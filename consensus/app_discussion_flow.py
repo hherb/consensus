@@ -429,6 +429,16 @@ async def complete_turn(
                 and discussion.current_turn_index == 0
                 and discussion.turn_number > 1):
             method.on_round_complete(discussion)
+            # A handler may change its intra-phase turn order on round
+            # completion (e.g. the Court huddle sub-state machine advancing
+            # from team-huddle to spokesperson-speaks).  Re-apply it now so the
+            # change takes effect immediately instead of only at the next phase
+            # transition.  Static handlers return the order unchanged.
+            refreshed = method.get_turn_order(
+                list(discussion.turn_order), discussion)
+            if refreshed and refreshed != list(discussion.turn_order):
+                discussion.turn_order = refreshed
+                discussion.current_turn_index = 0
 
         # Check for phase transition
         if method.should_advance_phase(discussion):
