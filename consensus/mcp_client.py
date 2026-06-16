@@ -107,6 +107,18 @@ class MCPToolProvider(ToolProvider):
             await self.close()
             return False
 
+    def _fail_pending(self, exc: Exception) -> None:
+        """Reject all in-flight request futures with ``exc``.
+
+        Called when the server stream ends or errors so callers blocked in
+        ``_send_request`` fail fast instead of waiting for the full timeout.
+        """
+        pending = list(self._pending.items())
+        self._pending.clear()
+        for _msg_id, future in pending:
+            if not future.done():
+                future.set_exception(exc)
+
     async def _read_loop(self) -> None:
         """Read newline-delimited JSON-RPC messages from the subprocess stdout."""
         assert self._process and self._process.stdout
@@ -125,10 +137,18 @@ class MCPToolProvider(ToolProvider):
                                    self.name, line_str[:200])
                     continue
                 self._handle_message(msg)
+            # EOF: the subprocess closed its stdout (exited/crashed).  Fail
+            # any in-flight requests so their callers don't hang.
+            self._connected = False
+            self._fail_pending(
+                ConnectionError(f"MCP server {self.name} closed the connection"))
         except asyncio.CancelledError:
             pass
-        except Exception:
+        except Exception as e:
             logger.exception("Read loop error for MCP server %s", self.name)
+            self._connected = False
+            self._fail_pending(
+                ConnectionError(f"MCP server {self.name} read error: {e}"))
 
     def _handle_message(self, msg: dict) -> None:
         """Route a received JSON-RPC message.
