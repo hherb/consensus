@@ -507,8 +507,13 @@ async def complete_turn(
                 "state": get_state_fn(),
             }
 
+    # Recompute the speaker from live state: a phase transition above may
+    # have reordered ``turn_order`` and reset ``current_turn_index`` to 0,
+    # which would make the ``next_speaker`` captured from ``advance_turn()``
+    # stale and point the frontend at the wrong participant.
+    final_speaker = discussion.current_speaker
     return {
-        "next_speaker": next_speaker.to_dict() if next_speaker else None,
+        "next_speaker": final_speaker.to_dict() if final_speaker else None,
         "turn_number": discussion.turn_number,
         "current_round": discussion.current_round,
         "state": get_state_fn(),
