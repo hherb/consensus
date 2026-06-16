@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import time
 from typing import Callable, Optional
 
@@ -13,18 +14,24 @@ from .pricing import PricingCache
 
 logger = logging.getLogger(__name__)
 
+# Matches the *entire* formatted pass message ("*Name passed this round.*"),
+# anchored so the phrase appearing inside a longer real contribution does not
+# count as a pass.
+_FORMATTED_PASS_RE = re.compile(r"^.+ passed this round\.$")
+
 
 def is_pass(content: str) -> bool:
     """Check if a participant's response is a pass (raw AI output or formatted).
 
     Recognises bracket notation ([PASS]), plain PASS, and the formatted
-    '*Name passed this round.*' variant.
+    '*Name passed this round.*' variant (which must be the whole message).
     """
     stripped = content.strip().strip("*_").strip()
     if stripped.upper() in ("[PASS]", "PASS"):
         return True
-    # Also match the formatted version: *Name passed this round.*
-    return "passed this round." in content.lower()
+    # Match the formatted version only when it is the entire message, so a
+    # participant mentioning the phrase mid-sentence is not misread as a pass.
+    return bool(_FORMATTED_PASS_RE.match(stripped))
 
 
 def calculate_discussion_cost(discussion: Discussion) -> float:
@@ -224,7 +231,7 @@ async def generate_ai_turn(
             completion_tokens=resp.completion_tokens,
             total_tokens=resp.total_tokens,
             latency_ms=resp.latency_ms,
-            temperature_used=current.ai_config.temperature if current.ai_config else 0,
+            temperature_used=current.ai_config.temperature if current.ai_config else None,
             prompt_id=prompt_id,
             tool_calls_json=tool_calls_json,
             cost=cost,
@@ -327,10 +334,16 @@ async def complete_turn(
     speaker_name = current.name if current else "Unknown"
     speaker_id = current.id if current else 0
 
-    # Check if the last participant message was a pass
-    last_msg = discussion.messages[-1] if discussion.messages else None
-    participant_passed = (last_msg and last_msg.role == MessageRole.PARTICIPANT
-                          and is_pass(last_msg.content))
+    # Check if the most recent participant message was a pass.  Scan back for
+    # the last PARTICIPANT message rather than trusting messages[-1], which
+    # may be a system/moderator message appended after the turn.
+    last_participant_msg = next(
+        (m for m in reversed(discussion.messages)
+         if m.role == MessageRole.PARTICIPANT),
+        None,
+    )
+    participant_passed = (last_participant_msg is not None
+                          and is_pass(last_participant_msg.content))
 
     if participant_passed and mod:
         # No AI summary needed — just note the pass
@@ -416,6 +429,16 @@ async def complete_turn(
                 and discussion.current_turn_index == 0
                 and discussion.turn_number > 1):
             method.on_round_complete(discussion)
+            # A handler may change its intra-phase turn order on round
+            # completion (e.g. the Court huddle sub-state machine advancing
+            # from team-huddle to spokesperson-speaks).  Re-apply it now so the
+            # change takes effect immediately instead of only at the next phase
+            # transition.  Static handlers return the order unchanged.
+            refreshed = method.get_turn_order(
+                list(discussion.turn_order), discussion)
+            if refreshed and refreshed != list(discussion.turn_order):
+                discussion.turn_order = refreshed
+                discussion.current_turn_index = 0
 
         # Check for phase transition
         if method.should_advance_phase(discussion):
@@ -507,8 +530,13 @@ async def complete_turn(
                 "state": get_state_fn(),
             }
 
+    # Recompute the speaker from live state: a phase transition above may
+    # have reordered ``turn_order`` and reset ``current_turn_index`` to 0,
+    # which would make the ``next_speaker`` captured from ``advance_turn()``
+    # stale and point the frontend at the wrong participant.
+    final_speaker = discussion.current_speaker
     return {
-        "next_speaker": next_speaker.to_dict() if next_speaker else None,
+        "next_speaker": final_speaker.to_dict() if final_speaker else None,
         "turn_number": discussion.turn_number,
         "current_round": discussion.current_round,
         "state": get_state_fn(),

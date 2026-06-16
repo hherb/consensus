@@ -282,6 +282,11 @@ def _unpack_embedding(blob: bytes) -> list[float]:
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    # Differing dimensions mean the vectors came from different embedding
+    # models; zip() would silently truncate and yield a meaningless score, so
+    # treat them as unrelated instead.
+    if len(a) != len(b):
+        return 0.0
     dot = sum(x * y for x, y in zip(a, b))
     mag_a = math.sqrt(sum(x * x for x in a))
     mag_b = math.sqrt(sum(x * x for x in b))
@@ -446,6 +451,17 @@ _DOC_SUMMARY_SCHEMA = {
 # Background embedding task
 # ---------------------------------------------------------------------------
 
+# Hold strong references to background tasks: asyncio only keeps a weak
+# reference, so an un-retained task can be garbage-collected mid-run.
+_background_tasks: set = set()
+
+
+def _spawn_background(coro) -> None:
+    """Schedule a fire-and-forget coroutine, retaining a strong reference."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 _embedding_docs: set[int] = set()  # track documents currently being embedded
 
 def _split_into_sub_chunks(text: str, size: int = DEFAULT_CHUNK_SIZE,
@@ -490,9 +506,13 @@ async def _embed_single_chunk(chunk, doc_id: int, db, embed_client) -> bool:
             DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP,
         )
 
-        # Get the next available chunk_index for this document
+        # Get the next available chunk_index for this document.  Guard the
+        # empty case so an absent chunk list cannot raise ValueError and
+        # abort the whole background embedding pass.
         existing_chunks = db.get_document_chunks(doc_id)
-        next_index = max(c["chunk_index"] for c in existing_chunks) + 1
+        next_index = max(
+            (c["chunk_index"] for c in existing_chunks), default=-1,
+        ) + 1
 
         all_ok = True
         step = DEFAULT_CHUNK_SIZE - DEFAULT_CHUNK_OVERLAP
@@ -681,7 +701,7 @@ async def ingest_document(
     # Background embedding
     if embed_client and doc_id not in _embedding_docs:
         _embedding_docs.add(doc_id)
-        asyncio.create_task(_embed_document_chunks(doc_id, db, embed_client))
+        _spawn_background(_embed_document_chunks(doc_id, db, embed_client))
 
     return {
         "document_id": doc_id,
@@ -797,7 +817,8 @@ async def _doc_list_handler(
         )
         lines = [f"Library search for '{query}' — {len(docs_list)} document(s):\n"]
         for doc in docs_list:
-            summary_snippet = (doc["summary"][:150] + "...") if len(doc["summary"]) > 150 else doc["summary"]
+            _summary = doc["summary"] or ""
+            summary_snippet = (_summary[:150] + "...") if len(_summary) > 150 else _summary
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars, "
                 f"score: {doc['best_score']:.2f})\n    {summary_snippet}"
@@ -811,7 +832,8 @@ async def _doc_list_handler(
             return ToolResult(content="No documents in the library.")
         lines = [f"All documents in library — {len(docs)} total:\n"]
         for doc in docs:
-            summary_snippet = (doc["summary"][:150] + "...") if len(doc["summary"]) > 150 else doc["summary"]
+            _summary = doc["summary"] or ""
+            summary_snippet = (_summary[:150] + "...") if len(_summary) > 150 else _summary
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars)\n"
                 f"    {summary_snippet}"
@@ -825,7 +847,8 @@ async def _doc_list_handler(
             return ToolResult(content="No documents attached to this discussion.")
         lines = [f"Documents in this discussion — {len(docs)} total:\n"]
         for doc in docs:
-            summary_snippet = (doc["summary"][:150] + "...") if len(doc["summary"]) > 150 else doc["summary"]
+            _summary = doc["summary"] or ""
+            summary_snippet = (_summary[:150] + "...") if len(_summary) > 150 else _summary
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars)\n"
                 f"    {summary_snippet}"
@@ -989,6 +1012,13 @@ async def _doc_ask_handler(
     # Check if embeddings are ready
     unembedded = db.count_unembedded_chunks(doc_id)
     if unembedded > 0:
+        # Re-kick the background embedding pass if it is not already running,
+        # so a previously failed/interrupted chunk is retried instead of
+        # leaving the document permanently stuck as "still being indexed".
+        if embed_client and doc_id not in _embedding_docs:
+            _embedding_docs.add(doc_id)
+            _spawn_background(
+                _embed_document_chunks(doc_id, db, embed_client))
         total_chunks = len(db.get_document_chunks(doc_id))
         embedded = total_chunks - unembedded
         return ToolResult(

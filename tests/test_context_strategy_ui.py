@@ -185,7 +185,9 @@ class TestSetupPhaseFlush:
         assert row["default_context_window_size"] == 20
 
     def test_entities_without_override_use_db_defaults(self, app_with_entities):
-        """Entities with no explicit override should get DB column defaults."""
+        """Entities with no explicit override inherit the discussion default."""
+        from consensus.context_strategies import ContextConfig, ContextStrategy
+
         app, mod_id, p1_id, p2_id = app_with_entities
         # Only set override for p1, not p2
         app.set_member_context_strategy(p1_id, "full", 100)
@@ -193,7 +195,13 @@ class TestSetupPhaseFlush:
         app.start_discussion(moderator_participates=False)
         did = app.discussion.id
 
-        # p2 should have DB default
+        # p2 has no stored override (NULL) so the discussion-level default
+        # applies when its context config is resolved.
         m2 = app.db.get_discussion_member(did, p2_id)
-        assert m2["context_strategy"] == "sliding_window"
-        assert m2["context_window_size"] == 20
+        assert m2["context_strategy"] is None
+        assert m2["context_window_size"] is None
+
+        disc = app.db.get_discussion(did)
+        cfg = ContextConfig.from_member_row(m2, disc)
+        assert cfg.strategy == ContextStrategy.SLIDING_WINDOW
+        assert cfg.window_size == 20

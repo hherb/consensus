@@ -477,10 +477,15 @@ async def _install_package_handler(
             is_error=True,
         )
 
-    # Check if already installed
+    # Check if already installed.  Query the distribution (PyPI) name via
+    # importlib.metadata rather than guessing the import name, which differs
+    # for many packages (pillow→PIL, scikit-learn→sklearn, opencv-python→cv2).
+    # package_name is already validated to bare [A-Za-z0-9._-], so embedding
+    # it as a repr literal is safe.
     try:
         check_proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-c", f"import {package_name.replace('-', '_')}",
+            sys.executable, "-c",
+            f"import importlib.metadata as m; m.version({package_name!r})",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
