@@ -218,11 +218,13 @@ class TestUpdateMemberContextStrategy:
         assert member["context_window_size"] == 100
 
     def test_default_values(self, tmp_db, sample_ai_entity):
+        # A member with no explicit override stores NULL so the
+        # discussion-level default is applied by ContextConfig.
         did = tmp_db.create_discussion("T", sample_ai_entity)
         tmp_db.add_discussion_member(did, sample_ai_entity)
         member = tmp_db.get_discussion_member(did, sample_ai_entity)
-        assert member["context_strategy"] == "sliding_window"
-        assert member["context_window_size"] == 20
+        assert member["context_strategy"] is None
+        assert member["context_window_size"] is None
 
 
 class TestDiscussionContextDefaults:
@@ -242,6 +244,26 @@ class TestDiscussionContextDefaults:
         disc = tmp_db.get_discussion(did)
         assert disc["default_context_strategy"] == "sliding_window"
         assert disc["default_context_window_size"] == 20
+
+    def test_discussion_default_applies_without_member_override(
+            self, tmp_db, sample_ai_entity):
+        # A non-default discussion-level default must reach a member that
+        # has not set an explicit override (regression: NOT NULL member
+        # columns previously masked the discussion default entirely).
+        from consensus.context_strategies import ContextConfig, ContextStrategy
+
+        did = tmp_db.create_discussion("T", sample_ai_entity)
+        tmp_db.add_discussion_member(did, sample_ai_entity)
+        tmp_db.update_discussion(
+            did,
+            default_context_strategy="summary",
+            default_context_window_size=50,
+        )
+        member = tmp_db.get_discussion_member(did, sample_ai_entity)
+        disc = tmp_db.get_discussion(did)
+        cfg = ContextConfig.from_member_row(member, disc)
+        assert cfg.strategy == ContextStrategy.SUMMARY
+        assert cfg.window_size == 50
 
 
 # ---------------------------------------------------------------------------
