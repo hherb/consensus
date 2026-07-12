@@ -119,9 +119,14 @@ Test count went from 1287 to **1362 passing** (75 new tests in
 - Project rules: `uv` only (never pip), TDD (failing test first), files
   under ~500 lines, docstrings + type hints mandatory.
 
-## Open questions for the repo owner
+## Decisions from the repo owner (2026-07-12)
 
-- Should Open Discussion remain the recommender's excluded fallback, or
-  become recommendable once generative methods (#24) exist?
-- For #23: is it acceptable to require tool-capable models for methods
-  with structured phases, or must the regex fallback remain first-class?
+- **Open Discussion becomes recommendable once #24 (NGT) exists.** When
+  implementing #24, also remove `"open_discussion"` from
+  `_EXCLUDED_METHODS` in `consensus/methods/recommender.py` and update
+  the `_TAXONOMY` line that marks it "(fallback only)".
+- **#23: it is acceptable to require tool-capable models for methods
+  with structured phases.** The regex fallback does not need to remain
+  first-class — design the phase output contract around forced tool
+  calls, and surface a clear setup-time error (not a silent degrade)
+  when a participant's model/provider lacks tool support.
