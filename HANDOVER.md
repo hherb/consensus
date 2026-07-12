@@ -1,75 +1,50 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-12 (session: discussion-methods review, branch
-`claude/consensus-discussion-review-f5af59`, PR #18)._
+_Last updated: 2026-07-13 (session: phase-machine loop support, branch
+`claude/handover-instructions-7598ab`)._
 
 This file briefs the next session(s) on what was done, what is in flight,
 and what to do next. Update it whenever a session materially changes the
 plan; delete sections that are finished and no longer instructive.
 
-## What happened in this session
+## Where things stand
 
-A systematic three-pass review of the discussion-methods subsystem
-(`consensus/methods/`, its 43 phase handlers, and the moderator/flow
-integration) found six classes of real defects. All were fixed with
-test-driven regression coverage and shipped as **PR #18**, which closes
-issues **#12–#17** on merge. Highlights of the fixes (details in the PR
-body and the issues):
-
-- **#13 turn-order cascade** — `get_turn_order` hooks now receive the
-  full roster (`Discussion.base_turn_order`) via
-  `apply_method_turn_order()` / `method_roster()` in
-  `app_discussion_flow.py`, never the previous phase's narrowed order.
-- **#12 court huddle privacy** — huddle suppression survives the
-  `[Name]: ` prefix; suppressed messages are dropped entirely; huddles
-  run 2 rounds.
-- **#14 method_complete** — frontend concludes the discussion when a
-  method exhausts its phases (`handleTurnLimitFlags` in
-  `consensus/static/discussion-actions.js`).
-- **#15 framing/capture dead code** — belief-diffusion/premortem framing
-  are moderator-only phases; counterfactual conclusion and
-  self-distillation rich summary are captured in the extract/distill
-  moderator turns; loop caps added to condition-based phases.
-- **#16 persistence** — method_state persisted every completed turn;
-  phase turn order recorded in `method_state["_turn_order"]` and
-  restored by `load_discussion`; `turn_number` restored as max+1;
-  **human messages now run `method.process_response`** (human votes and
-  estimates used to be ignored); method switches keep budget keys.
-- **#17 assorted** — Delphi label consistency + word-boundary
-  anonymisation + zero-median convergence; triage word-boundary method
-  matching; no-motion vote skip; ACH inline-ratings brace matcher;
-  sub-question attribution by header number.
-
-Test count went from 1287 to **1362 passing** (75 new tests in
-`tests/test_turn_order_flow.py`, `tests/test_court_huddle_privacy.py`,
-`tests/test_moderator_framing_phases.py`,
-`tests/test_method_state_persistence.py`,
-`tests/test_small_method_defects.py`).
+- **PR #18** (six defect classes from the discussion-methods review,
+  issues #12–#17) is **merged**.
+- **#19, #20, #21** were fixed in a prior session (merged via PR #31):
+  rotation resets on every phase transition (and survives reload), the
+  Red Team description matches its single-pass behavior, and
+  `ProcessedResponse.extracted_data` was removed.
+- **#22 phase-machine loop support** was implemented in this session
+  (this branch): `DiscussionMethod.next_phase(discussion) -> str | None`
+  chooses the next phase by name; `PhaseHandler.next_phase` can return a
+  phase name (jump/loop), `None` (abort the method early), or the
+  `LINEAR_NEXT` sentinel (default linear order). `advance_phase` in
+  `consensus/methods/base.py` enforces a loop guard:
+  `max_phase_entries` per method, defaulting to
+  `len(default_phases) * MAX_PHASE_VISITS_PER_PHASE`. Transition count
+  lives in `method_state["_phase_entries"]`. 16 new tests in
+  `tests/test_phase_machine_loops.py`, including a full
+  diverge→converge→diverge cycle through the real `complete_turn`
+  pipeline. Existing linear methods are behaviorally unchanged.
 
 ## Next steps, in order
 
-1. **Merge PR #18** (human review + merge). Everything below assumes it
-   lands; several open issues reference code it introduces.
+1. **Merge this branch's PR (#22 loop support).** Everything below can
+   build on the `next_phase` hook once it lands.
 
-2. **Remaining bugs (small, well-scoped):**
-   - **#19** — mid-round condition-based phase transitions start the new
-     phase at `current_turn_index > 0`, truncating its first round.
-     Suggested fix: reset the index unconditionally on any phase
-     transition in `complete_turn`.
-   - **#20** — Red Team rotation is described but unimplemented
-     (`red_team_rotation` state is dead). Either implement rotation
-     (blocked on #22) or fix the description.
-   - **#21** — remove (or actually wire up) `ProcessedResponse.extracted_data`;
-     its only caller discards it.
+2. **#30 Belief Diffusion method-abort** — now unblocked by #22: give
+   the framing phase's handler a `next_phase` override that returns
+   `None` when `MAX_FRAMING_ATTEMPTS` is exhausted and no hypotheses
+   were parsed, so the method ends (`method_complete`) instead of
+   running prior/diffuse/diagnose against an empty hypothesis list.
+   Acceptance criterion is on the issue.
 
-3. **Architectural enablers (do before new methods):**
-   - **#22 phase-machine loop support** — let a method choose the next
-     phase (`next_phase()` hook with linear default + loop guard).
-     Unlocks #20, #26, and true recursion in recursive_decomposition.
-   - **#23 function-calling for structured outputs** — phases declare an
-     output tool (`submit_estimate`, `submit_ratings`, ...) enforced via
-     `ai_client.complete_with_tools()`; regex parsing stays as fallback.
-     Removes the whole class of "silently unparseable response" bugs.
+3. **#23 function-calling for structured outputs** — phases declare an
+   output tool (`submit_estimate`, `submit_ratings`, ...) enforced via
+   `ai_client.complete_with_tools()`. Per the owner decision below,
+   tool-capable models may be required; surface a setup-time error
+   rather than silently degrading.
 
 4. **New methods (highest value first):**
    - **#24 Nominal Group Technique** — structured brainstorming; ~80% of
@@ -81,7 +56,8 @@ Test count went from 1287 to **1362 passing** (75 new tests in
      method with a structured, machine-readable final artifact.
    - **#27 Double Crux** — disagreement resolution by crux-finding;
      pairs with belief tracking.
-   - **#26 Tree-of-Thoughts** — generate/score/prune/expand; needs #22.
+   - **#26 Tree-of-Thoughts** — generate/score/prune/expand; the #22
+     `next_phase` hook it needed now exists.
 
 5. **Cross-cutting quality:**
    - **#28 evidence-gated phases** — opt-in `require_citations` so
@@ -96,7 +72,8 @@ Test count went from 1287 to **1362 passing** (75 new tests in
   against empty orders, but don't rely on it.
 - **`method_state` keys starting with `_` are internal bookkeeping**
   (`_turn_order`, `_panelist_map`, `_continuation_count`,
-  `_original_max_rounds`, `_original_cost_limit`). `switch_discussion_method`
+  `_original_max_rounds`, `_original_cost_limit`, `_phase_entries` —
+  the loop-guard transition counter). `switch_discussion_method`
   preserves the budget keys explicitly — if you add new bookkeeping that
   must survive a method switch, add it to the preserved set in
   `app_discussion_flow.switch_discussion_method`.

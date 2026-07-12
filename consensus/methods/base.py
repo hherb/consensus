@@ -23,6 +23,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Sentinel returned by ``PhaseHandler.next_phase`` to request the
+#: default linear phase progression.  A dunder name so it can never
+#: collide with a real phase name.
+LINEAR_NEXT: str = "__linear__"
+
+#: Default loop-guard budget: a method may enter phases at most
+#: ``len(default_phases) * MAX_PHASE_VISITS_PER_PHASE`` times unless it
+#: sets ``max_phase_entries`` explicitly.  Linear methods make at most
+#: ``len(default_phases) - 1`` transitions, so they can never hit this.
+MAX_PHASE_VISITS_PER_PHASE: int = 5
+
 
 @dataclass
 class Phase:
@@ -71,6 +82,11 @@ class DiscussionMethod(ABC):
     description: str = ""
     default_phases: tuple[Phase, ...] = ()
     phase_handlers: tuple[_PhaseHandler, ...] = ()
+    #: Loop guard: maximum total phase entries (transitions) before the
+    #: method is forcibly completed.  0 = auto (``len(default_phases) *
+    #: MAX_PHASE_VISITS_PER_PHASE``).  Only relevant for methods whose
+    #: ``next_phase`` hook can revisit phases.
+    max_phase_entries: int = 0
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -148,22 +164,63 @@ class DiscussionMethod(ABC):
         phase_round = discussion.method_state.get("phase_round", 1)
         return phase_round > phase.rounds
 
-    def advance_phase(self, discussion: Discussion) -> Optional[Phase]:
-        """Move to the next phase.  Returns the new Phase, or None if done."""
+    def next_phase(self, discussion: Discussion) -> Optional[str]:
+        """Return the name of the phase to enter next, or None to finish.
+
+        The active handler is consulted first: it may return a phase
+        name (jump — enables loops), ``None`` (end the method early,
+        e.g. abort after an unrecoverable phase failure), or the
+        ``LINEAR_NEXT`` sentinel to defer to the default linear order.
+
+        Method subclasses can override this directly; calling
+        ``super().next_phase(discussion)`` yields the linear default.
+        """
+        handler = self._active_handler(discussion)
+        if handler is not None:
+            choice = handler.next_phase(discussion)
+            if choice != LINEAR_NEXT:
+                return choice
         phases = self.default_phases
         current = self.current_phase(discussion)
         if not current:
             return None
-        try:
-            idx = next(i for i, p in enumerate(phases) if p.name == current.name)
-        except StopIteration:
-            return None
-        if idx + 1 >= len(phases):
+        idx = next((i for i, p in enumerate(phases)
+                    if p.name == current.name), None)
+        if idx is None or idx + 1 >= len(phases):
             return None  # all phases exhausted
-        next_phase = phases[idx + 1]
-        discussion.method_state["current_phase"] = next_phase.name
+        return phases[idx + 1].name
+
+    def advance_phase(self, discussion: Discussion) -> Optional[Phase]:
+        """Move to the phase chosen by ``next_phase``.
+
+        Returns the new Phase, or None if the method is done — either
+        because ``next_phase`` returned None/an unknown name, or because
+        the loop guard was exhausted.
+        """
+        target = self.next_phase(discussion)
+        if target is None:
+            return None
+        phase = next((p for p in self.default_phases if p.name == target),
+                     None)
+        if phase is None:
+            logger.warning(
+                "Method %s next_phase returned unknown phase %r — "
+                "ending method", self.name, target,
+            )
+            return None
+        entries = discussion.method_state.get("_phase_entries", 0) + 1
+        cap = (self.max_phase_entries
+               or len(self.default_phases) * MAX_PHASE_VISITS_PER_PHASE)
+        if entries > cap:
+            logger.warning(
+                "Method %s exceeded the loop guard of %d phase entries — "
+                "ending method", self.name, cap,
+            )
+            return None
+        discussion.method_state["_phase_entries"] = entries
+        discussion.method_state["current_phase"] = phase.name
         discussion.method_state["phase_round"] = 1
-        return next_phase
+        return phase
 
     # ------------------------------------------------------------------
     # Prompt hooks — called by moderator.py
