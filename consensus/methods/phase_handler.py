@@ -10,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar
 
-from .base import Phase, ProcessedResponse
+from .base import LINEAR_NEXT, Phase, ProcessedResponse
 
 if TYPE_CHECKING:
     from ..models import Discussion, Entity
@@ -100,6 +100,22 @@ class PhaseHandler(ABC):
             return False
         phase_round = discussion.method_state.get("phase_round", 1)
         return phase_round > self.phase.rounds
+
+    def next_phase(self, discussion: Discussion) -> str | None:
+        """Choose which phase to enter when this phase completes.
+
+        Return a phase name to jump there (backwards jumps create
+        loops), ``None`` to end the method early (abort), or the
+        ``LINEAR_NEXT`` sentinel (default) to follow the method's
+        linear phase order.  Jumps are bounded by the method's loop
+        guard (``max_phase_entries``).
+
+        Note: any ``method_state`` mutations made inside this hook are
+        committed even if ``advance_phase`` then rejects the transition
+        (unknown phase name or loop-guard trip) — the method ends, but
+        the mutated state is what gets persisted.
+        """
+        return LINEAR_NEXT
 
     def get_transition_message(self, discussion: Discussion) -> str:
         """Return a system message posted when transitioning TO this phase."""
