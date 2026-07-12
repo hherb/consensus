@@ -20,7 +20,7 @@ desktop = [
     "PyGObject>=3.42; sys_platform == 'linux'",
     "pycairo>=1.24; sys_platform == 'linux'",
 ]
-web = ["aiohttp>=3.9"]
+web = ["aiohttp>=3.14.1"]
 tools = ["trafilatura>=1.6"]
 memory = ["sqlite-vec>=0.1.0", "numpy>=1.26"]
 documents = ["sqlite-vec>=0.1.0", "numpy>=1.26", "pdfplumber>=0.10"]
@@ -29,7 +29,7 @@ all = [
     "pywebview>=5.0",
     "PyGObject>=3.42; sys_platform == 'linux'",
     "pycairo>=1.24; sys_platform == 'linux'",
-    "aiohttp>=3.9",
+    "aiohttp>=3.14.1",
     "trafilatura>=1.6",
     "sqlite-vec>=0.1.0",
     "numpy>=1.26",
