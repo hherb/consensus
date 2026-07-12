@@ -541,8 +541,18 @@ async def complete_turn(
                 # Method ended: linear order exhausted, or a next_phase
                 # hook aborted it early.  Post the method's explanation
                 # (if any) so the user learns WHY it ended (issue #30).
-                end_msg = method.get_method_complete_message(discussion)
+                # Skip it when Triage is about to hand off to its chosen
+                # method (a switch, not an end), and post at most once —
+                # complete_turn can hit this branch again if turns keep
+                # completing after method_complete was already returned.
+                switching = (discussion.discussion_method == "triage"
+                             and discussion.method_state.get("chosen_method"))
+                already_posted = discussion.method_state.get(
+                    "_complete_message_posted")
+                end_msg = ("" if switching or already_posted
+                           else method.get_method_complete_message(discussion))
                 if end_msg and mod:
+                    discussion.method_state["_complete_message_posted"] = True
                     sys_msg = Message(
                         entity_id=mod.id, entity_name=mod.name,
                         content=end_msg, role=MessageRole.SYSTEM,
