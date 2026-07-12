@@ -157,6 +157,61 @@ class TestPhaseTransitionTurnOrder:
         assert disc.turn_order == [p.id for p in parts]
 
 
+class TestMidRoundPhaseTransition:
+    """A phase transition must restart the rotation at index 0 (issue #19).
+
+    Condition-based (``rounds=0``-style) ``should_advance`` checks run
+    after every turn, so a phase can end mid-round.  If the next phase
+    keeps the same turn order, the old conditional reset left
+    ``current_turn_index`` at k>0 and the new phase's first round was
+    truncated — participants before index k never spoke in it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_same_order_transition_resets_turn_index(self, tmp_db):
+        """surface -> challenge (identical order) must restart at P1.
+
+        Simulates: round 1 of Key Assumptions "surface" produced no
+        parseable assumptions (phase_round already 2), then P1's round-2
+        response finally parsed.  should_advance fires mid-round after
+        P1's turn; challenge uses the same all-participant order.
+        """
+        disc, mod, parts = _make_discussion(tmp_db, "key_assumptions")
+        p1 = parts[0]
+        disc.method_state["current_phase"] = "surface"
+        disc.method_state["phase_round"] = 2
+        disc.method_state["assumptions"] = ["Prices reflect all information"]
+        disc.current_turn_index = 0  # P1 is speaking this turn
+        disc.turn_number = 4
+
+        result = await _run_complete_turn(disc, tmp_db)
+
+        assert "error" not in result
+        assert disc.method_state["current_phase"] == "challenge"
+        assert disc.current_turn_index == 0, (
+            "phase transition must restart the rotation"
+        )
+        assert disc.current_speaker is not None
+        assert disc.current_speaker.id == p1.id
+
+    @pytest.mark.asyncio
+    async def test_method_switch_resets_turn_index(self, tmp_db):
+        """A triage method switch is a phase transition too — index resets."""
+        disc, mod, parts = _make_discussion(tmp_db, "triage")
+        disc.method_state["current_phase"] = "confirm"
+        disc.method_state["chosen_method"] = "delphi"
+        disc.turn_order = [mod.id]
+        disc.current_turn_index = 0
+        disc.turn_number = 5
+
+        result = await _run_complete_turn(disc, tmp_db)
+
+        assert result.get("method_switched") is True
+        assert disc.current_turn_index == 0
+        assert disc.current_speaker is not None
+        assert disc.current_speaker.id == parts[0].id
+
+
 class TestStartDiscussionTurnOrder:
     """The first phase's turn order must apply from turn 1."""
 

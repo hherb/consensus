@@ -157,14 +157,10 @@ class VoteHandler(PhaseHandler):
             })
             accepted += 1
 
-        extracted = {"votes_cast": accepted}
         if accepted:
             content += f"\n\n---\n**Votes cast:** {accepted}"
 
-        return ProcessedResponse(
-            display_content=content,
-            extracted_data=extracted,
-        )
+        return ProcessedResponse(display_content=content)
 
     # ------------------------------------------------------------------
     # Phase advancement

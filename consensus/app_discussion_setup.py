@@ -119,6 +119,12 @@ def remove_from_discussion(
             )
         else:
             discussion.current_turn_index = 0
+        # The stamped turn index (see ``stamp_turn_index``) is a position
+        # in the order it was recorded against — a shrunken order makes
+        # it stale.  Drop it so a reload falls back to the id-based
+        # last-speaker heuristic.
+        discussion.method_state.pop("_turn_index", None)
+        discussion.method_state.pop("_turn_index_turn", None)
 
     discussion.entities = [
         e for e in discussion.entities if e.id != entity_id
@@ -130,6 +136,10 @@ def remove_from_discussion(
     # Persist to DB if discussion is already started
     if discussion.id and discussion.status in ("active", "paused"):
         db.remove_discussion_member(discussion.id, entity_id)
+        db.update_discussion(
+            discussion.id,
+            method_state=serialize_method_state(discussion.method_state),
+        )
 
         sys_msg = Message(
             entity_id=entity_id, entity_name=entity_name,

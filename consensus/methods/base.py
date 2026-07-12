@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
@@ -39,14 +39,15 @@ class Phase:
 class ProcessedResponse:
     """Result of post-processing a participant's raw response.
 
-    Methods can extract structured data (e.g. belief distributions,
-    hypothesis ratings) from the natural-language response and store
-    it in ``extracted_data``.  The ``display_content`` may differ from
-    the original response (e.g. with appended visualisations).
+    ``display_content`` may differ from the original response (e.g. with
+    appended visualisations) and is what gets stored as the message
+    content.  Handlers that extract structured data (belief
+    distributions, hypothesis ratings, ...) must write it into
+    ``discussion.method_state`` themselves — the flow layer consumes
+    nothing else from this object (issue #21).
     """
 
     display_content: str  # what gets stored as the message content
-    extracted_data: dict = field(default_factory=dict)
 
 
 class DiscussionMethod(ABC):

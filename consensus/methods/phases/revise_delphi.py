@@ -147,10 +147,7 @@ class ReviseDelphiHandler(PhaseHandler):
             )
             display = content
 
-        return ProcessedResponse(
-            display_content=display,
-            extracted_data=estimate_data if estimate_data else {},
-        )
+        return ProcessedResponse(display_content=display)
 
     # ------------------------------------------------------------------
     # Phase advancement

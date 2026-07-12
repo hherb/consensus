@@ -13,12 +13,19 @@ class MessagesMixin:
         _execute_write(sql, params) -> sqlite3.Cursor
     """
 
-    def get_max_turn_number(self, discussion_id: int) -> int:
-        """Return the highest turn_number from messages for a discussion."""
-        row = self.conn.execute(
-            "SELECT MAX(turn_number) FROM messages WHERE discussion_id=?",
-            (discussion_id,),
-        ).fetchone()
+    def get_max_turn_number(self, discussion_id: int,
+                            role: Optional[str] = None) -> int:
+        """Return the highest turn_number from messages for a discussion.
+
+        ``role`` restricts the maximum to messages with that role (e.g.
+        ``"participant"``), ignoring system/moderator bookkeeping messages.
+        """
+        sql = "SELECT MAX(turn_number) FROM messages WHERE discussion_id=?"
+        params: tuple = (discussion_id,)
+        if role is not None:
+            sql += " AND role=?"
+            params = (discussion_id, role)
+        row = self.conn.execute(sql, params).fetchone()
         return row[0] if row and row[0] is not None else 0
 
     def add_message(self, discussion_id: int, entity_id: int,

@@ -1,9 +1,11 @@
-"""Red Team / Blue Team with Rotation — structured adversarial analysis.
+"""Red Team / Blue Team — structured adversarial analysis.
 
-Each round, one participant is designated as the Red Team (attacker)
-while the others form the Blue Team (constructors).  The Red Team sees
-only the current conclusion and tries to break it — they do NOT
-participate in construction.  The Red Team role rotates each round.
+One participant is designated as the Red Team (attacker) for the whole
+analysis, while the others form the Blue Team (constructors).  The Red
+Team sees only the current conclusion and tries to break it — they do
+NOT participate in construction.  The method runs a single
+construct → attack → revise → assess pass.  (Rotating the Red Team role
+across multiple passes needs phase-machine loop support, issue #22.)
 
 Phases:
   1. CONSTRUCT  — Blue Team builds an initial position (Red Team silent)
@@ -29,15 +31,15 @@ if TYPE_CHECKING:
 
 
 class RedTeamBlueTeam(DiscussionMethod):
-    """Red Team / Blue Team with rotating adversarial role."""
+    """Red Team / Blue Team with a designated adversarial role."""
 
     name = "red_team"
     display_name = "Red Team / Blue Team"
     description = (
-        "Rotating adversarial analysis.  Each round, one participant "
-        "is designated as the Red Team (attacker) while the others "
-        "construct and defend a position.  The Red Team role rotates, "
-        "ensuring every perspective gets stress-tested."
+        "Adversarial analysis.  One participant is designated as the "
+        "Red Team (attacker) while the others construct and defend a "
+        "position.  The position is stress-tested in a single "
+        "construct, attack, revise, assess pass."
     )
     phase_handlers = (
         ConstructHandler(),

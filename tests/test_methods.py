@@ -96,9 +96,10 @@ class TestBeliefDiffusion:
             "```\n\n"
             "I favour H1 because..."
         )
-        result = method.process_response(content, ai_entity, disc)
-        assert result.extracted_data["beliefs"] == {"H1": 0.7, "H2": 0.3}
-        assert len(disc.method_state["belief_history"]) == 1
+        method.process_response(content, ai_entity, disc)
+        history = disc.method_state["belief_history"]
+        assert len(history) == 1
+        assert history[0]["beliefs"] == {"H1": 0.7, "H2": 0.3}
 
     def test_extract_beliefs_inline_json(self, ai_entity):
         method = get_method("belief_diffusion")
@@ -108,8 +109,9 @@ class TestBeliefDiffusion:
         disc.method_state["hypotheses"] = ["A", "B"]
 
         content = 'Updated: {"beliefs": {"H1": 0.5, "H2": 0.5}} because...'
-        result = method.process_response(content, ai_entity, disc)
-        assert result.extracted_data["beliefs"] == {"H1": 0.5, "H2": 0.5}
+        method.process_response(content, ai_entity, disc)
+        history = disc.method_state["belief_history"]
+        assert history[-1]["beliefs"] == {"H1": 0.5, "H2": 0.5}
 
     def test_belief_bar_in_display(self, ai_entity):
         method = get_method("belief_diffusion")
@@ -672,11 +674,11 @@ class TestDelphi:
             "```\n\n"
             "I believe this because..."
         )
-        result = method.process_response(content, ai_entity, disc)
-        assert result.extracted_data["estimate"] == 42.5
-        assert result.extracted_data["confidence"] == "HIGH"
-        assert len(disc.method_state["estimates"]) == 1
-        assert disc.method_state["estimates"][0]["value"] == 42.5
+        method.process_response(content, ai_entity, disc)
+        estimates = disc.method_state["estimates"]
+        assert len(estimates) == 1
+        assert estimates[0]["value"] == 42.5
+        assert estimates[0]["confidence"] == "HIGH"
 
     def test_estimate_extraction_inline(self, ai_entity):
         method = get_method("delphi")
@@ -684,8 +686,8 @@ class TestDelphi:
         disc.method_state = method.init_state(disc)
 
         content = 'I estimate {"estimate": 0.75, "confidence": "MEDIUM", "unit": "probability"} based on...'
-        result = method.process_response(content, ai_entity, disc)
-        assert result.extracted_data["estimate"] == 0.75
+        method.process_response(content, ai_entity, disc)
+        assert disc.method_state["estimates"][0]["value"] == 0.75
 
     def test_display_augmented_with_estimate(self, ai_entity):
         method = get_method("delphi")

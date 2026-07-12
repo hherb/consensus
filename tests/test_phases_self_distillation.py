@@ -446,7 +446,7 @@ class TestDistillSkeletonHandler:
         assert sd_discussion.method_state["skeleton"] == VALID_SKELETON
         assert sd_discussion.method_state["skeleton_display"] != ""
         assert sd_discussion.method_state["extraction_failed"] is False
-        assert result.extracted_data["skeleton"] == VALID_SKELETON
+        assert result.display_content == content
 
     def test_process_response_invalid_json(self, handler, moderator, sd_discussion):
         content = "I couldn't extract a proper structure."

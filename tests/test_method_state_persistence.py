@@ -120,6 +120,73 @@ class TestTurnOrderPersistence:
         assert restored.base_turn_order == [p.id for p in parts]
 
 
+class TestTurnIndexRestore:
+    """A mid-round phase transition's rotation reset must survive a reload.
+
+    Phase transitions restart the rotation at index 0 even when the turn
+    order is unchanged (issue #19).  ``load_discussion`` re-derives the
+    index as last-speaker-position + 1, which would silently undo that
+    reset after a crash/restart between the transition and the next turn
+    — re-truncating the new phase's first round.
+    """
+
+    @pytest.mark.asyncio
+    async def test_same_order_transition_reset_survives_reload(self, tmp_db):
+        disc, mod, parts = _make_db_discussion(tmp_db, "key_assumptions")
+        p1 = parts[0]
+        disc.method_state["current_phase"] = "surface"
+        disc.method_state["phase_round"] = 2
+        disc.method_state["assumptions"] = ["Prices reflect all information"]
+        disc.current_turn_index = 0  # P1 is speaking this turn
+        disc.turn_number = 4
+        # The turn message the generate/submit path records before
+        # complete_turn finalizes the turn.
+        tmp_db.add_message(disc.id, p1.id, "My key assumption.",
+                           "participant", turn_number=4)
+
+        await _run_complete_turn(disc, tmp_db)
+        assert disc.method_state["current_phase"] == "challenge"
+        assert disc.current_turn_index == 0
+
+        loaded = load_discussion(
+            tmp_db, disc.id, key_resolver=lambda pid, env: "", tool_registry=None,
+        )
+        assert not isinstance(loaded, dict), f"load failed: {loaded}"
+        restored, _moderator = loaded
+        assert restored.current_turn_index == 0, (
+            "reload must not undo the phase-transition rotation reset"
+        )
+        assert restored.current_speaker is not None
+        assert restored.current_speaker.id == p1.id
+
+    @pytest.mark.asyncio
+    async def test_stale_stamp_ignored_after_new_message(self, tmp_db):
+        """A participant message recorded after the stamp invalidates it."""
+        disc, mod, parts = _make_db_discussion(tmp_db, "key_assumptions")
+        p1, p2 = parts
+        disc.method_state["current_phase"] = "surface"
+        disc.current_turn_index = 0  # P1 is speaking this turn
+        disc.turn_number = 1
+        tmp_db.add_message(disc.id, p1.id, "First thoughts.",
+                           "participant", turn_number=1)
+
+        await _run_complete_turn(disc, tmp_db)  # stamps the index for P2
+        assert disc.current_speaker.id == p2.id
+
+        # P2 speaks (e.g. a human message) but crashes before the turn
+        # is completed — the stamp is now one turn behind.
+        submit_human_message(disc, tmp_db, p2.id, "Second thoughts.")
+
+        loaded = load_discussion(
+            tmp_db, disc.id, key_resolver=lambda pid, env: "", tool_registry=None,
+        )
+        assert not isinstance(loaded, dict), f"load failed: {loaded}"
+        restored, _moderator = loaded
+        # Heuristic applies: the speaker after P2 wraps back to P1.
+        assert restored.current_turn_index == 0
+        assert restored.current_speaker.id == p1.id
+
+
 class TestTurnNumberRestore:
     """load_discussion must restore turn_number = max(turn) + 1."""
 

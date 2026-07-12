@@ -99,7 +99,6 @@ class DeliberateHandler(PhaseHandler):
                          discussion: Discussion) -> ProcessedResponse:
         state = discussion.method_state
         motions = extract_motions(content)
-        extracted: dict = {}
 
         for motion_text in motions:
             motion_id = state.get("next_motion_id", 1)
@@ -109,7 +108,6 @@ class DeliberateHandler(PhaseHandler):
                 "proposed_by": entity.name,
             })
             state["next_motion_id"] = motion_id + 1
-            extracted["motions"] = motions
 
         if motions:
             motion_lines = "\n".join(
@@ -118,7 +116,4 @@ class DeliberateHandler(PhaseHandler):
             )
             content += f"\n\n---\n**Motions proposed:**\n{motion_lines}"
 
-        return ProcessedResponse(
-            display_content=content,
-            extracted_data=extracted,
-        )
+        return ProcessedResponse(display_content=content)

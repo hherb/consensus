@@ -94,10 +94,7 @@ class PriorBeliefsHandler(PhaseHandler):
             )
             display = content
 
-        return ProcessedResponse(
-            display_content=display,
-            extracted_data={"beliefs": beliefs} if beliefs else {},
-        )
+        return ProcessedResponse(display_content=display)
 
     def should_advance(self, discussion: Discussion) -> bool:
         return discussion.method_state.get("phase_round", 1) > 1

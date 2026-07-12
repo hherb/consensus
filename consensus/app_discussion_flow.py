@@ -51,13 +51,20 @@ def method_roster(discussion: Discussion) -> list[int]:
     return list(discussion.base_turn_order or discussion.turn_order)
 
 
-def apply_method_turn_order(discussion: Discussion) -> None:
+def apply_method_turn_order(
+    discussion: Discussion, reset_index: bool = False,
+) -> None:
     """Apply the active method's turn order for the current phase.
 
     Derives the order from the full roster and installs it only when it
     is non-empty and differs from the current order (resetting the turn
     index).  An empty result keeps the full roster instead — a discussion
     must never be left without speakers.
+
+    ``reset_index=True`` restarts the rotation at index 0 even when the
+    order is unchanged.  Pass it on every phase transition: condition-based
+    phases can end mid-round, and a same-order successor phase would
+    otherwise start at index k>0 with its first round truncated (issue #19).
     """
     roster = method_roster(discussion)
     method = get_active_method(discussion)
@@ -71,6 +78,23 @@ def apply_method_turn_order(discussion: Discussion) -> None:
         # instead of the setup roster (issue #16).  Underscore-prefixed
         # keys are internal bookkeeping, not method data.
         discussion.method_state["_turn_order"] = list(new_order)
+    elif reset_index:
+        discussion.current_turn_index = 0
+
+
+def stamp_turn_index(discussion: Discussion) -> None:
+    """Record the live turn index in method_state bookkeeping.
+
+    ``load_discussion`` re-derives the index from the last participant
+    message's position (+1), which cannot see the rotation reset a
+    mid-round phase transition performs (issue #19) and would undo it
+    after a crash/restart.  Stamping the index together with the turn it
+    was recorded at lets a reload restore the exact live value when no
+    participant has spoken since.  Underscore-prefixed keys are internal
+    bookkeeping, not method data.
+    """
+    discussion.method_state["_turn_index"] = discussion.current_turn_index
+    discussion.method_state["_turn_index_turn"] = discussion.turn_number
 
 
 def submit_human_message(
@@ -495,8 +519,10 @@ async def complete_turn(
         if method.should_advance_phase(discussion):
             new_phase = method.advance_phase(discussion)
             if new_phase:
-                # Let the method reorder turns for the new phase
-                apply_method_turn_order(discussion)
+                # Let the method reorder turns for the new phase; the
+                # transition is a rotation boundary, so restart at index 0
+                # even when the order is unchanged (issue #19).
+                apply_method_turn_order(discussion, reset_index=True)
 
                 # Post phase transition message
                 transition_msg = method.get_phase_transition_message(
@@ -514,6 +540,7 @@ async def complete_turn(
             else:
                 # All phases exhausted
                 if discussion.id:
+                    stamp_turn_index(discussion)
                     db.update_discussion(
                         discussion.id,
                         method_state=serialize_method_state(discussion.method_state),
@@ -528,8 +555,9 @@ async def complete_turn(
                         # Reorder turns for the new method's first phase,
                         # starting from the full roster — the triage phases
                         # ran moderator-only and must not leak that order.
-                        apply_method_turn_order(discussion)
+                        apply_method_turn_order(discussion, reset_index=True)
                         if discussion.id:
+                            stamp_turn_index(discussion)
                             db.update_discussion(
                                 discussion.id,
                                 method_state=serialize_method_state(
@@ -554,6 +582,7 @@ async def complete_turn(
         # must survive a crash/reload even without a phase transition
         # (issue #16).
         if discussion.id:
+            stamp_turn_index(discussion)
             db.update_discussion(
                 discussion.id,
                 method_state=serialize_method_state(discussion.method_state),

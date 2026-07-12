@@ -139,8 +139,11 @@ class Phase:
 @dataclass
 class ProcessedResponse:
     display_content: str     # stored as message content
-    extracted_data: dict     # structured data (beliefs, ratings, etc.)
 ```
+
+Handlers that extract structured data (beliefs, ratings, votes, ...)
+must write it into `discussion.method_state` inside `process_response`;
+the flow layer consumes only `display_content` (issue #21).
 
 ---
 
