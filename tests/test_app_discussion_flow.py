@@ -184,6 +184,67 @@ class TestCostLimitEnforcement:
         assert "error" not in result
 
     @pytest.mark.asyncio
+    async def test_structured_payload_routed(
+        self, monkeypatch, tmp_db, discussion_with_entities
+    ):
+        """generate_ai_turn routes structured payloads to
+        process_structured_response (issue #23)."""
+        import consensus.methods as methods_registry
+        from consensus.ai_client import AIResponse
+        from consensus.methods.base import (
+            DiscussionMethod, Phase, ProcessedResponse,
+        )
+        from consensus.methods.phase_handler import PhaseHandler
+        from consensus.moderator import Moderator
+
+        calls = {}
+
+        class _Handler(PhaseHandler):
+            phase = Phase("p", "P")
+            requires_structured_output = True
+
+            def get_system_prompt(self, entity, discussion):
+                return ""
+
+            def get_turn_prompt(self, entity, discussion):
+                return ""
+
+            def process_structured_response(self, payload, entity,
+                                            discussion):
+                calls["payload"] = payload
+                return ProcessedResponse(display_content="structured!")
+
+            def process_response(self, content, entity, discussion):
+                calls["free_text"] = content
+                return ProcessedResponse(display_content=content)
+
+        class _M(DiscussionMethod):
+            name = "_test_routing"
+            display_name = "Routing"
+            description = "test"
+            phase_handlers = (_Handler(),)
+
+        disc = discussion_with_entities
+        disc.discussion_method = "_test_routing"
+        disc.method_state = _M().init_state(disc)
+        monkeypatch.setitem(methods_registry._METHODS,
+                            "_test_routing", _M)
+        did = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.id = did
+
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = Moderator(disc, tmp_db)
+        moderator.generate_turn = AsyncMock(return_value=AIResponse(
+            content="", structured_output={"estimate": 3}))
+        moderator.prompt_id = MagicMock(return_value=None)
+
+        result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
+
+        assert calls["payload"] == {"estimate": 3}
+        assert "free_text" not in calls
+        assert result["content"] == "structured!"
+
+    @pytest.mark.asyncio
     async def test_no_limit_when_zero(
         self, tmp_db, discussion_with_entities
     ):

@@ -150,6 +150,71 @@ async def test_http_400_raises_structured_output_error():
             [{"role": "user", "content": "go"}], SPEC, _Method())
 
 
+# ---------------------------------------------------------------------------
+# Moderator integration (Task 4): structured phases route through the
+# forced-tool path and skip registry tools.
+# ---------------------------------------------------------------------------
+
+import consensus.methods as methods_registry
+from consensus.methods.base import DiscussionMethod, Phase, ProcessedResponse
+from consensus.methods.phase_handler import PhaseHandler
+from consensus.moderator import Moderator
+
+
+class _EstimatePhase(PhaseHandler):
+    phase = Phase("estimate", "Estimate")
+    requires_structured_output = True
+
+    def get_system_prompt(self, entity, discussion) -> str:
+        return "sys"
+
+    def get_turn_prompt(self, entity, discussion) -> str:
+        return "turn"
+
+    def get_output_tool(self, entity, discussion) -> OutputToolSpec:
+        return SPEC
+
+    def validate_output(self, payload, entity, discussion) -> str:
+        return "" if "estimate" in payload else "'estimate' is required."
+
+    def process_structured_response(self, payload, entity,
+                                    discussion) -> ProcessedResponse:
+        discussion.method_state.setdefault("estimates", []).append(
+            {"entity_id": entity.id, "value": payload["estimate"]})
+        return ProcessedResponse(
+            display_content=f"Estimate: {payload['estimate']}")
+
+
+class _StructuredTestMethod(DiscussionMethod):
+    name = "_test_structured_turn"
+    display_name = "Structured Turn Test"
+    description = "test"
+    phase_handlers = (_EstimatePhase(),)
+
+
+@pytest.mark.asyncio
+async def test_moderator_generate_turn_uses_structured_path(
+        monkeypatch, tmp_db, discussion_with_entities):
+    disc = discussion_with_entities
+    disc.discussion_method = "_test_structured_turn"
+    method = _StructuredTestMethod()
+    disc.method_state = method.init_state(disc)
+    monkeypatch.setitem(methods_registry._METHODS,
+                        "_test_structured_turn", _StructuredTestMethod)
+
+    moderator = Moderator(disc, tmp_db)
+    ai_entity = next(e for e in disc.entities
+                     if e.entity_type == EntityType.AI)
+    stub = _StubClient([_result(
+        {"content": "", "tool_calls": [_tool_call({"estimate": 0.4})]})])
+    monkeypatch.setattr(moderator, "_get_client", lambda entity: stub)
+
+    resp = await moderator.generate_turn(ai_entity)
+    assert resp.structured_output == {"estimate": 0.4}
+    # The forced tool was requested, and no registry tools were mixed in
+    assert stub.calls[0]["tools"] == [SPEC.to_openai_schema()]
+
+
 @pytest.mark.asyncio
 async def test_dsml_tool_calls_get_user_feedback_not_tool_role():
     client = _StubClient([

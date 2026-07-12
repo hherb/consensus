@@ -14,6 +14,7 @@ from .context_strategies import (
 )
 from .database import Database
 from .methods import get_active_method
+from .structured_output import generate_structured_turn
 from .tools import ToolCallRecord, ToolRegistry, MAX_TOOL_ITERATIONS
 from .tools_image import is_vision_capable, build_image_content_blocks
 
@@ -332,6 +333,16 @@ class Moderator:
         else:
             messages = await self._build_context(system_prompt, task,
                                                  current_entity_id=entity.id)
+
+        # Structured-output phases (issue #23): force the declared
+        # output tool instead of free-text parsing.  Registry tools are
+        # not offered on these turns — the phase output is the task.
+        output_spec = (method.get_output_tool(entity, self.discussion)
+                       if method else None)
+        if output_spec is not None:
+            return await generate_structured_turn(
+                client, cfg, entity, self.discussion, messages,
+                output_spec, method)
 
         # Get tools for this entity
         tool_schemas: list[dict] = []
