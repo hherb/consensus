@@ -158,15 +158,34 @@ class TestBuildDistributionSummary:
 
     def test_summary_content(self, discussion):
         discussion.method_state["estimates"] = [
-            {"round": 0, "value": 0.7, "confidence": "HIGH", "unit": "prob", "entity_id": 1},
-            {"round": 0, "value": 0.8, "confidence": "MEDIUM", "unit": "prob", "entity_id": 2},
-            {"round": 0, "value": 0.9, "confidence": "LOW", "unit": "prob", "entity_id": 3},
+            {"round": 0, "value": 0.7, "confidence": "HIGH", "unit": "prob",
+             "entity_id": 1, "entity_name": "Expert_1"},
+            {"round": 0, "value": 0.8, "confidence": "MEDIUM", "unit": "prob",
+             "entity_id": 2, "entity_name": "Expert_2"},
+            {"round": 0, "value": 0.9, "confidence": "LOW", "unit": "prob",
+             "entity_id": 3, "entity_name": "Expert_3"},
         ]
         summary = build_distribution_summary(discussion)
         assert "Participants: 3" in summary
         assert "Mean:" in summary
         assert "Median:" in summary
         assert "Panelist 1:" in summary
+
+    def test_summary_labels_match_anonymisation_aliases(self, discussion):
+        """Sorted display keeps each panelist's STABLE alias (issue #17)."""
+        from consensus.methods.phases._delphi_helpers import (
+            build_panelist_map,
+        )
+        discussion.method_state["estimates"] = [
+            {"round": 0, "value": 0.9, "confidence": "HIGH", "unit": "prob",
+             "entity_id": 1, "entity_name": "Expert_1"},
+            {"round": 0, "value": 0.2, "confidence": "LOW", "unit": "prob",
+             "entity_id": 2, "entity_name": "Expert_2"},
+        ]
+        aliases = build_panelist_map(discussion)
+        summary = build_distribution_summary(discussion)
+        assert f"{aliases['Expert_1']}: 0.9" in summary
+        assert f"{aliases['Expert_2']}: 0.2" in summary
 
 
 # -- EstimateHandler tests --

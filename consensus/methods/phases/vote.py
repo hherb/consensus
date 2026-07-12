@@ -173,10 +173,14 @@ class VoteHandler(PhaseHandler):
     def should_advance(self, discussion: Discussion) -> bool:
         """Advance when all participants have voted on all motions.
 
-        Falls back to a ``phase_round`` safety cap so the phase always
-        terminates even if some votes can never be recorded, preventing
-        the discussion from stalling indefinitely in the voting phase.
+        A deliberation that produced no motions advances immediately —
+        there is nothing to vote on.  Falls back to a ``phase_round``
+        safety cap so the phase always terminates even if some votes can
+        never be recorded, preventing the discussion from stalling
+        indefinitely in the voting phase.
         """
+        if not discussion.method_state.get("motions"):
+            return True
         if _all_votes_in(discussion):
             return True
         phase_round = discussion.method_state.get("phase_round", 1)

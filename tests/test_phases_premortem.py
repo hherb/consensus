@@ -57,13 +57,18 @@ class TestFramePremortemHandler:
         state = frame_handler.init_state(disc)
         assert state == {"conclusion": ""}
 
-    def test_system_prompt_returns_empty(self, frame_handler, ai_entity, disc):
+    def test_system_prompt_instructs_moderator(self, frame_handler,
+                                               ai_entity, disc):
         prompt = frame_handler.get_system_prompt(ai_entity, disc)
-        assert prompt == ""
+        assert "Premortem" in prompt
 
-    def test_turn_prompt_returns_empty(self, frame_handler, ai_entity, disc):
+    def test_turn_prompt_asks_for_plan(self, frame_handler, ai_entity, disc):
         prompt = frame_handler.get_turn_prompt(ai_entity, disc)
-        assert prompt == ""
+        assert prompt != ""
+
+    def test_turn_order_is_moderator_only(self, frame_handler, disc):
+        disc.moderator_id = 42
+        assert frame_handler.get_turn_order([1, 2, 3], disc) == [42]
 
     def test_process_response_captures_conclusion(self, frame_handler,
                                                    ai_entity, disc):
@@ -190,13 +195,13 @@ class TestPremortemEquivalence:
         names = [p.name for p in method.default_phases]
         assert names == ["frame", "premortem", "consolidate"]
 
-    def test_frame_system_prompt_returns_empty(self, ai_entity):
+    def test_frame_system_prompt_instructs_moderator(self, ai_entity):
         method = get_method("premortem")
         disc = Discussion(topic="test topic",
                           discussion_method="premortem")
         disc.method_state = method.init_state(disc)
         prompt = method.get_system_prompt(ai_entity, disc)
-        assert prompt == ""
+        assert "Premortem" in prompt
 
     def test_premortem_system_prompt_matches(self, ai_entity):
         method = get_method("premortem")

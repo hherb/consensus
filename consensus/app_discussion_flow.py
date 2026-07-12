@@ -39,6 +39,40 @@ def calculate_discussion_cost(discussion: Discussion) -> float:
     return sum(m.cost or 0.0 for m in discussion.messages)
 
 
+def method_roster(discussion: Discussion) -> list[int]:
+    """Return the full eligible roster for method turn-order hooks.
+
+    ``get_turn_order`` hooks must always receive the complete rotation
+    roster from setup, never the current (possibly phase-narrowed) order —
+    otherwise one phase's narrowing cascades into the next and can empty
+    the turn order entirely (issue #13).  Falls back to the current order
+    for discussions created before ``base_turn_order`` existed.
+    """
+    return list(discussion.base_turn_order or discussion.turn_order)
+
+
+def apply_method_turn_order(discussion: Discussion) -> None:
+    """Apply the active method's turn order for the current phase.
+
+    Derives the order from the full roster and installs it only when it
+    is non-empty and differs from the current order (resetting the turn
+    index).  An empty result keeps the full roster instead — a discussion
+    must never be left without speakers.
+    """
+    roster = method_roster(discussion)
+    method = get_active_method(discussion)
+    new_order = roster
+    if method:
+        new_order = method.get_turn_order(roster, discussion) or roster
+    if new_order and new_order != list(discussion.turn_order):
+        discussion.turn_order = new_order
+        discussion.current_turn_index = 0
+        # Record the phase order in method_state so a reload restores it
+        # instead of the setup roster (issue #16).  Underscore-prefixed
+        # keys are internal bookkeeping, not method data.
+        discussion.method_state["_turn_order"] = list(new_order)
+
+
 def submit_human_message(
     discussion: Discussion, db: Database, entity_id: int, content: str,
 ) -> dict:
@@ -54,6 +88,18 @@ def submit_human_message(
     current = discussion.current_speaker
     if not current or current.id != entity_id:
         return {"error": f"It's not {entity.name}'s turn"}
+
+    # Method-specific response post-processing — human responses carry
+    # method data too (votes, estimates, ...), exactly like AI turns.
+    method = get_active_method(discussion)
+    if method and not is_pass(content):
+        processed = method.process_response(content, entity, discussion)
+        content = processed.display_content
+        if discussion.id:
+            db.update_discussion(
+                discussion.id,
+                method_state=serialize_method_state(discussion.method_state),
+            )
 
     msg = Message(
         entity_id=entity_id, entity_name=entity.name,
@@ -282,8 +328,17 @@ def switch_discussion_method(
     except KeyError:
         return {"error": f"Unknown method: {method_name!r}"}
 
+    # Budget bookkeeping written by _increase_budgets must survive the
+    # method_state reset (issue #16).
+    preserved = {
+        key: discussion.method_state[key]
+        for key in ("_continuation_count", "_original_max_rounds",
+                    "_original_cost_limit")
+        if key in discussion.method_state
+    }
     discussion.discussion_method = method_name
     discussion.method_state = method.init_state(discussion)
+    discussion.method_state.update(preserved)
 
     if discussion.id:
         db.update_discussion(
@@ -434,22 +489,14 @@ async def complete_turn(
             # from team-huddle to spokesperson-speaks).  Re-apply it now so the
             # change takes effect immediately instead of only at the next phase
             # transition.  Static handlers return the order unchanged.
-            refreshed = method.get_turn_order(
-                list(discussion.turn_order), discussion)
-            if refreshed and refreshed != list(discussion.turn_order):
-                discussion.turn_order = refreshed
-                discussion.current_turn_index = 0
+            apply_method_turn_order(discussion)
 
         # Check for phase transition
         if method.should_advance_phase(discussion):
             new_phase = method.advance_phase(discussion)
             if new_phase:
                 # Let the method reorder turns for the new phase
-                new_order = method.get_turn_order(
-                    list(discussion.turn_order), discussion)
-                if new_order != list(discussion.turn_order):
-                    discussion.turn_order = new_order
-                    discussion.current_turn_index = 0
+                apply_method_turn_order(discussion)
 
                 # Post phase transition message
                 transition_msg = method.get_phase_transition_message(
@@ -478,14 +525,16 @@ async def complete_turn(
                     switch_result = switch_discussion_method(
                         discussion, db, chosen)
                     if "error" not in switch_result:
-                        # Reorder turns for the new method
-                        new_method = get_active_method(discussion)
-                        if new_method:
-                            new_order = new_method.get_turn_order(
-                                list(discussion.turn_order), discussion)
-                            if new_order != list(discussion.turn_order):
-                                discussion.turn_order = new_order
-                                discussion.current_turn_index = 0
+                        # Reorder turns for the new method's first phase,
+                        # starting from the full roster — the triage phases
+                        # ran moderator-only and must not leak that order.
+                        apply_method_turn_order(discussion)
+                        if discussion.id:
+                            db.update_discussion(
+                                discussion.id,
+                                method_state=serialize_method_state(
+                                    discussion.method_state),
+                            )
                         return {
                             "method_switched": True,
                             "new_method": switch_result,
@@ -500,12 +549,15 @@ async def complete_turn(
                     "state": get_state_fn(),
                 }
 
-            # Persist method state after phase transition
-            if discussion.id:
-                db.update_discussion(
-                    discussion.id,
-                    method_state=serialize_method_state(discussion.method_state),
-                )
+        # Persist method state on every completed turn — round-lifecycle
+        # mutations (phase_round, huddle sub-state, revision counters)
+        # must survive a crash/reload even without a phase transition
+        # (issue #16).
+        if discussion.id:
+            db.update_discussion(
+                discussion.id,
+                method_state=serialize_method_state(discussion.method_state),
+            )
 
     # Check if max_rounds has been reached
     max_r = discussion.max_rounds

@@ -7,6 +7,7 @@ or prior conclusion. Includes retry logic for failed extractions.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from ..base import Phase, ProcessedResponse
@@ -19,6 +20,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_EXTRACTION_ATTEMPTS = 3
+
+# Captures the "CONCLUSION: ..." statement at the top of the moderator's
+# extraction response, up to the first numbered claim or end of text.
+# The moderator summary path never reaches process_response, so the
+# preliminary conclusion is captured here, in the moderator-only extract
+# turn (issue #15).
+_CONCLUSION_RE = re.compile(
+    r"^\s*\**CONCLUSION:?\**\s*:?\s*(.+?)(?=\n\s*\d+[\.\)]|\Z)",
+    re.MULTILINE | re.DOTALL | re.IGNORECASE,
+)
 
 
 class ExtractClaimsHandler(PhaseHandler):
@@ -63,12 +74,23 @@ class ExtractClaimsHandler(PhaseHandler):
                       or state.get("prior_conclusion")
                       or "(no conclusion available)")
 
+        has_conclusion = bool(state.get("preliminary_conclusion")
+                              or state.get("prior_conclusion"))
+        conclusion_instruction = (
+            ""
+            if has_conclusion else
+            "First, synthesise the discussion's preliminary conclusion "
+            "in one paragraph on a line starting with \"CONCLUSION:\".  "
+            "Then "
+        )
+
         if state.get("extraction_failed") and state.get("extraction_attempts", 0) > 0:
             return (
                 "The previous extraction failed to produce a numbered list "
                 "of claims. Please try again.\n\n"
                 f"Conclusion to analyze:\n{conclusion}\n\n"
-                "Extract 3-7 key claims as a NUMBERED LIST. Each claim "
+                f"{conclusion_instruction}extract 3-7 key claims as a "
+                "NUMBERED LIST. Each claim "
                 "must be a specific, falsifiable assertion — not a value "
                 "judgment or vague statement. Use this format:\n"
                 "1. <claim>\n"
@@ -79,7 +101,8 @@ class ExtractClaimsHandler(PhaseHandler):
         return (
             "Review the discussion above and the conclusion reached.\n\n"
             f"Conclusion:\n{conclusion}\n\n"
-            "Extract 3-7 key claims that this conclusion depends on. "
+            f"{conclusion_instruction}extract 3-7 key claims that this "
+            "conclusion depends on. "
             "Each claim should be a specific, falsifiable assertion — "
             "not a value judgment or vague statement. List them as a "
             "numbered list:\n"
@@ -91,6 +114,15 @@ class ExtractClaimsHandler(PhaseHandler):
     def process_response(self, content: str, entity: Entity,
                          discussion: Discussion) -> ProcessedResponse:
         state = discussion.method_state
+
+        # Capture the preliminary conclusion stated by the moderator,
+        # unless one was already provided (prior_conclusion) or captured.
+        if not (state.get("preliminary_conclusion")
+                or state.get("prior_conclusion")):
+            m = _CONCLUSION_RE.search(content)
+            if m:
+                state["preliminary_conclusion"] = m.group(1).strip()
+
         parsed = parse_numbered_list(content)
 
         if not parsed:

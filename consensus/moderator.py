@@ -156,8 +156,9 @@ class Moderator:
                     msg.entity_name, content, role, self.discussion,
                     current_entity_id=current_entity_id)
 
-            # Skip empty assistant messages — some APIs (e.g. Kimi) reject them
-            if not content and role == "assistant":
+            # Skip empty messages entirely: filters suppress private content
+            # by returning "", and some APIs (e.g. Kimi) reject empty content.
+            if not content:
                 continue
 
             messages.append({"role": role, "content": content})

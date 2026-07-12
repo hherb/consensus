@@ -8,6 +8,7 @@ notification after calling each function.
 import time
 from typing import Optional
 
+from .app_discussion_flow import apply_method_turn_order
 from .database import Database
 from .methods import get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole
@@ -386,6 +387,7 @@ def start_discussion(
             discussion.turn_order.append(da_entity.id)
             turn_pos += 1
 
+    discussion.base_turn_order = list(discussion.turn_order)
     discussion.current_turn_index = 0
     discussion.turn_number = 1
     discussion.max_rounds = max_rounds
@@ -415,6 +417,13 @@ def start_discussion(
     try:
         method = get_method(discussion.discussion_method)
         discussion.method_state = method.init_state(discussion)
+        # Apply the first phase's turn order so phase-1 ordering (e.g. red
+        # team exclusion, humans-only intake) takes effect from turn 1
+        # rather than only after the first round completes (issue #13).
+        # Must run before the persist below: deriving the order can write
+        # method_state (``_turn_order``, red-team designation) that has to
+        # survive a reload before the first turn completes (issue #16).
+        apply_method_turn_order(discussion)
         db.update_discussion(
             did,
             discussion_method=discussion.discussion_method,

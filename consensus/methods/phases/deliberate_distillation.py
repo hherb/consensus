@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import Phase
 from ..phase_handler import PhaseHandler
 
 if TYPE_CHECKING:
@@ -71,11 +71,6 @@ class DistillationDeliberateHandler(PhaseHandler):
             f"Note how it relates to prior arguments. Next: {next_speaker_name}."
         )
 
-    def process_response(self, content: str, entity: Entity,
-                         discussion: Discussion) -> ProcessedResponse:
-        """Capture moderator's final-round summary as rich_reasoning_summary."""
-        state = discussion.method_state
-        if (entity.id == discussion.moderator_id
-                and state.get("phase_round", 1) >= self.phase.rounds):
-            state["rich_reasoning_summary"] = content
-        return ProcessedResponse(display_content=content)
+    # The rich-reasoning summary is captured in the distill phase
+    # (moderator-only turn) — process_response here is never called for
+    # the moderator, whose summaries bypass response processing.

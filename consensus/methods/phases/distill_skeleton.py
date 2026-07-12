@@ -9,6 +9,7 @@ Includes retry logic for failed JSON extraction.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 from ..base import Phase, ProcessedResponse
@@ -22,6 +23,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_EXTRACTION_ATTEMPTS = 3
+
+# Captures the "RICH SUMMARY: ..." paragraph the moderator provides
+# before the skeleton JSON.  The moderator summary path never reaches
+# process_response, so the rich-reasoning summary is captured here, in
+# the moderator-only distill turn (issue #15).
+_RICH_SUMMARY_RE = re.compile(
+    r"^\s*\**RICH SUMMARY:?\**\s*:?\s*(.+?)(?=\n\s*```|\Z)",
+    re.MULTILINE | re.DOTALL | re.IGNORECASE,
+)
 
 
 class DistillSkeletonHandler(PhaseHandler):
@@ -105,7 +115,12 @@ class DistillSkeletonHandler(PhaseHandler):
         return (
             "Review the discussion above and extract its logical "
             "skeleton.\n\n"
-            "Identify:\n"
+            "First, on a line starting with \"RICH SUMMARY:\", give a "
+            "short paragraph capturing the original discussion's most "
+            "persuasive arguments and rhetorical moves — the examples, "
+            "analogies, and appeals that carried the most force.  This "
+            "will later be contrasted with the bare logic.\n\n"
+            "Then identify:\n"
             "1. **Premises** — factual claims, assumptions, or starting "
             "points that participants stated or relied on\n"
             "2. **Inferences** — logical steps where one or more premises "
@@ -137,6 +152,13 @@ class DistillSkeletonHandler(PhaseHandler):
     def process_response(self, content: str, entity: Entity,
                          discussion: Discussion) -> ProcessedResponse:
         state = discussion.method_state
+
+        # Capture the rich-reasoning summary if not already recorded.
+        if not state.get("rich_reasoning_summary"):
+            m = _RICH_SUMMARY_RE.search(content)
+            if m:
+                state["rich_reasoning_summary"] = m.group(1).strip()
+
         parsed = extract_json_block(content)
 
         if not parsed or not validate_skeleton(parsed):
