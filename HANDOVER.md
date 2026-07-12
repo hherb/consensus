@@ -1,7 +1,7 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-13 (session: Belief Diffusion method-abort,
-branch `claude/handover-instructions-68ca24`)._
+_Last updated: 2026-07-13 (session: #23 structured outputs via native
+function calling, branch `claude/handover-instructions-e198e6`)._
 
 This file briefs the next session(s) on what was done, what is in flight,
 and what to do next. Update it whenever a session materially changes the
@@ -9,45 +9,60 @@ plan; delete sections that are finished and no longer instructive.
 
 ## Where things stand
 
-- **PR #18** (six defect classes from the discussion-methods review,
-  issues #12–#17) is **merged**.
-- **#19, #20, #21** were fixed in a prior session (merged via PR #31):
-  rotation resets on every phase transition (and survives reload), the
-  Red Team description matches its single-pass behavior, and
-  `ProcessedResponse.extracted_data` was removed.
-- **#22 phase-machine loop support** is **merged** (PR #35):
-  `DiscussionMethod.next_phase(discussion) -> str | None` chooses the
-  next phase by name; `PhaseHandler.next_phase` can return a phase name
-  (jump/loop), `None` (abort the method early), or the `LINEAR_NEXT`
-  sentinel (default linear order). `advance_phase` in
-  `consensus/methods/base.py` enforces a loop guard
-  (`max_phase_entries`, counter in `method_state["_phase_entries"]`).
-- **#30 Belief Diffusion method-abort** was implemented in this session
-  (branch `claude/handover-instructions-68ca24`, PR pending merge):
-  `FrameHypothesesHandler.next_phase` returns `None` when
-  `MAX_FRAMING_ATTEMPTS` is exhausted with no parsed hypotheses, so the
-  method ends instead of running prior/diffuse/diagnose against an
-  empty hypothesis list. A new hook,
-  `get_method_complete_message(discussion) -> str`
-  (`PhaseHandler` default `""`, `DiscussionMethod` delegates to the
-  active handler), lets the ending phase post a user-facing system
-  message; `complete_turn` posts it just before returning
-  `method_complete`. `BeliefDiffusion.get_conclusion_prompt` now returns
-  an honest failure-summary prompt when `hypotheses` is empty (the
-  frontend auto-concludes on `method_complete`). 12 new tests in
-  `tests/test_belief_diffusion_abort.py`, including the exhausted-framing
-  path through the real `complete_turn` pipeline.
+- **PR #18** (six defect classes, issues #12–#17), **PR #31**
+  (#19/#20/#21), **PR #35** (#22 phase-machine loop support), and
+  **PR #36** (#30 Belief Diffusion abort) are all **merged**.
+- **#23 structured outputs — mechanism + first three conversions done**
+  (this session). Plan:
+  `docs/superpowers/plans/2026-07-13-structured-method-outputs.md`.
+  - `consensus/structured_output.py` — `generate_structured_turn()`
+    forces the phase's declared tool via `tool_choice`, validates the
+    payload with the handler's `validate_output` hook, retries with the
+    validation error fed back (`MAX_STRUCTURED_OUTPUT_ATTEMPTS = 3`),
+    then falls back to the free-text path with a user-visible warning.
+    HTTP 400 (model without tool support) raises a loud
+    `StructuredOutputError`.
+  - Hooks: `OutputToolSpec` in `consensus/methods/base.py`;
+    `PhaseHandler.get_output_tool` / `validate_output` /
+    `process_structured_response` + `requires_structured_output`
+    ClassVar; `DiscussionMethod` delegates all of them and exposes
+    `requires_structured_output()`.
+  - Flow: `Moderator.generate_turn` routes structured phases (registry
+    tools are NOT offered on those turns); `generate_ai_turn` sends
+    `AIResponse.structured_output` to `process_structured_response`,
+    everything else (incl. human input) through the regex
+    `process_response` path, which remains as containment fallback.
+  - Setup gate: migration 014 adds `supported_parameters` to
+    `model_pricing`; `PricingCache.supports_tools()` returns
+    True/False/None (None = unknown → allowed, fails loudly at runtime);
+    `start_discussion` rejects structured methods when any AI member's
+    model is known to lack tool support
+    (`_validate_structured_output_support` in `app_discussion_setup.py`).
+  - Converted phases: Delphi `estimate` + `revise` (`submit_estimate`),
+    Voting `vote` (`submit_votes`), Belief Diffusion `frame`
+    (`submit_hypotheses` — closes the #30 failure mode at the source;
+    the abort machinery stays as last-resort containment).
 
 ## Next steps, in order
 
-1. **Merge the #30 PR** (from branch
-   `claude/handover-instructions-68ca24`).
+1. **Finish the #23 conversions** — mechanical, following the pattern in
+   the converted handlers (schema + `validate_output` +
+   `process_structured_response`, shared helpers refactored for reuse,
+   prompts rewritten to name the tool, existing regex path kept for
+   humans/fallback). Remaining regex-parsing phases:
+   `prior_beliefs` / `diffuse_beliefs` (belief distributions),
+   `blind_evaluate` / `tally`, `evaluate_matrix` / `define_criteria`,
+   `distill_skeleton`, `hypothesize`, `surface_assumptions`,
+   `decompose`, `counterfactual_extract`.
 
-2. **#23 function-calling for structured outputs** — phases declare an
-   output tool (`submit_estimate`, `submit_ratings`, ...) enforced via
-   `ai_client.complete_with_tools()`. Per the owner decision below,
-   tool-capable models may be required; surface a setup-time error
-   rather than silently degrading.
+2. **Known #23 gaps (small, self-contained):**
+   - `switch_discussion_method` (triage handoff) does not run the
+     tool-capability check, so Triage can still switch into a structured
+     method with a non-tool-capable model. Add the check there (return
+     an error → triage falls through to `method_complete`).
+   - `MethodRecommender` does not consider tool capability when
+     recommending methods; it could down-rank structured methods when
+     panel models lack tool support.
 
 3. **New methods (highest value first):**
    - **#24 Nominal Group Technique** — structured brainstorming; ~80% of
@@ -69,6 +84,10 @@ plan; delete sections that are finished and no longer instructive.
 
 ## Conventions and gotchas for the next session
 
+- **Structured-phase conversions must keep `process_response`.** Humans
+  type free text, and the structured path falls back to it after
+  exhausted retries. The regex path is the containment layer, not dead
+  code.
 - **Never derive a phase turn order from the incoming `entity_ids` by
   filtering the current order.** Handlers receive the full roster; if
   you need "everyone except X", filter the roster. The flow guards
@@ -95,7 +114,8 @@ plan; delete sections that are finished and no longer instructive.
   `tests/test_turn_order_flow.py` / `tests/test_method_state_persistence.py`:
   drive `complete_turn` with a human moderator plus `moderator_summary`
   (no network needed), and `Moderator._format_messages` for context
-  filtering.
+  filtering. For structured turns, stub `complete_with_tools` (see
+  `tests/test_structured_output.py`).
 - Project rules: `uv` only (never pip), TDD (failing test first), files
   under ~500 lines, docstrings + type hints mandatory.
 
@@ -107,6 +127,6 @@ plan; delete sections that are finished and no longer instructive.
   the `_TAXONOMY` line that marks it "(fallback only)".
 - **#23: it is acceptable to require tool-capable models for methods
   with structured phases.** The regex fallback does not need to remain
-  first-class — design the phase output contract around forced tool
-  calls, and surface a clear setup-time error (not a silent degrade)
-  when a participant's model/provider lacks tool support.
+  first-class — the implemented design forces tool calls and surfaces a
+  clear setup-time error (not a silent degrade) when a participant's
+  model/provider is known to lack tool support.
