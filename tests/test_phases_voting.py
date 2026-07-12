@@ -500,10 +500,11 @@ class TestVoteHandler:
         })
         assert self.handler.should_advance(disc) is False
 
-    def test_should_not_advance_no_motions(self):
+    def test_advances_immediately_with_no_motions(self):
+        """No motions means nothing to vote on — skip the phase (issue #17)."""
         disc = _init_discussion()
         disc.method_state["current_phase"] = "vote"
-        assert self.handler.should_advance(disc) is False
+        assert self.handler.should_advance(disc) is True
 
     def test_transition_message_with_motions(self):
         disc = _init_discussion()

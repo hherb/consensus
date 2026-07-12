@@ -624,26 +624,45 @@ class TestStressTestTurnOrder:
         assert result == [1, 2, 3]
 
 
-class TestDeliberatePreliminaryConclusion:
-    """Test that preliminary_conclusion is captured from moderator summary."""
+class TestExtractPreliminaryConclusion:
+    """The conclusion is captured in the moderator-only extract turn.
 
-    def test_moderator_response_captures_conclusion(self, deliberate_handler, cf_discussion):
+    (The deliberate-phase moderator capture was dead code — moderator
+    summaries never go through process_response; issue #15.)
+    """
+
+    def test_extract_response_captures_conclusion(self, cf_discussion):
         mod = Entity(name="Moderator", entity_type=EntityType.AI, id=100)
-        cf_discussion.method_state["phase_round"] = 2  # final round
-        result = deliberate_handler.process_response(
-            "After discussion, the group concludes that cars should be banned.",
-            mod, cf_discussion
+        handler = ExtractClaimsHandler()
+        handler.process_response(
+            "CONCLUSION: Cars should be banned from city centres.\n\n"
+            "1. Urban air quality improves measurably when traffic drops\n"
+            "2. Businesses in pedestrian zones see higher foot traffic\n",
+            mod, cf_discussion,
         )
         assert cf_discussion.method_state["preliminary_conclusion"] == \
-            "After discussion, the group concludes that cars should be banned."
+            "Cars should be banned from city centres."
 
-    def test_non_moderator_does_not_set_conclusion(self, deliberate_handler, entity, cf_discussion):
-        cf_discussion.method_state["phase_round"] = 2
-        deliberate_handler.process_response("My opinion.", entity, cf_discussion)
+    def test_prior_conclusion_not_overwritten(self, cf_discussion):
+        mod = Entity(name="Moderator", entity_type=EntityType.AI, id=100)
+        handler = ExtractClaimsHandler()
+        cf_discussion.method_state["prior_conclusion"] = "Given conclusion"
+        handler.process_response(
+            "CONCLUSION: Something else entirely.\n\n"
+            "1. A specific falsifiable claim about the topic\n",
+            mod, cf_discussion,
+        )
         assert cf_discussion.method_state["preliminary_conclusion"] is None
 
-    def test_early_round_does_not_set_conclusion(self, deliberate_handler, cf_discussion):
+    def test_response_without_conclusion_still_extracts_claims(
+        self, cf_discussion,
+    ):
         mod = Entity(name="Moderator", entity_type=EntityType.AI, id=100)
-        cf_discussion.method_state["phase_round"] = 1
-        deliberate_handler.process_response("Early summary.", mod, cf_discussion)
+        handler = ExtractClaimsHandler()
+        handler.process_response(
+            "1. A specific falsifiable claim about the topic\n"
+            "2. Another specific falsifiable claim entirely\n",
+            mod, cf_discussion,
+        )
+        assert cf_discussion.method_state["claims"]
         assert cf_discussion.method_state["preliminary_conclusion"] is None

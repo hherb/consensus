@@ -20,6 +20,9 @@ if TYPE_CHECKING:
 MIN_HYPOTHESIS_LENGTH = 10
 # Word overlap ratio above which two hypotheses are considered duplicates
 SIMILARITY_THRESHOLD = 0.7
+# Give up and advance after this many rounds even without parsed
+# hypotheses — an unparseable group must not loop forever (issue #15).
+MAX_HYPOTHESIZE_ROUNDS = 3
 
 
 class HypothesizeHandler(PhaseHandler):
@@ -118,8 +121,10 @@ class HypothesizeHandler(PhaseHandler):
 
     def should_advance(self, discussion: Discussion) -> bool:
         state = discussion.method_state
-        return (bool(state.get("hypotheses"))
-                and state.get("phase_round", 1) > 1)
+        phase_round = state.get("phase_round", 1)
+        if phase_round > MAX_HYPOTHESIZE_ROUNDS:
+            return True
+        return bool(state.get("hypotheses")) and phase_round > 1
 
     # ------------------------------------------------------------------
     # Transition message

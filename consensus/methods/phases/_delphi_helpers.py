@@ -89,10 +89,18 @@ def build_panelist_map(discussion: Discussion) -> dict[str, str]:
 
 
 def anonymise_content(content: str, discussion: Discussion) -> str:
-    """Replace real names with 'Panelist N' labels."""
+    """Replace real names with 'Panelist N' labels.
+
+    Matches whole words only and replaces longer names first, so a name
+    that is a substring of another ("Ann" in "Anna") or of a regular
+    word ("Mark" in "Markdown") does not corrupt the text.
+    """
     panelist_map = build_panelist_map(discussion)
-    for name, alias in panelist_map.items():
-        content = content.replace(name, alias)
+    for name in sorted(panelist_map, key=len, reverse=True):
+        content = re.sub(
+            r"\b" + re.escape(name) + r"\b",
+            panelist_map[name], content,
+        )
     return content
 
 
@@ -120,13 +128,20 @@ def check_convergence(discussion: Discussion) -> bool:
     # lengths) — sufficient for Delphi convergence detection where
     # approximate spread matters more than statistical precision.
     median = current_values[len(current_values) // 2]
-    if median == 0:
-        return False
 
     q1 = current_values[len(current_values) // 4]
     q3 = current_values[3 * len(current_values) // 4]
     iqr = q3 - q1
-    ratio = abs(iqr / median)
+
+    # Estimates centred on zero would make the IQR/median ratio blow up;
+    # fall back to the largest magnitude as the scale, and treat an
+    # all-zero panel as converged.
+    scale = abs(median)
+    if scale == 0:
+        scale = max(abs(v) for v in current_values)
+    if scale == 0:
+        return True
+    ratio = abs(iqr / scale)
 
     converged = ratio < threshold
     if converged:
@@ -176,16 +191,20 @@ def build_distribution_summary(discussion: Discussion) -> str:
         "",
         "  Individual estimates (anonymised, sorted):",
     ]
-    # Sort entries by value for anonymised display, preserving
-    # the correct confidence for each entry even when values match.
+    # Sort entries by value for display, but label each with its STABLE
+    # panelist alias — the same alias used to anonymise the transcript —
+    # so reasoning and estimates stay attributable to the same panelist.
+    panelist_map = build_panelist_map(discussion)
     sorted_entries = sorted(
         [e for e in latest if e.get("value") is not None],
         key=lambda e: e["value"],
     )
-    for i, entry in enumerate(sorted_entries):
+    for entry in sorted_entries:
         v = entry["value"]
         conf = entry.get("confidence", "")
-        lines.append(f"    Panelist {i+1}: {v:.4g} {unit} "
+        alias = panelist_map.get(
+            entry.get("entity_name", ""), "Panelist ?")
+        lines.append(f"    {alias}: {v:.4g} {unit} "
                      f"(Confidence: {conf})")
 
     return "\n".join(lines)

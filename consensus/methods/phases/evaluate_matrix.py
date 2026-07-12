@@ -157,15 +157,24 @@ class EvaluateMatrixHandler(PhaseHandler):
         if isinstance(data, dict) and "ratings" in data:
             return data["ratings"]
 
-        # Fallback: inline JSON
-        match = re.search(r'\{"ratings"\s*:\s*\{.+?\}\s*\}', content,
-                          re.DOTALL)
-        if match:
-            try:
-                data = json.loads(match.group(0))
-                return data.get("ratings", {})
-            except (json.JSONDecodeError, ValueError):
-                pass
+        # Fallback: inline (unfenced) JSON.  The ratings object nests one
+        # dict per evidence item, so a lazy regex would truncate at the
+        # first inner brace — scan for the balanced closing brace instead.
+        start = content.find('{"ratings"')
+        if start != -1:
+            depth = 0
+            for pos in range(start, len(content)):
+                if content[pos] == "{":
+                    depth += 1
+                elif content[pos] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            data = json.loads(content[start:pos + 1])
+                            return data.get("ratings", {})
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                        break
 
         return {}
 

@@ -247,13 +247,20 @@ class TestFrameHypothesesHandler:
         assert state["max_diffuse_rounds"] == MAX_DIFFUSE_ROUNDS
         assert state["diffuse_round"] == 0
 
-    def test_system_prompt_empty(self, entity, discussion):
+    def test_system_prompt_instructs_moderator(self, entity, discussion):
         handler = FrameHypothesesHandler()
-        assert handler.get_system_prompt(entity, discussion) == ""
+        prompt = handler.get_system_prompt(entity, discussion)
+        assert "hypotheses" in prompt.lower()
 
-    def test_turn_prompt_empty(self, entity, discussion):
+    def test_turn_prompt_asks_for_numbered_list(self, entity, discussion):
         handler = FrameHypothesesHandler()
-        assert handler.get_turn_prompt(entity, discussion) == ""
+        prompt = handler.get_turn_prompt(entity, discussion)
+        assert "NUMBERED LIST" in prompt
+
+    def test_turn_order_is_moderator_only(self, discussion):
+        handler = FrameHypothesesHandler()
+        discussion.moderator_id = 42
+        assert handler.get_turn_order([1, 2, 3], discussion) == [42]
 
     def test_should_advance_no_hypotheses(self, discussion):
         handler = FrameHypothesesHandler()
@@ -492,13 +499,15 @@ class TestBeliefDiffusionIntegration:
         assert state["convergence_threshold"] == DEFAULT_CONVERGENCE_THRESHOLD
         assert state["max_diffuse_rounds"] == MAX_DIFFUSE_ROUNDS
 
-    def test_frame_system_prompt_empty(self, method, entity, discussion):
+    def test_frame_system_prompt_instructs_moderator(self, method, entity,
+                                                     discussion):
         prompt = method.get_system_prompt(entity, discussion)
-        assert prompt == ""
+        assert "hypotheses" in prompt.lower()
 
-    def test_frame_turn_prompt_empty(self, method, entity, discussion):
+    def test_frame_turn_prompt_asks_for_numbered_list(self, method, entity,
+                                                      discussion):
         prompt = method.get_turn_prompt(entity, discussion)
-        assert prompt == ""
+        assert "NUMBERED LIST" in prompt
 
     def test_prior_system_prompt(self, method, entity, discussion):
         discussion.method_state["current_phase"] = "prior"

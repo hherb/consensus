@@ -365,22 +365,28 @@ class TestDistillationDeliberateHandler:
         assert entity.name in prompt
         assert "persuasive" in prompt.lower()
 
-    def test_moderator_final_round_captures_summary(self, handler, moderator, sd_discussion):
-        sd_discussion.method_state["phase_round"] = 2
-        result = handler.process_response(
-            "After rich discussion, the consensus is X.", moderator, sd_discussion
+    def test_distill_phase_captures_rich_summary(self, moderator, sd_discussion):
+        """The rich summary is captured in the moderator-only distill turn.
+
+        (The deliberate-phase moderator capture was dead code — moderator
+        summaries never go through process_response; issue #15.)
+        """
+        distill = DistillSkeletonHandler()
+        distill.process_response(
+            "RICH SUMMARY: The consensus leaned on the Titanic analogy.\n\n"
+            "```json\n"
+            '{"premises": [{"id": "P1", "text": "p"}],\n'
+            ' "inferences": [{"id": "I1", "from": ["P1"], "text": "i"}],\n'
+            ' "conclusions": [{"id": "C1", "from": ["I1"], "text": "c"}]}\n'
+            "```",
+            moderator, sd_discussion,
         )
         assert sd_discussion.method_state["rich_reasoning_summary"] == \
-            "After rich discussion, the consensus is X."
+            "The consensus leaned on the Titanic analogy."
 
-    def test_non_moderator_does_not_capture(self, handler, entity, sd_discussion):
+    def test_participant_turn_does_not_capture(self, handler, entity, sd_discussion):
         sd_discussion.method_state["phase_round"] = 2
         handler.process_response("My view.", entity, sd_discussion)
-        assert sd_discussion.method_state["rich_reasoning_summary"] is None
-
-    def test_early_round_does_not_capture(self, handler, moderator, sd_discussion):
-        sd_discussion.method_state["phase_round"] = 1
-        handler.process_response("Early summary.", moderator, sd_discussion)
         assert sd_discussion.method_state["rich_reasoning_summary"] is None
 
     def test_should_advance(self, handler, sd_discussion):

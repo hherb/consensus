@@ -105,10 +105,15 @@ class TriageConfirmHandler(PhaseHandler):
                 chosen = match
                 break
 
-        # Fallback: check if any recommended method name appears in text
+        # Fallback: check if any recommended method name appears in the
+        # text as a whole word.  Substring matching would pick "ach" out
+        # of "approach"; iterate deterministically by recommendation
+        # confidence order rather than set order.
         if not chosen:
-            for name in valid_names:
-                if name in content.lower():
+            for rec in recs:
+                name = rec["method_name"]
+                if re.search(r"\b" + re.escape(name) + r"\b",
+                             content, re.IGNORECASE):
                     chosen = name
                     break
 

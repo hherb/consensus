@@ -15,6 +15,10 @@ from ..phase_handler import PhaseHandler
 if TYPE_CHECKING:
     from ...models import Discussion, Entity
 
+# Give up and advance after this many rounds even without parsed
+# criteria — an unparseable group must not loop forever (issue #15).
+MAX_CRITERIA_ROUNDS = 4
+
 
 class DefineCriteriaHandler(PhaseHandler):
     """Phase 2: Jointly define settlement criteria."""
@@ -150,5 +154,8 @@ class DefineCriteriaHandler(PhaseHandler):
 
     def should_advance(self, discussion: Discussion) -> bool:
         state = discussion.method_state
+        phase_round = state.get("phase_round", 1)
+        if phase_round > MAX_CRITERIA_ROUNDS:
+            return True
         return (bool(state.get("criteria"))
-                and state.get("phase_round", 1) > self.phase.rounds)
+                and phase_round > self.phase.rounds)

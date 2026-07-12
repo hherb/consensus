@@ -111,17 +111,7 @@ async function completeTurnFlow() {
             }
             if (result?.state) onStateUpdate(result.state);
             else onStateUpdate(await api.getState());
-            if (result?.max_rounds_reached) {
-                renderDiscussion();
-                showToast('Max rounds reached — concluding discussion');
-                await onConclude();
-                return false;
-            }
-            if (result?.cost_limit_reached) {
-                renderDiscussion();
-                showCostLimitDialog(result.total_cost, result.cost_limit);
-                return false;
-            }
+            if (await handleTurnLimitFlags(result)) return false;
         } catch (e) {
             showToast('Summary failed: ' + e.message);
             onStateUpdate(await api.getState());
@@ -132,6 +122,33 @@ async function completeTurnFlow() {
         promptModeratorInput('summary');
         return false;
     }
+}
+
+/**
+ * Handle terminal flags returned by completeTurn (max rounds, cost limit,
+ * or an exhausted discussion method). Without this, a completed method
+ * would keep generating turns in its final phase indefinitely.
+ * @returns {Promise<boolean>} True if a terminal flag was handled.
+ */
+async function handleTurnLimitFlags(result) {
+    if (result?.max_rounds_reached) {
+        renderDiscussion();
+        showToast('Max rounds reached — concluding discussion');
+        await onConclude();
+        return true;
+    }
+    if (result?.method_complete) {
+        renderDiscussion();
+        showToast('All method phases complete — concluding discussion');
+        await onConclude();
+        return true;
+    }
+    if (result?.cost_limit_reached) {
+        renderDiscussion();
+        showCostLimitDialog(result.total_cost, result.cost_limit);
+        return true;
+    }
+    return false;
 }
 
 /**
@@ -165,6 +182,7 @@ export async function onConfirmModeratorInput() {
         const result = await api.completeTurn(content);
         if (result?.state) onStateUpdate(result.state);
         else onStateUpdate(await api.getState());
+        if (await handleTurnLimitFlags(result)) return;
         renderDiscussion();
         processCurrentTurn();
     } else {

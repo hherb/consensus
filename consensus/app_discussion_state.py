@@ -89,11 +89,30 @@ def load_discussion(
     status = disc["status"]
     is_active = status == "active"
 
+    # Restore method state (needed below for the phase turn order)
+    discussion_method = disc.get("discussion_method", "open_discussion")
+    method_state_raw = disc.get("method_state", "{}")
+    try:
+        method_state = json.loads(method_state_raw) if method_state_raw else {}
+    except (json.JSONDecodeError, TypeError):
+        method_state = {}
+
+    # The members table holds the full setup roster; the current phase
+    # may run a narrowed order recorded in method_state (issue #16).
+    base_turn_order = list(turn_order)
+    saved_order = method_state.get("_turn_order")
+    member_ids = {m["entity_id"] for m in members}
+    if (isinstance(saved_order, list) and saved_order
+            and all(eid in member_ids for eid in saved_order)):
+        turn_order = list(saved_order)
+
     # Recover turn state for resumable discussions
     current_turn_index = 0
     turn_number = 0
     if status in ("active", "paused") and turn_order and msgs:
-        turn_number = db.get_max_turn_number(discussion_id)
+        # Live invariant after advance_turn: turn_number is one past the
+        # last recorded turn (matches reopen/continue restore paths).
+        turn_number = db.get_max_turn_number(discussion_id) + 1
         # Find the last participant message to determine next speaker
         last_participant = next(
             (m for m in reversed(msgs)
@@ -111,14 +130,6 @@ def load_discussion(
         for m in members
     }
 
-    # Restore method state
-    discussion_method = disc.get("discussion_method", "open_discussion")
-    method_state_raw = disc.get("method_state", "{}")
-    try:
-        method_state = json.loads(method_state_raw) if method_state_raw else {}
-    except (json.JSONDecodeError, TypeError):
-        method_state = {}
-
     discussion = Discussion(
         id=discussion_id,
         topic=disc["topic"],
@@ -127,6 +138,7 @@ def load_discussion(
         messages=msgs,
         storyboard=sb,
         turn_order=turn_order,
+        base_turn_order=base_turn_order,
         current_turn_index=current_turn_index,
         turn_number=turn_number,
         max_rounds=disc.get("max_rounds", 0),

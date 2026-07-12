@@ -17,6 +17,16 @@ if TYPE_CHECKING:
 # huddle messages for non-team members.
 HUDDLE_PREFIX = "[PRIVATE HUDDLE] "
 
+# The moderator formats other speakers' context messages as
+# "[Name]: <content>" BEFORE filter_context_message runs, so huddle
+# detection must tolerate an optional leading speaker prefix.
+_HUDDLE_CONTENT_RE = re.compile(
+    r"^\s*(?:\[[^\]]*\]:\s*)?" + re.escape(HUDDLE_PREFIX)
+)
+
+# Maximum full team-huddle rounds before the spokesperson speaks.
+MAX_HUDDLE_ROUNDS = 2
+
 # ── Trial type & team resolution ──────────────────────────────────────
 
 def get_trial_type(discussion: Discussion) -> str:
@@ -116,14 +126,13 @@ def advance_huddle_state(discussion: Discussion,
 
     if sub == "accusation_huddle":
         huddle["active_team"] = "accusation"
-        if len(acc_ids) <= 1 or huddle["huddle_round"] >= 2:
+        huddle["huddle_round"] += 1
+        if len(acc_ids) <= 1 or huddle["huddle_round"] >= MAX_HUDDLE_ROUNDS:
             # Skip/finish huddle → spokesperson speaks
             huddle["sub_state"] = "accusation_speaks"
             huddle["huddle_round"] = 0
             if not huddle["spokesperson_id"] and acc_ids:
                 huddle["spokesperson_id"] = acc_ids[0]
-        else:
-            huddle["huddle_round"] += 1
 
     elif sub == "accusation_speaks":
         # Accusation done → move to defense huddle
@@ -134,13 +143,12 @@ def advance_huddle_state(discussion: Discussion,
 
     elif sub == "defense_huddle":
         huddle["active_team"] = "defense"
-        if len(def_ids) <= 1 or huddle["huddle_round"] >= 2:
+        huddle["huddle_round"] += 1
+        if len(def_ids) <= 1 or huddle["huddle_round"] >= MAX_HUDDLE_ROUNDS:
             huddle["sub_state"] = "defense_speaks"
             huddle["huddle_round"] = 0
             if not huddle["spokesperson_id"] and def_ids:
                 huddle["spokesperson_id"] = def_ids[0]
-        else:
-            huddle["huddle_round"] += 1
 
     elif sub == "defense_speaks":
         huddle["sub_state"] = "done"
@@ -205,9 +213,11 @@ def filter_huddle_message(entity_name: str, content: str,
 
     This is phase-agnostic: it checks the ``HUDDLE_PREFIX`` marker
     regardless of which phase is currently active, so huddle messages
-    remain private even in later phases.
+    remain private even in later phases.  The marker is matched through
+    an optional leading ``[Name]: `` speaker prefix, which the moderator
+    prepends before this filter runs.
     """
-    if current_entity_id is None or not content.startswith(HUDDLE_PREFIX):
+    if current_entity_id is None or not _HUDDLE_CONTENT_RE.match(content):
         return content
 
     reader_team = get_team_for_entity(current_entity_id, discussion)
