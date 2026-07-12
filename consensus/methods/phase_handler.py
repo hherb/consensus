@@ -109,6 +109,11 @@ class PhaseHandler(ABC):
         ``LINEAR_NEXT`` sentinel (default) to follow the method's
         linear phase order.  Jumps are bounded by the method's loop
         guard (``max_phase_entries``).
+
+        Note: any ``method_state`` mutations made inside this hook are
+        committed even if ``advance_phase`` then rejects the transition
+        (unknown phase name or loop-guard trip) — the method ends, but
+        the mutated state is what gets persisted.
         """
         return LINEAR_NEXT
 

@@ -92,6 +92,23 @@ class BadNameMethod(DiscussionMethod):
         return "no_such_phase"
 
 
+class SentinelMethod(DiscussionMethod):
+    """Returns LINEAR_NEXT from a method-level override (instead of
+    calling ``super().next_phase(...)``) — must fall back to the linear
+    order, not be treated as an unknown phase name."""
+
+    name = "_test_sentinel"
+    display_name = "Sentinel Test"
+    description = "test"
+    default_phases = (
+        Phase("a", "Phase A"),
+        Phase("b", "Phase B"),
+    )
+
+    def next_phase(self, discussion: Discussion) -> str | None:
+        return LINEAR_NEXT
+
+
 class ForeverMethod(DiscussionMethod):
     """Always loops back to the first phase — must hit the loop guard."""
 
@@ -254,6 +271,14 @@ class TestMethodLevelHook:
         assert m.advance_phase(disc) is None
         # State untouched — still in the first phase.
         assert disc.method_state["current_phase"] == "a"
+
+    def test_linear_sentinel_from_method_hook_falls_back_to_linear(self):
+        m = SentinelMethod()
+        disc = _discussion(m)
+
+        new_phase = m.advance_phase(disc)
+        assert new_phase is not None and new_phase.name == "b"
+        assert m.advance_phase(disc) is None  # linear order exhausted
 
     def test_unknown_phase_name_ends_method_with_warning(self, caplog):
         m = BadNameMethod()

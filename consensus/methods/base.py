@@ -30,8 +30,11 @@ LINEAR_NEXT: str = "__linear__"
 
 #: Default loop-guard budget: a method may enter phases at most
 #: ``len(default_phases) * MAX_PHASE_VISITS_PER_PHASE`` times unless it
-#: sets ``max_phase_entries`` explicitly.  Linear methods make at most
-#: ``len(default_phases) - 1`` transitions, so they can never hit this.
+#: sets ``max_phase_entries`` explicitly.  The budget caps *total*
+#: transitions (linear ones included), not visits per individual phase
+#: — a method that loops heavily draws from the same budget as its
+#: linear tail.  Linear methods make at most ``len(default_phases) - 1``
+#: transitions, so they can never hit this.
 MAX_PHASE_VISITS_PER_PHASE: int = 5
 
 
@@ -173,13 +176,23 @@ class DiscussionMethod(ABC):
         ``LINEAR_NEXT`` sentinel to defer to the default linear order.
 
         Method subclasses can override this directly; calling
-        ``super().next_phase(discussion)`` yields the linear default.
+        ``super().next_phase(discussion)`` yields the linear default
+        (returning ``LINEAR_NEXT`` from an override works too).
+
+        Note: any ``method_state`` mutations made inside this hook are
+        committed even if ``advance_phase`` then rejects the transition
+        (unknown phase name or loop-guard trip) — the method ends, but
+        the mutated state is what gets persisted.
         """
         handler = self._active_handler(discussion)
         if handler is not None:
             choice = handler.next_phase(discussion)
             if choice != LINEAR_NEXT:
                 return choice
+        return self._linear_next(discussion)
+
+    def _linear_next(self, discussion: Discussion) -> Optional[str]:
+        """Return the successor of the current phase in ``default_phases``."""
         phases = self.default_phases
         current = self.current_phase(discussion)
         if not current:
@@ -198,6 +211,10 @@ class DiscussionMethod(ABC):
         the loop guard was exhausted.
         """
         target = self.next_phase(discussion)
+        if target == LINEAR_NEXT:
+            # A method-level override returned the sentinel instead of
+            # calling super().next_phase() — honor the intent.
+            target = self._linear_next(discussion)
         if target is None:
             return None
         phase = next((p for p in self.default_phases if p.name == target),
