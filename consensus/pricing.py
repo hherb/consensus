@@ -97,10 +97,12 @@ class PricingCache:
             input_mods = arch.get("input_modalities") or ["text"]
             input_modalities = ",".join(input_mods)
             context_length = m.get("context_length")
+            supported_parameters = ",".join(
+                m.get("supported_parameters") or [])
             if model_id:
                 rows.append((
                     model_id, prompt_cost, completion_cost, now,
-                    input_modalities, context_length,
+                    input_modalities, context_length, supported_parameters,
                 ))
 
         if not rows:
@@ -110,8 +112,8 @@ class PricingCache:
             self._conn.executemany(
                 "INSERT OR REPLACE INTO model_pricing "
                 "(model_id, prompt_cost, completion_cost, last_updated,"
-                " input_modalities, context_length) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                " input_modalities, context_length, supported_parameters) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
             self._conn.commit()
@@ -203,6 +205,27 @@ class PricingCache:
             return None
         return row.get("context_length")
 
+    def supports_tools(self, model_name: str,
+                       base_url: str = "") -> Optional[bool]:
+        """Check if a model supports native tool/function calling.
+
+        Uses the same fuzzy matching logic as ``lookup()`` and refreshes
+        the cache once if the model is unknown.  Returns True/False when
+        OpenRouter reports the model's supported parameters, or None
+        when the model — or its capability data — is unknown (local
+        models, rows cached before this column existed).
+        """
+        row = self._lookup_row(model_name, base_url)
+        if row is None and self.needs_refresh_for_model(model_name):
+            self.refresh()
+            row = self._lookup_row(model_name, base_url)
+        if row is None:
+            return None
+        params = (row.get("supported_parameters") or "").strip()
+        if not params:
+            return None
+        return "tools" in params.split(",")
+
     def _lookup_row(self, model_name: str,
                     base_url: str = "") -> Optional[dict]:
         """Look up the full model_pricing row for a model name.
@@ -216,7 +239,7 @@ class PricingCache:
         if alias:
             cur = self._conn.execute(
                 "SELECT model_id, prompt_cost, completion_cost, "
-                "input_modalities, context_length FROM model_pricing WHERE model_id = ?",
+                "input_modalities, context_length, supported_parameters FROM model_pricing WHERE model_id = ?",
                 (alias,),
             )
             row = cur.fetchone()
@@ -225,7 +248,7 @@ class PricingCache:
 
         cur = self._conn.execute(
             "SELECT model_id, prompt_cost, completion_cost, "
-            "input_modalities, context_length FROM model_pricing WHERE model_id = ?",
+            "input_modalities, context_length, supported_parameters FROM model_pricing WHERE model_id = ?",
             (model_name,),
         )
         row = cur.fetchone()
@@ -238,7 +261,7 @@ class PricingCache:
         for name in variants:
             cur = self._conn.execute(
                 "SELECT model_id, prompt_cost, completion_cost, "
-                "input_modalities, context_length FROM model_pricing "
+                "input_modalities, context_length, supported_parameters FROM model_pricing "
                 "WHERE model_id LIKE ?",
                 (f"%/{name}",),
             )
@@ -250,7 +273,7 @@ class PricingCache:
             for name in variants:
                 cur = self._conn.execute(
                     "SELECT model_id, prompt_cost, completion_cost, "
-                    "input_modalities, context_length FROM model_pricing "
+                    "input_modalities, context_length, supported_parameters FROM model_pricing "
                     "WHERE model_id LIKE ?",
                     (f"%/{name}%",),
                 )

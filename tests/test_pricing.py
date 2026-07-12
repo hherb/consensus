@@ -20,7 +20,8 @@ def pricing_cache(tmp_path):
         "CREATE TABLE IF NOT EXISTS model_pricing "
         "(model_id TEXT PRIMARY KEY, prompt_cost REAL NOT NULL DEFAULT 0, "
         "completion_cost REAL NOT NULL DEFAULT 0, last_updated REAL NOT NULL DEFAULT 0, "
-        "input_modalities TEXT DEFAULT 'text', context_length INTEGER)"
+        "input_modalities TEXT DEFAULT 'text', context_length INTEGER, "
+        "supported_parameters TEXT DEFAULT '')"
     )
     conn.commit()
     cache = PricingCache(conn, threading.Lock())
@@ -202,3 +203,36 @@ class TestGetContextLength:
         )
         pricing_cache._conn.commit()
         assert pricing_cache.get_context_length("no-ctx") is None
+
+
+def _insert_model_with_params(pricing_cache, model_id: str,
+                              supported: str) -> None:
+    pricing_cache._conn.execute(
+        "INSERT INTO model_pricing (model_id, prompt_cost, completion_cost,"
+        " last_updated, input_modalities, context_length,"
+        " supported_parameters) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (model_id, 0.0, 0.0, time.time(), "text", 8192, supported),
+    )
+    pricing_cache._conn.commit()
+
+
+class TestSupportsTools:
+    """Tool-capability lookups for structured methods (issue #23)."""
+
+    def test_true_when_tools_listed(self, pricing_cache):
+        _insert_model_with_params(
+            pricing_cache, "openai/gpt-4o", "temperature,tools,top_p")
+        assert pricing_cache.supports_tools("gpt-4o") is True
+
+    def test_false_when_tools_absent(self, pricing_cache):
+        _insert_model_with_params(
+            pricing_cache, "meta/plain-model", "temperature,top_p")
+        assert pricing_cache.supports_tools("plain-model") is False
+
+    def test_none_when_capability_data_empty(self, pricing_cache):
+        _insert_model_with_params(pricing_cache, "local/mystery-model", "")
+        assert pricing_cache.supports_tools("mystery-model") is None
+
+    def test_none_for_unknown_model(self, pricing_cache):
+        with patch.object(pricing_cache, "refresh", return_value=False):
+            assert pricing_cache.supports_tools("no-such-model") is None
