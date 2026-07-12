@@ -7,10 +7,11 @@ initialization.  Methods assemble ordered sequences of handlers.
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar
 
-from .base import LINEAR_NEXT, Phase, ProcessedResponse
+from .base import LINEAR_NEXT, OutputToolSpec, Phase, ProcessedResponse
 
 if TYPE_CHECKING:
     from ..models import Discussion, Entity
@@ -77,6 +78,48 @@ class PhaseHandler(ABC):
         Default: no transformation, no extracted data.
         """
         return ProcessedResponse(display_content=content)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    #: True when this handler forces structured output via a declared
+    #: output tool.  Read at setup time to require tool-capable models
+    #: (issue #23) — handlers that set it must return a spec from
+    #: ``get_output_tool``.
+    requires_structured_output: ClassVar[bool] = False
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec | None:
+        """Declare the forced output tool for this phase.
+
+        Return an ``OutputToolSpec`` to have AI turns in this phase
+        generated through a forced tool call (issue #23), or ``None``
+        (default) for ordinary free-text turns.
+        """
+        return None
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        """Semantically validate a structured-output payload.
+
+        Return ``""`` when the payload is acceptable, or a
+        human-readable error the model can act on — the turn generator
+        feeds it back and retries within the same conversation.
+        Default: accept everything.
+        """
+        return ""
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        """Handle a validated structured-output payload.
+
+        Counterpart of ``process_response`` for the forced-tool path:
+        write extracted data into ``discussion.method_state`` and build
+        the display content.  Default: render the payload as JSON.
+        """
+        return ProcessedResponse(
+            display_content=json.dumps(payload, indent=2))
 
     # ------------------------------------------------------------------
     # Phase lifecycle
