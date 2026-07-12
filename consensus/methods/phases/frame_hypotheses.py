@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ..base import Phase, ProcessedResponse
+from ..base import LINEAR_NEXT, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
 from ._belief_helpers import (
     DEFAULT_CONVERGENCE_THRESHOLD,
@@ -131,3 +131,38 @@ class FrameHypothesesHandler(PhaseHandler):
             )
             return True
         return False
+
+    def _gave_up(self, discussion: Discussion) -> bool:
+        """True if framing exhausted its attempts without hypotheses."""
+        state = discussion.method_state
+        return (not state.get("hypotheses")
+                and state.get("framing_attempts", 0) >= MAX_FRAMING_ATTEMPTS)
+
+    def next_phase(self, discussion: Discussion) -> str | None:
+        """Abort the method when framing gave up (issue #30).
+
+        Without hypotheses the remaining phases (prior/diffuse/diagnose)
+        are degenerate — they would prompt for probability distributions
+        over an empty list and burn API spend producing nothing usable.
+        """
+        if self._gave_up(discussion):
+            logger.warning(
+                "Framing gave up without hypotheses — ending the "
+                "Belief Diffusion method early",
+            )
+            return None
+        return LINEAR_NEXT
+
+    def get_method_complete_message(self, discussion: Discussion) -> str:
+        if not self._gave_up(discussion):
+            return ""
+        return (
+            "⚠️ **Belief Diffusion ended early.** The framing phase could "
+            f"not produce a parseable hypothesis list after "
+            f"{MAX_FRAMING_ATTEMPTS} attempts, so the belief-tracking "
+            "phases (prior beliefs, diffusion, diagnosis) were skipped — "
+            "they require a structured hypothesis set.  Consider "
+            "rephrasing the topic as a question with distinct possible "
+            "answers and starting a new discussion, or switching to "
+            "another method."
+        )

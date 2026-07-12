@@ -1,7 +1,7 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-13 (session: phase-machine loop support, branch
-`claude/handover-instructions-7598ab`)._
+_Last updated: 2026-07-13 (session: Belief Diffusion method-abort,
+branch `claude/handover-instructions-68ca24`)._
 
 This file briefs the next session(s) on what was done, what is in flight,
 and what to do next. Update it whenever a session materially changes the
@@ -15,38 +15,41 @@ plan; delete sections that are finished and no longer instructive.
   rotation resets on every phase transition (and survives reload), the
   Red Team description matches its single-pass behavior, and
   `ProcessedResponse.extracted_data` was removed.
-- **#22 phase-machine loop support** was implemented in this session
-  (**PR #35**): `DiscussionMethod.next_phase(discussion) -> str | None`
-  chooses the next phase by name; `PhaseHandler.next_phase` can return a
-  phase name (jump/loop), `None` (abort the method early), or the
-  `LINEAR_NEXT` sentinel (default linear order). `advance_phase` in
-  `consensus/methods/base.py` enforces a loop guard:
-  `max_phase_entries` per method, defaulting to
-  `len(default_phases) * MAX_PHASE_VISITS_PER_PHASE`. Transition count
-  lives in `method_state["_phase_entries"]`. 16 new tests in
-  `tests/test_phase_machine_loops.py`, including a full
-  diverge→converge→diverge cycle through the real `complete_turn`
-  pipeline. Existing linear methods are behaviorally unchanged.
+- **#22 phase-machine loop support** is **merged** (PR #35):
+  `DiscussionMethod.next_phase(discussion) -> str | None` chooses the
+  next phase by name; `PhaseHandler.next_phase` can return a phase name
+  (jump/loop), `None` (abort the method early), or the `LINEAR_NEXT`
+  sentinel (default linear order). `advance_phase` in
+  `consensus/methods/base.py` enforces a loop guard
+  (`max_phase_entries`, counter in `method_state["_phase_entries"]`).
+- **#30 Belief Diffusion method-abort** was implemented in this session
+  (branch `claude/handover-instructions-68ca24`, PR pending merge):
+  `FrameHypothesesHandler.next_phase` returns `None` when
+  `MAX_FRAMING_ATTEMPTS` is exhausted with no parsed hypotheses, so the
+  method ends instead of running prior/diffuse/diagnose against an
+  empty hypothesis list. A new hook,
+  `get_method_complete_message(discussion) -> str`
+  (`PhaseHandler` default `""`, `DiscussionMethod` delegates to the
+  active handler), lets the ending phase post a user-facing system
+  message; `complete_turn` posts it just before returning
+  `method_complete`. `BeliefDiffusion.get_conclusion_prompt` now returns
+  an honest failure-summary prompt when `hypotheses` is empty (the
+  frontend auto-concludes on `method_complete`). 12 new tests in
+  `tests/test_belief_diffusion_abort.py`, including the exhausted-framing
+  path through the real `complete_turn` pipeline.
 
 ## Next steps, in order
 
-1. **Merge PR #35 (#22 loop support).** Everything below can build on
-   the `next_phase` hook once it lands.
+1. **Merge the #30 PR** (from branch
+   `claude/handover-instructions-68ca24`).
 
-2. **#30 Belief Diffusion method-abort** — now unblocked by #22: give
-   the framing phase's handler a `next_phase` override that returns
-   `None` when `MAX_FRAMING_ATTEMPTS` is exhausted and no hypotheses
-   were parsed, so the method ends (`method_complete`) instead of
-   running prior/diffuse/diagnose against an empty hypothesis list.
-   Acceptance criterion is on the issue.
-
-3. **#23 function-calling for structured outputs** — phases declare an
+2. **#23 function-calling for structured outputs** — phases declare an
    output tool (`submit_estimate`, `submit_ratings`, ...) enforced via
    `ai_client.complete_with_tools()`. Per the owner decision below,
    tool-capable models may be required; surface a setup-time error
    rather than silently degrading.
 
-4. **New methods (highest value first):**
+3. **New methods (highest value first):**
    - **#24 Nominal Group Technique** — structured brainstorming; ~80% of
      phases exist as reusable handlers (Delphi anonymisation, list
      parsing/dedup, voting/tally). The catalog currently has no
@@ -59,7 +62,7 @@ plan; delete sections that are finished and no longer instructive.
    - **#26 Tree-of-Thoughts** — generate/score/prune/expand; the #22
      `next_phase` hook it needed now exists.
 
-5. **Cross-cutting quality:**
+4. **Cross-cutting quality:**
    - **#28 evidence-gated phases** — opt-in `require_citations` so
      evidence phases must ground claims via the existing RAG/web tools.
    - **#29 same-model-panel warning** for Delphi/Belief Diffusion.

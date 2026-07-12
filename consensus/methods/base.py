@@ -326,6 +326,19 @@ class DiscussionMethod(ABC):
             f"{new_phase.description}"
         )
 
+    def get_method_complete_message(self, discussion: Discussion) -> str:
+        """Return a system message announcing the end of the method.
+
+        Called by the flow when ``advance_phase`` returns ``None`` —
+        both normal completion and an early abort.  Delegates to the
+        handler of the phase the method ended in.  Default: empty
+        string (no message posted).
+        """
+        handler = self._active_handler(discussion)
+        if handler is not None:
+            return handler.get_method_complete_message(discussion)
+        return ""
+
     # ------------------------------------------------------------------
     # Response post-processing
     # ------------------------------------------------------------------

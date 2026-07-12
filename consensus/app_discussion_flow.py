@@ -538,7 +538,20 @@ async def complete_turn(
                         turn_number=discussion.turn_number,
                     )
             else:
-                # All phases exhausted
+                # Method ended: linear order exhausted, or a next_phase
+                # hook aborted it early.  Post the method's explanation
+                # (if any) so the user learns WHY it ended (issue #30).
+                end_msg = method.get_method_complete_message(discussion)
+                if end_msg and mod:
+                    sys_msg = Message(
+                        entity_id=mod.id, entity_name=mod.name,
+                        content=end_msg, role=MessageRole.SYSTEM,
+                    )
+                    discussion.messages.append(sys_msg)
+                    db.add_message(
+                        discussion.id, mod.id, end_msg, "system",
+                        turn_number=discussion.turn_number,
+                    )
                 if discussion.id:
                     stamp_turn_index(discussion)
                     db.update_discussion(

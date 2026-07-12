@@ -69,9 +69,32 @@ class BeliefDiffusion(DiscussionMethod):
     # ------------------------------------------------------------------
 
     def get_conclusion_prompt(self, discussion: Discussion) -> str:
-        """Return the diagnosis/conclusion prompt."""
+        """Return the diagnosis/conclusion prompt.
+
+        When framing gave up without hypotheses (issue #30 — the method
+        was aborted early), the standard belief-trajectory diagnosis is
+        meaningless; ask for an honest failure summary instead.
+        """
         state = discussion.method_state
         hypotheses = state.get("hypotheses", [])
+
+        if not hypotheses:
+            return (
+                "This Belief State Diffusion discussion ended early: the "
+                "framing phase could not decompose the topic into a "
+                "parseable list of competing hypotheses, so no belief "
+                "tracking took place.\n\n"
+                "Provide a brief conclusion that:\n"
+                "1. States plainly that the method could not be applied "
+                "to this topic as framed.\n"
+                "2. Summarises anything of value from the framing "
+                "attempts.\n"
+                "3. Suggests how the topic could be rephrased (a question "
+                "with distinct, competing possible answers), or which "
+                "other discussion method might suit it better.\n\n"
+                "Do NOT invent hypotheses, probabilities, or convergence "
+                "results — none exist."
+            )
 
         trajectory = build_trajectory_summary(discussion)
 
