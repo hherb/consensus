@@ -124,6 +124,16 @@ class PhaseHandler(ABC):
             f"\n\n{self.phase.description}"
         )
 
+    def get_method_complete_message(self, discussion: Discussion) -> str:
+        """Return a system message posted when the method ends in this phase.
+
+        Called for both normal completion (linear order exhausted) and
+        early abort (``next_phase`` returned ``None``).  Default: empty
+        string (no message posted).  Handlers that can abort the method
+        should override this to explain why to the user.
+        """
+        return ""
+
     # ------------------------------------------------------------------
     # Round lifecycle
     # ------------------------------------------------------------------

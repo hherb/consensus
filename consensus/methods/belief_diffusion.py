@@ -22,7 +22,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .base import DiscussionMethod
-from .phases.frame_hypotheses import FrameHypothesesHandler
+from .phases.frame_hypotheses import (
+    MAX_FRAMING_ATTEMPTS,
+    FrameHypothesesHandler,
+)
 from .phases.prior_beliefs import PriorBeliefsHandler
 from .phases.diffuse_beliefs import DiffuseBeliefsHandler
 from .phases.diagnose_beliefs import DiagnoseHandler
@@ -69,9 +72,46 @@ class BeliefDiffusion(DiscussionMethod):
     # ------------------------------------------------------------------
 
     def get_conclusion_prompt(self, discussion: Discussion) -> str:
-        """Return the diagnosis/conclusion prompt."""
+        """Return the diagnosis/conclusion prompt.
+
+        When framing gave up without hypotheses (issue #30 — the method
+        was aborted early), the standard belief-trajectory diagnosis is
+        meaningless; ask for an honest failure summary instead.
+        """
         state = discussion.method_state
         hypotheses = state.get("hypotheses", [])
+
+        if not hypotheses:
+            # Distinguish a genuine framing failure (attempts exhausted)
+            # from a user concluding mid-framing with attempts remaining.
+            gave_up = (state.get("framing_attempts", 0)
+                       >= MAX_FRAMING_ATTEMPTS)
+            if gave_up:
+                opening = (
+                    "This Belief State Diffusion discussion ended early: "
+                    "the framing phase could not decompose the topic into "
+                    "a parseable list of competing hypotheses, so no "
+                    "belief tracking took place."
+                )
+            else:
+                opening = (
+                    "This Belief State Diffusion discussion was concluded "
+                    "before the framing phase produced a hypothesis list, "
+                    "so no belief tracking took place."
+                )
+            return (
+                f"{opening}\n\n"
+                "Provide a brief conclusion that:\n"
+                "1. States plainly that the method was not applied "
+                "to this topic.\n"
+                "2. Summarises anything of value from the framing "
+                "discussion so far.\n"
+                "3. Suggests how the topic could be rephrased (a question "
+                "with distinct, competing possible answers), or which "
+                "other discussion method might suit it better.\n\n"
+                "Do NOT invent hypotheses, probabilities, or convergence "
+                "results — none exist."
+            )
 
         trajectory = build_trajectory_summary(discussion)
 
