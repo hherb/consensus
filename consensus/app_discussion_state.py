@@ -124,6 +124,21 @@ def load_discussion(
             current_turn_index = (last_idx + 1) % len(turn_order)
         turn_number = max(turn_number, 1)
 
+        # Prefer the stamped live index over the heuristic when it is
+        # provably fresh.  A mid-round phase transition resets the
+        # rotation to index 0 without changing the order (issue #19),
+        # which the last-speaker heuristic cannot see and would undo.
+        # The stamp is fresh iff no participant message was recorded
+        # after ``complete_turn`` wrote it.
+        saved_idx = method_state.get("_turn_index")
+        saved_turn = method_state.get("_turn_index_turn")
+        if (isinstance(saved_idx, int) and isinstance(saved_turn, int)
+                and 0 <= saved_idx < len(turn_order)):
+            last_participant_turn = db.get_max_turn_number(
+                discussion_id, role="participant")
+            if saved_turn == last_participant_turn + 1:
+                current_turn_index = saved_idx
+
     # Restore member roles from DB
     member_roles = {
         m["entity_id"]: m.get("participant_role", "standard")

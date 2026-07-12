@@ -104,7 +104,6 @@ class TestDelegation:
         result = method.process_response("hello", entity, discussion)
         assert result.display_content == "[alpha] hello"
         assert discussion.method_state["alpha_data"] == ["hello"]
-        assert discussion.method_state["alpha_data"] == ["hello"]
 
     def test_should_advance_delegates(self, method, discussion):
         discussion.method_state["phase_round"] = 1
