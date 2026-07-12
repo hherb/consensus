@@ -97,10 +97,7 @@ class DecomposeHandler(PhaseHandler):
                     existing.append(sq)
             state["sub_questions"] = existing
 
-        return ProcessedResponse(
-            display_content=content,
-            extracted_data={"new_sub_questions": new_sqs},
-        )
+        return ProcessedResponse(display_content=content)
 
     def should_advance(self, discussion: Discussion) -> bool:
         state = discussion.method_state

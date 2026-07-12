@@ -181,10 +181,7 @@ class DistillSkeletonHandler(PhaseHandler):
             len(parsed["inferences"]),
             len(parsed["conclusions"]),
         )
-        return ProcessedResponse(
-            display_content=content,
-            extracted_data={"skeleton": parsed},
-        )
+        return ProcessedResponse(display_content=content)
 
     def should_advance(self, discussion: Discussion) -> bool:
         state = discussion.method_state

@@ -110,10 +110,7 @@ class HypothesizeHandler(PhaseHandler):
                     existing.append(h)
             state["hypotheses"] = existing
 
-        return ProcessedResponse(
-            display_content=content,
-            extracted_data={"new_hypotheses": new_hyps},
-        )
+        return ProcessedResponse(display_content=content)
 
     # ------------------------------------------------------------------
     # Phase advancement

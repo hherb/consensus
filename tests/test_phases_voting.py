@@ -429,7 +429,7 @@ class TestVoteHandler:
         assert len(disc.method_state["votes"]) == 1
         assert disc.method_state["votes"][0]["vote"] == "for"
         assert disc.method_state["votes"][0]["entity_id"] == entity.id
-        assert result.extracted_data["votes_cast"] == 1
+        assert "**Votes cast:** 1" in result.display_content
 
     def test_process_response_invalid_vote_value(self):
         disc = _init_discussion()
@@ -441,7 +441,7 @@ class TestVoteHandler:
         content = '```json\n{"vote": "maybe", "motion_id": 1}\n```'
         result = self.handler.process_response(content, entity, disc)
         assert len(disc.method_state["votes"]) == 0
-        assert result.extracted_data["votes_cast"] == 0
+        assert "Votes cast" not in result.display_content
 
     def test_process_response_invalid_motion_id(self):
         disc = _init_discussion()

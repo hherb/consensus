@@ -26,8 +26,7 @@ class AlphaHandler(PhaseHandler):
 
     def process_response(self, content, entity, discussion):
         discussion.method_state.setdefault("alpha_data", []).append(content)
-        return ProcessedResponse(display_content=content,
-                                 extracted_data={"added": content})
+        return ProcessedResponse(display_content=f"[alpha] {content}")
 
     def get_transition_message(self, discussion):
         return "Entering Alpha phase."
@@ -103,7 +102,8 @@ class TestDelegation:
 
     def test_process_response_delegates(self, method, entity, discussion):
         result = method.process_response("hello", entity, discussion)
-        assert result.extracted_data == {"added": "hello"}
+        assert result.display_content == "[alpha] hello"
+        assert discussion.method_state["alpha_data"] == ["hello"]
         assert discussion.method_state["alpha_data"] == ["hello"]
 
     def test_should_advance_delegates(self, method, discussion):

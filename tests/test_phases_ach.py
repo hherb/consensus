@@ -92,7 +92,6 @@ class TestHypothesizeHandler:
         assert len(hypotheses) == 3
         assert "Economic decline" in hypotheses[0]
         assert isinstance(result, ProcessedResponse)
-        assert result.extracted_data.get("new_hypotheses")
 
     def test_process_response_deduplicates(
             self, hypothesize_handler, ai_entity, disc):
@@ -196,7 +195,7 @@ class TestGatherEvidenceHandler:
         assert evidence[0]["contributor"] == "TestAI"
         assert evidence[0]["contributor_id"] == 1
         assert "Maddison" in evidence[0]["source"]
-        assert result.extracted_data["evidence_count"] == 2
+        assert result.display_content == content
 
     def test_process_response_extracts_numbered_fallback(
             self, evidence_handler, ai_entity, disc):
@@ -208,7 +207,7 @@ class TestGatherEvidenceHandler:
         evidence = disc.method_state["evidence"]
         assert len(evidence) == 2
         assert evidence[0]["id"] == 1
-        assert result.extracted_data["evidence_count"] == 2
+        assert result.display_content == content
 
     def test_process_response_assigns_auto_increment_ids(
             self, evidence_handler, ai_entity, ai_entity2, disc):
@@ -289,7 +288,6 @@ class TestEvaluateMatrixHandler:
         assert disc.method_state["matrix"]["1"]["H1"]["E1"] == "+"
         assert disc.method_state["matrix"]["1"]["H1"]["E2"] == "-"
         assert "Rating Matrix" in result.display_content
-        assert result.extracted_data["ratings"] is not None
 
     def test_process_response_parses_unfenced_json_block(
             self, evaluate_handler, ai_entity, disc):

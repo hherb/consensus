@@ -112,10 +112,7 @@ class DiffuseBeliefsHandler(PhaseHandler):
             )
             display = content
 
-        return ProcessedResponse(
-            display_content=display,
-            extracted_data={"beliefs": beliefs} if beliefs else {},
-        )
+        return ProcessedResponse(display_content=display)
 
     def should_advance(self, discussion: Discussion) -> bool:
         state = discussion.method_state

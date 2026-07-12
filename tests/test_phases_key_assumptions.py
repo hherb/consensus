@@ -81,7 +81,6 @@ class TestSurfaceAssumptionsHandler:
         assert len(assumptions) == 3
         assert "market" in assumptions[0].lower()
         assert isinstance(result, ProcessedResponse)
-        assert result.extracted_data.get("new_assumptions")
 
     def test_process_response_deduplicates(self, surface_handler,
                                             ai_entity, disc):

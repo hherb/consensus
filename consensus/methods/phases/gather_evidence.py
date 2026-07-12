@@ -114,10 +114,7 @@ class GatherEvidenceHandler(PhaseHandler):
             state.setdefault("evidence", []).append(item)
             state["next_evidence_id"] = eid + 1
 
-        return ProcessedResponse(
-            display_content=content,
-            extracted_data={"evidence_count": len(evidence_items)},
-        )
+        return ProcessedResponse(display_content=content)
 
     # ------------------------------------------------------------------
     # Transition message

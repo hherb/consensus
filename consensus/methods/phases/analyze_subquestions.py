@@ -86,7 +86,4 @@ class AnalyzeSubquestionsHandler(PhaseHandler):
                 "analysis": analysis_text,
             })
 
-        return ProcessedResponse(
-            display_content=content,
-            extracted_data={"analyses_extracted": len(extractions)},
-        )
+        return ProcessedResponse(display_content=content)

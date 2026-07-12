@@ -331,19 +331,19 @@ class TestPriorBeliefsHandler:
         content = '```json\n{"beliefs": {"H1": 0.6, "H2": 0.4}}\n```\nMy reasoning.'
         result = handler.process_response(content, entity, discussion)
         assert "**Belief Distribution:**" in result.display_content
-        assert result.extracted_data == {"beliefs": {"H1": 0.6, "H2": 0.4}}
         # Check stored in history
         history = discussion.method_state["belief_history"]
         assert len(history) == 1
         assert history[0]["round"] == 0
         assert history[0]["entity_id"] == entity.id
+        assert history[0]["beliefs"] == {"H1": 0.6, "H2": 0.4}
 
     def test_process_response_no_beliefs(self, entity, discussion):
         handler = PriorBeliefsHandler()
         content = "I have no structured beliefs to share."
         result = handler.process_response(content, entity, discussion)
         assert result.display_content == content
-        assert result.extracted_data == {}
+        assert not discussion.method_state.get("belief_history")
 
     def test_should_advance_before_round(self, discussion):
         handler = PriorBeliefsHandler()

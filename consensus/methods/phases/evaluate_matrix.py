@@ -120,10 +120,7 @@ class EvaluateMatrixHandler(PhaseHandler):
             )
             display = content
 
-        return ProcessedResponse(
-            display_content=display,
-            extracted_data={"ratings": ratings},
-        )
+        return ProcessedResponse(display_content=display)
 
     # ------------------------------------------------------------------
     # Phase advancement

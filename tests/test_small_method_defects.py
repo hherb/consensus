@@ -3,11 +3,15 @@
 Covers: Delphi panelist-label consistency and anonymisation robustness,
 zero-median convergence, triage method-name word-boundary matching,
 no-motion vote phase skipping, the ACH inline-ratings fallback parser,
-and sub-question analysis attribution by header number.
+and sub-question analysis attribution by header number.  Also the
+``ProcessedResponse`` contract slimming (issue #21).
 """
+
+import dataclasses
 
 import pytest
 
+from consensus.methods.base import ProcessedResponse
 from consensus.methods.phases._decomposition_helpers import (
     extract_subquestion_analyses,
 )
@@ -195,3 +199,17 @@ class TestSubquestionAttribution:
         result = extract_subquestion_analyses(content, 2)
         assert "First analysis" in result[0]
         assert "Second analysis" in result[1]
+
+
+class TestProcessedResponseContract:
+    """ProcessedResponse must not offer a decoy data channel (issue #21).
+
+    The flow layer only ever consumed ``display_content``; handlers own
+    their state writes via ``discussion.method_state``.  An
+    ``extracted_data`` field would invite new handlers to return data
+    that is silently dropped.
+    """
+
+    def test_no_extracted_data_field(self):
+        field_names = {f.name for f in dataclasses.fields(ProcessedResponse)}
+        assert field_names == {"display_content"}

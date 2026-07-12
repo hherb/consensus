@@ -99,10 +99,7 @@ class SurfaceAssumptionsHandler(PhaseHandler):
                 if not any(word_overlap_similar(a, e) for e in existing):
                     existing.append(a)
             state["assumptions"] = existing
-        return ProcessedResponse(
-            display_content=content,
-            extracted_data={"new_assumptions": new_assumptions},
-        )
+        return ProcessedResponse(display_content=content)
 
     # ------------------------------------------------------------------
     # Phase advancement

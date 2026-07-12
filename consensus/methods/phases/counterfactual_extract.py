@@ -150,10 +150,7 @@ class ExtractClaimsHandler(PhaseHandler):
         ]
 
         logger.info("Extracted %d claims for stress testing", len(claims))
-        return ProcessedResponse(
-            display_content=content,
-            extracted_data={"claims": claims},
-        )
+        return ProcessedResponse(display_content=content)
 
     def should_advance(self, discussion: Discussion) -> bool:
         state = discussion.method_state

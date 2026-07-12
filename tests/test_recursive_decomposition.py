@@ -178,7 +178,7 @@ class TestIntegrateHandler:
         disc.method_state = {}
         result = handler.process_response("Prose integration.", ai_entity, disc)
         assert result.display_content == "Prose integration."
-        assert result.extracted_data == {}
+        assert disc.method_state == {}
 
 
 class TestRecomposeHandler:
@@ -207,7 +207,7 @@ class TestRecomposeHandler:
         disc.method_state = {}
         result = handler.process_response("My synthesis.", ai_entity, disc)
         assert result.display_content == "My synthesis."
-        assert result.extracted_data == {}
+        assert disc.method_state == {}
 
 
 class TestRecursiveDecompositionMethod:

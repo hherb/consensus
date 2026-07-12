@@ -114,10 +114,7 @@ class StressTestHandler(PhaseHandler):
         if score is not None and idx < len(claim_results):
             claim_results[idx]["scores"][entity.name] = score
 
-        return ProcessedResponse(
-            display_content=content,
-            extracted_data={"impact_score": score},
-        )
+        return ProcessedResponse(display_content=content)
 
     def should_advance(self, discussion: Discussion) -> bool:
         state = discussion.method_state

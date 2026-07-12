@@ -230,17 +230,18 @@ class TestEstimateHandler:
         content = '```json\n{"estimate": 0.75, "confidence": "HIGH", "unit": "prob"}\n```\nMy reasoning.'
         result = handler.process_response(content, entity, discussion)
         assert "**Estimate:** 0.75" in result.display_content
-        assert result.extracted_data["estimate"] == 0.75
         # Check stored in state
-        assert len(discussion.method_state["estimates"]) == 1
-        assert discussion.method_state["estimates"][0]["round"] == 0
+        estimates = discussion.method_state["estimates"]
+        assert len(estimates) == 1
+        assert estimates[0]["round"] == 0
+        assert estimates[0]["value"] == 0.75
 
     def test_process_response_no_estimate(self, entity, discussion):
         handler = EstimateHandler()
         content = "I have no numeric answer."
         result = handler.process_response(content, entity, discussion)
         assert result.display_content == content
-        assert result.extracted_data == {}
+        assert not discussion.method_state.get("estimates")
 
     def test_should_advance_after_round(self, discussion):
         handler = EstimateHandler()
@@ -281,8 +282,9 @@ class TestReviseDelphiHandler:
         discussion.method_state["revise_round"] = 2
         content = '```json\n{"estimate": 0.80, "confidence": "HIGH", "unit": "prob"}\n```\nRevised.'
         result = handler.process_response(content, entity, discussion)
-        assert result.extracted_data["estimate"] == 0.80
+        assert "0.80" in result.display_content
         stored = discussion.method_state["estimates"][-1]
+        assert stored["value"] == 0.80
         assert stored["round"] == 3  # revise_round + 1
 
     def test_should_advance_on_convergence(self, discussion):

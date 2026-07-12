@@ -190,10 +190,7 @@ class BlindEvaluateHandler(PhaseHandler):
             )
             display = content
 
-        return ProcessedResponse(
-            display_content=display,
-            extracted_data={"validity_scores": scores, "overall": overall},
-        )
+        return ProcessedResponse(display_content=display)
 
     # ------------------------------------------------------------------
     # Transition
