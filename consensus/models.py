@@ -230,6 +230,10 @@ class Discussion:
     messages: list[Message] = field(default_factory=list)
     storyboard: list[StoryboardEntry] = field(default_factory=list)
     turn_order: list[int] = field(default_factory=list)
+    # Full eligible rotation roster from setup (never narrowed by phases).
+    # Method get_turn_order hooks derive per-phase orders from this, so one
+    # phase's narrowing cannot cascade into the next (issue #13).
+    base_turn_order: list[int] = field(default_factory=list)
     current_turn_index: int = 0
     turn_number: int = 0
     max_rounds: int = 0  # 0 = unlimited

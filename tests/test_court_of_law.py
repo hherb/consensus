@@ -250,17 +250,12 @@ class TestHuddle:
         disc.method_state[key] = init_huddle_state()
         huddle = disc.method_state[key]
 
-        # First advance: 2 plaintiffs → huddle round 1
+        # First round completes: 2 plaintiffs → stay in huddle
         advance_huddle_state(disc, key)
         assert huddle["sub_state"] == "accusation_huddle"
         assert huddle["huddle_round"] == 1
 
-        # Second advance: huddle round 2
-        advance_huddle_state(disc, key)
-        assert huddle["sub_state"] == "accusation_huddle"
-        assert huddle["huddle_round"] == 2
-
-        # Third advance: max rounds reached → speaks
+        # Second round completes: max rounds reached → speaks
         advance_huddle_state(disc, key)
         assert huddle["sub_state"] == "accusation_speaks"
 
@@ -273,8 +268,7 @@ class TestHuddle:
 
         # Accusation huddle (2 members: 2 rounds)
         advance_huddle_state(disc, key)  # round 1
-        advance_huddle_state(disc, key)  # round 2
-        advance_huddle_state(disc, key)  # → accusation_speaks
+        advance_huddle_state(disc, key)  # round 2 → accusation_speaks
         assert huddle["sub_state"] == "accusation_speaks"
 
         # Accusation speaks → defense huddle

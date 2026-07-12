@@ -37,16 +37,36 @@ class FramePremortemHandler(PhaseHandler):
         return {"conclusion": ""}
 
     # ------------------------------------------------------------------
+    # Turn order — moderator only
+    # ------------------------------------------------------------------
+
+    def get_turn_order(self, entity_ids: list[int],
+                       discussion: Discussion) -> list[int]:
+        """Only the moderator speaks during framing."""
+        return [discussion.moderator_id]
+
+    # ------------------------------------------------------------------
     # Prompts
     # ------------------------------------------------------------------
 
     def get_system_prompt(self, entity: Entity,
                           discussion: Discussion) -> str:
-        return ""  # moderator handles framing
+        return (
+            "You are the moderator framing a Premortem Analysis.\n"
+            f"Topic: {discussion.topic}\n\n"
+            "Your task is to state the plan, decision, or preliminary "
+            "conclusion that the group will subject to premortem "
+            "analysis.  Participants will then imagine it has already "
+            "failed and work backwards to identify failure causes."
+        )
 
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
-        return ""
+        return (
+            "State the plan or preliminary conclusion to be analysed, "
+            "in one clear paragraph.  Be specific about what success "
+            "would look like — the premortem will imagine its failure."
+        )
 
     # ------------------------------------------------------------------
     # Response processing

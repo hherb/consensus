@@ -104,6 +104,19 @@ class PriorBeliefsHandler(PhaseHandler):
 
     def get_transition_message(self, discussion: Discussion) -> str:
         hypotheses = discussion.method_state.get("hypotheses", [])
+        if not hypotheses:
+            # Framing gave up without a parseable hypothesis list — say so
+            # instead of announcing an empty list (golden rule: caught
+            # errors must be shown to the user).
+            return (
+                f"**Phase: {self.phase.display_name}**\n\n"
+                "⚠️ **Warning:** The framing phase could not produce a "
+                "parseable hypothesis list, so this Belief Diffusion run "
+                "has no structured hypothesis set.  Belief tracking and "
+                "convergence detection will be unavailable.  Consider "
+                "concluding this discussion and restarting it, or switching "
+                "to another method."
+            )
         hyp_list = "\n".join(f"  **H{i+1}:** {h}"
                              for i, h in enumerate(hypotheses))
         return (

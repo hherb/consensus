@@ -159,9 +159,9 @@ class TestBeliefDiffusion:
         disc.method_state = method.init_state(disc)
         disc.method_state["hypotheses"] = ["Safe", "Dangerous"]
 
-        # Frame phase — empty (moderator handles)
+        # Frame phase — moderator-only framing instructions
         disc.method_state["current_phase"] = "frame"
-        assert method.get_system_prompt(ai_entity, disc) == ""
+        assert "hypotheses" in method.get_system_prompt(ai_entity, disc).lower()
 
         # Prior phase — instructs belief output
         disc.method_state["current_phase"] = "prior"
@@ -740,7 +740,13 @@ class TestDelphi:
 
     def test_distribution_summary(self):
         method = get_method("delphi")
-        disc = Discussion(topic="test", discussion_method="delphi")
+        disc = Discussion(
+            topic="test", discussion_method="delphi",
+            entities=[
+                Entity(id=1, name="A", entity_type=EntityType.AI),
+                Entity(id=2, name="B", entity_type=EntityType.AI),
+            ],
+        )
         disc.method_state = method.init_state(disc)
         disc.method_state["estimates"] = [
             {"round": 0, "entity_id": 1, "entity_name": "A",
