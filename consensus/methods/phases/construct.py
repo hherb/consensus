@@ -35,7 +35,6 @@ class ConstructHandler(PhaseHandler):
     def init_state(self, discussion: Discussion) -> dict:
         return {
             "red_team_entity_id": None,
-            "red_team_rotation": 0,
             "attacks": [],
         }
 
@@ -76,7 +75,7 @@ class ConstructHandler(PhaseHandler):
 
         if is_red:
             return base + (
-                "You are the RED TEAM this round.  You are SILENT "
+                "You are the RED TEAM for this analysis.  You are SILENT "
                 "during the construction phase.  Wait for your turn "
                 "to attack."
             )

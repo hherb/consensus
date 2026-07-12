@@ -67,8 +67,11 @@ class TestConstructHandler:
     def test_init_state(self, construct_handler, disc):
         state = construct_handler.init_state(disc)
         assert state["red_team_entity_id"] is None
-        assert state["red_team_rotation"] == 0
         assert state["attacks"] == []
+        # The method runs a single pass with one fixed attacker; a
+        # rotation counter would be dead state promising otherwise
+        # (issue #20).
+        assert "red_team_rotation" not in state
 
     def test_turn_order_assigns_red_team_if_none(self, construct_handler, disc):
         assert disc.method_state["red_team_entity_id"] is None
@@ -264,8 +267,19 @@ class TestRedTeamEquivalence:
         assert state["current_phase"] == "construct"
         assert state["phase_round"] == 1
         assert state["red_team_entity_id"] is None
-        assert state["red_team_rotation"] == 0
+        assert "red_team_rotation" not in state
         assert state["attacks"] == []
+
+    def test_description_does_not_promise_rotation(self):
+        """The description must match the single-pass behavior (issue #20).
+
+        The method runs one construct→attack→revise→assess pass with a
+        single fixed attacker.  Promising a rotating Red Team role misleads
+        both users and the LLM-based method recommender.
+        """
+        method = get_method("red_team")
+        for text in (method.description, type(method).__doc__ or ""):
+            assert "rotat" not in text.lower()
 
     def test_has_four_phases(self):
         method = get_method("red_team")

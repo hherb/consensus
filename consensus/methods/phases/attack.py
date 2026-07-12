@@ -132,7 +132,7 @@ class AttackHandler(PhaseHandler):
                 break
         return (
             f"**Phase: {self.phase.display_name}**\n\n"
-            f"**{red_name}** is the Red Team this round.  "
+            f"**{red_name}** is the Red Team.  "
             "They will attack the Blue Team's position, then the "
             "Blue Team will defend."
         )
