@@ -16,7 +16,7 @@ plan; delete sections that are finished and no longer instructive.
   Red Team description matches its single-pass behavior, and
   `ProcessedResponse.extracted_data` was removed.
 - **#22 phase-machine loop support** was implemented in this session
-  (this branch): `DiscussionMethod.next_phase(discussion) -> str | None`
+  (**PR #35**): `DiscussionMethod.next_phase(discussion) -> str | None`
   chooses the next phase by name; `PhaseHandler.next_phase` can return a
   phase name (jump/loop), `None` (abort the method early), or the
   `LINEAR_NEXT` sentinel (default linear order). `advance_phase` in
@@ -30,8 +30,8 @@ plan; delete sections that are finished and no longer instructive.
 
 ## Next steps, in order
 
-1. **Merge this branch's PR (#22 loop support).** Everything below can
-   build on the `next_phase` hook once it lands.
+1. **Merge PR #35 (#22 loop support).** Everything below can build on
+   the `next_phase` hook once it lands.
 
 2. **#30 Belief Diffusion method-abort** — now unblocked by #22: give
    the framing phase's handler a `next_phase` override that returns
