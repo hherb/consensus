@@ -252,10 +252,10 @@ class TestFrameHypothesesHandler:
         prompt = handler.get_system_prompt(entity, discussion)
         assert "hypotheses" in prompt.lower()
 
-    def test_turn_prompt_asks_for_numbered_list(self, entity, discussion):
+    def test_turn_prompt_asks_for_submit_tool(self, entity, discussion):
         handler = FrameHypothesesHandler()
         prompt = handler.get_turn_prompt(entity, discussion)
-        assert "NUMBERED LIST" in prompt
+        assert "submit_hypotheses" in prompt
 
     def test_turn_order_is_moderator_only(self, discussion):
         handler = FrameHypothesesHandler()
@@ -504,10 +504,10 @@ class TestBeliefDiffusionIntegration:
         prompt = method.get_system_prompt(entity, discussion)
         assert "hypotheses" in prompt.lower()
 
-    def test_frame_turn_prompt_asks_for_numbered_list(self, method, entity,
-                                                      discussion):
+    def test_frame_turn_prompt_asks_for_submit_tool(self, method, entity,
+                                                    discussion):
         prompt = method.get_turn_prompt(entity, discussion)
-        assert "NUMBERED LIST" in prompt
+        assert "submit_hypotheses" in prompt
 
     def test_prior_system_prompt(self, method, entity, discussion):
         discussion.method_state["current_phase"] = "prior"

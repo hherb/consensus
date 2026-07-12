@@ -29,6 +29,33 @@ BELIEF_BAR_WIDTH = 30
 # Minimum character length for a parsed hypothesis to be kept
 MIN_HYPOTHESIS_LENGTH = 5
 
+# Acceptable hypothesis-count bounds for structured framing (the
+# prompt asks for 3-5; validation is slightly tolerant).
+MIN_HYPOTHESES = 2
+MAX_HYPOTHESES = 6
+
+#: JSON Schema for the submit_hypotheses output tool (issue #23).
+HYPOTHESES_TOOL_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "hypotheses": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 3,
+            "maxItems": 5,
+            "description": ("3-5 competing, mutually exclusive "
+                            "hypotheses that together cover the "
+                            "plausible answer space."),
+        },
+        "rationale": {
+            "type": "string",
+            "description": ("Brief explanation of how the hypotheses "
+                            "partition the answer space."),
+        },
+    },
+    "required": ["hypotheses"],
+}
+
 
 def extract_beliefs(content: str) -> dict[str, float]:
     """Parse a belief JSON block from the response content."""
