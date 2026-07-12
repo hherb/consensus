@@ -798,7 +798,7 @@ class TestDelphi:
 
         prompt = method.get_system_prompt(ai_entity, disc)
         assert "independent" in prompt.lower()
-        assert "json" in prompt.lower()
+        assert "submit_estimate" in prompt
         assert "estimate" in prompt.lower()
 
     def test_summary_prompt_preserves_anonymity(self):

@@ -10,14 +10,18 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
 from ._delphi_helpers import (
+    ESTIMATE_TOOL_PARAMETERS,
     MAX_REVISE_ROUNDS,
     anonymise_content,
     build_distribution_summary,
     check_convergence,
     extract_estimate,
+    format_estimate_bar,
+    record_estimate,
+    validate_estimate_payload,
 )
 
 if TYPE_CHECKING:
@@ -60,14 +64,9 @@ class ReviseDelphiHandler(PhaseHandler):
             f"Here is the group's distribution from the previous "
             f"round (anonymised):\n{summary}\n\n"
             "Review the distribution and anonymised reasoning.  Then "
-            "provide your REVISED estimate.\n\n"
-            "You MUST include a JSON block:\n"
-            "```json\n"
-            '{"estimate": <number_or_probability>, '
-            '"confidence": "<HIGH/MEDIUM/LOW>", '
-            '"unit": "<what the number represents>"}\n'
-            "```\n\n"
-            "Explain:\n"
+            "provide your REVISED estimate by calling the "
+            "submit_estimate tool.\n\n"
+            "In the 'reasoning' field, explain:\n"
             "1. Has your estimate changed?  By how much and why?\n"
             "2. Which anonymised arguments were most persuasive?\n"
             "3. What reasoning do you maintain despite the group "
@@ -81,15 +80,10 @@ class ReviseDelphiHandler(PhaseHandler):
         round_num = discussion.method_state.get("revise_round", 0) + 1
         return (
             f"Revision round {round_num}, {entity.name}.  Review the "
-            "group distribution and provide your revised estimate.\n\n"
-            "CRITICAL: Your response MUST start with a JSON code block "
-            "containing your revised estimate.  Place it as the VERY "
-            "FIRST thing in your response, before any other text:\n"
-            "```json\n"
-            '{"estimate": <number>, "confidence": "<HIGH/MEDIUM/LOW>", '
-            '"unit": "<what the number represents>"}\n'
-            "```\n"
-            "Then explain how and why your estimate has or hasn't changed."
+            "group distribution and provide your revised estimate by "
+            "calling the submit_estimate tool.  In the 'reasoning' "
+            "field, explain how and why your estimate has or hasn't "
+            "changed."
         )
 
     def get_summary_prompt(self, discussion: Discussion,
@@ -124,22 +118,17 @@ class ReviseDelphiHandler(PhaseHandler):
         estimate_data = extract_estimate(content)
 
         if estimate_data:
-            round_num = state.get("revise_round", 0) + 1
-            entry = {
-                "round": round_num,
-                "entity_id": entity.id,
-                "entity_name": entity.name,
-                "value": estimate_data.get("estimate"),
-                "confidence": estimate_data.get("confidence", ""),
-                "unit": estimate_data.get("unit", ""),
-            }
-            state.setdefault("estimates", []).append(entry)
-
-            val = estimate_data.get("estimate", "?")
-            conf = estimate_data.get("confidence", "?")
-            unit = estimate_data.get("unit", "")
-            bar = f"\n\n---\n**Estimate:** {val} {unit} (Confidence: {conf})"
-            display = content + bar
+            record_estimate(
+                state, entity, state.get("revise_round", 0) + 1,
+                estimate_data.get("estimate"),
+                estimate_data.get("confidence", ""),
+                estimate_data.get("unit", ""),
+            )
+            display = content + format_estimate_bar(
+                estimate_data.get("estimate", "?"),
+                estimate_data.get("confidence", "?"),
+                estimate_data.get("unit", ""),
+            )
         else:
             logger.warning(
                 "Could not extract estimate from %s's response",
@@ -147,6 +136,37 @@ class ReviseDelphiHandler(PhaseHandler):
             )
             display = content
 
+        return ProcessedResponse(display_content=display)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    requires_structured_output = True
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec:
+        return OutputToolSpec(
+            name="submit_estimate",
+            description=("Submit your revised estimate after reviewing "
+                         "the group distribution."),
+            parameters=ESTIMATE_TOOL_PARAMETERS,
+        )
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        return validate_estimate_payload(payload)
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        state = discussion.method_state
+        value = float(payload["estimate"])
+        confidence = str(payload["confidence"]).upper()
+        unit = str(payload.get("unit", ""))
+        record_estimate(state, entity, state.get("revise_round", 0) + 1,
+                        value, confidence, unit)
+        display = (str(payload["reasoning"]).strip()
+                   + format_estimate_bar(value, confidence, unit))
         return ProcessedResponse(display_content=display)
 
     # ------------------------------------------------------------------

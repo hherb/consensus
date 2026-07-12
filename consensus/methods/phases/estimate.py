@@ -9,13 +9,17 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
 from ._delphi_helpers import (
     DEFAULT_CONVERGENCE_RATIO,
+    ESTIMATE_TOOL_PARAMETERS,
     MAX_REVISE_ROUNDS,
     anonymise_content,
     extract_estimate,
+    format_estimate_bar,
+    record_estimate,
+    validate_estimate_payload,
 )
 
 if TYPE_CHECKING:
@@ -63,13 +67,9 @@ class EstimateHandler(PhaseHandler):
             "Provide your independent estimate or assessment.  "
             "IMPORTANT: Do not anchor on others' views — this is your "
             "independent judgement.\n\n"
-            "You MUST include a JSON block with your estimate:\n"
-            "```json\n"
-            '{"estimate": <number_or_probability>, '
-            '"confidence": "<HIGH/MEDIUM/LOW>", '
-            '"unit": "<what the number represents>"}\n'
-            "```\n\n"
-            "After the JSON, provide detailed reasoning:\n"
+            "Submit your estimate by calling the submit_estimate tool "
+            "with your estimate, confidence (HIGH/MEDIUM/LOW), unit, "
+            "and detailed reasoning covering:\n"
             "1. What evidence or reasoning supports your estimate?\n"
             "2. What are the key uncertainties?\n"
             "3. What would make you revise significantly upward or "
@@ -82,16 +82,9 @@ class EstimateHandler(PhaseHandler):
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
         return (
-            f"It is your turn, {entity.name}.  Provide your "
-            "independent estimate with reasoning.\n\n"
-            "CRITICAL: Your response MUST start with a JSON code block "
-            "containing your estimate.  Place it as the VERY FIRST "
-            "thing in your response, before any other text:\n"
-            "```json\n"
-            '{"estimate": <number>, "confidence": "<HIGH/MEDIUM/LOW>", '
-            '"unit": "<what the number represents>"}\n'
-            "```\n"
-            "Then provide your detailed reasoning below the JSON block."
+            f"It is your turn, {entity.name}.  Provide your independent "
+            "estimate by calling the submit_estimate tool.  Put your "
+            "full detailed reasoning in the 'reasoning' field."
         )
 
     def get_summary_prompt(self, discussion: Discussion,
@@ -129,21 +122,17 @@ class EstimateHandler(PhaseHandler):
         estimate_data = extract_estimate(content)
 
         if estimate_data:
-            entry = {
-                "round": 0,
-                "entity_id": entity.id,
-                "entity_name": entity.name,
-                "value": estimate_data.get("estimate"),
-                "confidence": estimate_data.get("confidence", ""),
-                "unit": estimate_data.get("unit", ""),
-            }
-            state.setdefault("estimates", []).append(entry)
-
-            val = estimate_data.get("estimate", "?")
-            conf = estimate_data.get("confidence", "?")
-            unit = estimate_data.get("unit", "")
-            bar = f"\n\n---\n**Estimate:** {val} {unit} (Confidence: {conf})"
-            display = content + bar
+            record_estimate(
+                state, entity, 0,
+                estimate_data.get("estimate"),
+                estimate_data.get("confidence", ""),
+                estimate_data.get("unit", ""),
+            )
+            display = content + format_estimate_bar(
+                estimate_data.get("estimate", "?"),
+                estimate_data.get("confidence", "?"),
+                estimate_data.get("unit", ""),
+            )
         else:
             logger.warning(
                 "Could not extract estimate from %s's response",
@@ -151,6 +140,36 @@ class EstimateHandler(PhaseHandler):
             )
             display = content
 
+        return ProcessedResponse(display_content=display)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    requires_structured_output = True
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec:
+        return OutputToolSpec(
+            name="submit_estimate",
+            description=("Submit your independent estimate with "
+                         "detailed reasoning."),
+            parameters=ESTIMATE_TOOL_PARAMETERS,
+        )
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        return validate_estimate_payload(payload)
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        value = float(payload["estimate"])
+        confidence = str(payload["confidence"]).upper()
+        unit = str(payload.get("unit", ""))
+        record_estimate(discussion.method_state, entity, 0,
+                        value, confidence, unit)
+        display = (str(payload["reasoning"]).strip()
+                   + format_estimate_bar(value, confidence, unit))
         return ProcessedResponse(display_content=display)
 
     # ------------------------------------------------------------------

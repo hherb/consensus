@@ -12,7 +12,7 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ...models import Discussion
+    from ...models import Discussion, Entity
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,66 @@ DEFAULT_CONVERGENCE_RATIO = 0.15
 
 # Maximum revision rounds
 MAX_REVISE_ROUNDS = 5
+
+#: Accepted confidence labels for estimate submissions.
+CONFIDENCE_LEVELS: tuple[str, ...] = ("HIGH", "MEDIUM", "LOW")
+
+#: JSON Schema for the submit_estimate output tool (issue #23).
+ESTIMATE_TOOL_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "estimate": {
+            "type": "number",
+            "description": ("Your numeric estimate; use a probability "
+                            "0.0-1.0 for non-numeric questions."),
+        },
+        "confidence": {"type": "string", "enum": list(CONFIDENCE_LEVELS)},
+        "unit": {
+            "type": "string",
+            "description": ("What the number represents, e.g. "
+                            "'probability', 'USD', 'years'."),
+        },
+        "reasoning": {
+            "type": "string",
+            "description": ("Your detailed reasoning: supporting "
+                            "evidence, key uncertainties, and what "
+                            "would revise your estimate."),
+        },
+    },
+    "required": ["estimate", "confidence", "unit", "reasoning"],
+}
+
+
+def validate_estimate_payload(payload: dict) -> str:
+    """Return '' if a submit_estimate payload is usable, else an error."""
+    try:
+        float(payload.get("estimate"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return ("'estimate' must be a number (use a probability 0.0-1.0 "
+                "for non-numeric questions).")
+    if str(payload.get("confidence", "")).upper() not in CONFIDENCE_LEVELS:
+        return "'confidence' must be HIGH, MEDIUM, or LOW."
+    if not str(payload.get("reasoning", "")).strip():
+        return "'reasoning' must contain your detailed reasoning."
+    return ""
+
+
+def record_estimate(state: dict, entity: Entity, round_num: int,
+                    value: object, confidence: str, unit: str) -> None:
+    """Append an estimate entry to method_state['estimates']."""
+    state.setdefault("estimates", []).append({
+        "round": round_num,
+        "entity_id": entity.id,
+        "entity_name": entity.name,
+        "value": value,
+        "confidence": confidence,
+        "unit": unit,
+    })
+
+
+def format_estimate_bar(value: object, confidence: str, unit: str) -> str:
+    """Return the display footer appended to estimate messages."""
+    return f"\n\n---\n**Estimate:** {value} {unit} (Confidence: {confidence})"
 
 
 def extract_estimate(content: str) -> dict:

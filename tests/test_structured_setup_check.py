@@ -32,7 +32,6 @@ def _start(disc, tmp_db):
 
 
 class TestStructuredMethodSetupCheck:
-    @pytest.mark.skip(reason="enabled by the Delphi conversion task")
     def test_blocks_model_without_tool_support(
             self, tmp_db, discussion_with_entities, monkeypatch):
         monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
