@@ -93,12 +93,15 @@ def anonymise_content(content: str, discussion: Discussion) -> str:
 
     Matches whole words only and replaces longer names first, so a name
     that is a substring of another ("Ann" in "Anna") or of a regular
-    word ("Mark" in "Markdown") does not corrupt the text.
+    word ("Mark" in "Markdown") does not corrupt the text.  Lookarounds
+    are used instead of ``\\b`` so names that start or end with a
+    non-word character ("Claude (Opus)") are still anonymised —
+    ``\\b`` finds no boundary at a non-word edge and would leak the name.
     """
     panelist_map = build_panelist_map(discussion)
     for name in sorted(panelist_map, key=len, reverse=True):
         content = re.sub(
-            r"\b" + re.escape(name) + r"\b",
+            r"(?<!\w)" + re.escape(name) + r"(?!\w)",
             panelist_map[name], content,
         )
     return content

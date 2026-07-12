@@ -14,6 +14,7 @@ from consensus.app_discussion_flow import (
     submit_human_message,
     switch_discussion_method,
 )
+from consensus.app_discussion_setup import start_discussion
 from consensus.app_discussion_state import load_discussion
 from consensus.methods import get_method
 from consensus.moderator import Moderator
@@ -161,6 +162,34 @@ class TestHumanMessageMethodProcessing:
         persisted = _db_method_state(tmp_db, disc.id)
         assert persisted.get("estimates"), (
             "method_state must be persisted after a human message"
+        )
+
+
+class TestStartDiscussionPersistence:
+    """State written while applying the first phase's turn order must be
+    persisted at discussion start, not only after the first turn completes.
+    """
+
+    def test_first_phase_order_and_red_team_persisted(self, tmp_db):
+        mod = _entity(tmp_db, "Mod")
+        parts = [_entity(tmp_db, f"P{i + 1}") for i in range(3)]
+        disc = Discussion(
+            topic="Test topic",
+            entities=[mod] + parts,
+            moderator_id=mod.id,
+            discussion_method="red_team",
+        )
+        moderator = Moderator(disc, tmp_db)
+
+        result = start_discussion(disc, tmp_db, moderator)
+
+        assert result.get("started") is True
+        persisted = _db_method_state(tmp_db, disc.id)
+        assert persisted.get("red_team_entity_id") == parts[0].id, (
+            "red-team designation must survive a reload before turn 1"
+        )
+        assert persisted.get("_turn_order") == [p.id for p in parts[1:]], (
+            "the first phase's turn order must survive a reload before turn 1"
         )
 
 

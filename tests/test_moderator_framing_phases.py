@@ -17,6 +17,7 @@ from consensus.methods.phases.distill_skeleton import DistillSkeletonHandler
 from consensus.methods.phases.frame_hypotheses import FrameHypothesesHandler
 from consensus.methods.phases.frame_premortem import FramePremortemHandler
 from consensus.methods.phases.hypothesize import HypothesizeHandler
+from consensus.methods.phases.prior_beliefs import PriorBeliefsHandler
 from consensus.models import Discussion, Entity, EntityType
 
 
@@ -75,6 +76,26 @@ class TestFrameHypotheses:
         )
         assert discussion.method_state["hypotheses"]
         assert h.should_advance(discussion) is True
+
+    def test_prior_transition_warns_when_framing_gave_up(self, discussion):
+        """The next phase's announcement must surface the failure to users
+        instead of rendering an empty hypothesis list.
+
+        (After ``MAX_FRAMING_ATTEMPTS`` unparseable responses the frame
+        phase advances with ``hypotheses`` still empty.)
+        """
+        h = PriorBeliefsHandler()
+        discussion.method_state = {"hypotheses": []}
+        msg = h.get_transition_message(discussion)
+        assert "could not" in msg.lower()
+        assert "hypothesis" in msg.lower()
+
+    def test_prior_transition_normal_when_hypotheses_present(self, discussion):
+        h = PriorBeliefsHandler()
+        discussion.method_state = {"hypotheses": ["A", "B"]}
+        msg = h.get_transition_message(discussion)
+        assert "**H1:** A" in msg
+        assert "could not" not in msg.lower()
 
 
 class TestFramePremortem:

@@ -82,6 +82,20 @@ class TestAnonymiseContent:
         result = anonymise_content("Use Markdown formatting.", disc)
         assert "Markdown" in result
 
+    def test_name_with_non_word_edges_still_anonymised(self, delphi_discussion):
+        """Names starting/ending in non-word chars must still be replaced.
+
+        ``\\b`` fails at a non-word edge (e.g. a trailing ``)``), which
+        would leak the panelist's real name into the anonymised text.
+        """
+        disc = delphi_discussion
+        disc.entities.append(_entity(4, "Claude (Opus)"))
+        disc.method_state.pop("_panelist_map", None)
+        panelist_map = build_panelist_map(disc)
+        result = anonymise_content("Claude (Opus) estimates 5 units.", disc)
+        assert "Claude (Opus)" not in result
+        assert f"{panelist_map['Claude (Opus)']} estimates" in result
+
 
 class TestZeroMedianConvergence:
     """Estimates converging on zero must still be able to converge."""
