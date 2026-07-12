@@ -13,7 +13,8 @@ plan; delete sections that are finished and no longer instructive.
   (#19/#20/#21), **PR #35** (#22 phase-machine loop support), and
   **PR #36** (#30 Belief Diffusion abort) are all **merged**.
 - **#23 structured outputs — mechanism + first three conversions done**
-  (this session). Plan:
+  (this session, **PR #38** — merge it before building on the hooks).
+  Plan:
   `docs/superpowers/plans/2026-07-13-structured-method-outputs.md`.
   - `consensus/structured_output.py` — `generate_structured_turn()`
     forces the phase's declared tool via `tool_choice`, validates the
