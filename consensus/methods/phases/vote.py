@@ -8,12 +8,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
 from ._voting_helpers import (
     VALID_VOTES,
+    VOTES_TOOL_PARAMETERS,
     extract_votes,
     format_motions_for_voting,
+    record_votes,
 )
 
 if TYPE_CHECKING:
@@ -55,13 +57,9 @@ class VoteHandler(PhaseHandler):
             f"deliberation with voting.\n"
             f"Topic: {discussion.topic}\n\n"
             "VOTING PHASE\n\n"
-            "Vote on each motion below.  For EACH motion, include a "
-            "JSON block with your vote:\n"
-            "```json\n"
-            '{"vote": "for|against|abstain", "motion_id": <number>}\n'
-            "```\n\n"
-            "Valid votes: 'for', 'against', 'abstain'\n\n"
-            "Provide reasoning for each vote after the JSON block.\n\n"
+            "Vote on each motion below by calling the submit_votes "
+            "tool with one entry per motion: its motion_id, your vote "
+            "('for', 'against', or 'abstain'), and your rationale.\n\n"
             f"Motions to vote on:\n{motions_text}"
         )
 
@@ -81,12 +79,9 @@ class VoteHandler(PhaseHandler):
             f"  Motion {m['id']}: {m['text']}" for m in unvoted
         )
         return (
-            f"{entity.name}, please cast your vote on each motion.\n\n"
-            "CRITICAL: For EACH motion, include a JSON block as the "
-            "FIRST thing, before your reasoning:\n"
-            "```json\n"
-            '{"vote": "for|against|abstain", "motion_id": <number>}\n'
-            "```\n\n"
+            f"{entity.name}, please cast your vote on each motion by "
+            "calling the submit_votes tool, with one entry per motion "
+            "(motion_id, vote, rationale).\n\n"
             f"Motions awaiting your vote:\n{motion_list}"
         )
 
@@ -105,62 +100,62 @@ class VoteHandler(PhaseHandler):
     def process_response(self, content: str, entity: Entity,
                          discussion: Discussion) -> ProcessedResponse:
         state = discussion.method_state
-        votes = extract_votes(content)
-        valid_motion_ids = {m["id"] for m in state.get("motions", [])}
-        accepted = 0
-
-        for vote_data in votes:
-            vote_val = vote_data.get("vote", "").lower()
-            motion_id = vote_data.get("motion_id")
-
-            if vote_val not in VALID_VOTES:
-                logger.warning(
-                    "Invalid vote value '%s' from %s, skipping",
-                    vote_val, entity.name,
-                )
-                continue
-            # Motion ids are stored as ints; models sometimes emit them as
-            # JSON strings ("1").  Coerce so the membership test below does
-            # not silently drop an otherwise-valid vote.
-            try:
-                motion_id = int(motion_id)
-            except (TypeError, ValueError):
-                logger.warning(
-                    "Vote with non-numeric motion_id %r from %s, skipping",
-                    motion_id, entity.name,
-                )
-                continue
-            if motion_id not in valid_motion_ids:
-                logger.warning(
-                    "Vote for unknown motion %s from %s, skipping",
-                    motion_id, entity.name,
-                )
-                continue
-            # Prevent double-voting
-            already_voted = any(
-                v["entity_id"] == entity.id and v["motion_id"] == motion_id
-                for v in state.get("votes", [])
-            )
-            if already_voted:
-                logger.info(
-                    "%s already voted on motion %d, skipping duplicate",
-                    entity.name, motion_id,
-                )
-                continue
-
-            state.setdefault("votes", []).append({
-                "entity_id": entity.id,
-                "entity_name": entity.name,
-                "motion_id": motion_id,
-                "vote": vote_val,
-                "rationale": vote_data.get("rationale", ""),
-            })
-            accepted += 1
-
+        accepted = record_votes(state, entity, extract_votes(content))
         if accepted:
             content += f"\n\n---\n**Votes cast:** {accepted}"
-
         return ProcessedResponse(display_content=content)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    requires_structured_output = True
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec:
+        state = discussion.method_state
+        return OutputToolSpec(
+            name="submit_votes",
+            description=("Cast your vote (for/against/abstain) with a "
+                         "rationale on every pending motion:\n"
+                         + format_motions_for_voting(state)),
+            parameters=VOTES_TOOL_PARAMETERS,
+        )
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        votes = payload.get("votes")
+        if not isinstance(votes, list) or not votes:
+            return "'votes' must be a non-empty array, one entry per motion."
+        valid_ids = {m["id"]
+                     for m in discussion.method_state.get("motions", [])}
+        for v in votes:
+            if not isinstance(v, dict):
+                return "Each entry in 'votes' must be an object."
+            try:
+                motion_id = int(v.get("motion_id"))
+            except (TypeError, ValueError):
+                return "Each vote needs an integer 'motion_id'."
+            if motion_id not in valid_ids:
+                return (f"Motion {motion_id} does not exist. Valid motion "
+                        f"ids: {sorted(valid_ids)}.")
+            if str(v.get("vote", "")).lower() not in VALID_VOTES:
+                return "Each 'vote' must be 'for', 'against', or 'abstain'."
+        return ""
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        state = discussion.method_state
+        votes = [{"motion_id": int(v["motion_id"]),
+                  "vote": str(v["vote"]).lower(),
+                  "rationale": str(v.get("rationale", ""))}
+                 for v in payload["votes"]]
+        accepted = record_votes(state, entity, votes)
+        lines = [f"**Motion {v['motion_id']} — {v['vote'].upper()}:** "
+                 f"{v['rationale']}" for v in votes]
+        display = ("\n\n".join(lines)
+                   + f"\n\n---\n**Votes cast:** {accepted}")
+        return ProcessedResponse(display_content=display)
 
     # ------------------------------------------------------------------
     # Phase advancement
