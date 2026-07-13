@@ -551,8 +551,7 @@ class TestBlindEvaluateHandler:
         prompt = handler.get_system_prompt(entity, eval_discussion)
         assert "P1" in prompt
         assert "I1" in prompt
-        assert "VALIDITY" in prompt
-        assert "OVERALL" in prompt
+        assert "submit_validity_scores" in prompt
         assert entity.name in prompt
 
     def test_system_prompt_failed_extraction(self, handler, entity, sd_discussion):
@@ -560,12 +559,12 @@ class TestBlindEvaluateHandler:
         prompt = handler.get_system_prompt(entity, sd_discussion)
         assert "failed" in prompt.lower()
 
-    def test_turn_prompt_lists_tags(self, handler, entity, eval_discussion):
+    def test_turn_prompt_names_tool(self, handler, entity, eval_discussion):
         prompt = handler.get_turn_prompt(entity, eval_discussion)
-        assert "[VALIDITY I1:" in prompt
-        assert "[VALIDITY I2:" in prompt
-        assert "[VALIDITY C1:" in prompt
-        assert "[OVERALL:" in prompt
+        assert "submit_validity_scores" in prompt
+        assert "I1" in prompt
+        assert "I2" in prompt
+        assert "C1" in prompt
 
     def test_process_response_extracts_scores(self, handler, entity, eval_discussion):
         content = (
@@ -754,7 +753,7 @@ class TestRecursiveSelfDistillationIntegration:
             VALID_SKELETON
         )
         prompt = method.get_system_prompt(entity, discussion)
-        assert "VALIDITY" in prompt
+        assert "submit_validity_scores" in prompt
         assert "skeleton" in prompt.lower()
 
 
