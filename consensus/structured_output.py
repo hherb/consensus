@@ -7,13 +7,14 @@ arguments are validated by the method's ``validate_output`` hook, and
 validation errors are fed back for a bounded number of retries
 (issue #23).
 
-Failure containment: if the provider rejects the request outright
-(HTTP 400 — typically a model without tool support) a
-``StructuredOutputError`` is raised so the misconfiguration is loud,
-never a silent degrade (owner decision 2026-07-12).  If a tool-capable
-model keeps producing invalid payloads, the turn falls back to the
-free-text path with a user-visible warning — the phase's own give-up
-caps (e.g. ``MAX_FRAMING_ATTEMPTS``) then bound the damage.
+Failure containment: if the provider rejects the request with an
+HTTP 400 that mentions tools/functions (a model without tool support)
+a ``StructuredOutputError`` is raised so the misconfiguration is loud,
+never a silent degrade (owner decision 2026-07-12).  Unrelated provider
+errors propagate unchanged to the normal per-turn error handling.  If a
+tool-capable model keeps producing invalid payloads, the turn falls
+back to the free-text path with a user-visible warning — the phase's
+own give-up caps (e.g. ``MAX_FRAMING_ATTEMPTS``) then bound the damage.
 """
 
 from __future__ import annotations
@@ -36,9 +37,28 @@ logger = logging.getLogger(__name__)
 #: to the free-text parsing path.
 MAX_STRUCTURED_OUTPUT_ATTEMPTS = 3
 
+#: Maximum length of the provider error body echoed into a
+#: StructuredOutputError message.
+_PROVIDER_ERROR_SNIPPET_LENGTH = 200
+
+#: Substrings that identify a provider 400 as a tool-support rejection
+#: (as opposed to e.g. a context-length overflow).
+_TOOL_ERROR_MARKERS = ("tool", "function")
+
 
 class StructuredOutputError(RuntimeError):
     """The provider/model cannot satisfy a phase's forced output tool."""
+
+
+def _is_tool_support_error(body: str) -> bool:
+    """Heuristically classify a provider 400 body as a tool-support error.
+
+    Providers return 400 for many reasons (context overflow, malformed
+    requests, content filters); only bodies that mention tools or
+    functions should be reported as "model lacks tool support".
+    """
+    lowered = body.lower()
+    return any(marker in lowered for marker in _TOOL_ERROR_MARKERS)
 
 
 def _payload_from_tool_calls(
@@ -92,7 +112,8 @@ async def generate_structured_turn(
 
     Raises:
         StructuredOutputError: the provider rejected the forced tool
-            call (HTTP 400), i.e. the model/provider lacks tool support.
+            call with a tool-related HTTP 400, i.e. the model/provider
+            lacks tool support.  Other HTTP errors propagate unchanged.
     """
     tools = [spec.to_openai_schema()]
     tool_choice = {"type": "function", "function": {"name": spec.name}}
@@ -111,13 +132,25 @@ async def generate_structured_turn(
                 max_tokens=cfg.max_tokens,
             )
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 400:
+            body = exc.response.text or ""
+            if (exc.response.status_code == 400
+                    and _is_tool_support_error(body)):
+                snippet = body[:_PROVIDER_ERROR_SNIPPET_LENGTH].strip()
                 raise StructuredOutputError(
                     f"{cfg.model} rejected the forced tool call required "
                     f"by this phase ({spec.name}). Assign a tool-capable "
                     f"model to {entity.name} or choose a method without "
-                    "structured phases."
+                    f"structured phases. Provider error: {snippet}"
                 ) from exc
+            # Other errors (context overflow, provider hiccups, ...) are
+            # not a tool-capability problem — let the normal per-turn
+            # error handling report them.  Log the body here: it is the
+            # only diagnostic str(HTTPStatusError) does not carry.
+            logger.warning(
+                "Provider error %d for %s during structured turn: %s",
+                exc.response.status_code, cfg.model,
+                body[:_PROVIDER_ERROR_SNIPPET_LENGTH],
+            )
             raise
 
         prompt_tokens += result["prompt_tokens"]

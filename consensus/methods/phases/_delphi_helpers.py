@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from typing import TYPE_CHECKING
 
@@ -55,10 +56,15 @@ ESTIMATE_TOOL_PARAMETERS: dict = {
 def validate_estimate_payload(payload: dict) -> str:
     """Return '' if a submit_estimate payload is usable, else an error."""
     try:
-        float(payload.get("estimate"))  # type: ignore[arg-type]
+        value = float(payload.get("estimate"))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return ("'estimate' must be a number (use a probability 0.0-1.0 "
                 "for non-numeric questions).")
+    if not math.isfinite(value):
+        # NaN/inf parse as floats but would poison the convergence and
+        # distribution statistics.
+        return ("'estimate' must be a finite number (use a probability "
+                "0.0-1.0 for non-numeric questions).")
     if str(payload.get("confidence", "")).upper() not in CONFIDENCE_LEVELS:
         return "'confidence' must be HIGH, MEDIUM, or LOW."
     if not str(payload.get("reasoning", "")).strip():

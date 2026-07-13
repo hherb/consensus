@@ -112,8 +112,13 @@ class VoteHandler(PhaseHandler):
     requires_structured_output = True
 
     def get_output_tool(self, entity: Entity,
-                        discussion: Discussion) -> OutputToolSpec:
+                        discussion: Discussion) -> OutputToolSpec | None:
         state = discussion.method_state
+        if not self._pending_motion_ids(entity, state):
+            # No unvoted motions: no submit_votes payload could pass
+            # validation, so forcing the tool would burn every retry.
+            # The free-text path handles the "already voted" prose turn.
+            return None
         return OutputToolSpec(
             name="submit_votes",
             description=("Cast your vote (for/against/abstain) with a "
@@ -122,13 +127,29 @@ class VoteHandler(PhaseHandler):
             parameters=VOTES_TOOL_PARAMETERS,
         )
 
+    @staticmethod
+    def _pending_motion_ids(entity: Entity, state: dict) -> set[int]:
+        """Motion ids this entity has not voted on yet."""
+        voted = {v["motion_id"] for v in state.get("votes", [])
+                 if v["entity_id"] == entity.id}
+        return {m["id"] for m in state.get("motions", [])} - voted
+
     def validate_output(self, payload: dict, entity: Entity,
                         discussion: Discussion) -> str:
+        """Validate a submit_votes payload.
+
+        Rejecting duplicate and already-voted motions here (rather than
+        relying on record_votes' silent dedupe) keeps the displayed vote
+        lines in process_structured_response consistent with what is
+        actually recorded.
+        """
         votes = payload.get("votes")
         if not isinstance(votes, list) or not votes:
             return "'votes' must be a non-empty array, one entry per motion."
-        valid_ids = {m["id"]
-                     for m in discussion.method_state.get("motions", [])}
+        state = discussion.method_state
+        valid_ids = {m["id"] for m in state.get("motions", [])}
+        pending = self._pending_motion_ids(entity, state)
+        seen: set[int] = set()
         for v in votes:
             if not isinstance(v, dict):
                 return "Each entry in 'votes' must be an object."
@@ -139,6 +160,14 @@ class VoteHandler(PhaseHandler):
             if motion_id not in valid_ids:
                 return (f"Motion {motion_id} does not exist. Valid motion "
                         f"ids: {sorted(valid_ids)}.")
+            if motion_id in seen:
+                return (f"Motion {motion_id} appears more than once — "
+                        "submit exactly one entry per motion.")
+            seen.add(motion_id)
+            if motion_id not in pending:
+                return (f"You have already voted on motion {motion_id}. "
+                        f"Vote only on your pending motions: "
+                        f"{sorted(pending)}.")
             if str(v.get("vote", "")).lower() not in VALID_VOTES:
                 return "Each 'vote' must be 'for', 'against', or 'abstain'."
         return ""

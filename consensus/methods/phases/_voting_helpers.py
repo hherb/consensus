@@ -54,7 +54,8 @@ def record_votes(state: dict, entity: Entity, votes: list[dict]) -> int:
     accepted = 0
 
     for vote_data in votes:
-        vote_val = vote_data.get("vote", "").lower()
+        # str(... or "") guards non-string JSON values (null, 1, ...)
+        vote_val = str(vote_data.get("vote") or "").lower()
         motion_id = vote_data.get("motion_id")
 
         if vote_val not in VALID_VOTES:

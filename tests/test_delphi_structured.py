@@ -39,6 +39,16 @@ class TestValidateEstimatePayload:
         bad = dict(PAYLOAD, reasoning="  ")
         assert "reasoning" in validate_estimate_payload(bad)
 
+    def test_nan_estimate_rejected(self):
+        """float('nan') parses, but a NaN estimate would poison the
+        convergence and distribution statistics."""
+        bad = dict(PAYLOAD, estimate="nan")
+        assert "estimate" in validate_estimate_payload(bad)
+
+    def test_infinite_estimate_rejected(self):
+        bad = dict(PAYLOAD, estimate="inf")
+        assert "estimate" in validate_estimate_payload(bad)
+
 
 class TestEstimateHandlerStructured:
     def test_declares_output_tool(self):

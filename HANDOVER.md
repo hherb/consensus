@@ -87,8 +87,10 @@ plan; delete sections that are finished and no longer instructive.
 
 - **Structured-phase conversions must keep `process_response`.** Humans
   type free text, and the structured path falls back to it after
-  exhausted retries. The regex path is the containment layer, not dead
-  code.
+  exhausted retries — not dead code. Note the fallback rarely *extracts*
+  anything (the rewritten prompts no longer describe the JSON-block
+  format); the real extraction containment is each phase's give-up cap
+  (`MAX_FRAMING_ATTEMPTS`, `MAX_VOTE_ROUNDS`, `phase_round` advancement).
 - **Never derive a phase turn order from the incoming `entity_ids` by
   filtering the current order.** Handlers receive the full roster; if
   you need "everyone except X", filter the roster. The flow guards

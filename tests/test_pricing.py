@@ -230,9 +230,55 @@ class TestSupportsTools:
         assert pricing_cache.supports_tools("plain-model") is False
 
     def test_none_when_capability_data_empty(self, pricing_cache):
+        # Another row carries capability data, so the cache is
+        # post-migration: an empty column means OpenRouter reported
+        # nothing for this model — no refresh, capability unknown.
+        _insert_model_with_params(
+            pricing_cache, "openai/gpt-4o", "temperature,tools")
         _insert_model_with_params(pricing_cache, "local/mystery-model", "")
-        assert pricing_cache.supports_tools("mystery-model") is None
+        with patch.object(pricing_cache, "refresh") as refresh:
+            assert pricing_cache.supports_tools("mystery-model") is None
+        refresh.assert_not_called()
 
     def test_none_for_unknown_model(self, pricing_cache):
         with patch.object(pricing_cache, "refresh", return_value=False):
             assert pricing_cache.supports_tools("no-such-model") is None
+
+    def test_pre_migration_cache_refreshes_capability_data(
+            self, pricing_cache):
+        """Rows cached before migration 014 have an empty
+        supported_parameters column; the first capability lookup must
+        refresh so the setup gate works right after an upgrade."""
+        _insert_model_with_params(pricing_cache, "openai/gpt-4o", "")
+
+        def _populate() -> bool:
+            pricing_cache._conn.execute(
+                "UPDATE model_pricing SET supported_parameters = ? "
+                "WHERE model_id = ?",
+                ("temperature,tools", "openai/gpt-4o"),
+            )
+            pricing_cache._conn.commit()
+            return True
+
+        with patch.object(pricing_cache, "refresh",
+                          side_effect=_populate) as refresh:
+            assert pricing_cache.supports_tools("gpt-4o") is True
+        refresh.assert_called_once()
+
+    def test_pre_migration_cache_refresh_failure_returns_none(
+            self, pricing_cache):
+        _insert_model_with_params(pricing_cache, "openai/gpt-4o", "")
+        with patch.object(pricing_cache, "refresh", return_value=False):
+            assert pricing_cache.supports_tools("gpt-4o") is None
+
+    def test_capability_refresh_attempted_at_most_once(self, pricing_cache):
+        """A failed capability refresh (e.g. offline) must not be
+        re-attempted on every call — the setup gate checks every AI
+        member in a loop and each refresh can block for up to 30s."""
+        _insert_model_with_params(pricing_cache, "openai/gpt-4o", "")
+        _insert_model_with_params(pricing_cache, "openai/gpt-4o-mini", "")
+        with patch.object(pricing_cache, "refresh",
+                          return_value=False) as refresh:
+            assert pricing_cache.supports_tools("gpt-4o") is None
+            assert pricing_cache.supports_tools("gpt-4o-mini") is None
+        refresh.assert_called_once()

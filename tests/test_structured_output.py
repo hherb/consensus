@@ -67,9 +67,9 @@ class _StubClient:
         return item
 
 
-def _http_400() -> httpx.HTTPStatusError:
+def _http_400(body: str = "tools not supported") -> httpx.HTTPStatusError:
     req = httpx.Request("POST", "http://x/chat/completions")
-    resp = httpx.Response(400, request=req, text="tools not supported")
+    resp = httpx.Response(400, request=req, text=body)
     return httpx.HTTPStatusError("400", request=req, response=resp)
 
 
@@ -148,6 +148,33 @@ async def test_http_400_raises_structured_output_error():
         await generate_structured_turn(
             client, entity.ai_config, entity, Discussion(topic="t"),
             [{"role": "user", "content": "go"}], SPEC, _Method())
+
+
+@pytest.mark.asyncio
+async def test_http_400_error_includes_provider_detail():
+    client = _StubClient([
+        _http_400("Function calling is not enabled for this model")])
+    entity = _entity()
+    with pytest.raises(StructuredOutputError) as excinfo:
+        await generate_structured_turn(
+            client, entity.ai_config, entity, Discussion(topic="t"),
+            [{"role": "user", "content": "go"}], SPEC, _Method())
+    assert "Function calling is not enabled" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_http_400_unrelated_to_tools_is_reraised(caplog):
+    """A 400 with a non-tool cause (e.g. context overflow) must not be
+    misreported as missing tool support — and the provider body must be
+    logged, since str(HTTPStatusError) does not include it."""
+    client = _StubClient([_http_400(
+        "This model's maximum context length is 8192 tokens")])
+    entity = _entity()
+    with pytest.raises(httpx.HTTPStatusError):
+        await generate_structured_turn(
+            client, entity.ai_config, entity, Discussion(topic="t"),
+            [{"role": "user", "content": "go"}], SPEC, _Method())
+    assert "maximum context length" in caplog.text
 
 
 # ---------------------------------------------------------------------------
