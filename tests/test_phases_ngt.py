@@ -13,9 +13,11 @@ from consensus.methods.phases._ngt_helpers import (
     MAX_CLUSTER_ATTEMPTS,
     MAX_GENERATE_ROUNDS,
     POINTS_PER_VOTER,
+    record_allocations,
     record_candidates,
     record_ideas,
 )
+from consensus.methods.phases.allocate_points import AllocatePointsHandler
 from consensus.methods.phases.clarify_ideas import ClarifyIdeasHandler
 from consensus.methods.phases.cluster_ideas import ClusterIdeasHandler
 from consensus.methods.phases.generate_ideas import GenerateIdeasHandler
@@ -270,4 +272,122 @@ class TestClarifyIdeasHandler:
     def test_transition_message_lists_candidates(self):
         msg = ClarifyIdeasHandler().get_transition_message(self._disc())
         assert "2 candidate idea(s)" in msg
+        assert "Candidate 1:" in msg
+
+
+class TestAllocatePointsHandler:
+    def _disc(self, **state):
+        disc = make_disc(current_phase="allocate", **state)
+        record_candidates(disc.method_state, [
+            {"title": "Build a self-serve onboarding checklist"},
+            {"title": "Run recurring live office hours for customers"},
+        ])
+        return disc
+
+    def test_phase_metadata_and_init_state(self):
+        handler = AllocatePointsHandler()
+        assert handler.phase.name == "allocate"
+        assert handler.init_state(make_disc()) == {
+            "point_allocations": [], "points_per_voter": POINTS_PER_VOTER}
+
+    def test_system_prompt_states_pool_and_candidates(self, ai_entity):
+        prompt = AllocatePointsHandler().get_system_prompt(
+            ai_entity, self._disc())
+        assert "MULTI-VOTING PHASE" in prompt
+        assert str(POINTS_PER_VOTER) in prompt
+        assert "Candidate 1:" in prompt
+        assert "submit_points" in prompt
+
+    def test_turn_prompt_after_allocation(self, ai_entity):
+        disc = self._disc()
+        record_allocations(disc.method_state, ai_entity,
+                           [{"candidate_id": 1, "points": POINTS_PER_VOTER}])
+        prompt = AllocatePointsHandler().get_turn_prompt(ai_entity, disc)
+        assert "already allocated" in prompt
+
+    def test_output_tool_omitted_when_already_allocated(self, ai_entity):
+        disc = self._disc()
+        record_allocations(disc.method_state, ai_entity,
+                           [{"candidate_id": 1, "points": POINTS_PER_VOTER}])
+        assert AllocatePointsHandler().get_output_tool(
+            ai_entity, disc) is None
+
+    def test_output_tool_omitted_without_candidates(self, ai_entity):
+        disc = make_disc(current_phase="allocate")
+        assert AllocatePointsHandler().get_output_tool(
+            ai_entity, disc) is None
+
+    def test_output_tool_lists_candidates(self, ai_entity):
+        spec = AllocatePointsHandler().get_output_tool(
+            ai_entity, self._disc())
+        assert spec.name == "submit_points"
+        assert "Candidate 1:" in spec.description
+
+    def test_validate_output_enforces_sum(self, ai_entity):
+        handler = AllocatePointsHandler()
+        disc = self._disc()
+        bad = {"allocations": [{"candidate_id": 1, "points": 3}],
+               "reasoning": "x"}
+        assert str(POINTS_PER_VOTER) in handler.validate_output(
+            bad, ai_entity, disc)
+        good = {"allocations": [
+            {"candidate_id": 1, "points": POINTS_PER_VOTER - 4},
+            {"candidate_id": 2, "points": 4}], "reasoning": "x"}
+        assert handler.validate_output(good, ai_entity, disc) == ""
+
+    def test_process_structured_records_and_displays(self, ai_entity):
+        handler = AllocatePointsHandler()
+        disc = self._disc()
+        payload = {
+            "allocations": [
+                {"candidate_id": 1, "points": 7, "rationale": "Scales"},
+                {"candidate_id": 2, "points": 3},
+            ],
+            "reasoning": "Self-serve first; keep the human touch.",
+        }
+        processed = handler.process_structured_response(
+            payload, ai_entity, disc)
+        assert len(disc.method_state["point_allocations"]) == 2
+        assert "Self-serve first" in processed.display_content
+        assert "7 point(s)" in processed.display_content
+        assert (processed.display_content.index("Self-serve first")
+                < processed.display_content.index("7 point(s)"))
+
+    def test_free_text_path_records(self, ai_entity):
+        handler = AllocatePointsHandler()
+        disc = self._disc()
+        processed = handler.process_response(
+            "Candidate 1: 6 points\nCandidate 2: 4 points",
+            ai_entity, disc)
+        assert len(disc.method_state["point_allocations"]) == 2
+        assert "Point allocations recorded: 2" in (
+            processed.display_content.replace("**", ""))
+
+    def test_advances_when_all_participants_allocated(self):
+        disc = self._disc()
+        record_allocations(disc.method_state,
+                           Entity(name="TestAI", entity_type=EntityType.AI,
+                                  id=1),
+                           [{"candidate_id": 1, "points": POINTS_PER_VOTER}])
+        assert AllocatePointsHandler().should_advance(disc) is False
+        record_allocations(disc.method_state,
+                           Entity(name="Bob", entity_type=EntityType.HUMAN,
+                                  id=2),
+                           [{"candidate_id": 2, "points": POINTS_PER_VOTER}])
+        assert AllocatePointsHandler().should_advance(disc) is True
+
+    def test_advances_immediately_without_candidates(self):
+        disc = make_disc(current_phase="allocate")
+        assert AllocatePointsHandler().should_advance(disc) is True
+
+    def test_gives_up_after_cap(self, caplog):
+        disc = self._disc(phase_round=MAX_ALLOCATE_ROUNDS + 1)
+        with caplog.at_level("WARNING"):
+            assert AllocatePointsHandler().should_advance(disc) is True
+        assert any("allocation" in r.message.lower()
+                   for r in caplog.records)
+
+    def test_transition_message_states_pool(self):
+        msg = AllocatePointsHandler().get_transition_message(self._disc())
+        assert str(POINTS_PER_VOTER) in msg
         assert "Candidate 1:" in msg
