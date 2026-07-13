@@ -139,7 +139,11 @@ async function handleTurnLimitFlags(result) {
     }
     if (result?.method_complete) {
         renderDiscussion();
-        showToast('All method phases complete — concluding discussion');
+        // A blocked method switch (e.g. a model without tool support)
+        // must surface its reason instead of the generic completion toast.
+        showToast(result.switch_error
+            ? 'Method switch failed: ' + result.switch_error
+            : 'All method phases complete — concluding discussion');
         await onConclude();
         return true;
     }

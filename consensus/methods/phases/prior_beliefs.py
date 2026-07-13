@@ -9,9 +9,16 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
-from ._belief_helpers import extract_beliefs, format_belief_bar
+from ._belief_helpers import (
+    BELIEFS_TOOL_PARAMETERS,
+    extract_beliefs,
+    format_belief_bar,
+    format_labelled_hypotheses,
+    record_beliefs,
+    validate_beliefs_payload,
+)
 
 if TYPE_CHECKING:
     from ...models import Discussion, Entity
@@ -36,8 +43,7 @@ class PriorBeliefsHandler(PhaseHandler):
                           discussion: Discussion) -> str:
         state = discussion.method_state
         hypotheses = state.get("hypotheses", [])
-        hyp_list = "\n".join(f"  {i+1}. {h}"
-                             for i, h in enumerate(hypotheses))
+        hyp_list = format_labelled_hypotheses(hypotheses)
         return (
             f"You are {entity.name}, a participant in a structured Belief "
             f"State Diffusion analysis.\n"
@@ -46,20 +52,18 @@ class PriorBeliefsHandler(PhaseHandler):
             f"{hyp_list}\n\n"
             "You must provide your INITIAL probability distribution over "
             "these hypotheses.  Your probabilities must sum to 1.0.\n\n"
-            "Output format — you MUST include this JSON block:\n"
-            "```json\n"
-            '{"beliefs": {"H1": 0.XX, "H2": 0.XX, ...}}\n'
-            "```\n"
-            "Use the hypothesis labels H1, H2, etc.\n"
-            "Follow the JSON with 2-3 sentences of reasoning."
+            "Submit your distribution by calling the submit_beliefs tool, "
+            "mapping each hypothesis label (H1, H2, ...) to your "
+            "probability estimate, with 2-3 sentences of reasoning in "
+            "the 'reasoning' field."
         )
 
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
         return (
             f"It is your turn, {entity.name}.  State your initial beliefs "
-            "as a probability distribution over the hypotheses.  "
-            "Include the JSON block and your reasoning."
+            "as a probability distribution over the hypotheses by calling "
+            "the submit_beliefs tool, with your reasoning."
         )
 
     def get_summary_prompt(self, discussion: Discussion,
@@ -94,6 +98,45 @@ class PriorBeliefsHandler(PhaseHandler):
             )
             display = content
 
+        return ProcessedResponse(display_content=display)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    requires_structured_output = True
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec | None:
+        hypotheses = discussion.method_state.get("hypotheses", [])
+        if not hypotheses:
+            # Framing aborted without hypotheses: no submit_beliefs
+            # payload could pass validation, so forcing the tool would
+            # burn every retry.  Fall through to the free-text path,
+            # which surfaces the warning transition message instead.
+            return None
+        hyp_list = format_labelled_hypotheses(hypotheses)
+        return OutputToolSpec(
+            name="submit_beliefs",
+            description=("Submit your initial probability distribution, "
+                         "keyed by hypothesis label, over these "
+                         f"hypotheses:\n{hyp_list}"),
+            parameters=BELIEFS_TOOL_PARAMETERS,
+        )
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        hypotheses = discussion.method_state.get("hypotheses", [])
+        return validate_beliefs_payload(payload, hypotheses)
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        beliefs = {k: float(v) for k, v in payload["beliefs"].items()}
+        record_beliefs(discussion.method_state, entity, 0, beliefs)
+        belief_bar = format_belief_bar(beliefs, discussion)
+        reasoning = str(payload.get("reasoning", "")).strip()
+        display = (f"{reasoning}\n\n---\n{belief_bar}" if reasoning
+                   else belief_bar)
         return ProcessedResponse(display_content=display)
 
     def should_advance(self, discussion: Discussion) -> bool:

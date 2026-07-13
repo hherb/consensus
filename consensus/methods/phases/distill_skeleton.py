@@ -12,10 +12,15 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..parsing import extract_json_block
 from ..phase_handler import PhaseHandler
-from ._distillation_helpers import format_skeleton_display, validate_skeleton
+from ._distillation_helpers import (
+    SKELETON_TOOL_PARAMETERS,
+    format_skeleton_display,
+    validate_skeleton,
+    validate_skeleton_payload,
+)
 
 if TYPE_CHECKING:
     from ...models import Discussion, Entity
@@ -76,7 +81,8 @@ class DistillSkeletonHandler(PhaseHandler):
             "- Repetition and emphasis\n\n"
             "What remains should be bare logical structure: factual "
             "premises, inferential steps connecting them, and the "
-            "conclusions that follow."
+            "conclusions that follow.\n\n"
+            "Submit your extraction by calling the submit_skeleton tool."
         )
 
     def get_turn_prompt(self, entity: Entity,
@@ -85,28 +91,20 @@ class DistillSkeletonHandler(PhaseHandler):
 
         if state.get("extraction_failed") and state.get("extraction_attempts", 0) > 0:
             return (
-                "The previous extraction did not produce valid JSON. "
-                "Please try again.\n\n"
-                "You MUST output a JSON code block with EXACTLY this "
-                "structure:\n"
-                "```json\n"
-                "{\n"
-                '  "premises": [\n'
-                '    {"id": "P1", "text": "factual claim or assumption"},\n'
-                '    {"id": "P2", "text": "another premise"}\n'
-                "  ],\n"
-                '  "inferences": [\n'
-                '    {"id": "I1", "from": ["P1", "P2"], '
-                '"text": "what follows from those premises"},\n'
-                '    {"id": "I2", "from": ["P1", "I1"], '
-                '"text": "next inferential step"}\n'
-                "  ],\n"
-                '  "conclusions": [\n'
-                '    {"id": "C1", "from": ["I1", "I2"], '
-                '"text": "final conclusion"}\n'
-                "  ]\n"
-                "}\n"
-                "```\n\n"
+                "The previous extraction did not produce a usable "
+                "result. Please try again.\n\n"
+                "Call the submit_skeleton tool with EXACTLY these "
+                "fields:\n"
+                "- premises: a list of {id, text} objects, e.g. "
+                '{"id": "P1", "text": "factual claim or assumption"}\n'
+                "- inferences: a list of {id, from, text} objects, "
+                'e.g. {"id": "I1", "from": ["P1", "P2"], "text": '
+                '"what follows from those premises"}\n'
+                "- conclusions: a list of {id, from, text} objects, "
+                'e.g. {"id": "C1", "from": ["I1", "I2"], "text": '
+                '"final conclusion"}\n'
+                "- rich_summary: a short paragraph on the discussion's "
+                "most persuasive rhetoric\n\n"
                 "Every inference and conclusion MUST have a \"from\" "
                 "field listing which premises or prior inferences it "
                 "depends on. Use IDs like P1, P2, I1, I2, C1, C2."
@@ -115,8 +113,8 @@ class DistillSkeletonHandler(PhaseHandler):
         return (
             "Review the discussion above and extract its logical "
             "skeleton.\n\n"
-            "First, on a line starting with \"RICH SUMMARY:\", give a "
-            "short paragraph capturing the original discussion's most "
+            "First, in the 'rich_summary' field, give a short "
+            "paragraph capturing the original discussion's most "
             "persuasive arguments and rhetorical moves — the examples, "
             "analogies, and appeals that carried the most force.  This "
             "will later be contrasted with the bare logic.\n\n"
@@ -127,26 +125,13 @@ class DistillSkeletonHandler(PhaseHandler):
             "(or prior inferences) are combined to reach a new claim\n"
             "3. **Conclusions** — the final claims that the argument "
             "arrives at\n\n"
-            "Output the skeleton as a JSON code block:\n"
-            "```json\n"
-            "{\n"
-            '  "premises": [\n'
-            '    {"id": "P1", "text": "..."},\n'
-            '    {"id": "P2", "text": "..."}\n'
-            "  ],\n"
-            '  "inferences": [\n'
-            '    {"id": "I1", "from": ["P1", "P2"], "text": "..."},\n'
-            '    {"id": "I2", "from": ["I1"], "text": "..."}\n'
-            "  ],\n"
-            '  "conclusions": [\n'
-            '    {"id": "C1", "from": ["I1", "I2"], "text": "..."}\n'
-            "  ]\n"
-            "}\n"
-            "```\n\n"
-            "Strip ALL rhetoric — keep only the bare logical claims "
-            "and their dependencies. Each inference must reference "
-            "which premises or prior inferences it depends on via "
-            'the "from" field.'
+            "Submit the skeleton by calling the submit_skeleton tool "
+            "with your premises, inferences, and conclusions, plus "
+            "the rich_summary field. Strip ALL rhetoric from the "
+            "premises/inferences/conclusions — keep only the bare "
+            "logical claims and their dependencies. Each inference "
+            "and conclusion must reference which premises or prior "
+            'inferences it depends on via the "from" field.'
         )
 
     def process_response(self, content: str, entity: Entity,
@@ -182,6 +167,73 @@ class DistillSkeletonHandler(PhaseHandler):
             len(parsed["conclusions"]),
         )
         return ProcessedResponse(display_content=content)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    requires_structured_output = True
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec | None:
+        """Declare the forced submit_skeleton tool for this phase.
+
+        Unlike blind_evaluate/evaluate_matrix, there is no state that
+        makes the schema unsatisfiable (extraction always has a
+        discussion to distill), so this always returns a spec.
+        """
+        return OutputToolSpec(
+            name="submit_skeleton",
+            description=(
+                "Submit the extracted logical skeleton: premises, "
+                "inferences, and conclusions (each inference/conclusion "
+                "listing which prior ids it depends on via 'from'), "
+                "plus a rich_summary paragraph capturing the original "
+                "discussion's most persuasive rhetoric."
+            ),
+            parameters=SKELETON_TOOL_PARAMETERS,
+        )
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        """Validate a submit_skeleton payload via the shared function."""
+        return validate_skeleton_payload(payload)
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        """Store the submitted skeleton and render the same display.
+
+        Mirrors ``process_response``'s successful branch: writes
+        ``skeleton``, ``skeleton_display`` (via
+        ``format_skeleton_display``), clears ``extraction_failed``, and
+        captures ``rich_reasoning_summary`` from the payload's
+        ``rich_summary`` field -- once only, exactly like the free-text
+        ``_RICH_SUMMARY_RE`` capture in ``process_response``.
+        """
+        state = discussion.method_state
+        skeleton = {key: payload[key]
+                   for key in ("premises", "inferences", "conclusions")}
+        skeleton_display = format_skeleton_display(skeleton)
+
+        state["skeleton"] = skeleton
+        state["skeleton_display"] = skeleton_display
+        state["extraction_failed"] = False
+
+        rich_summary = str(payload.get("rich_summary", "")).strip()
+        if not state.get("rich_reasoning_summary"):
+            state["rich_reasoning_summary"] = rich_summary
+
+        logger.info(
+            "Extracted skeleton via submit_skeleton: %d premises, "
+            "%d inferences, %d conclusions",
+            len(skeleton["premises"]),
+            len(skeleton["inferences"]),
+            len(skeleton["conclusions"]),
+        )
+
+        display = (f"**Rich Summary:**\n\n{rich_summary}\n\n{skeleton_display}"
+                  if rich_summary else skeleton_display)
+        return ProcessedResponse(display_content=display)
 
     def should_advance(self, discussion: Discussion) -> bool:
         state = discussion.method_state

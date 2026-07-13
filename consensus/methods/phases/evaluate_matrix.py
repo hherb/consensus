@@ -1,8 +1,10 @@
 """Matrix evaluation phase handler for Analysis of Competing Hypotheses.
 
 Each participant rates every hypothesis against every piece of evidence
-using +/-/0 ratings.  Ratings are parsed from JSON and stored in the
-discussion's method state.
+using +/-/0 ratings, submitted via the forced ``submit_matrix_ratings``
+output tool (issue #23); free-text JSON parsing remains as the fallback
+path for humans and non-tool turns.  Ratings are stored per entity in
+the discussion's method state.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..parsing import extract_json_block
 from ..phase_handler import PhaseHandler
 
@@ -20,6 +22,92 @@ if TYPE_CHECKING:
     from ...models import Discussion, Entity
 
 logger = logging.getLogger(__name__)
+
+#: Accepted rating symbols.  Must match exactly what the downstream
+#: majority-vote aggregation recognizes -- ``ach.py``'s
+#: ``_aggregate_matrix`` only counts "+", "-", and "0" votes (any other
+#: string is silently treated as unrecognized), so the structured-output
+#: enum below is bound to the same set: no more, no less.
+RATING_SYMBOLS: tuple[str, ...] = ("+", "-", "0")
+
+#: JSON Schema for the submit_matrix_ratings output tool (issue #23).
+#: ``ratings`` nests two levels of dynamic keys -- hypothesis label
+#: (H1, H2, ...) then evidence label (E<id>, ...) -- so both levels use
+#: ``additionalProperties`` (the pattern ``BELIEFS_TOOL_PARAMETERS`` in
+#: ``_belief_helpers.py`` uses for its single level of dynamic keys).
+MATRIX_TOOL_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "ratings": {
+            "type": "object",
+            "description": (
+                "Map of every hypothesis label (H1, H2, ...) to an "
+                "object mapping every evidence label (E1, E2, ...) to "
+                "your rating for that hypothesis/evidence pair."
+            ),
+            "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                    "type": "string",
+                    "enum": list(RATING_SYMBOLS),
+                },
+            },
+        },
+        "reasoning": {
+            "type": "string",
+            "description": (
+                "Your rationale for these ratings -- explain your most "
+                "important inconsistency ratings: why does that "
+                "evidence contradict that hypothesis?"
+            ),
+        },
+    },
+    "required": ["ratings", "reasoning"],
+}
+
+
+def validate_matrix_payload(payload: dict, hypotheses: list[str],
+                            evidence: list[dict]) -> str:
+    """Return '' if a submit_matrix_ratings payload is usable, else an error.
+
+    Hypothesis keys must be a subset of the framed H-labels and evidence
+    keys a subset of the recorded E-labels (unknown labels are named in
+    the error, along with the valid set).  Every rating value must be
+    one of ``RATING_SYMBOLS``.  Coverage may be partial: the free-text
+    ``_parse_ratings`` path stores whatever ratings JSON a participant
+    supplies with no completeness check (a partial matrix just displays
+    "?" for missing cells and defaults to neutral in aggregation), so
+    this validator holds the same bar rather than a stricter one.
+    """
+    ratings = payload.get("ratings")
+    if not isinstance(ratings, dict) or not ratings:
+        return ("'ratings' must be a non-empty object mapping each "
+                "hypothesis label (H1, H2, ...) to a ratings object.")
+
+    valid_h = [f"H{i}" for i in range(1, len(hypotheses) + 1)]
+    unknown_h = [key for key in ratings if key not in valid_h]
+    if unknown_h:
+        return (f"Unknown hypothesis label(s) {unknown_h}. "
+                f"Valid labels: {valid_h}.")
+
+    valid_e = [f"E{e['id']}" for e in evidence]
+    for hkey, row in ratings.items():
+        if not isinstance(row, dict) or not row:
+            return (f"The ratings for '{hkey}' must be a non-empty object "
+                    "mapping each evidence label to a rating.")
+        unknown_e = [key for key in row if key not in valid_e]
+        if unknown_e:
+            return (f"Unknown evidence label(s) {unknown_e} for '{hkey}'. "
+                    f"Valid labels: {valid_e}.")
+        for ekey, rating in row.items():
+            if rating not in RATING_SYMBOLS:
+                return (f"The rating for '{hkey}'/'{ekey}' must be one of "
+                        f"{list(RATING_SYMBOLS)} (got: {rating!r}).")
+
+    if not str(payload.get("reasoning", "")).strip():
+        return "'reasoning' must contain your rationale for these ratings."
+
+    return ""
 
 
 class EvaluateMatrixHandler(PhaseHandler):
@@ -53,6 +141,17 @@ class EvaluateMatrixHandler(PhaseHandler):
             f"Topic: {discussion.topic}\n\n"
         )
 
+        # Degenerate matrix (no hypotheses or no evidence):
+        # get_output_tool returns None, so no submit_matrix_ratings
+        # tool is offered — don't instruct the model to call it.
+        if not hypotheses or not evidence:
+            return base + (
+                "MATRIX EVALUATION PHASE\n\n"
+                "No rating matrix could be formed (missing hypotheses "
+                "or evidence). Give a brief qualitative assessment of "
+                "how the available material bears on the topic instead."
+            )
+
         hyp_list = "\n".join(f"  H{i+1}: {h}"
                              for i, h in enumerate(hypotheses))
         ev_list = "\n".join(
@@ -71,22 +170,26 @@ class EvaluateMatrixHandler(PhaseHandler):
             "under this hypothesis\n"
             "  0 (neutral) — the evidence doesn't meaningfully "
             "differentiate\n\n"
-            "Output your ratings as a JSON matrix:\n"
-            "```json\n"
-            '{"ratings": {"H1": {"E1": "+", "E2": "-", ...}, '
-            '"H2": {"E1": "0", ...}, ...}}\n'
-            "```\n\n"
-            "After the matrix, briefly explain your most important "
-            "inconsistency ratings — why does that evidence contradict "
-            "that hypothesis?"
+            "Submit your ratings by calling the submit_matrix_ratings "
+            "tool, mapping each hypothesis label (H1, H2, ...) to an "
+            "object of evidence labels (E1, E2, ...) to your rating, "
+            "plus your reasoning in the 'reasoning' field — explain "
+            "your most important inconsistency ratings: why does that "
+            "evidence contradict that hypothesis?"
         )
 
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
+        state = discussion.method_state
+        if not state.get("hypotheses") or not state.get("evidence"):
+            return (
+                f"{entity.name}, no rating matrix could be formed — "
+                "give a brief qualitative assessment instead."
+            )
         return (
             f"{entity.name}, evaluate each hypothesis against each piece "
-            "of evidence using the +/-/0 rating system.  Include the "
-            "JSON matrix."
+            "of evidence using the +/-/0 rating system by calling the "
+            "submit_matrix_ratings tool with your ratings and reasoning."
         )
 
     def get_summary_prompt(self, discussion: Discussion,
@@ -120,6 +223,70 @@ class EvaluateMatrixHandler(PhaseHandler):
             )
             display = content
 
+        return ProcessedResponse(display_content=display)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    requires_structured_output = True
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec | None:
+        """Declare the forced submit_matrix_ratings tool for this phase.
+
+        Returns ``None`` when there is nothing to rate (no hypotheses
+        or no evidence): no submit_matrix_ratings payload could pass
+        validation, so forcing the tool would burn every retry.  Falls
+        through to the free-text path instead (pattern shared with
+        prior_beliefs.py / blind_evaluate.py).
+        """
+        state = discussion.method_state
+        hypotheses = state.get("hypotheses", [])
+        evidence = state.get("evidence", [])
+        if not hypotheses or not evidence:
+            return None
+
+        hyp_list = "\n".join(f"  H{i+1}: {h}"
+                             for i, h in enumerate(hypotheses))
+        ev_list = "\n".join(f"  E{e['id']}: {e['text']}" for e in evidence)
+        return OutputToolSpec(
+            name="submit_matrix_ratings",
+            description=(
+                "Submit your ratings for each hypothesis against each "
+                'piece of evidence, using "+" (consistent), "-" '
+                '(inconsistent), or "0" (neutral), plus your reasoning.\n'
+                f"Hypotheses:\n{hyp_list}\n\nEvidence:\n{ev_list}"
+            ),
+            parameters=MATRIX_TOOL_PARAMETERS,
+        )
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        """Validate a submit_matrix_ratings payload via the shared function."""
+        state = discussion.method_state
+        return validate_matrix_payload(payload, state.get("hypotheses", []),
+                                       state.get("evidence", []))
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        """Store the submitted ratings and render the same matrix display.
+
+        Writes ``state["matrix"][str(entity.id)]`` in exactly the shape
+        ``_parse_ratings`` produces (hypothesis label -> evidence label
+        -> rating string), so ``ach.py``'s aggregation and
+        ``_format_rating_matrix`` work regardless of which path a turn
+        took.
+        """
+        state = discussion.method_state
+        ratings = {hkey: dict(row)
+                  for hkey, row in payload["ratings"].items()}
+        state.setdefault("matrix", {})[str(entity.id)] = ratings
+
+        matrix_text = self._format_rating_matrix(ratings, discussion)
+        reasoning = str(payload.get("reasoning", "")).strip()
+        display = (f"{reasoning}\n\n---\n{matrix_text}" if reasoning
+                  else matrix_text)
         return ProcessedResponse(display_content=display)
 
     # ------------------------------------------------------------------

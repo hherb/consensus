@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
 
 if TYPE_CHECKING:
@@ -18,6 +18,57 @@ if TYPE_CHECKING:
 # Give up and advance after this many rounds even without parsed
 # criteria — an unparseable group must not loop forever (issue #15).
 MAX_CRITERIA_ROUNDS = 4
+
+#: Minimum length (exclusive) a parsed/submitted criterion string must
+#: exceed to count as substantive — filters out stray short fragments
+#: like list markers or truncated matches.  Shared by the free-text
+#: parser (``_parse_criteria``) and the structured-output validator
+#: (``validate_criteria_payload``) so both paths hold criteria to the
+#: same bar.
+CRITERION_MIN_LENGTH = 10
+
+#: JSON Schema for the submit_criteria output tool (issue #23).
+CRITERIA_TOOL_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "criteria": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": ("The proposed settlement criteria: specific, "
+                            "concrete, testable conditions that would "
+                            "resolve the disagreement."),
+        },
+        "reasoning": {
+            "type": "string",
+            "description": ("Your rationale for these criteria: why they "
+                            "are specific, measurable, and fair to both "
+                            "sides."),
+        },
+    },
+    "required": ["criteria", "reasoning"],
+}
+
+
+def validate_criteria_payload(payload: dict) -> str:
+    """Return '' if a submit_criteria payload is usable, else an error.
+
+    Mirrors the free-text path's substantive-length filter
+    (``CRITERION_MIN_LENGTH``) and ``validate_estimate_payload``'s
+    wording style.
+    """
+    criteria = payload.get("criteria")
+    if not isinstance(criteria, list) or not criteria:
+        return "'criteria' must be a non-empty array of criterion strings."
+    for c in criteria:
+        if not isinstance(c, str) or len(c.strip()) <= CRITERION_MIN_LENGTH:
+            return (
+                "Each criterion must be a substantive string longer than "
+                f"{CRITERION_MIN_LENGTH} characters describing a specific, "
+                f"testable condition (got: {c!r})."
+            )
+    if not str(payload.get("reasoning", "")).strip():
+        return "'reasoning' must contain your rationale for these criteria."
+    return ""
 
 
 class DefineCriteriaHandler(PhaseHandler):
@@ -69,10 +120,10 @@ class DefineCriteriaHandler(PhaseHandler):
             "1. The criterion itself (specific and measurable)\n"
             "2. What finding would support Position A\n"
             "3. What finding would support Position B\n\n"
-            "Format:\n"
-            "**C1:** <criterion>\n"
-            "  - If <finding A> → supports Position A\n"
-            "  - If <finding B> → supports Position B\n\n"
+            "Submit your criteria by calling the submit_criteria tool "
+            "with an array of criterion strings — each one a complete, "
+            "testable statement covering all three points above — plus "
+            "your rationale in the 'reasoning' field.\n\n"
             "CRITICAL: These criteria will be LOCKED before evidence "
             "gathering.  You cannot change them later.  Design criteria "
             "that you believe are fair to BOTH sides."
@@ -84,12 +135,14 @@ class DefineCriteriaHandler(PhaseHandler):
         if round_num == 1:
             return (
                 f"It is your turn, {entity.name}.  Propose settlement "
-                "criteria that would be fair to both sides."
+                "criteria that would be fair to both sides by calling "
+                "the submit_criteria tool."
             )
         return (
             f"Round {round_num}, {entity.name}.  Review the proposed "
             "criteria and suggest refinements.  Do you accept these "
-            "criteria as fair?"
+            "criteria as fair?  Call the submit_criteria tool with the "
+            "refined (or unchanged) set of criteria and your reasoning."
         )
 
     def get_summary_prompt(self, discussion: Discussion,
@@ -131,6 +184,52 @@ class DefineCriteriaHandler(PhaseHandler):
         return ProcessedResponse(display_content=content)
 
     # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    requires_structured_output = True
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec:
+        """Declare the forced submit_criteria tool for this phase."""
+        return OutputToolSpec(
+            name="submit_criteria",
+            description=("Submit the proposed settlement criteria as an "
+                         "array of criterion strings, plus your "
+                         "reasoning."),
+            parameters=CRITERIA_TOOL_PARAMETERS,
+        )
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        """Validate a submit_criteria payload via the shared function."""
+        return validate_criteria_payload(payload)
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        """Dedup and append submitted criteria, then render the display.
+
+        Mirrors ``process_response``'s exact-membership dedup against
+        ``state["criteria"]``.  The display renders the reasoning first,
+        followed by a numbered list of the criteria submitted this turn
+        (matching ``_belief_helpers``-style display conventions).
+        """
+        state = discussion.method_state
+        # rstrip('.') mirrors _parse_criteria so structured items dedup
+        # against regex-parsed ones in mixed human/AI panels.
+        submitted = [str(c).strip().rstrip(".") for c in payload["criteria"]]
+        existing = state.get("criteria", [])
+        for c in submitted:
+            if c not in existing:
+                existing.append(c)
+        state["criteria"] = existing
+
+        reasoning = str(payload.get("reasoning", "")).strip()
+        numbered = "\n".join(f"{i}. {c}" for i, c in enumerate(submitted, 1))
+        display = f"{reasoning}\n\n{numbered}" if reasoning else numbered
+        return ProcessedResponse(display_content=display)
+
+    # ------------------------------------------------------------------
     # Parsing helpers
     # ------------------------------------------------------------------
 
@@ -145,7 +244,7 @@ class DefineCriteriaHandler(PhaseHandler):
             matches = re.findall(pattern, content, re.MULTILINE | re.DOTALL)
             if matches:
                 return [m.strip().rstrip('.') for m in matches
-                        if len(m.strip()) > 10]
+                        if len(m.strip()) > CRITERION_MIN_LENGTH]
         return []
 
     # ------------------------------------------------------------------

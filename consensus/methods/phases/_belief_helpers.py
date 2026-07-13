@@ -56,6 +56,110 @@ HYPOTHESES_TOOL_PARAMETERS: dict = {
     "required": ["hypotheses"],
 }
 
+#: Lower/upper bound for an individual belief probability.
+BELIEF_MIN = 0.0
+BELIEF_MAX = 1.0
+
+#: Allowed deviation of a belief distribution's sum from 1.0 —
+#: generous enough for two-decimal rounding across MAX_HYPOTHESES
+#: values (e.g. 0.33 * 3 = 0.99) without accepting non-distributions.
+BELIEF_SUM_TOLERANCE = 0.05
+
+#: JSON Schema for the submit_beliefs output tool (issue #23).
+#: Keys are hypothesis labels ("H1", "H2", ...) — the same convention
+#: the free-text path and the display/convergence helpers use — so
+#: structured and fallback turns stay comparable in belief_history.
+BELIEFS_TOOL_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "beliefs": {
+            "type": "object",
+            "description": (
+                "Map of every hypothesis label (H1, H2, ...) to your "
+                "probability estimate for it (0.0-1.0). Include one entry "
+                "per hypothesis label."
+            ),
+            "additionalProperties": {
+                "type": "number",
+                "minimum": BELIEF_MIN,
+                "maximum": BELIEF_MAX,
+            },
+        },
+        "reasoning": {
+            "type": "string",
+            "description": "Brief explanation of your probability assignments.",
+        },
+    },
+    "required": ["beliefs"],
+}
+
+
+def hypothesis_labels(hypotheses: list[str]) -> list[str]:
+    """Return the label set ('H1'..'Hn') for the framed hypotheses."""
+    return [f"H{i}" for i in range(1, len(hypotheses) + 1)]
+
+
+def format_labelled_hypotheses(hypotheses: list[str]) -> str:
+    """Format hypotheses as a labelled list ('  H1: <text>' per line)."""
+    return "\n".join(f"  H{i}: {h}" for i, h in enumerate(hypotheses, 1))
+
+
+def validate_beliefs_payload(payload: dict, hypotheses: list[str]) -> str:
+    """Return '' if a submit_beliefs payload is usable, else an error.
+
+    The keys of ``beliefs`` must be exactly the label set
+    ``H1..H{len(hypotheses)}`` (unknown or missing labels are named in
+    the error), every value must be numeric in [0, 1], and the values
+    must sum to 1.0 within ``BELIEF_SUM_TOLERANCE``.
+    """
+    beliefs = payload.get("beliefs")
+    if not isinstance(beliefs, dict) or not beliefs:
+        return ("'beliefs' must be a non-empty object mapping each "
+                "hypothesis label (H1, H2, ...) to a probability.")
+
+    valid = hypothesis_labels(hypotheses)
+    unknown = [key for key in beliefs if key not in valid]
+    if unknown:
+        return (f"Unknown hypothesis label(s) {unknown}. "
+                f"Valid labels: {valid}.")
+
+    for key, value in beliefs.items():
+        try:
+            v = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return (f"The belief for '{key}' must be a number between "
+                    f"{BELIEF_MIN} and {BELIEF_MAX}.")
+        if not (BELIEF_MIN <= v <= BELIEF_MAX):
+            return (f"The belief for '{key}' must be between "
+                    f"{BELIEF_MIN} and {BELIEF_MAX}.")
+
+    missing = [label for label in valid if label not in beliefs]
+    if missing:
+        return (f"Provide a belief for every hypothesis label. "
+                f"Missing: {missing}.")
+
+    total = sum(float(v) for v in beliefs.values())  # type: ignore[arg-type]
+    if abs(total - 1.0) > BELIEF_SUM_TOLERANCE:
+        return (f"The beliefs must form a probability distribution "
+                f"summing to 1.0 (got {total:.2f}).")
+
+    return ""
+
+
+def record_beliefs(state: dict, entity: Entity, round_num: int,
+                   beliefs: dict[str, float]) -> None:
+    """Append a beliefs entry to method_state['belief_history'].
+
+    Shared by prior_beliefs.py and diffuse_beliefs.py to avoid
+    duplicating the entry shape both handlers append.
+    """
+    state.setdefault("belief_history", []).append({
+        "round": round_num,
+        "entity_id": entity.id,
+        "entity_name": entity.name,
+        "beliefs": beliefs,
+    })
+
 
 def extract_beliefs(content: str) -> dict[str, float]:
     """Parse a belief JSON block from the response content."""

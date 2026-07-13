@@ -310,7 +310,7 @@ class TestPriorBeliefsHandler:
         assert "AI surpasses by 2028" in prompt
         assert "AI surpasses by 2032" in prompt
         assert "INITIAL probability distribution" in prompt
-        assert "json" in prompt.lower()
+        assert "submit_beliefs" in prompt
 
     def test_turn_prompt(self, entity, discussion):
         handler = PriorBeliefsHandler()

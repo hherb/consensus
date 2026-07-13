@@ -16,6 +16,7 @@ from .parsing import extract_json_block
 
 if TYPE_CHECKING:
     from ..ai_client import AIClient
+    from ..database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,11 @@ class MethodRecommendation:
     confidence: float
     reasoning: str
     fit_factors: list[str] = field(default_factory=list)
+    #: Set by ``downrank_incompatible_recommendations`` when a panel
+    #: model is known to lack the tool support this method needs — the
+    #: UI shows it as a badge, since the untouched confidence score
+    #: would otherwise contradict the down-ranked ordering.
+    capability_warning: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -53,6 +59,7 @@ class MethodRecommendation:
             "confidence": self.confidence,
             "reasoning": self.reasoning,
             "fit_factors": self.fit_factors,
+            "capability_warning": self.capability_warning,
         }
 
 
@@ -201,3 +208,65 @@ class MethodRecommender:
         except Exception:
             logger.exception("MethodRecommender.recommend() failed")
             return _fallback_recommendation()
+
+
+def downrank_incompatible_recommendations(
+    recommendations: list[MethodRecommendation],
+    db: "Database",
+    panel_models: list[tuple[str, str]],
+) -> list[MethodRecommendation]:
+    """Move structured-output recommendations behind compatible ones.
+
+    Recommender awareness of tool capability (#23 follow-up): the LLM
+    recommender has no visibility into which models the panel is using,
+    so a caller with ``db`` access (``app_discussion_setup.recommend_method``)
+    applies this pass afterward. A recommendation is "incompatible" when
+    its method's ``requires_structured_output()`` is True (issue #23 forces
+    a native tool call for those phases) and ``db.pricing.supports_tools()``
+    reports ``False`` (known unsupported) for any panel model. Compatible
+    recommendations, and any whose method name is not in the registry, keep
+    their relative order at the front; incompatible ones are appended in
+    their original relative order with a note appended to ``reasoning``.
+    Nothing is ever dropped — unknown capability (``None``, e.g. local
+    models) never down-ranks, since it is not a confirmed incompatibility.
+
+    Args:
+        recommendations: Ranked recommendations to reorder in place order.
+        db: Database handle providing the pricing cache.
+        panel_models: ``(model, base_url)`` pairs for the discussion's AI
+            participants.
+
+    Returns:
+        The reordered list (capability-compatible first, then down-ranked).
+    """
+    from . import get_method
+
+    compatible: list[MethodRecommendation] = []
+    incompatible: list[MethodRecommendation] = []
+    for rec in recommendations:
+        try:
+            method = get_method(rec.method_name)
+        except KeyError:
+            compatible.append(rec)
+            continue
+        if not method.requires_structured_output():
+            compatible.append(rec)
+            continue
+        unsupported_model = next(
+            (model for model, base_url in panel_models
+             if db.pricing.supports_tools(model, base_url) is False),
+            None,
+        )
+        if unsupported_model is None:
+            compatible.append(rec)
+            continue
+        rec.reasoning = (
+            f"{rec.reasoning} Note: requires tool-capable models; "
+            f"{unsupported_model} is known to lack tool support."
+        ).strip()
+        rec.capability_warning = (
+            f"Requires tool-capable models — {unsupported_model} "
+            "lacks tool support"
+        )
+        incompatible.append(rec)
+    return compatible + incompatible

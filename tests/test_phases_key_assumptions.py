@@ -153,6 +153,30 @@ class TestChallengeAssumptionsHandler:
         assert "3" in msg
         assert "assumptions" in msg.lower()
 
+    def test_transition_message_explains_empty_assumptions(
+            self, challenge_handler, disc):
+        """After a MAX_SURFACE_ROUNDS give-up (PR #39 review) the
+        transition must explain the empty list, not announce
+        '0 assumptions have been surfaced:' with nothing below it."""
+        disc.method_state["assumptions"] = []
+        msg = challenge_handler.get_transition_message(disc)
+        assert "0 assumptions have been surfaced" not in msg
+        assert "no assumptions" in msg.lower()
+
+    def test_prompts_handle_empty_assumptions(
+            self, challenge_handler, ai_entity, disc):
+        """The system and turn prompts must match the empty-list
+        transition message instead of rendering a blank assumption
+        list with per-assumption instructions (PR #39 review)."""
+        disc.method_state["current_phase"] = "challenge"
+        disc.method_state["assumptions"] = []
+        sys_prompt = challenge_handler.get_system_prompt(ai_entity, disc)
+        assert "have been surfaced:\n\n" not in sys_prompt
+        assert "no assumptions" in sys_prompt.lower()
+        turn_prompt = challenge_handler.get_turn_prompt(ai_entity, disc)
+        assert "each surfaced assumption" not in turn_prompt
+        assert "assumptions you consider most critical" in turn_prompt
+
     def test_turn_prompt(self, challenge_handler, ai_entity, disc):
         prompt = challenge_handler.get_turn_prompt(ai_entity, disc)
         assert "TestAI" in prompt

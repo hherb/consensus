@@ -11,9 +11,15 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
-from ._distillation_helpers import extract_overall_score, extract_validity_scores
+from ._distillation_helpers import (
+    VALIDITY_TOOL_PARAMETERS,
+    extract_overall_score,
+    extract_validity_scores,
+    format_validity_scores_display,
+    validate_validity_scores_payload,
+)
 
 if TYPE_CHECKING:
     from ...models import Discussion, Entity
@@ -125,24 +131,25 @@ class BlindEvaluateHandler(PhaseHandler):
             "- **1** = Fallacious — does not follow from the stated "
             "premises at all\n\n"
             f"You must evaluate: {items_str}\n\n"
-            "Use these EXACT tags in your response:\n"
-            f"- For each step: `[VALIDITY <ID>: <1-5>]` "
-            f"(e.g. `[VALIDITY I1: 4]`)\n"
-            "- Overall argument: `[OVERALL: <1-5>]`"
+            "Submit your scores by calling the submit_validity_scores "
+            "tool, with one entry per step (its id and a 1-5 score), "
+            "an overall 1-5 score for the whole argument, and your "
+            "assessment rationale in the 'reasoning' field."
         )
 
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
         skeleton = discussion.method_state.get("skeleton", {})
         eval_items = self._eval_item_ids(skeleton)
-        tags = " ".join(f"`[VALIDITY {eid}: ?]`" for eid in eval_items)
+        items_str = ", ".join(eval_items)
 
         return (
             f"{entity.name}, evaluate the logical skeleton above.\n\n"
-            "For each inference and conclusion step, explain whether "
+            "For each inference and conclusion step, judge whether "
             "it follows logically from its stated dependencies, then "
-            "assign a validity score.\n\n"
-            f"You MUST include these tags: {tags} `[OVERALL: ?]`\n\n"
+            "call the submit_validity_scores tool with a score for "
+            f"each step ({items_str}), an overall score, and your "
+            "reasoning.\n\n"
             "Focus on the LOGIC, not the truth of the premises."
         )
 
@@ -190,6 +197,56 @@ class BlindEvaluateHandler(PhaseHandler):
             )
             display = content
 
+        return ProcessedResponse(display_content=display)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    requires_structured_output = True
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec | None:
+        skeleton = discussion.method_state.get("skeleton")
+        eval_items = self._eval_item_ids(skeleton) if skeleton else []
+        if not eval_items:
+            # Skeleton extraction failed (or produced nothing scorable):
+            # no submit_validity_scores payload could pass validation,
+            # so forcing the tool would burn every retry.  Fall through
+            # to the free-text path, which asks for a qualitative
+            # assessment instead (see get_system_prompt).
+            return None
+        items_str = ", ".join(eval_items)
+        return OutputToolSpec(
+            name="submit_validity_scores",
+            description=("Submit a 1-5 logical validity score for each "
+                         f"step ({items_str}), an overall 1-5 score "
+                         "for the whole argument, and your assessment "
+                         "rationale."),
+            parameters=VALIDITY_TOOL_PARAMETERS,
+        )
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        skeleton = discussion.method_state.get("skeleton") or {}
+        eval_items = self._eval_item_ids(skeleton)
+        return validate_validity_scores_payload(payload, eval_items)
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        state = discussion.method_state
+        scores = {str(entry["inference_id"]).upper(): int(entry["score"])
+                  for entry in payload["scores"]}
+        overall = int(payload["overall"])
+
+        for item_id, score in scores.items():
+            state.setdefault("validity_scores", {}).setdefault(
+                item_id, {}
+            )[entity.name] = score
+        state.setdefault("overall_scores", {})[entity.name] = overall
+
+        reasoning = str(payload.get("reasoning", ""))
+        display = format_validity_scores_display(scores, overall, reasoning)
         return ProcessedResponse(display_content=display)
 
     # ------------------------------------------------------------------

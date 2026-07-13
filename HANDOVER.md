@@ -1,7 +1,7 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-13 (session: #23 structured outputs via native
-function calling, branch `claude/handover-instructions-e198e6`)._
+_Last updated: 2026-07-13 (session: #23 remaining conversions, branch
+`claude/handover-instructions-4be219`)._
 
 This file briefs the next session(s) on what was done, what is in flight,
 and what to do next. Update it whenever a session materially changes the
@@ -10,62 +10,73 @@ plan; delete sections that are finished and no longer instructive.
 ## Where things stand
 
 - **PR #18** (six defect classes, issues #12–#17), **PR #31**
-  (#19/#20/#21), **PR #35** (#22 phase-machine loop support), and
-  **PR #36** (#30 Belief Diffusion abort) are all **merged**.
-- **#23 structured outputs — mechanism + first three conversions done**
-  (this session, **PR #38** — merge it before building on the hooks).
-  Plan:
-  `docs/superpowers/plans/2026-07-13-structured-method-outputs.md`.
-  - `consensus/structured_output.py` — `generate_structured_turn()`
-    forces the phase's declared tool via `tool_choice`, validates the
-    payload with the handler's `validate_output` hook, retries with the
-    validation error fed back (`MAX_STRUCTURED_OUTPUT_ATTEMPTS = 3`),
-    then falls back to the free-text path with a user-visible warning.
-    HTTP 400 (model without tool support) raises a loud
-    `StructuredOutputError`.
-  - Hooks: `OutputToolSpec` in `consensus/methods/base.py`;
-    `PhaseHandler.get_output_tool` / `validate_output` /
-    `process_structured_response` + `requires_structured_output`
-    ClassVar; `DiscussionMethod` delegates all of them and exposes
-    `requires_structured_output()`.
-  - Flow: `Moderator.generate_turn` routes structured phases (registry
-    tools are NOT offered on those turns); `generate_ai_turn` sends
-    `AIResponse.structured_output` to `process_structured_response`,
-    everything else (incl. human input) through the regex
-    `process_response` path, which remains as containment fallback.
-  - Setup gate: migration 014 adds `supported_parameters` to
-    `model_pricing`; `PricingCache.supports_tools()` returns
-    True/False/None (None = unknown → allowed, fails loudly at runtime);
-    `start_discussion` rejects structured methods when any AI member's
-    model is known to lack tool support
-    (`_validate_structured_output_support` in `app_discussion_setup.py`).
-  - Converted phases: Delphi `estimate` + `revise` (`submit_estimate`),
-    Voting `vote` (`submit_votes`), Belief Diffusion `frame`
-    (`submit_hypotheses` — closes the #30 failure mode at the source;
-    the abort machinery stays as last-resort containment).
+  (#19/#20/#21), **PR #35** (#22 phase-machine loop support), **PR #36**
+  (#30 Belief Diffusion abort), and **PR #38** (#23 mechanism + first
+  three conversions) are all **merged**.
+- **#23 structured outputs — ALL remaining regex-parsing phases
+  converted** (this session, **PR #39** — merge it before building on
+  this work). Plan:
+  `docs/superpowers/plans/2026-07-13-structured-conversions-remaining.md`
+  (all 11 tasks executed). See
+  `docs/superpowers/plans/2026-07-13-structured-method-outputs.md` for
+  the original mechanism design.
+  - Newly converted phases, each following the established pattern
+    (schema + `validate_output` + `process_structured_response`, prompts
+    rewritten to name the tool, regex `process_response` kept as the
+    human/fallback path):
+    - Belief Diffusion `prior_beliefs` / `diffuse_beliefs` →
+      `submit_beliefs` (H-label keyed belief distributions — a JSON
+      object mapping each hypothesis label to a probability).
+    - Self-Distillation `blind_evaluate` → `submit_validity_scores`.
+    - Adversarial Collab `define_criteria` → `submit_criteria`.
+    - ACH `evaluate_matrix` → `submit_matrix_ratings`.
+    - Self-Distillation `distill_skeleton` → `submit_skeleton`.
+    - ACH `hypothesize` → `submit_hypotheses` (ACH-specific spec —
+      distinct from Belief Diffusion's `frame`'s tool of the same name).
+    - Key Assumptions `surface_assumptions` → `submit_assumptions`.
+    - Recursive Decomposition `decompose` → `submit_subquestions`.
+    - Counterfactual `counterfactual_extract` → `submit_claims`.
+  - `tally.py` needed **no conversion**: `TallyHandler` has no
+    `process_response` override (the base `PhaseHandler` no-op is used
+    as-is) — the vote tally itself is computed by `_voting_helpers` at
+    conclusion, not parsed from a turn.
+  - Give-up caps added alongside their conversions:
+    `MAX_SURFACE_ROUNDS` (`surface_assumptions.py`) and
+    `MAX_DECOMPOSE_ROUNDS` (`decompose.py`), per the existing
+    condition-based-phase convention.
+  - **Both #23 gaps from the previous session are now closed:**
+    - `switch_discussion_method` (`app_discussion_flow.py`) now runs
+      `_validate_structured_output_support` before committing a Triage
+      handoff. The check itself moved to `consensus/structured_output.py`
+      (re-exported from `app_discussion_setup` for backward
+      compatibility) because `app_discussion_setup` and
+      `app_discussion_flow` import each other, and both needed the
+      helper — a same-module home would have created a circular import.
+      A blocked switch returns an error, is logged, posted to the
+      transcript as a system message, and surfaced to the frontend via a
+      `switch_error` field (toasted) instead of silently falling through.
+    - `MethodRecommender` is now capability-aware:
+      `consensus.methods.recommender.downrank_incompatible_recommendations()`
+      takes the ranked recommendations, a `db` handle, and a list of
+      `(model, base_url)` panel pairs; any recommendation whose method
+      `requires_structured_output()` is moved after all
+      capability-compatible recommendations when
+      `db.pricing.supports_tools()` is `False` for any panel model, with
+      a note appended to `reasoning` (never dropped). Unknown capability
+      (`None`) never down-ranks. `app_discussion_setup.recommend_method`
+      (the db-aware caller) accepts optional `db` and `panel_models`
+      parameters and calls the helper only when both are supplied;
+      omitting either leaves behavior unchanged. `ConsensusApp.recommend_method`
+      (`app.py`) is wired: the New Discussion tab already lists
+      participants (with their models) above the "Suggest Method" button
+      (`consensus/static/index.html` — roster at line ~123, button at
+      line ~174), so panel data is available at this call site and is
+      passed through as `(model, base_url)` pairs from
+      `self.discussion.entities`.
 
 ## Next steps, in order
 
-1. **Finish the #23 conversions** — mechanical, following the pattern in
-   the converted handlers (schema + `validate_output` +
-   `process_structured_response`, shared helpers refactored for reuse,
-   prompts rewritten to name the tool, existing regex path kept for
-   humans/fallback). Remaining regex-parsing phases:
-   `prior_beliefs` / `diffuse_beliefs` (belief distributions),
-   `blind_evaluate` / `tally`, `evaluate_matrix` / `define_criteria`,
-   `distill_skeleton`, `hypothesize`, `surface_assumptions`,
-   `decompose`, `counterfactual_extract`.
-
-2. **Known #23 gaps (small, self-contained):**
-   - `switch_discussion_method` (triage handoff) does not run the
-     tool-capability check, so Triage can still switch into a structured
-     method with a non-tool-capable model. Add the check there (return
-     an error → triage falls through to `method_complete`).
-   - `MethodRecommender` does not consider tool capability when
-     recommending methods; it could down-rank structured methods when
-     panel models lack tool support.
-
-3. **New methods (highest value first):**
+1. **New methods (highest value first):**
    - **#24 Nominal Group Technique** — structured brainstorming; ~80% of
      phases exist as reusable handlers (Delphi anonymisation, list
      parsing/dedup, voting/tally). The catalog currently has no
@@ -78,10 +89,59 @@ plan; delete sections that are finished and no longer instructive.
    - **#26 Tree-of-Thoughts** — generate/score/prune/expand; the #22
      `next_phase` hook it needed now exists.
 
-4. **Cross-cutting quality:**
+2. **Cross-cutting quality:**
    - **#28 evidence-gated phases** — opt-in `require_citations` so
      evidence phases must ground claims via the existing RAG/web tools.
    - **#29 same-model-panel warning** for Delphi/Belief Diffusion.
+
+3. **New known follow-ups (this session):**
+   - **Blocked Triage switch still auto-concludes the discussion.** When
+     `switch_discussion_method` rejects a handoff (non-tool-capable
+     model), Triage currently falls through to `method_complete` and the
+     discussion ends. A "reassign model and retry" UX — pause, let the
+     user swap the offending participant's model, then retry the
+     switch — would be considerably better than ending the discussion
+     outright. No mechanism for this exists yet.
+   - **Structured payload validators share a fragile string-coercion
+     pattern.** `str(payload.get(x, "")).strip()` (23 call sites across
+     `consensus/methods/phases/*.py`) silently accepts a JSON literal
+     `null` for `x` as the Python string `"None"`, because
+     `payload.get("x", "")` only substitutes the default when the key is
+     *absent*, not when it is present with value `null`. A model that
+     omits a field gets the safe `""` default; a model that includes the
+     field as `null` gets the misleading string `"None"`. One shared
+     helper (e.g. `_coerce_str(payload, key)` treating both `None` and
+     absence as `""`) applied across all structured phases would harden
+     this in one place rather than 23.
+   - **Recommender panel-model wiring needed no frontend change.** The
+     New Discussion tab already builds the roster (with each entity's
+     model) before "Suggest Method" is clickable, and
+     `ConsensusApp.recommend_method` reads `self.discussion.entities`
+     server-side — so `consensus/static/setup.js`'s existing
+     `api.recommendMethod(topic, answerType)` call needed no changes.
+     (The cosmetic gap originally noted here is closed: down-ranked
+     recommendations now carry a `capability_warning` field rendered
+     as a ⚠ badge by `renderRecommendations()`, so the untouched
+     confidence score no longer visually contradicts the ordering.)
+   - **PR #39 post-review hardening (2026-07-14) is on the PR branch:**
+     `validate_skeleton` rejects non-string ids/text (a truthy int
+     previously crashed `format_skeleton_display` and the crash was
+     swallowed as a misleading "API error" without advancing the
+     extraction give-up counter); the `MAX_SURFACE_ROUNDS` /
+     `MAX_DECOMPOSE_ROUNDS` give-ups now log a warning and the
+     downstream zero-item transition/turn prompts explain the empty
+     list instead of announcing "0 assumptions"; structured items are
+     `rstrip('.')`-normalised to match the regex paths (hypothesize,
+     define_criteria, counterfactual claims); belief payloads must sum
+     to ~1 (`BELIEF_SUM_TOLERANCE`); the blocked-switch transcript
+     notice dedups per target method rather than globally; the belief
+     value schema carries `minimum`/`maximum` and the claims schema
+     `minItems`/`maxItems` (accumulative schemas stay deliberately
+     unbounded); `evaluate_matrix` prompts no longer name the tool
+     when the degenerate empty matrix means none is offered; and the
+     counterfactual extract display shows the conclusion actually kept,
+     not a discarded payload one. The shared `str(None)` validator
+     helper below remains open.
 
 ## Conventions and gotchas for the next session
 
@@ -111,6 +171,19 @@ plan; delete sections that are finished and no longer instructive.
   unparseable group cannot loop forever (`MAX_*_ATTEMPTS` /
   `MAX_*_ROUNDS` constants — no magic numbers, per
   `docs/llm/golden_rules.md`).
+- **Structured conversions include a required `reasoning` field**,
+  rendered before the data display (belief bar, matrix, skeleton, ...) so
+  a validated payload still reads as a real contribution rather than a
+  bare data dump. Two exceptions: `submit_beliefs` declares `reasoning`
+  but leaves it optional (unvalidated — a belief turn may render as a
+  bare belief bar), and `submit_claims` has no `reasoning` field at all
+  (its `preliminary_conclusion` — like `submit_skeleton`'s
+  `rich_summary` — plays that role for the moderator extraction phases). Dynamic-key maps (belief distributions keyed by
+  hypothesis label, matrix ratings keyed by hypothesis × evidence label)
+  declare `additionalProperties` in their JSON Schema rather than
+  enumerating keys, since the key set is only known at runtime (see
+  `MATRIX_TOOL_PARAMETERS` in `evaluate_matrix.py` and the shared
+  `BELIEFS_TOOL_PARAMETERS` pattern in `_belief_helpers.py`).
 - **Test new flow behavior through the real pipeline.** The historical
   failure mode here was unit tests feeding handlers idealized inputs the
   moderator never produces. Use the patterns in

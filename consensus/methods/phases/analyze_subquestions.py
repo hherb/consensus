@@ -37,11 +37,22 @@ class AnalyzeSubquestionsHandler(PhaseHandler):
         sq_list = "\n".join(
             f"{i + 1}. {sq}" for i, sq in enumerate(sub_questions)
         )
-        return (
+        base = (
             f"You are {entity.name}, participating in a Recursive "
             f"Decomposition analysis.\n"
             f"Topic: {discussion.topic}\n\n"
             "SUB-QUESTION ANALYSIS PHASE\n\n"
+        )
+        # Empty only via the MAX_DECOMPOSE_ROUNDS give-up: don't
+        # render a blank list with the per-sub-question format.
+        if not sub_questions:
+            return base + (
+                "No sub-questions were captured during decomposition, "
+                "so analyze the main question directly. Provide your "
+                "best reasoning, evidence, and any caveats or "
+                "uncertainties."
+            )
+        return base + (
             "The group has identified the following sub-questions:\n"
             f"{sq_list}\n\n"
             "Address EACH sub-question with substantive analysis. "
@@ -56,6 +67,15 @@ class AnalyzeSubquestionsHandler(PhaseHandler):
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
         n = len(discussion.method_state.get("sub_questions", []))
+        if n == 0:
+            # Reached only via the MAX_DECOMPOSE_ROUNDS give-up: no
+            # sub-questions were captured, so asking for "each of the
+            # 0 sub-questions" would be nonsense.
+            return (
+                f"It is your turn, {entity.name}. No sub-questions "
+                "were captured during decomposition, so analyze the "
+                "main question directly with substantive analysis."
+            )
         return (
             f"It is your turn, {entity.name}. Address each of the "
             f"{n} sub-questions with substantive analysis. Use the "

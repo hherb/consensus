@@ -1,17 +1,36 @@
 """Tests for consensus.app_discussion_flow — active discussion operations."""
 
+import logging
+import time
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from consensus.app_discussion_flow import (
     calculate_discussion_cost,
+    complete_turn,
     generate_ai_turn,
     is_pass,
     submit_human_message,
     submit_moderator_message,
+    switch_discussion_method,
 )
 from consensus.models import Discussion, Entity, EntityType, Message, MessageRole
 from consensus.pricing import PricingCache
+
+
+def _insert_model(tmp_db, model_id: str, supported: str) -> None:
+    """Insert a model_pricing row with a given ``supported_parameters`` value.
+
+    Mirrors the helper in tests/test_structured_setup_check.py.
+    """
+    tmp_db.conn.execute(
+        "INSERT INTO model_pricing (model_id, prompt_cost, completion_cost,"
+        " last_updated, input_modalities, context_length,"
+        " supported_parameters) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (model_id, 0.0, 0.0, time.time(), "text", 8192, supported),
+    )
+    tmp_db.conn.commit()
 
 
 class TestIsPass:
@@ -402,3 +421,235 @@ class TestStructuredOutputFlowRouting:
 
         assert result["skipped"] is True
         assert "model-x rejected the forced tool call" in result["error"]
+
+
+class TestSwitchDiscussionMethodToolCapability:
+    """Runtime method switching must honour the same tool-capability gate
+    as discussion setup (issue #23) — Triage's handoff to a chosen method
+    must not bypass it."""
+
+    def _prepare(self, disc, tmp_db):
+        """Give the discussion an id and a starting method/state so a
+        successful switch would have something to mutate."""
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.discussion_method = "triage"
+        disc.method_state = {"chosen_method": "delphi"}
+        disc.messages = []
+        return disc
+
+    def test_blocks_structured_target_with_non_tool_capable_model(
+        self, tmp_db, discussion_with_entities, monkeypatch
+    ):
+        """Switching into delphi (structured) with a model known to lack
+        tool support returns an error and leaves method/state/messages
+        untouched."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_model(tmp_db, "test/test-model", "temperature,top_p")
+        disc = self._prepare(discussion_with_entities, tmp_db)
+        original_state = dict(disc.method_state)
+
+        result = switch_discussion_method(disc, tmp_db, "delphi")
+
+        assert "error" in result
+        assert "test-model" in result["error"]
+        assert disc.discussion_method == "triage"
+        assert disc.method_state == original_state
+        assert disc.messages == []
+
+    def test_allows_unknown_capability(
+        self, tmp_db, discussion_with_entities, monkeypatch
+    ):
+        """No pricing data (e.g. a local model) still allows the switch."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        disc = self._prepare(discussion_with_entities, tmp_db)
+
+        result = switch_discussion_method(disc, tmp_db, "delphi")
+
+        assert "error" not in result
+        assert disc.discussion_method == "delphi"
+
+    def test_allows_unstructured_target_with_non_tool_capable_model(
+        self, tmp_db, discussion_with_entities, monkeypatch
+    ):
+        """A target method with no structured phases is never blocked,
+        even with a known non-tool-capable model."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_model(tmp_db, "test/test-model", "temperature,top_p")
+        disc = self._prepare(discussion_with_entities, tmp_db)
+
+        result = switch_discussion_method(disc, tmp_db, "open_discussion")
+
+        assert "error" not in result
+        assert disc.discussion_method == "open_discussion"
+
+
+class TestCompleteTurnBlockedTriageSwitch:
+    """A triage switch blocked by the tool-capability gate must be loud:
+    logged, posted into the transcript as a system message, and surfaced
+    to the frontend via ``switch_error`` — never silently swallowed into
+    a bare ``method_complete`` (golden rule 6, issue #23)."""
+
+    def _make_triage_pipeline(self, tmp_db, sample_provider):
+        """Active triage discussion at the confirm phase, driven by a
+        human moderator, with one AI panel member (model 'test-model').
+
+        Returns (discussion, moderator_entity, Moderator, PricingCache).
+        Mirrors the pipeline pattern in tests/test_belief_diffusion_abort.py.
+        """
+        from consensus.methods import get_method
+        from consensus.moderator import Moderator
+
+        mod_id = tmp_db.add_entity("Mod", "human", "#123456")
+        ai_id = tmp_db.add_entity(
+            "Alice", "ai", "#ff0000", sample_provider,
+            "test-model", 0.5, 512, "You are Alice.",
+        )
+        mod = Entity.from_db_row(tmp_db.get_entity(mod_id))
+        ai = Entity.from_db_row(tmp_db.get_entity(ai_id))
+        disc = Discussion(
+            topic="Which method fits?",
+            entities=[mod, ai],
+            moderator_id=mod.id,
+            turn_order=[mod.id],
+            base_turn_order=[ai.id],
+            current_turn_index=0,
+            turn_number=5,
+            is_active=True,
+            status="active",
+            discussion_method="triage",
+        )
+        disc.id = tmp_db.create_discussion(disc.topic, mod.id)
+        disc.method_state = get_method("triage").init_state(disc)
+        disc.method_state["current_phase"] = "confirm"
+        # The confirm handler re-parses the moderator's message; the
+        # recommended_method fallback keeps the choice deterministic.
+        disc.method_state["chosen_method"] = "delphi"
+        disc.method_state["recommended_method"] = "delphi"
+        moderator = Moderator(disc, tmp_db)
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        return disc, mod, moderator, pricing
+
+    async def _drive_turn(self, disc, mod, moderator, tmp_db, pricing):
+        """One human-moderator turn through the real pipeline."""
+        submitted = submit_human_message(
+            disc, tmp_db, mod.id, "Yes, proceed with the recommendation.",
+        )
+        assert "error" not in submitted
+        result = await complete_turn(
+            disc, moderator, tmp_db, pricing,
+            get_state_fn=lambda: {},
+            moderator_summary="Noted.",
+        )
+        return result
+
+    def _blocked_notices(self, disc):
+        """System messages announcing the blocked switch."""
+        return [m for m in disc.messages
+                if m.role == MessageRole.SYSTEM
+                and "could not be adopted" in m.content]
+
+    @pytest.mark.asyncio
+    async def test_blocked_switch_is_loud(
+        self, tmp_db, sample_provider, monkeypatch, caplog,
+    ):
+        """A blocked switch returns switch_error, logs a warning, and
+        posts an explanatory system message into the transcript."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_model(tmp_db, "test/test-model", "temperature,top_p")
+        disc, mod, moderator, pricing = self._make_triage_pipeline(
+            tmp_db, sample_provider)
+
+        with caplog.at_level(logging.WARNING,
+                             logger="consensus.app_discussion_flow"):
+            result = await self._drive_turn(
+                disc, mod, moderator, tmp_db, pricing)
+
+        assert result.get("method_complete") is True
+        assert "test-model" in result["switch_error"]
+        assert disc.discussion_method == "triage"
+        # Logged (golden rule 6)
+        assert any("test-model" in rec.message
+                   for rec in caplog.records)
+        # Durable transcript notice quoting the validator's error
+        notices = self._blocked_notices(disc)
+        assert len(notices) == 1
+        assert "test-model" in notices[0].content
+
+    @pytest.mark.asyncio
+    async def test_blocked_switch_notice_posted_only_once(
+        self, tmp_db, sample_provider, monkeypatch,
+    ):
+        """Turns completing after the blocked switch must not repost the
+        notice — complete_turn re-enters the method-ended branch while
+        the frontend concludes."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_model(tmp_db, "test/test-model", "temperature,top_p")
+        disc, mod, moderator, pricing = self._make_triage_pipeline(
+            tmp_db, sample_provider)
+
+        result = await self._drive_turn(
+            disc, mod, moderator, tmp_db, pricing)
+        assert result.get("switch_error")
+
+        # One more turn completes before the frontend concludes —
+        # complete_turn re-enters the method-ended branch directly.
+        result = await complete_turn(
+            disc, moderator, tmp_db, pricing,
+            get_state_fn=lambda: {},
+            moderator_summary="Noted.",
+        )
+        assert result.get("method_complete") is True
+        assert result.get("switch_error"), (
+            "re-entry must still report the blocked switch"
+        )
+        assert len(self._blocked_notices(disc)) == 1, (
+            "the blocked-switch notice was posted more than once"
+        )
+
+    @pytest.mark.asyncio
+    async def test_blocked_switch_to_different_method_posts_new_notice(
+        self, tmp_db, sample_provider, monkeypatch,
+    ):
+        """The once-only dedup is per target method (PR #39 review):
+        a later blocked switch to a *different* method is new
+        information and must reach the transcript."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_model(tmp_db, "test/test-model", "temperature,top_p")
+        disc, mod, moderator, pricing = self._make_triage_pipeline(
+            tmp_db, sample_provider)
+
+        result = await self._drive_turn(
+            disc, mod, moderator, tmp_db, pricing)
+        assert result.get("switch_error")
+        assert len(self._blocked_notices(disc)) == 1
+
+        # Triage re-selects a different (also structured) method.
+        disc.method_state["chosen_method"] = "ach"
+        disc.method_state["recommended_method"] = "ach"
+        result = await complete_turn(
+            disc, moderator, tmp_db, pricing,
+            get_state_fn=lambda: {},
+            moderator_summary="Noted.",
+        )
+        assert result.get("switch_error")
+        notices = self._blocked_notices(disc)
+        assert len(notices) == 2
+        assert "Analysis of Competing Hypotheses" in notices[1].content
+
+    @pytest.mark.asyncio
+    async def test_unknown_capability_switch_unchanged(
+        self, tmp_db, sample_provider, monkeypatch,
+    ):
+        """No pricing data (e.g. a local model): the switch proceeds and
+        no switch_error is reported."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        disc, mod, moderator, pricing = self._make_triage_pipeline(
+            tmp_db, sample_provider)
+
+        result = await self._drive_turn(
+            disc, mod, moderator, tmp_db, pricing)
+
+        assert result.get("method_switched") is True
+        assert "switch_error" not in result
+        assert disc.discussion_method == "delphi"
+        assert self._blocked_notices(disc) == []

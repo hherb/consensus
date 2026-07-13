@@ -1254,6 +1254,12 @@ input[type="checkbox"] { width: auto; }
   font-size: 0.85em;
   opacity: 0.7;
 }
+.recommendation-item .capability-warning {
+  display: block;
+  font-size: 0.85em;
+  color: var(--warning, #b8860b);
+  margin-top: 0.15rem;
+}
 .recommendation-item .reasoning {
   font-size: 0.9em;
   margin-top: 0.25rem;

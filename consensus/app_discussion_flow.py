@@ -11,6 +11,7 @@ from .methods import get_active_method, get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole, StoryboardEntry
 from .moderator import Moderator
 from .pricing import PricingCache
+from .structured_output import _validate_structured_output_support
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +352,12 @@ def switch_discussion_method(
     Reinitializes method_state, persists to DB, and adds a system
     message announcing the transition. Returns the new method's
     metadata dict, or an error dict.
+
+    Runs the same tool-capability gate as discussion setup (issue #23)
+    before any mutation: a structured target method whose panel models
+    are known to lack tool support is rejected, leaving the discussion's
+    method, method_state, and messages untouched. Triage falls through
+    to ``method_complete`` when this returns an error.
     """
     if method_name == "triage":
         return {"error": "Cannot switch to triage method"}
@@ -359,6 +366,14 @@ def switch_discussion_method(
         method = get_method(method_name)
     except KeyError:
         return {"error": f"Unknown method: {method_name!r}"}
+
+    # The target method hasn't been assigned to discussion.discussion_method
+    # yet, so it must be passed explicitly (the default falls back to the
+    # discussion's *current* method, which is wrong here).
+    tool_error = _validate_structured_output_support(
+        discussion, db, method_name)
+    if tool_error:
+        return {"error": tool_error}
 
     # Budget bookkeeping written by _increase_budgets must survive the
     # method_state reset (issue #16).
@@ -601,6 +616,54 @@ async def complete_turn(
                             "current_round": discussion.current_round,
                             "state": get_state_fn(),
                         }
+                    # Blocked switch (e.g. the tool-capability gate,
+                    # issue #23): the error must be loud — logged and
+                    # posted into the transcript, never silently
+                    # swallowed into a bare method_complete (golden
+                    # rule 6).  Post the notice at most once *per
+                    # target method*: complete_turn re-enters this
+                    # branch while the frontend concludes, but a later
+                    # blocked switch to a different method is new
+                    # information.
+                    switch_error = switch_result["error"]
+                    logger.warning(
+                        "Triage could not switch discussion %s to %r: %s",
+                        discussion.id, chosen, switch_error,
+                    )
+                    # Scalar last-target key, deliberately: after an
+                    # intervening blocked switch to a different method,
+                    # re-notifying about an earlier target again is new
+                    # information, not spam.
+                    already_notified = discussion.method_state.get(
+                        "_switch_error_posted")
+                    if mod and discussion.id and already_notified != chosen:
+                        discussion.method_state[
+                            "_switch_error_posted"] = chosen
+                        notice = (
+                            "**The recommended method could not be "
+                            f"adopted.** {switch_error}"
+                        )
+                        sys_msg = Message(
+                            entity_id=mod.id, entity_name=mod.name,
+                            content=notice, role=MessageRole.SYSTEM,
+                        )
+                        discussion.messages.append(sys_msg)
+                        db.add_message(
+                            discussion.id, mod.id, notice, "system",
+                            turn_number=discussion.turn_number,
+                        )
+                        db.update_discussion(
+                            discussion.id,
+                            method_state=serialize_method_state(
+                                discussion.method_state),
+                        )
+                    return {
+                        "method_complete": True,
+                        "switch_error": switch_error,
+                        "turn_number": discussion.turn_number,
+                        "current_round": discussion.current_round,
+                        "state": get_state_fn(),
+                    }
                 return {
                     "method_complete": True,
                     "turn_number": discussion.turn_number,

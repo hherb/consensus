@@ -146,6 +146,34 @@ class TestValidateSkeleton:
         }
         assert validate_skeleton(data) is False
 
+    def test_non_string_id_rejected(self):
+        """Integer ids pass truthiness but crash display joins (PR #39)."""
+        data = {
+            "premises": [{"id": 1, "text": "X"}],
+            "inferences": [{"id": 2, "from": [1], "text": "Y"}],
+            "conclusions": [{"id": 3, "from": [2], "text": "Z"}],
+        }
+        assert validate_skeleton(data) is False
+
+    def test_non_string_text_rejected(self):
+        data = {
+            "premises": [{"id": "P1", "text": 42}],
+            "inferences": [{"id": "I1", "from": ["P1"], "text": "Y"}],
+            "conclusions": [{"id": "C1", "from": ["I1"], "text": "Z"}],
+        }
+        assert validate_skeleton(data) is False
+
+    def test_non_string_from_ref_rejected(self):
+        """Regression pin: a non-string ref fails the membership check
+        (valid_ids only ever holds strings) — there is no separate
+        isinstance check on refs, and none is needed."""
+        data = {
+            "premises": [{"id": "P1", "text": "X"}],
+            "inferences": [{"id": "I1", "from": [None], "text": "Y"}],
+            "conclusions": [{"id": "C1", "from": ["I1"], "text": "Z"}],
+        }
+        assert validate_skeleton(data) is False
+
     def test_inference_can_reference_prior_inference(self):
         """Inference I2 referencing I1 should be valid."""
         data = {
@@ -430,14 +458,14 @@ class TestDistillSkeletonHandler:
         prompt = handler.get_turn_prompt(entity, sd_discussion)
         assert "premises" in prompt.lower()
         assert "inferences" in prompt.lower()
-        assert "json" in prompt.lower()
+        assert "submit_skeleton" in prompt
 
     def test_turn_prompt_retry(self, handler, entity, sd_discussion):
         sd_discussion.method_state["extraction_failed"] = True
         sd_discussion.method_state["extraction_attempts"] = 1
         prompt = handler.get_turn_prompt(entity, sd_discussion)
         assert "try again" in prompt.lower() or "did not produce" in prompt.lower()
-        assert "json" in prompt.lower()
+        assert "submit_skeleton" in prompt
 
     def test_process_response_valid_skeleton(self, handler, moderator, sd_discussion):
         import json
@@ -551,8 +579,7 @@ class TestBlindEvaluateHandler:
         prompt = handler.get_system_prompt(entity, eval_discussion)
         assert "P1" in prompt
         assert "I1" in prompt
-        assert "VALIDITY" in prompt
-        assert "OVERALL" in prompt
+        assert "submit_validity_scores" in prompt
         assert entity.name in prompt
 
     def test_system_prompt_failed_extraction(self, handler, entity, sd_discussion):
@@ -560,12 +587,12 @@ class TestBlindEvaluateHandler:
         prompt = handler.get_system_prompt(entity, sd_discussion)
         assert "failed" in prompt.lower()
 
-    def test_turn_prompt_lists_tags(self, handler, entity, eval_discussion):
+    def test_turn_prompt_names_tool(self, handler, entity, eval_discussion):
         prompt = handler.get_turn_prompt(entity, eval_discussion)
-        assert "[VALIDITY I1:" in prompt
-        assert "[VALIDITY I2:" in prompt
-        assert "[VALIDITY C1:" in prompt
-        assert "[OVERALL:" in prompt
+        assert "submit_validity_scores" in prompt
+        assert "I1" in prompt
+        assert "I2" in prompt
+        assert "C1" in prompt
 
     def test_process_response_extracts_scores(self, handler, entity, eval_discussion):
         content = (
@@ -754,7 +781,7 @@ class TestRecursiveSelfDistillationIntegration:
             VALID_SKELETON
         )
         prompt = method.get_system_prompt(entity, discussion)
-        assert "VALIDITY" in prompt
+        assert "submit_validity_scores" in prompt
         assert "skeleton" in prompt.lower()
 
 

@@ -347,6 +347,9 @@ function renderRecommendations(recs) {
              data-method="${escHtml(r.method_name)}">
             <strong>${escHtml(r.display_name)}</strong>
             <span class="confidence">${Math.round(r.confidence * 100)}% match</span>
+            ${r.capability_warning
+                ? `<span class="capability-warning">⚠ ${escHtml(r.capability_warning)}</span>`
+                : ''}
             <div class="reasoning">${escHtml(r.reasoning)}</div>
         </div>
     `).join('');

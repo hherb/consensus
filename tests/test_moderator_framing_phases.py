@@ -143,7 +143,7 @@ class TestCounterfactualConclusionCapture:
         discussion.method_state = h.init_state(discussion)
         mod = discussion.entities[0]
         prompt = h.get_turn_prompt(mod, discussion)
-        assert "CONCLUSION:" in prompt
+        assert "preliminary_conclusion" in prompt
 
 
 class TestDistillRichSummaryCapture:

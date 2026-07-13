@@ -10,7 +10,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..parsing import parse_numbered_list
 from ..phase_handler import PhaseHandler
 
@@ -30,6 +30,72 @@ _CONCLUSION_RE = re.compile(
     r"^\s*\**CONCLUSION:?\**\s*:?\s*(.+?)(?=\n\s*\d+[\.\)]|\Z)",
     re.MULTILINE | re.DOTALL | re.IGNORECASE,
 )
+
+#: Minimum length (inclusive) a claim string must reach to count as
+#: substantive.  Matches ``parse_numbered_list``'s default
+#: ``min_length=10`` so the free-text and structured-output paths hold
+#: claims to the same bar.
+CLAIM_MIN_LENGTH = 10
+
+#: JSON Schema for the submit_claims output tool (issue #23).
+#: ``preliminary_conclusion`` replaces the free-text ``CONCLUSION:``
+#: line the moderator used to prefix the numbered claim list with.
+CLAIMS_TOOL_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "claims": {
+            "type": "array",
+            "items": {"type": "string"},
+            # Bounded like the framing tool's 3-5 hypothesis set: a
+            # single moderator extraction, so schema-enforcing
+            # providers can constrain generation to the prompt's
+            # range.  validate_claims_payload stays more lenient for
+            # providers that don't enforce tool-arg schemas.
+            "minItems": 3,
+            "maxItems": 7,
+            "description": (
+                "3-7 key claims the conclusion depends on. Each must be "
+                "a specific, falsifiable assertion -- not a value "
+                "judgment or vague statement."
+            ),
+        },
+        "preliminary_conclusion": {
+            "type": "string",
+            "description": (
+                "The discussion's preliminary conclusion in one "
+                "paragraph -- synthesise it if not already given."
+            ),
+        },
+    },
+    "required": ["claims", "preliminary_conclusion"],
+}
+
+
+def validate_claims_payload(payload: dict) -> str:
+    """Return '' if a submit_claims payload is usable, else an error.
+
+    Mirrors the free-text path's behaviour: ``claims`` must be a
+    non-empty array and at least one entry must be substantive (at
+    least ``CLAIM_MIN_LENGTH`` characters after stripping) -- exactly
+    like ``parse_numbered_list`` silently drops short items but only
+    fails when nothing survives.  ``preliminary_conclusion`` must be
+    non-empty prose, the structured replacement for the free-text
+    ``CONCLUSION:`` line.
+    """
+    claims = payload.get("claims")
+    if not isinstance(claims, list) or not claims:
+        return "'claims' must be a non-empty array of claim strings."
+    if not any(isinstance(c, str) and len(c.strip()) >= CLAIM_MIN_LENGTH
+               for c in claims):
+        return (
+            "At least one claim must be a substantive string of "
+            f"{CLAIM_MIN_LENGTH}+ characters describing a specific, "
+            "falsifiable assertion."
+        )
+    if not str(payload.get("preliminary_conclusion", "")).strip():
+        return ("'preliminary_conclusion' must contain the discussion's "
+                "preliminary conclusion in one paragraph.")
+    return ""
 
 
 class ExtractClaimsHandler(PhaseHandler):
@@ -64,7 +130,8 @@ class ExtractClaimsHandler(PhaseHandler):
         return (
             "You are the moderator extracting testable claims from "
             "the discussion. Identify the specific, falsifiable assertions "
-            "that the conclusion depends on."
+            "that the conclusion depends on.\n\n"
+            "Submit your extraction by calling the submit_claims tool."
         )
 
     def get_turn_prompt(self, entity: Entity,
@@ -80,22 +147,20 @@ class ExtractClaimsHandler(PhaseHandler):
             ""
             if has_conclusion else
             "First, synthesise the discussion's preliminary conclusion "
-            "in one paragraph on a line starting with \"CONCLUSION:\".  "
+            "in one paragraph for the preliminary_conclusion field.  "
             "Then "
         )
 
         if state.get("extraction_failed") and state.get("extraction_attempts", 0) > 0:
             return (
-                "The previous extraction failed to produce a numbered list "
-                "of claims. Please try again.\n\n"
+                "The previous extraction did not produce a usable "
+                "result. Please try again.\n\n"
                 f"Conclusion to analyze:\n{conclusion}\n\n"
-                f"{conclusion_instruction}extract 3-7 key claims as a "
-                "NUMBERED LIST. Each claim "
-                "must be a specific, falsifiable assertion — not a value "
-                "judgment or vague statement. Use this format:\n"
-                "1. <claim>\n"
-                "2. <claim>\n"
-                "..."
+                f"{conclusion_instruction}extract 3-7 key claims. Each "
+                "claim must be a specific, falsifiable assertion — not "
+                "a value judgment or vague statement. Call the "
+                "submit_claims tool with a claims array (3-7 entries) "
+                "and the preliminary_conclusion field."
             )
 
         return (
@@ -104,11 +169,9 @@ class ExtractClaimsHandler(PhaseHandler):
             f"{conclusion_instruction}extract 3-7 key claims that this "
             "conclusion depends on. "
             "Each claim should be a specific, falsifiable assertion — "
-            "not a value judgment or vague statement. List them as a "
-            "numbered list:\n"
-            "1. <claim>\n"
-            "2. <claim>\n"
-            "..."
+            "not a value judgment or vague statement. Submit them by "
+            "calling the submit_claims tool with a claims array (3-7 "
+            "entries) and the preliminary_conclusion field."
         )
 
     def process_response(self, content: str, entity: Entity,
@@ -151,6 +214,95 @@ class ExtractClaimsHandler(PhaseHandler):
 
         logger.info("Extracted %d claims for stress testing", len(claims))
         return ProcessedResponse(display_content=content)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    requires_structured_output = True
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec | None:
+        """Declare the forced submit_claims tool for this phase.
+
+        Like distill_skeleton's submit_skeleton, there is no state that
+        makes the schema unsatisfiable (extraction always has a
+        discussion/conclusion to draw claims from), so this always
+        returns a spec.
+        """
+        return OutputToolSpec(
+            name="submit_claims",
+            description=(
+                "Submit 3-7 key falsifiable claims the conclusion "
+                "depends on, plus the discussion's preliminary "
+                "conclusion in one paragraph."
+            ),
+            parameters=CLAIMS_TOOL_PARAMETERS,
+        )
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        """Validate a submit_claims payload via the shared function."""
+        return validate_claims_payload(payload)
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        """Store the submitted claims and render the same display.
+
+        Mirrors ``process_response``'s successful branch: filters out
+        non-substantive claims (``CLAIM_MIN_LENGTH``, matching
+        ``parse_numbered_list``'s filtering), builds the same
+        ``claims``/``claim_results`` structures, clears
+        ``extraction_failed``, and captures
+        ``preliminary_conclusion`` from the payload -- once only,
+        respecting the same ``prior_conclusion`` precedence the
+        free-text ``_CONCLUSION_RE`` capture in ``process_response``
+        honours.
+        """
+        state = discussion.method_state
+
+        # rstrip('.') mirrors parse_numbered_list so claim_text matches
+        # the regex path byte-for-byte.
+        substantive = [
+            text.strip().rstrip(".") for text in payload["claims"]
+            if isinstance(text, str) and len(text.strip()) >= CLAIM_MIN_LENGTH
+        ]
+        claims = [{"id": i + 1, "text": text}
+                  for i, text in enumerate(substantive)]
+        state["claims"] = claims
+        state["extraction_failed"] = False
+
+        state["claim_results"] = [
+            {
+                "claim_id": c["id"],
+                "claim_text": c["text"],
+                "scores": {},
+                "avg_score": None,
+                "classification": None,
+            }
+            for c in claims
+        ]
+
+        conclusion = str(payload.get("preliminary_conclusion", "")).strip()
+        if not (state.get("preliminary_conclusion")
+                or state.get("prior_conclusion")):
+            state["preliminary_conclusion"] = conclusion
+        # The transcript must show the conclusion actually used
+        # downstream — when one already existed, the payload's
+        # synthesized conclusion was discarded above.
+        effective_conclusion = (state.get("preliminary_conclusion")
+                                or state.get("prior_conclusion")
+                                or conclusion)
+
+        logger.info(
+            "Extracted %d claims via submit_claims for stress testing",
+            len(claims),
+        )
+
+        numbered = "\n".join(f"{c['id']}. {c['text']}" for c in claims)
+        display = (f"**Preliminary conclusion:** {effective_conclusion}"
+                   f"\n\n{numbered}")
+        return ProcessedResponse(display_content=display)
 
     def should_advance(self, discussion: Discussion) -> bool:
         state = discussion.method_state

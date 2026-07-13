@@ -13,6 +13,7 @@ from .database import Database
 from .methods import get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole
 from .moderator import Moderator
+from .structured_output import _validate_structured_output_support
 
 # Tools auto-assigned to a devil's advocate entity
 _DA_TOOL_NAMES = [
@@ -281,13 +282,27 @@ async def recommend_method(
     answer_type: str,
     ai_client,
     provider: dict,
+    db: Optional[Database] = None,
+    panel_models: Optional[list[tuple[str, str]]] = None,
 ) -> list[dict]:
     """Get LLM-based method recommendations for a topic.
+
+    When ``db`` and ``panel_models`` (``(model, base_url)`` pairs for the
+    discussion's AI participants) are both supplied, any recommendation
+    whose method ``requires_structured_output()`` is down-ranked — moved
+    after all capability-compatible recommendations, with a note appended
+    to its ``reasoning`` — when ``db.pricing.supports_tools()`` reports
+    ``False`` for any panel model. Recommendations are never dropped, only
+    reordered, and unknown capability (``None``, e.g. local models) never
+    down-ranks. When ``db`` or ``panel_models`` is omitted, behavior is
+    unchanged (backward compatible with existing call sites).
 
     Returns a list of recommendation dicts.
     """
     from .methods import list_methods
-    from .methods.recommender import MethodRecommender
+    from .methods.recommender import (
+        MethodRecommender, downrank_incompatible_recommendations,
+    )
 
     recommender = MethodRecommender()
     catalog = list_methods()
@@ -298,45 +313,11 @@ async def recommend_method(
         ai_client=ai_client,
         provider=provider,
     )
+    if db is not None and panel_models:
+        recommendations = downrank_incompatible_recommendations(
+            recommendations, db, panel_models,
+        )
     return [r.to_dict() for r in recommendations]
-
-
-def _validate_structured_output_support(
-    discussion: Discussion, db: Database,
-) -> str:
-    """Reject structured methods when a model is known to lack tool support.
-
-    Structured methods force output tools at the API layer (issue #23);
-    per the owner decision (2026-07-12) this must fail with a clear
-    setup-time error rather than silently degrading.  All AI members are
-    checked (including the moderator — some structured phases are
-    moderator-only, e.g. Belief Diffusion framing).  Unknown capability
-    (no OpenRouter data, e.g. local models) is allowed through: the
-    runtime path raises a loud StructuredOutputError if the provider
-    then rejects the forced call.
-
-    Returns "" when the discussion may start, else the error message.
-    """
-    try:
-        method = get_method(discussion.discussion_method)
-    except KeyError:
-        return ""  # open_discussion — no structured phases
-    if not method.requires_structured_output():
-        return ""
-    for e in discussion.entities:
-        if e.entity_type != EntityType.AI or not e.ai_config:
-            continue
-        supported = db.pricing.supports_tools(
-            e.ai_config.model, e.ai_config.base_url)
-        if supported is False:
-            return (
-                f"The {method.display_name} method requires structured "
-                f"outputs via native tool calling, but {e.name}'s model "
-                f"'{e.ai_config.model}' does not support tool calls. "
-                f"Assign a tool-capable model to {e.name} or choose a "
-                "different method."
-            )
-    return ""
 
 
 def start_discussion(
