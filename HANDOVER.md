@@ -153,10 +153,14 @@ plan; delete sections that are finished and no longer instructive.
   unparseable group cannot loop forever (`MAX_*_ATTEMPTS` /
   `MAX_*_ROUNDS` constants — no magic numbers, per
   `docs/llm/golden_rules.md`).
-- **Every structured conversion includes a required `reasoning` field**,
+- **Structured conversions include a required `reasoning` field**,
   rendered before the data display (belief bar, matrix, skeleton, ...) so
   a validated payload still reads as a real contribution rather than a
-  bare data dump. Dynamic-key maps (belief distributions keyed by
+  bare data dump. Two exceptions: `submit_beliefs` declares `reasoning`
+  but leaves it optional (unvalidated — a belief turn may render as a
+  bare belief bar), and `submit_claims` has no `reasoning` field at all
+  (its `preliminary_conclusion` — like `submit_skeleton`'s
+  `rich_summary` — plays that role for the moderator extraction phases). Dynamic-key maps (belief distributions keyed by
   hypothesis label, matrix ratings keyed by hypothesis × evidence label)
   declare `additionalProperties` in their JSON Schema rather than
   enumerating keys, since the key set is only known at runtime (see
