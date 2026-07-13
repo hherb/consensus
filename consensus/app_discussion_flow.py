@@ -616,6 +616,48 @@ async def complete_turn(
                             "current_round": discussion.current_round,
                             "state": get_state_fn(),
                         }
+                    # Blocked switch (e.g. the tool-capability gate,
+                    # issue #23): the error must be loud — logged and
+                    # posted into the transcript, never silently
+                    # swallowed into a bare method_complete (golden
+                    # rule 6).  Post the notice at most once:
+                    # complete_turn re-enters this branch while the
+                    # frontend concludes.
+                    switch_error = switch_result["error"]
+                    logger.warning(
+                        "Triage could not switch discussion %s to %r: %s",
+                        discussion.id, chosen, switch_error,
+                    )
+                    already_notified = discussion.method_state.get(
+                        "_switch_error_posted")
+                    if mod and discussion.id and not already_notified:
+                        discussion.method_state[
+                            "_switch_error_posted"] = True
+                        notice = (
+                            "**The recommended method could not be "
+                            f"adopted.** {switch_error}"
+                        )
+                        sys_msg = Message(
+                            entity_id=mod.id, entity_name=mod.name,
+                            content=notice, role=MessageRole.SYSTEM,
+                        )
+                        discussion.messages.append(sys_msg)
+                        db.add_message(
+                            discussion.id, mod.id, notice, "system",
+                            turn_number=discussion.turn_number,
+                        )
+                        db.update_discussion(
+                            discussion.id,
+                            method_state=serialize_method_state(
+                                discussion.method_state),
+                        )
+                    return {
+                        "method_complete": True,
+                        "switch_error": switch_error,
+                        "turn_number": discussion.turn_number,
+                        "current_round": discussion.current_round,
+                        "state": get_state_fn(),
+                    }
                 return {
                     "method_complete": True,
                     "turn_number": discussion.turn_number,
