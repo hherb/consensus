@@ -16,6 +16,7 @@ from consensus.methods.phases._ngt_helpers import (
     record_candidates,
     record_ideas,
 )
+from consensus.methods.phases.cluster_ideas import ClusterIdeasHandler
 from consensus.methods.phases.generate_ideas import GenerateIdeasHandler
 from consensus.models import Discussion, Entity, EntityType
 
@@ -136,3 +137,89 @@ class TestGenerateIdeasHandler:
         handler = GenerateIdeasHandler()
         assert handler.next_phase(disc) == LINEAR_NEXT
         assert handler.get_method_complete_message(disc) == ""
+
+
+class TestClusterIdeasHandler:
+    def _disc_with_ideas(self, **state):
+        disc = make_disc(current_phase="cluster", **state)
+        record_ideas(disc.method_state,
+                     Entity(name="TestAI", entity_type=EntityType.AI, id=1),
+                     ["Offer a self-serve onboarding checklist inside "
+                      "the product",
+                      "Run monthly live office hours for new customers"])
+        return disc
+
+    def test_phase_is_condition_based(self):
+        handler = ClusterIdeasHandler()
+        assert handler.phase.name == "cluster"
+        assert handler.phase.rounds == 0
+
+    def test_moderator_only_turn_order(self):
+        disc = self._disc_with_ideas()
+        assert ClusterIdeasHandler().get_turn_order([1, 2], disc) == [99]
+
+    def test_system_prompt_lists_raw_ideas(self, moderator):
+        disc = self._disc_with_ideas()
+        prompt = ClusterIdeasHandler().get_system_prompt(moderator, disc)
+        assert "CLUSTERING PHASE" in prompt
+        assert "Idea 1:" in prompt
+        assert "onboarding checklist" in prompt
+
+    def test_turn_prompt_names_tool_and_retry_variant(self, moderator):
+        disc = self._disc_with_ideas()
+        assert "submit_candidates" in ClusterIdeasHandler().get_turn_prompt(
+            moderator, disc)
+        disc.method_state["cluster_attempts"] = 1
+        retry = ClusterIdeasHandler().get_turn_prompt(moderator, disc)
+        assert "not usable" in retry
+
+    def test_free_text_path_records_candidates(self, moderator):
+        disc = self._disc_with_ideas()
+        content = ("1. Build a self-serve onboarding checklist\n"
+                   "2. Run recurring live office hours for customers")
+        ClusterIdeasHandler().process_response(content, moderator, disc)
+        assert len(disc.method_state["candidates"]) == 2
+        assert disc.method_state["cluster_attempts"] == 0
+
+    def test_unparseable_response_increments_attempts(self, moderator):
+        disc = self._disc_with_ideas()
+        ClusterIdeasHandler().process_response(
+            "I think these all look great.", moderator, disc)
+        assert disc.method_state["candidates"] == []
+        assert disc.method_state["cluster_attempts"] == 1
+
+    def test_advances_when_candidates_recorded(self):
+        disc = self._disc_with_ideas()
+        record_candidates(disc.method_state,
+                          [{"title": "A consolidated candidate idea"}])
+        assert ClusterIdeasHandler().should_advance(disc) is True
+
+    def test_does_not_advance_without_candidates_before_cap(self):
+        disc = self._disc_with_ideas(cluster_attempts=MAX_CLUSTER_ATTEMPTS - 1)
+        assert ClusterIdeasHandler().should_advance(disc) is False
+
+    def test_gives_up_after_cap(self, caplog):
+        disc = self._disc_with_ideas(cluster_attempts=MAX_CLUSTER_ATTEMPTS)
+        with caplog.at_level("WARNING"):
+            assert ClusterIdeasHandler().should_advance(disc) is True
+        assert any("cluster" in r.message.lower() for r in caplog.records)
+
+    def test_give_up_promotes_raw_ideas_to_candidates(self):
+        disc = self._disc_with_ideas(cluster_attempts=MAX_CLUSTER_ATTEMPTS)
+        handler = ClusterIdeasHandler()
+        assert handler.next_phase(disc) == LINEAR_NEXT
+        candidates = disc.method_state["candidates"]
+        assert len(candidates) == 2
+        assert candidates[0]["title"] == disc.method_state["ideas"][0]["text"]
+
+    def test_no_ideas_at_all_aborts(self):
+        disc = make_disc(current_phase="cluster",
+                         cluster_attempts=MAX_CLUSTER_ATTEMPTS)
+        handler = ClusterIdeasHandler()
+        assert handler.next_phase(disc) is None
+        assert "ended early" in handler.get_method_complete_message(disc)
+
+    def test_transition_message_counts_ideas(self):
+        disc = self._disc_with_ideas()
+        msg = ClusterIdeasHandler().get_transition_message(disc)
+        assert "2 idea(s)" in msg
