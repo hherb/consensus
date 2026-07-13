@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..parsing import parse_numbered_list, word_overlap_similar
 from ..phase_handler import PhaseHandler
 
@@ -23,6 +23,61 @@ SIMILARITY_THRESHOLD = 0.7
 # Give up and advance after this many rounds even without parsed
 # hypotheses — an unparseable group must not loop forever (issue #15).
 MAX_HYPOTHESIZE_ROUNDS = 3
+
+#: JSON Schema for the submit_hypotheses output tool (issue #23).
+#:
+#: Declared here rather than reused from Belief Diffusion's
+#: ``_belief_helpers.HYPOTHESES_TOOL_PARAMETERS`` because ACH's
+#: semantics differ: ACH *accumulates* hypotheses across participants
+#: over multiple rounds (each turn adds to the shared pool), whereas
+#: Belief Diffusion's framing tool produces one bounded 3-5 hypothesis
+#: set in a single moderator turn.  Accordingly this schema has no
+#: minItems/maxItems bound — ``validate_hypotheses_payload`` only
+#: requires at least one substantive hypothesis.
+HYPOTHESES_TOOL_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "hypotheses": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": ("Competing hypotheses that could explain or "
+                            "answer the question — include ones you "
+                            "personally doubt; ACH requires evaluating "
+                            "ALL plausible explanations."),
+        },
+        "reasoning": {
+            "type": "string",
+            "description": ("Your rationale for these hypotheses: why "
+                            "each is plausible and how they differ."),
+        },
+    },
+    "required": ["hypotheses", "reasoning"],
+}
+
+
+def validate_hypotheses_payload(payload: dict) -> str:
+    """Return '' if a submit_hypotheses payload is usable, else an error.
+
+    Applies the same substantive-length bar as the free-text path
+    (``parse_numbered_list`` with ``min_length=MIN_HYPOTHESIS_LENGTH``,
+    which keeps items of length ``>= MIN_HYPOTHESIS_LENGTH``) — but,
+    unlike Belief Diffusion's framing validator, does not enforce a
+    fixed hypothesis-count range, since ACH accumulates hypotheses
+    across participants and turns.
+    """
+    hypotheses = payload.get("hypotheses")
+    if not isinstance(hypotheses, list) or not hypotheses:
+        return "'hypotheses' must be a non-empty array of hypothesis strings."
+    for h in hypotheses:
+        if not isinstance(h, str) or len(h.strip()) < MIN_HYPOTHESIS_LENGTH:
+            return (
+                "Each hypothesis must be a substantive string of at "
+                f"least {MIN_HYPOTHESIS_LENGTH} characters describing a "
+                f"specific, plausible explanation (got: {h!r})."
+            )
+    if not str(payload.get("reasoning", "")).strip():
+        return "'reasoning' must contain your rationale for these hypotheses."
+    return ""
 
 
 class HypothesizeHandler(PhaseHandler):
@@ -68,19 +123,19 @@ class HypothesizeHandler(PhaseHandler):
             "answer the question.  IMPORTANT: include hypotheses you "
             "disagree with — ACH requires evaluating ALL plausible "
             "explanations.\n\n"
-            "Format each hypothesis on its own line:\n"
-            "1. <hypothesis text>\n"
-            "2. <hypothesis text>\n"
-            "3. <hypothesis text>\n\n"
-            "For each, provide 1-2 sentences of context about why "
-            "it is plausible."
+            "Submit your hypotheses by calling the submit_hypotheses "
+            "tool with an array of hypothesis strings — each a "
+            "complete, specific statement, with 1-2 sentences of "
+            "context about why it is plausible — plus your rationale "
+            "in the 'reasoning' field."
         )
 
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
         return (
             f"It is your turn, {entity.name}.  Propose 2-3 competing "
-            "hypotheses.  Include at least one you personally doubt."
+            "hypotheses.  Include at least one you personally doubt.  "
+            "Submit them by calling the submit_hypotheses tool."
         )
 
     def get_summary_prompt(self, discussion: Discussion,
@@ -111,6 +166,58 @@ class HypothesizeHandler(PhaseHandler):
             state["hypotheses"] = existing
 
         return ProcessedResponse(display_content=content)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    requires_structured_output = True
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec:
+        """Declare the forced submit_hypotheses tool for this phase."""
+        return OutputToolSpec(
+            name="submit_hypotheses",
+            description=("Submit competing hypotheses as an array of "
+                         "hypothesis strings, plus your reasoning."),
+            parameters=HYPOTHESES_TOOL_PARAMETERS,
+        )
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        """Validate a submit_hypotheses payload via the shared function."""
+        return validate_hypotheses_payload(payload)
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        """Dedup submitted hypotheses against existing ones and append.
+
+        Mirrors ``process_response``'s exact dedup rule: a submitted
+        hypothesis is dropped if it is word-overlap similar (threshold
+        ``SIMILARITY_THRESHOLD``) to any hypothesis already in
+        ``state["hypotheses"]``.  Unlike Belief Diffusion's framing
+        tool, hypotheses accumulate here across participants and
+        rounds, so accepted items from earlier turns are never
+        replaced.  The display renders the reasoning first, followed
+        by a numbered list of only the hypotheses accepted this turn
+        (i.e. excluding any submitted duplicates).
+        """
+        state = discussion.method_state
+        submitted = [str(h).strip() for h in payload["hypotheses"]
+                     if str(h).strip()]
+        existing = state.get("hypotheses", [])
+        accepted = []
+        for h in submitted:
+            if not any(word_overlap_similar(h, e, threshold=SIMILARITY_THRESHOLD)
+                       for e in existing):
+                existing.append(h)
+                accepted.append(h)
+        state["hypotheses"] = existing
+
+        reasoning = str(payload.get("reasoning", "")).strip()
+        numbered = "\n".join(f"{i}. {h}" for i, h in enumerate(accepted, 1))
+        display = f"{reasoning}\n\n{numbered}" if numbered else reasoning
+        return ProcessedResponse(display_content=display)
 
     # ------------------------------------------------------------------
     # Phase advancement
