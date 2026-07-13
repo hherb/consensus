@@ -11,6 +11,7 @@ from .methods import get_active_method, get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole, StoryboardEntry
 from .moderator import Moderator
 from .pricing import PricingCache
+from .structured_output import _validate_structured_output_support
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +352,12 @@ def switch_discussion_method(
     Reinitializes method_state, persists to DB, and adds a system
     message announcing the transition. Returns the new method's
     metadata dict, or an error dict.
+
+    Runs the same tool-capability gate as discussion setup (issue #23)
+    before any mutation: a structured target method whose panel models
+    are known to lack tool support is rejected, leaving the discussion's
+    method, method_state, and messages untouched. Triage falls through
+    to ``method_complete`` when this returns an error.
     """
     if method_name == "triage":
         return {"error": "Cannot switch to triage method"}
@@ -359,6 +366,14 @@ def switch_discussion_method(
         method = get_method(method_name)
     except KeyError:
         return {"error": f"Unknown method: {method_name!r}"}
+
+    # The target method hasn't been assigned to discussion.discussion_method
+    # yet, so it must be passed explicitly (the default falls back to the
+    # discussion's *current* method, which is wrong here).
+    tool_error = _validate_structured_output_support(
+        discussion, db, method_name)
+    if tool_error:
+        return {"error": tool_error}
 
     # Budget bookkeeping written by _increase_budgets must survive the
     # method_state reset (issue #16).

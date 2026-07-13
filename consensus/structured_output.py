@@ -26,6 +26,9 @@ from typing import TYPE_CHECKING, Optional
 import httpx
 
 from .ai_client import AIClient, AIResponse
+from .database import Database
+from .methods import get_method
+from .models import EntityType
 
 if TYPE_CHECKING:
     from .methods.base import DiscussionMethod, OutputToolSpec
@@ -48,6 +51,66 @@ _TOOL_ERROR_MARKERS = ("tool", "function")
 
 class StructuredOutputError(RuntimeError):
     """The provider/model cannot satisfy a phase's forced output tool."""
+
+
+def _validate_structured_output_support(
+    discussion: "Discussion", db: Database, method_name: Optional[str] = None,
+) -> str:
+    """Reject structured methods when a model is known to lack tool support.
+
+    Structured methods force output tools at the API layer (issue #23);
+    per the owner decision (2026-07-12) this must fail with a clear
+    error rather than silently degrading.  All AI members are checked
+    (including the moderator — some structured phases are moderator-only,
+    e.g. Belief Diffusion framing).  Unknown capability (no OpenRouter
+    data, e.g. local models) is allowed through: the runtime path raises
+    a loud ``StructuredOutputError`` if the provider then rejects the
+    forced call.
+
+    Lives here (rather than in ``app_discussion_setup``, its original
+    home) because both the setup-time gate (``start_discussion``) and
+    the runtime gate (``switch_discussion_method`` in
+    ``app_discussion_flow``, used by Triage's handoff) need it, and
+    ``app_discussion_setup``/``app_discussion_flow`` import each other —
+    importing one from the other here would create a circular import.
+    ``app_discussion_setup`` re-exports this name for backward
+    compatibility.
+
+    Args:
+        discussion: The discussion whose entities are checked.
+        db: Database handle providing the pricing cache.
+        method_name: The method to validate against. Defaults to
+            ``discussion.discussion_method`` (the setup-time case,
+            where the target method has already been assigned).
+            Callers that validate a *prospective* switch — where
+            ``discussion.discussion_method`` still holds the old
+            method — must pass the target explicitly.
+
+    Returns "" when the discussion may proceed, else the error message.
+    """
+    target = (
+        method_name if method_name is not None else discussion.discussion_method
+    )
+    try:
+        method = get_method(target)
+    except KeyError:
+        return ""  # open_discussion — no structured phases
+    if not method.requires_structured_output():
+        return ""
+    for e in discussion.entities:
+        if e.entity_type != EntityType.AI or not e.ai_config:
+            continue
+        supported = db.pricing.supports_tools(
+            e.ai_config.model, e.ai_config.base_url)
+        if supported is False:
+            return (
+                f"The {method.display_name} method requires structured "
+                f"outputs via native tool calling, but {e.name}'s model "
+                f"'{e.ai_config.model}' does not support tool calls. "
+                f"Assign a tool-capable model to {e.name} or choose a "
+                "different method."
+            )
+    return ""
 
 
 def _is_tool_support_error(body: str) -> bool:

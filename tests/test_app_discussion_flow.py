@@ -1,5 +1,7 @@
 """Tests for consensus.app_discussion_flow — active discussion operations."""
 
+import time
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,9 +11,24 @@ from consensus.app_discussion_flow import (
     is_pass,
     submit_human_message,
     submit_moderator_message,
+    switch_discussion_method,
 )
 from consensus.models import Discussion, Entity, EntityType, Message, MessageRole
 from consensus.pricing import PricingCache
+
+
+def _insert_model(tmp_db, model_id: str, supported: str) -> None:
+    """Insert a model_pricing row with a given ``supported_parameters`` value.
+
+    Mirrors the helper in tests/test_structured_setup_check.py.
+    """
+    tmp_db.conn.execute(
+        "INSERT INTO model_pricing (model_id, prompt_cost, completion_cost,"
+        " last_updated, input_modalities, context_length,"
+        " supported_parameters) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (model_id, 0.0, 0.0, time.time(), "text", 8192, supported),
+    )
+    tmp_db.conn.commit()
 
 
 class TestIsPass:
@@ -402,3 +419,63 @@ class TestStructuredOutputFlowRouting:
 
         assert result["skipped"] is True
         assert "model-x rejected the forced tool call" in result["error"]
+
+
+class TestSwitchDiscussionMethodToolCapability:
+    """Runtime method switching must honour the same tool-capability gate
+    as discussion setup (issue #23) — Triage's handoff to a chosen method
+    must not bypass it."""
+
+    def _prepare(self, disc, tmp_db):
+        """Give the discussion an id and a starting method/state so a
+        successful switch would have something to mutate."""
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.discussion_method = "triage"
+        disc.method_state = {"chosen_method": "delphi"}
+        disc.messages = []
+        return disc
+
+    def test_blocks_structured_target_with_non_tool_capable_model(
+        self, tmp_db, discussion_with_entities, monkeypatch
+    ):
+        """Switching into delphi (structured) with a model known to lack
+        tool support returns an error and leaves method/state/messages
+        untouched."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_model(tmp_db, "test/test-model", "temperature,top_p")
+        disc = self._prepare(discussion_with_entities, tmp_db)
+        original_state = dict(disc.method_state)
+
+        result = switch_discussion_method(disc, tmp_db, "delphi")
+
+        assert "error" in result
+        assert "test-model" in result["error"]
+        assert disc.discussion_method == "triage"
+        assert disc.method_state == original_state
+        assert disc.messages == []
+
+    def test_allows_unknown_capability(
+        self, tmp_db, discussion_with_entities, monkeypatch
+    ):
+        """No pricing data (e.g. a local model) still allows the switch."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        disc = self._prepare(discussion_with_entities, tmp_db)
+
+        result = switch_discussion_method(disc, tmp_db, "delphi")
+
+        assert "error" not in result
+        assert disc.discussion_method == "delphi"
+
+    def test_allows_unstructured_target_with_non_tool_capable_model(
+        self, tmp_db, discussion_with_entities, monkeypatch
+    ):
+        """A target method with no structured phases is never blocked,
+        even with a known non-tool-capable model."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_model(tmp_db, "test/test-model", "temperature,top_p")
+        disc = self._prepare(discussion_with_entities, tmp_db)
+
+        result = switch_discussion_method(disc, tmp_db, "open_discussion")
+
+        assert "error" not in result
+        assert disc.discussion_method == "open_discussion"
