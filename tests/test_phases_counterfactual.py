@@ -227,7 +227,7 @@ class TestExtractClaimsHandler:
         prompt = handler.get_turn_prompt(entity, cf_discussion)
         assert "Cars should be banned" in prompt
         assert "3-7" in prompt
-        assert "numbered" in prompt.lower()
+        assert "submit_claims" in prompt
 
     def test_turn_prompt_uses_prior_conclusion(self, handler, entity, cf_discussion):
         cf_discussion.method_state["current_phase"] = "extract"
@@ -242,7 +242,7 @@ class TestExtractClaimsHandler:
         cf_discussion.method_state["extraction_attempts"] = 1
         prompt = handler.get_turn_prompt(entity, cf_discussion)
         assert "failed" in prompt.lower() or "try again" in prompt.lower()
-        assert "numbered" in prompt.lower()
+        assert "submit_claims" in prompt
 
     def test_process_response_extracts_claims(self, handler, entity, cf_discussion):
         cf_discussion.method_state["current_phase"] = "extract"
