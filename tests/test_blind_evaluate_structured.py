@@ -32,6 +32,7 @@ PAYLOAD = {
         {"inference_id": "C1", "score": 3},
     ],
     "overall": 4,
+    "reasoning": "I1 follows directly from P1; C1 rests on I1 alone.",
 }
 
 
@@ -118,17 +119,29 @@ class TestValidateValidityScoresPayload:
                "overall": 7}
         assert validate_validity_scores_payload(bad, EVAL_ITEMS) != ""
 
+    def test_missing_reasoning_rejected(self):
+        bad = {k: v for k, v in PAYLOAD.items() if k != "reasoning"}
+        err = validate_validity_scores_payload(bad, EVAL_ITEMS)
+        assert "reasoning" in err.lower()
+
+    def test_whitespace_only_reasoning_rejected(self):
+        bad = {**PAYLOAD, "reasoning": "   \n\t "}
+        err = validate_validity_scores_payload(bad, EVAL_ITEMS)
+        assert "reasoning" in err.lower()
+
 
 class TestValidityToolParameters:
     def test_schema_shape(self):
         assert VALIDITY_TOOL_PARAMETERS["type"] == "object"
-        assert set(VALIDITY_TOOL_PARAMETERS["required"]) == {"scores", "overall"}
+        assert set(VALIDITY_TOOL_PARAMETERS["required"]) == {
+            "scores", "overall", "reasoning"}
         props = VALIDITY_TOOL_PARAMETERS["properties"]
         assert props["scores"]["type"] == "array"
         item_props = props["scores"]["items"]["properties"]
         assert item_props["inference_id"]["type"] == "string"
         assert item_props["score"]["type"] == "integer"
         assert props["overall"]["type"] == "integer"
+        assert props["reasoning"]["type"] == "string"
 
 
 class TestBlindEvaluateHandlerStructured:
@@ -169,11 +182,15 @@ class TestBlindEvaluateHandlerStructured:
         assert vs["C1"]["Analyst_1"] == 3
         assert disc.method_state["overall_scores"]["Analyst_1"] == 4
 
-        assert "[VALIDITY I1: 4]" in processed.display_content
-        assert "[VALIDITY C1: 3]" in processed.display_content
-        assert "[OVERALL: 4]" in processed.display_content
-        assert "I1: 4/5" in processed.display_content
-        assert "Overall: 4/5" in processed.display_content
+        display = processed.display_content
+        assert "[VALIDITY I1: 4]" in display
+        assert "[VALIDITY C1: 3]" in display
+        assert "[OVERALL: 4]" in display
+        assert "I1: 4/5" in display
+        assert "Overall: 4/5" in display
+        # Reasoning prose renders first, before the tag lines
+        assert PAYLOAD["reasoning"] in display
+        assert display.index(PAYLOAD["reasoning"]) < display.index("[VALIDITY")
 
     def test_process_structured_multiple_entities(self):
         handler = BlindEvaluateHandler()
@@ -183,11 +200,11 @@ class TestBlindEvaluateHandlerStructured:
         handler.process_structured_response(
             {"scores": [{"inference_id": "I1", "score": 5},
                        {"inference_id": "C1", "score": 4}],
-             "overall": 5}, e1, disc)
+             "overall": 5, "reasoning": "Airtight chain."}, e1, disc)
         handler.process_structured_response(
             {"scores": [{"inference_id": "I1", "score": 2},
                        {"inference_id": "C1", "score": 2}],
-             "overall": 2}, e2, disc)
+             "overall": 2, "reasoning": "Large unstated assumptions."}, e2, disc)
 
         vs = disc.method_state["validity_scores"]
         assert vs["I1"] == {"Alice": 5, "Bob": 2}

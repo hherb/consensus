@@ -129,8 +129,17 @@ VALIDITY_TOOL_PARAMETERS: dict = {
                 "Overall validity score for the whole argument (1-5)."
             ),
         },
+        "reasoning": {
+            "type": "string",
+            "description": (
+                "Your independent assessment rationale across the "
+                "scored inferences: which steps follow from their "
+                "stated dependencies, which have gaps or unstated "
+                "assumptions, and why."
+            ),
+        },
     },
-    "required": ["scores", "overall"],
+    "required": ["scores", "overall", "reasoning"],
 }
 
 
@@ -140,9 +149,9 @@ def validate_validity_scores_payload(payload: dict,
 
     Every id in ``eval_item_ids`` (the skeleton's inference and
     conclusion steps) must appear exactly once in ``scores`` with a
-    1-5 integer score, and ``overall`` must also be a 1-5 integer.
-    Unknown ids and missing ids are named explicitly so the model can
-    correct its next attempt.
+    1-5 integer score, ``overall`` must also be a 1-5 integer, and
+    ``reasoning`` must be non-empty prose.  Unknown ids and missing
+    ids are named explicitly so the model can correct its next attempt.
     """
     scores = payload.get("scores")
     if not isinstance(scores, list) or not scores:
@@ -195,13 +204,19 @@ def validate_validity_scores_payload(payload: dict,
         return (f"'overall' must be between {VALIDITY_SCORE_MIN} and "
                 f"{VALIDITY_SCORE_MAX}.")
 
+    if not str(payload.get("reasoning", "")).strip():
+        return "'reasoning' must contain your assessment rationale."
+
     return ""
 
 
 def format_validity_scores_display(scores: dict[str, int],
-                                   overall: int) -> str:
+                                   overall: int,
+                                   reasoning: str = "") -> str:
     """Render a validated submit_validity_scores payload as display text.
 
+    The evaluator's ``reasoning`` prose (if any) comes first so the
+    transcript keeps the deliberation, followed by the tag lines.
     Keeps the ``[VALIDITY id: n]``/``[OVERALL: n]`` tags in the output
     so ``BlindEvaluateHandler.filter_context_message`` still recognises
     this as an in-phase evaluation message (its blindness filter
@@ -216,8 +231,10 @@ def format_validity_scores_display(scores: dict[str, int],
                  for item_id, score in sorted(scores.items())]
     bar_parts.append(f"Overall: {overall}/5")
 
-    return ("\n".join(tags) + "\n\n---\n**Validity scores:** "
+    body = ("\n".join(tags) + "\n\n---\n**Validity scores:** "
             + " | ".join(bar_parts))
+    reasoning = reasoning.strip()
+    return f"{reasoning}\n\n{body}" if reasoning else body
 
 
 def extract_validity_scores(content: str) -> dict[str, int]:

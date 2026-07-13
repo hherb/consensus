@@ -132,8 +132,9 @@ class BlindEvaluateHandler(PhaseHandler):
             "premises at all\n\n"
             f"You must evaluate: {items_str}\n\n"
             "Submit your scores by calling the submit_validity_scores "
-            "tool, with one entry per step (its id and a 1-5 score) "
-            "plus an overall 1-5 score for the whole argument."
+            "tool, with one entry per step (its id and a 1-5 score), "
+            "an overall 1-5 score for the whole argument, and your "
+            "assessment rationale in the 'reasoning' field."
         )
 
     def get_turn_prompt(self, entity: Entity,
@@ -147,7 +148,8 @@ class BlindEvaluateHandler(PhaseHandler):
             "For each inference and conclusion step, judge whether "
             "it follows logically from its stated dependencies, then "
             "call the submit_validity_scores tool with a score for "
-            f"each step ({items_str}) and an overall score.\n\n"
+            f"each step ({items_str}), an overall score, and your "
+            "reasoning.\n\n"
             "Focus on the LOGIC, not the truth of the premises."
         )
 
@@ -218,8 +220,9 @@ class BlindEvaluateHandler(PhaseHandler):
         return OutputToolSpec(
             name="submit_validity_scores",
             description=("Submit a 1-5 logical validity score for each "
-                         f"step ({items_str}), plus an overall 1-5 "
-                         "score for the whole argument."),
+                         f"step ({items_str}), an overall 1-5 score "
+                         "for the whole argument, and your assessment "
+                         "rationale."),
             parameters=VALIDITY_TOOL_PARAMETERS,
         )
 
@@ -242,7 +245,8 @@ class BlindEvaluateHandler(PhaseHandler):
             )[entity.name] = score
         state.setdefault("overall_scores", {})[entity.name] = overall
 
-        display = format_validity_scores_display(scores, overall)
+        reasoning = str(payload.get("reasoning", ""))
+        display = format_validity_scores_display(scores, overall, reasoning)
         return ProcessedResponse(display_content=display)
 
     # ------------------------------------------------------------------
