@@ -14,7 +14,8 @@ plan; delete sections that are finished and no longer instructive.
   (#30 Belief Diffusion abort), and **PR #38** (#23 mechanism + first
   three conversions) are all **merged**.
 - **#23 structured outputs — ALL remaining regex-parsing phases
-  converted** (this session). Plan:
+  converted** (this session, **PR #39** — merge it before building on
+  this work). Plan:
   `docs/superpowers/plans/2026-07-13-structured-conversions-remaining.md`
   (all 11 tasks executed). See
   `docs/superpowers/plans/2026-07-13-structured-method-outputs.md` for
