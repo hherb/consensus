@@ -1,7 +1,7 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-13 (session: #23 remaining conversions, branch
-`claude/handover-instructions-4be219`)._
+_Last updated: 2026-07-14 (session: #24 Nominal Group Technique, branch
+`claude/handover-instructions-3dd9e3`)._
 
 This file briefs the next session(s) on what was done, what is in flight,
 and what to do next. Update it whenever a session materially changes the
@@ -11,11 +11,29 @@ plan; delete sections that are finished and no longer instructive.
 
 - **PR #18** (six defect classes, issues #12–#17), **PR #31**
   (#19/#20/#21), **PR #35** (#22 phase-machine loop support), **PR #36**
-  (#30 Belief Diffusion abort), and **PR #38** (#23 mechanism + first
-  three conversions) are all **merged**.
+  (#30 Belief Diffusion abort), **PR #38** (#23 mechanism + first
+  three conversions), and **PR #39** (#23 remaining conversions +
+  hardening) are all **merged**.
+- **#24 Nominal Group Technique implemented** (this session).  Plan:
+  `docs/superpowers/plans/2026-07-14-nominal-group-technique.md`.
+  Method `nominal_group` (`consensus/methods/nominal_group.py`), five
+  phases assembled from new handlers in `consensus/methods/phases/`
+  (`generate_ideas`, `cluster_ideas`, `clarify_ideas`,
+  `allocate_points`, `rank_ideas`) over a shared `_ngt_helpers.py`:
+  - Three structured phases per the #23 pattern: `submit_ideas`
+    (participants, anonymised silent generation), `submit_candidates`
+    (moderator-only clustering), `submit_points` (fixed pool of
+    `POINTS_PER_VOTER` points, validator enforces exact sum).
+    Clarify and rank are free-text phases.
+  - Give-up caps: `MAX_GENERATE_ROUNDS`, `MAX_CLUSTER_ATTEMPTS`,
+    `MAX_ALLOCATE_ROUNDS`.  Generation with zero ideas aborts the
+    method (frame_hypotheses pattern); clustering give-up instead
+    *promotes raw deduplicated ideas to candidates 1:1* and continues.
+  - Open Discussion is now recommendable: `_EXCLUDED_METHODS` is
+    `{"triage"}` and `_TAXONOMY` gained an NGT line (owner decision
+    2026-07-12, executed with #24).
 - **#23 structured outputs — ALL remaining regex-parsing phases
-  converted** (this session, **PR #39** — merge it before building on
-  this work). Plan:
+  converted** (2026-07-13 session, **PR #39**, merged). Plan:
   `docs/superpowers/plans/2026-07-13-structured-conversions-remaining.md`
   (all 11 tasks executed). See
   `docs/superpowers/plans/2026-07-13-structured-method-outputs.md` for
@@ -77,10 +95,6 @@ plan; delete sections that are finished and no longer instructive.
 ## Next steps, in order
 
 1. **New methods (highest value first):**
-   - **#24 Nominal Group Technique** — structured brainstorming; ~80% of
-     phases exist as reusable handlers (Delphi anonymisation, list
-     parsing/dedup, voting/tally). The catalog currently has no
-     generative method — this is the biggest functional gap.
    - **#25 Weighted decision matrix (MCDA)** — generalise
      `define_criteria` + `evaluate_matrix` into a standalone decision
      method with a structured, machine-readable final artifact.
@@ -197,10 +211,6 @@ plan; delete sections that are finished and no longer instructive.
 
 ## Decisions from the repo owner (2026-07-12)
 
-- **Open Discussion becomes recommendable once #24 (NGT) exists.** When
-  implementing #24, also remove `"open_discussion"` from
-  `_EXCLUDED_METHODS` in `consensus/methods/recommender.py` and update
-  the `_TAXONOMY` line that marks it "(fallback only)".
 - **#23: it is acceptable to require tool-capable models for methods
   with structured phases.** The regex fallback does not need to remain
   first-class — the implemented design forces tool calls and surfaces a

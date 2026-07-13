@@ -9,6 +9,7 @@ Consider what you want from the discussion:
 | Goal | Recommended Methods |
 |------|-------------------|
 | Explore a topic openly | Open Discussion |
+| Generate and prioritise new ideas or options | Nominal Group Technique |
 | Make a decision between options | Adversarial Collaboration, Voting |
 | Forecast or estimate | Delphi Method, Belief State Diffusion |
 | Identify risks and blind spots | Premortem Analysis, Red Team / Blue Team |
@@ -200,6 +201,21 @@ An LLM-native method designed to separate persuasive rhetoric from valid reasoni
 4. **Synthesize** — Compare rhetorical and logical versions
 
 **Best for:** Testing whether an argument is genuinely sound or just well-written, separating style from substance
+
+---
+
+### Nominal Group Technique (NGT)
+
+Structured brainstorming — the catalog's generative method. Participants first propose ideas silently and independently (anonymised, so ideas are judged on content rather than authorship), the moderator merges duplicates into a candidate list, one clarification round ensures everyone understands each candidate, and then every participant distributes a fixed pool of points across the candidates. The result is a ranked shortlist.
+
+**Phases:**
+1. **Generate** — Silent, independent, anonymised idea generation
+2. **Cluster** — The moderator merges duplicates into a candidate list
+3. **Clarify** — One round of questions and refinement (no advocacy)
+4. **Allocate** — Each participant distributes a fixed pool of points
+5. **Rank** — The moderator presents the ranked shortlist
+
+**Best for:** Open problem-solving, generating options, prioritising features or interventions, any question of the form "What should we do?" rather than "Is this right?"
 
 ---
 
