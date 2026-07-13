@@ -147,6 +147,20 @@ class TestHypothesizeHandlerStructured:
         assert (processed.display_content.index(PAYLOAD["reasoning"])
                 < processed.display_content.index("1."))
 
+    def test_process_structured_strips_trailing_period(self):
+        """Parity with the regex path: parse_numbered_list rstrips '.'
+        so mixed human/AI panels dedup 'X.' against 'X' (PR #39
+        review)."""
+        handler = HypothesizeHandler()
+        disc = _discussion()
+        payload = {
+            "hypotheses": ["Barbarian invasions overwhelmed the frontier."],
+            "reasoning": "Testing trailing-period normalization.",
+        }
+        handler.process_structured_response(payload, _entity(), disc)
+        assert disc.method_state["hypotheses"] == [
+            "Barbarian invasions overwhelmed the frontier"]
+
     def test_process_structured_dedups_by_word_overlap(self):
         """Near-duplicate wording must not be added, mirroring
         process_response's word_overlap_similar(threshold=0.7) rule."""

@@ -62,8 +62,9 @@ class TestValidateValidityScoresPayload:
         assert validate_validity_scores_payload({"overall": 3}, EVAL_ITEMS) != ""
 
     def test_empty_scores_rejected(self):
-        bad = {"scores": [], "overall": 3}
-        assert validate_validity_scores_payload(bad, EVAL_ITEMS) != ""
+        bad = {**PAYLOAD, "scores": []}
+        err = validate_validity_scores_payload(bad, EVAL_ITEMS)
+        assert "non-empty" in err
 
     def test_unknown_id_rejected(self):
         bad = {"scores": [{"inference_id": "I1", "score": 4},
@@ -77,11 +78,12 @@ class TestValidateValidityScoresPayload:
             assert item_id in err
 
     def test_duplicate_id_rejected(self):
-        bad = {"scores": [{"inference_id": "I1", "score": 4},
+        bad = {**PAYLOAD,
+               "scores": [{"inference_id": "I1", "score": 4},
                           {"inference_id": "I1", "score": 2},
-                          {"inference_id": "C1", "score": 3}],
-               "overall": 3}
-        assert validate_validity_scores_payload(bad, EVAL_ITEMS) != ""
+                          {"inference_id": "C1", "score": 3}]}
+        err = validate_validity_scores_payload(bad, EVAL_ITEMS)
+        assert "more than once" in err
 
     def test_missing_id_rejected(self):
         bad = {"scores": [{"inference_id": "I1", "score": 4}],
@@ -90,22 +92,27 @@ class TestValidateValidityScoresPayload:
         assert "C1" in err
 
     def test_score_out_of_range_rejected(self):
-        bad = {"scores": [{"inference_id": "I1", "score": 9},
-                          {"inference_id": "C1", "score": 3}],
-               "overall": 3}
-        assert validate_validity_scores_payload(bad, EVAL_ITEMS) != ""
+        bad = {**PAYLOAD,
+               "scores": [{"inference_id": "I1", "score": 9},
+                          {"inference_id": "C1", "score": 3}]}
+        err = validate_validity_scores_payload(bad, EVAL_ITEMS)
+        assert "I1" in err
+        assert "between 1 and 5" in err
 
     def test_score_zero_rejected(self):
-        bad = {"scores": [{"inference_id": "I1", "score": 0},
-                          {"inference_id": "C1", "score": 3}],
-               "overall": 3}
-        assert validate_validity_scores_payload(bad, EVAL_ITEMS) != ""
+        bad = {**PAYLOAD,
+               "scores": [{"inference_id": "I1", "score": 0},
+                          {"inference_id": "C1", "score": 3}]}
+        err = validate_validity_scores_payload(bad, EVAL_ITEMS)
+        assert "I1" in err
+        assert "between 1 and 5" in err
 
     def test_non_numeric_score_rejected(self):
-        bad = {"scores": [{"inference_id": "I1", "score": "high"},
-                          {"inference_id": "C1", "score": 3}],
-               "overall": 3}
-        assert validate_validity_scores_payload(bad, EVAL_ITEMS) != ""
+        bad = {**PAYLOAD,
+               "scores": [{"inference_id": "I1", "score": "high"},
+                          {"inference_id": "C1", "score": 3}]}
+        err = validate_validity_scores_payload(bad, EVAL_ITEMS)
+        assert "integer" in err
 
     def test_missing_overall_rejected(self):
         bad = {"scores": [{"inference_id": "I1", "score": 4},
@@ -114,10 +121,10 @@ class TestValidateValidityScoresPayload:
         assert "overall" in err.lower()
 
     def test_overall_out_of_range_rejected(self):
-        bad = {"scores": [{"inference_id": "I1", "score": 4},
-                          {"inference_id": "C1", "score": 3}],
-               "overall": 7}
-        assert validate_validity_scores_payload(bad, EVAL_ITEMS) != ""
+        bad = {**PAYLOAD, "overall": 7}
+        err = validate_validity_scores_payload(bad, EVAL_ITEMS)
+        assert "'overall'" in err
+        assert "between 1 and 5" in err
 
     def test_missing_reasoning_rejected(self):
         bad = {k: v for k, v in PAYLOAD.items() if k != "reasoning"}

@@ -215,7 +215,9 @@ class DefineCriteriaHandler(PhaseHandler):
         (matching ``_belief_helpers``-style display conventions).
         """
         state = discussion.method_state
-        submitted = [str(c).strip() for c in payload["criteria"]]
+        # rstrip('.') mirrors _parse_criteria so structured items dedup
+        # against regex-parsed ones in mixed human/AI panels.
+        submitted = [str(c).strip().rstrip(".") for c in payload["criteria"]]
         existing = state.get("criteria", [])
         for c in submitted:
             if c not in existing:

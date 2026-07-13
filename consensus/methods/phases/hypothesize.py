@@ -1,8 +1,10 @@
 """Hypothesize phase handler for Analysis of Competing Hypotheses.
 
-Participants propose competing hypotheses.  Hypotheses are extracted
-from responses using numbered-list parsing and deduplicated by word
-overlap similarity.
+Participants propose competing hypotheses via the forced
+``submit_hypotheses`` output tool (issue #23); free-text numbered-list
+parsing remains as the fallback path for humans and non-tool turns.
+Either way, hypotheses are deduplicated by word overlap similarity and
+accumulate across participants.
 """
 
 from __future__ import annotations
@@ -203,8 +205,11 @@ class HypothesizeHandler(PhaseHandler):
         (i.e. excluding any submitted duplicates).
         """
         state = discussion.method_state
-        submitted = [str(h).strip() for h in payload["hypotheses"]
-                     if str(h).strip()]
+        # rstrip('.') mirrors parse_numbered_list so structured items
+        # dedup against regex-parsed ones in mixed human/AI panels.
+        normalized = (str(h).strip().rstrip(".")
+                      for h in payload["hypotheses"])
+        submitted = [h for h in normalized if h]
         existing = state.get("hypotheses", [])
         accepted = []
         for h in submitted:

@@ -620,19 +620,25 @@ async def complete_turn(
                     # issue #23): the error must be loud — logged and
                     # posted into the transcript, never silently
                     # swallowed into a bare method_complete (golden
-                    # rule 6).  Post the notice at most once:
-                    # complete_turn re-enters this branch while the
-                    # frontend concludes.
+                    # rule 6).  Post the notice at most once *per
+                    # target method*: complete_turn re-enters this
+                    # branch while the frontend concludes, but a later
+                    # blocked switch to a different method is new
+                    # information.
                     switch_error = switch_result["error"]
                     logger.warning(
                         "Triage could not switch discussion %s to %r: %s",
                         discussion.id, chosen, switch_error,
                     )
+                    # Scalar last-target key, deliberately: after an
+                    # intervening blocked switch to a different method,
+                    # re-notifying about an earlier target again is new
+                    # information, not spam.
                     already_notified = discussion.method_state.get(
                         "_switch_error_posted")
-                    if mod and discussion.id and not already_notified:
+                    if mod and discussion.id and already_notified != chosen:
                         discussion.method_state[
-                            "_switch_error_posted"] = True
+                            "_switch_error_posted"] = chosen
                         notice = (
                             "**The recommended method could not be "
                             f"adopted.** {switch_error}"

@@ -46,6 +46,13 @@ CLAIMS_TOOL_PARAMETERS: dict = {
         "claims": {
             "type": "array",
             "items": {"type": "string"},
+            # Bounded like the framing tool's 3-5 hypothesis set: a
+            # single moderator extraction, so schema-enforcing
+            # providers can constrain generation to the prompt's
+            # range.  validate_claims_payload stays more lenient for
+            # providers that don't enforce tool-arg schemas.
+            "minItems": 3,
+            "maxItems": 7,
             "description": (
                 "3-7 key claims the conclusion depends on. Each must be "
                 "a specific, falsifiable assertion -- not a value "
@@ -254,8 +261,10 @@ class ExtractClaimsHandler(PhaseHandler):
         """
         state = discussion.method_state
 
+        # rstrip('.') mirrors parse_numbered_list so claim_text matches
+        # the regex path byte-for-byte.
         substantive = [
-            text.strip() for text in payload["claims"]
+            text.strip().rstrip(".") for text in payload["claims"]
             if isinstance(text, str) and len(text.strip()) >= CLAIM_MIN_LENGTH
         ]
         claims = [{"id": i + 1, "text": text}
@@ -278,6 +287,12 @@ class ExtractClaimsHandler(PhaseHandler):
         if not (state.get("preliminary_conclusion")
                 or state.get("prior_conclusion")):
             state["preliminary_conclusion"] = conclusion
+        # The transcript must show the conclusion actually used
+        # downstream — when one already existed, the payload's
+        # synthesized conclusion was discarded above.
+        effective_conclusion = (state.get("preliminary_conclusion")
+                                or state.get("prior_conclusion")
+                                or conclusion)
 
         logger.info(
             "Extracted %d claims via submit_claims for stress testing",
@@ -285,7 +300,8 @@ class ExtractClaimsHandler(PhaseHandler):
         )
 
         numbered = "\n".join(f"{c['id']}. {c['text']}" for c in claims)
-        display = f"**Preliminary conclusion:** {conclusion}\n\n{numbered}"
+        display = (f"**Preliminary conclusion:** {effective_conclusion}"
+                   f"\n\n{numbered}")
         return ProcessedResponse(display_content=display)
 
     def should_advance(self, discussion: Discussion) -> bool:

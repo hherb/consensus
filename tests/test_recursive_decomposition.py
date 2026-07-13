@@ -122,6 +122,48 @@ class TestAnalyzeHandler:
         assert "3" in prompt
         assert "TestAI" in prompt
 
+    def test_turn_prompt_handles_empty_sub_questions(self, ai_entity):
+        """After a MAX_DECOMPOSE_ROUNDS give-up (PR #39 review) the
+        prompt must not ask participants to address 'the 0
+        sub-questions' — it should fall back to the main question."""
+        from consensus.methods.phases.analyze_subquestions import AnalyzeSubquestionsHandler
+        handler = AnalyzeSubquestionsHandler()
+        disc = Discussion(topic="Why is the sky blue?",
+                          discussion_method="recursive_decomposition")
+        disc.method_state = {"sub_questions": []}
+        prompt = handler.get_turn_prompt(ai_entity, disc)
+        assert "0 sub-questions" not in prompt
+        assert "TestAI" in prompt
+        assert "main question" in prompt.lower()
+
+    def test_system_prompt_handles_empty_sub_questions(self, ai_entity):
+        """Same give-up path: the system prompt must not render an
+        empty sub-question list with the **Sub-question N:** format
+        instruction (PR #39 review)."""
+        from consensus.methods.phases.analyze_subquestions import AnalyzeSubquestionsHandler
+        handler = AnalyzeSubquestionsHandler()
+        disc = Discussion(topic="Why is the sky blue?",
+                          discussion_method="recursive_decomposition")
+        disc.method_state = {"sub_questions": []}
+        prompt = handler.get_system_prompt(ai_entity, disc)
+        assert "identified the following sub-questions" not in prompt
+        assert "**Sub-question 1:**" not in prompt
+        assert "main question" in prompt.lower()
+
+    def test_conclusion_prompt_handles_empty_sub_questions(self):
+        """Same give-up path: the conclusion prompt must not claim the
+        group decomposed the question when it never did (PR #39
+        review)."""
+        from consensus.methods.recursive_decomposition import RecursiveDecomposition
+        method = RecursiveDecomposition()
+        disc = Discussion(topic="Why is the sky blue?",
+                          discussion_method="recursive_decomposition")
+        disc.method_state = {"sub_questions": []}
+        prompt = method.get_conclusion_prompt(disc)
+        assert "decomposed this into the following sub-questions" \
+            not in prompt
+        assert "Why is the sky blue?" in prompt
+
     def test_process_response_accumulates_analyses(self, ai_entity, ai_entity_2):
         from consensus.methods.phases.analyze_subquestions import AnalyzeSubquestionsHandler
         handler = AnalyzeSubquestionsHandler()

@@ -1,12 +1,15 @@
 """Decompose phase handler for Recursive Decomposition.
 
 Participants propose 3-7 sub-questions that collectively address the
-main question.  Sub-questions are extracted via numbered-list parsing
-and deduplicated by word overlap.
+main question via the forced ``submit_subquestions`` output tool
+(issue #23); free-text numbered-list parsing remains as the fallback
+path for humans and non-tool turns.  Sub-questions are deduplicated by
+word overlap.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
@@ -15,6 +18,8 @@ from ..phase_handler import PhaseHandler
 
 if TYPE_CHECKING:
     from ...models import Discussion, Entity
+
+logger = logging.getLogger(__name__)
 
 # Minimum character length for a sub-question to be considered meaningful
 MIN_SUBQUESTION_LENGTH = 10
@@ -223,5 +228,10 @@ class DecomposeHandler(PhaseHandler):
         state = discussion.method_state
         phase_round = state.get("phase_round", 1)
         if phase_round > MAX_DECOMPOSE_ROUNDS:
+            logger.warning(
+                "Decompose phase reached round %d; advancing with %d "
+                "sub-question(s) collected.",
+                phase_round, len(state.get("sub_questions", [])),
+            )
             return True
         return bool(state.get("sub_questions")) and phase_round > 1

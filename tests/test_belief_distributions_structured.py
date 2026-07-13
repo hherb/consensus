@@ -7,7 +7,12 @@ payload is keyed by hypothesis labels ("H1", "H2", ...) — the same
 convention the free-text path and the display/convergence helpers use.
 """
 
-from consensus.methods.phases._belief_helpers import validate_beliefs_payload
+from consensus.methods.phases._belief_helpers import (
+    BELIEF_MAX,
+    BELIEF_MIN,
+    BELIEFS_TOOL_PARAMETERS,
+    validate_beliefs_payload,
+)
 from consensus.methods.phases.diffuse_beliefs import DiffuseBeliefsHandler
 from consensus.methods.phases.prior_beliefs import PriorBeliefsHandler
 from consensus.models import Discussion, Entity, EntityType
@@ -39,6 +44,17 @@ def _discussion(**state) -> Discussion:
         **state,
     }
     return disc
+
+
+class TestBeliefsToolParameters:
+    def test_value_schema_bounds_match_runtime_validation(self):
+        """Schema-enforcing providers should constrain values to the
+        same [0, 1] range validate_beliefs_payload enforces at runtime
+        (PR #39 review)."""
+        value_schema = BELIEFS_TOOL_PARAMETERS["properties"]["beliefs"][
+            "additionalProperties"]
+        assert value_schema["minimum"] == BELIEF_MIN
+        assert value_schema["maximum"] == BELIEF_MAX
 
 
 class TestValidateBeliefsPayload:
@@ -85,6 +101,20 @@ class TestValidateBeliefsPayload:
     def test_nan_value_rejected(self):
         bad = {"beliefs": {"H1": float("nan"), "H2": 0.5, "H3": 0.5}}
         assert validate_beliefs_payload(bad, HYPOTHESES) != ""
+
+    def test_sum_far_from_one_rejected(self):
+        """The prompt demands the distribution sum to 1.0; the retry
+        loop is the cheap place to enforce it (PR #39 review)."""
+        bad = {"beliefs": {"H1": 0.9, "H2": 0.9, "H3": 0.9}}
+        err = validate_beliefs_payload(bad, HYPOTHESES)
+        assert err != ""
+        assert "sum" in err.lower()
+
+    def test_sum_within_rounding_tolerance_accepted(self):
+        """Two-decimal rounding (0.33 * 3 = 0.99) must not trigger a
+        retry."""
+        ok = {"beliefs": {"H1": 0.33, "H2": 0.33, "H3": 0.33}}
+        assert validate_beliefs_payload(ok, HYPOTHESES) == ""
 
 
 class TestPriorBeliefsHandlerStructured:

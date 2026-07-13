@@ -1,6 +1,8 @@
 """Tests for MethodRecommender — LLM-based method classification."""
 
 import json
+import time
+
 import pytest
 from consensus.methods.recommender import MethodRecommendation
 
@@ -32,6 +34,7 @@ class TestMethodRecommendation:
         assert d["confidence"] == 0.7
         assert d["reasoning"] == "Forecasting question."
         assert d["fit_factors"] == ["quantitative"]
+        assert d["capability_warning"] == ""
 
 
 from consensus.methods.recommender import (
@@ -175,9 +178,6 @@ class TestRecommendAsync:
         assert results[0].method_name == "open_discussion"
 
 
-import time
-
-
 def _insert_pricing_row(tmp_db, model_id: str, supported: str) -> None:
     """Insert a model_pricing row with a given supported_parameters value."""
     tmp_db.conn.execute(
@@ -233,6 +233,11 @@ class TestRecommendMethodCapabilityDownranking:
         assert "tool-capable" in delphi_rec["reasoning"]
         assert "test/no-tools" in delphi_rec["reasoning"]
         assert "Forecasting fit." in delphi_rec["reasoning"]
+        # The UI needs a machine-readable flag: the down-ranked rec's
+        # confidence badge would otherwise contradict its ordering
+        # (PR #39 review).
+        assert "test/no-tools" in delphi_rec["capability_warning"]
+        assert recs[0]["capability_warning"] == ""
 
     @pytest.mark.asyncio
     async def test_never_drops_incompatible_recommendation(

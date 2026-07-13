@@ -30,7 +30,12 @@ def validate_skeleton(data: dict) -> bool:
         for item in items:
             if not isinstance(item, dict):
                 return False
-            if not item.get("id") or not item.get("text"):
+            # ids/text must be non-empty *strings*: display formatting
+            # joins ids (", ".join) and downstream validators call
+            # .upper() on them, so a truthy int would crash later.
+            if not isinstance(item.get("id"), str) or not item["id"]:
+                return False
+            if not isinstance(item.get("text"), str) or not item["text"]:
                 return False
 
     # Collect all valid IDs for reference checking

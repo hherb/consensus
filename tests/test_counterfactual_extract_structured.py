@@ -62,6 +62,15 @@ class TestClaimsToolParameters:
         assert props["claims"]["items"]["type"] == "string"
         assert props["preliminary_conclusion"]["type"] == "string"
 
+    def test_schema_bounds_match_prompt(self):
+        """Single moderator extraction of '3-7 key claims': bounded in
+        the schema like the framing tool's 3-5 set, so schema-enforcing
+        providers constrain generation (PR #39 review). Runtime
+        validation stays lenient for non-enforcing providers."""
+        claims = CLAIMS_TOOL_PARAMETERS["properties"]["claims"]
+        assert claims["minItems"] == 3
+        assert claims["maxItems"] == 7
+
 
 class TestValidateClaimsPayload:
     def test_valid(self):
@@ -153,6 +162,17 @@ class TestExtractClaimsHandlerStructured:
         assert "urban pollution" in processed.display_content
         assert PAYLOAD["preliminary_conclusion"] in processed.display_content
 
+    def test_process_structured_strips_trailing_period(self):
+        """Parity with the regex path: parse_numbered_list rstrips '.'
+        so claim_text matches across paths (PR #39 review)."""
+        handler = ExtractClaimsHandler()
+        disc = _discussion()
+        payload = {**PAYLOAD,
+                   "claims": ["Remote work reduces urban pollution levels."]}
+        handler.process_structured_response(payload, _moderator(), disc)
+        assert disc.method_state["claims"] == [
+            {"id": 1, "text": "Remote work reduces urban pollution levels"}]
+
     def test_process_structured_filters_short_claims(self):
         """Non-substantive claims are dropped, mirroring parse_numbered_list;
         ids are assigned after filtering, starting at 1."""
@@ -183,6 +203,42 @@ class TestExtractClaimsHandlerStructured:
         disc = _discussion(preliminary_conclusion="Already captured")
         handler.process_structured_response(PAYLOAD, _moderator(), disc)
         assert disc.method_state["preliminary_conclusion"] == "Already captured"
+
+    def test_structured_matches_free_text_state_shape(self):
+        """True cross-path parity (PR #39 review): equivalent input
+        through process_response and process_structured_response must
+        leave byte-identical claims/claim_results/conclusion state."""
+        # A trailing period exercises both paths' rstrip('.')
+        # normalization within the parity comparison itself.
+        claims = VALID_CLAIMS[:2] + [VALID_CLAIMS[2] + "."]
+        free_handler = ExtractClaimsHandler()
+        free_disc = _discussion()
+        content = ("CONCLUSION: " + PAYLOAD["preliminary_conclusion"]
+                   + "\n" + "\n".join(f"{i}. {c}"
+                                      for i, c in enumerate(claims, 1)))
+        free_handler.process_response(content, _moderator(), free_disc)
+
+        structured_handler = ExtractClaimsHandler()
+        structured_disc = _discussion()
+        structured_handler.process_structured_response(
+            {**PAYLOAD, "claims": claims}, _moderator(), structured_disc)
+
+        for key in ("claims", "claim_results", "preliminary_conclusion",
+                    "extraction_failed"):
+            assert structured_disc.method_state[key] \
+                == free_disc.method_state[key], key
+
+    def test_display_shows_conclusion_actually_in_effect(self):
+        """When the payload's conclusion is discarded (a conclusion
+        already exists), the transcript must show the one used
+        downstream, not the discarded one (PR #39 review)."""
+        handler = ExtractClaimsHandler()
+        disc = _discussion(prior_conclusion="Given conclusion")
+        processed = handler.process_structured_response(
+            PAYLOAD, _moderator(), disc)
+        assert "Given conclusion" in processed.display_content
+        assert PAYLOAD["preliminary_conclusion"] \
+            not in processed.display_content
 
     def test_should_advance_after_structured_success(self):
         handler = ExtractClaimsHandler()

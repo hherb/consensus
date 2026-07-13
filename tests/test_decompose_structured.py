@@ -235,6 +235,25 @@ class TestGiveUpCap:
                            sub_questions=[])
         assert handler.should_advance(disc) is True
 
+    def test_give_up_logs_warning(self, caplog):
+        """A silent give-up is undiagnosable (PR #39 review): the cap
+        trip must leave a log trail like vote.py's MAX_VOTE_ROUNDS."""
+        handler = DecomposeHandler()
+        disc = _discussion(phase_round=MAX_DECOMPOSE_ROUNDS + 1,
+                           sub_questions=[])
+        with caplog.at_level("WARNING"):
+            assert handler.should_advance(disc) is True
+        assert any("sub-question" in r.message.lower()
+                   for r in caplog.records)
+
+    def test_normal_advance_does_not_log_warning(self, caplog):
+        handler = DecomposeHandler()
+        disc = _discussion(phase_round=2,
+                           sub_questions=["Some sub-question here?"])
+        with caplog.at_level("WARNING"):
+            assert handler.should_advance(disc) is True
+        assert not caplog.records
+
     def test_still_advances_normally_with_sub_questions_before_cap(self):
         handler = DecomposeHandler()
         disc = _discussion(phase_round=2,

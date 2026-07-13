@@ -60,6 +60,11 @@ HYPOTHESES_TOOL_PARAMETERS: dict = {
 BELIEF_MIN = 0.0
 BELIEF_MAX = 1.0
 
+#: Allowed deviation of a belief distribution's sum from 1.0 —
+#: generous enough for two-decimal rounding across MAX_HYPOTHESES
+#: values (e.g. 0.33 * 3 = 0.99) without accepting non-distributions.
+BELIEF_SUM_TOLERANCE = 0.05
+
 #: JSON Schema for the submit_beliefs output tool (issue #23).
 #: Keys are hypothesis labels ("H1", "H2", ...) — the same convention
 #: the free-text path and the display/convergence helpers use — so
@@ -74,7 +79,11 @@ BELIEFS_TOOL_PARAMETERS: dict = {
                 "probability estimate for it (0.0-1.0). Include one entry "
                 "per hypothesis label."
             ),
-            "additionalProperties": {"type": "number"},
+            "additionalProperties": {
+                "type": "number",
+                "minimum": BELIEF_MIN,
+                "maximum": BELIEF_MAX,
+            },
         },
         "reasoning": {
             "type": "string",
@@ -100,7 +109,8 @@ def validate_beliefs_payload(payload: dict, hypotheses: list[str]) -> str:
 
     The keys of ``beliefs`` must be exactly the label set
     ``H1..H{len(hypotheses)}`` (unknown or missing labels are named in
-    the error), and every value must be numeric in [0, 1].
+    the error), every value must be numeric in [0, 1], and the values
+    must sum to 1.0 within ``BELIEF_SUM_TOLERANCE``.
     """
     beliefs = payload.get("beliefs")
     if not isinstance(beliefs, dict) or not beliefs:
@@ -127,6 +137,11 @@ def validate_beliefs_payload(payload: dict, hypotheses: list[str]) -> str:
     if missing:
         return (f"Provide a belief for every hypothesis label. "
                 f"Missing: {missing}.")
+
+    total = sum(float(v) for v in beliefs.values())  # type: ignore[arg-type]
+    if abs(total - 1.0) > BELIEF_SUM_TOLERANCE:
+        return (f"The beliefs must form a probability distribution "
+                f"summing to 1.0 (got {total:.2f}).")
 
     return ""
 

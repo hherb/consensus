@@ -47,6 +47,21 @@ class RecursiveDecomposition(DiscussionMethod):
     def get_conclusion_prompt(self, discussion: Discussion) -> str:
         state = discussion.method_state
         sub_questions = state.get("sub_questions", [])
+        # Empty only via the MAX_DECOMPOSE_ROUNDS give-up: don't claim
+        # the group decomposed the question when it never did.
+        if not sub_questions:
+            return (
+                "The Recursive Decomposition analysis is complete.\n\n"
+                f"Original question: \"{discussion.topic}\"\n\n"
+                "No sub-questions were captured during decomposition; "
+                "the group analyzed the main question directly.\n\n"
+                "Provide a comprehensive final synthesis: summarize the "
+                "key findings, where participants agreed and diverged, "
+                "a clear unified answer to the original question, and "
+                "what aspects are well-supported vs. uncertain.\n\n"
+                "Ground your synthesis in the specific analyses "
+                "provided by participants."
+            )
         sq_list = "\n".join(
             f"{i + 1}. {sq}" for i, sq in enumerate(sub_questions)
         )

@@ -1,12 +1,15 @@
 """Surface Assumptions phase handler for Key Assumptions Check.
 
 Participants identify the key assumptions underlying the discussion
-topic.  Assumptions are extracted from responses using numbered-list
-parsing and deduplicated by word overlap similarity.
+topic via the forced ``submit_assumptions`` output tool (issue #23);
+free-text numbered-list parsing remains as the fallback path for
+humans and non-tool turns.  Assumptions are deduplicated by word
+overlap similarity.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
@@ -15,6 +18,8 @@ from ..phase_handler import PhaseHandler
 
 if TYPE_CHECKING:
     from ...models import Discussion, Entity
+
+logger = logging.getLogger(__name__)
 
 # Minimum character length for an assumption to be considered meaningful
 MIN_ASSUMPTION_LENGTH = 10
@@ -218,5 +223,10 @@ class SurfaceAssumptionsHandler(PhaseHandler):
         state = discussion.method_state
         phase_round = state.get("phase_round", 1)
         if phase_round > MAX_SURFACE_ROUNDS:
+            logger.warning(
+                "Surface Assumptions phase reached round %d; advancing "
+                "with %d assumption(s) collected.",
+                phase_round, len(state.get("assumptions", [])),
+            )
             return True
         return bool(state.get("assumptions")) and phase_round > 1

@@ -226,6 +226,22 @@ class TestGiveUpCap:
         disc = _discussion(phase_round=MAX_SURFACE_ROUNDS + 1, assumptions=[])
         assert handler.should_advance(disc) is True
 
+    def test_give_up_logs_warning(self, caplog):
+        """A silent give-up is undiagnosable (PR #39 review): the cap
+        trip must leave a log trail like vote.py's MAX_VOTE_ROUNDS."""
+        handler = SurfaceAssumptionsHandler()
+        disc = _discussion(phase_round=MAX_SURFACE_ROUNDS + 1, assumptions=[])
+        with caplog.at_level("WARNING"):
+            assert handler.should_advance(disc) is True
+        assert any("assumption" in r.message.lower() for r in caplog.records)
+
+    def test_normal_advance_does_not_log_warning(self, caplog):
+        handler = SurfaceAssumptionsHandler()
+        disc = _discussion(phase_round=2, assumptions=["Some assumption here"])
+        with caplog.at_level("WARNING"):
+            assert handler.should_advance(disc) is True
+        assert not caplog.records
+
     def test_still_advances_normally_with_assumptions_before_cap(self):
         handler = SurfaceAssumptionsHandler()
         disc = _discussion(phase_round=2, assumptions=["Some assumption here"])

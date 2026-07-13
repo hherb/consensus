@@ -26,11 +26,11 @@ from typing import TYPE_CHECKING, Optional
 import httpx
 
 from .ai_client import AIClient, AIResponse
-from .database import Database
 from .methods import get_method
 from .models import EntityType
 
 if TYPE_CHECKING:
+    from .database import Database
     from .methods.base import DiscussionMethod, OutputToolSpec
     from .models import AIConfig, Discussion, Entity
 
@@ -54,7 +54,8 @@ class StructuredOutputError(RuntimeError):
 
 
 def _validate_structured_output_support(
-    discussion: "Discussion", db: Database, method_name: Optional[str] = None,
+    discussion: "Discussion", db: "Database",
+    method_name: Optional[str] = None,
 ) -> str:
     """Reject structured methods when a model is known to lack tool support.
 
@@ -71,8 +72,8 @@ def _validate_structured_output_support(
     home) because both the setup-time gate (``start_discussion``) and
     the runtime gate (``switch_discussion_method`` in
     ``app_discussion_flow``, used by Triage's handoff) need it, and
-    ``app_discussion_setup``/``app_discussion_flow`` import each other —
-    importing one from the other here would create a circular import.
+    ``app_discussion_setup`` already imports ``app_discussion_flow`` —
+    the reverse import this would have required would create a cycle.
     ``app_discussion_setup`` re-exports this name for backward
     compatibility.
 

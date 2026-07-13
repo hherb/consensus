@@ -119,12 +119,29 @@ plan; delete sections that are finished and no longer instructive.
      `ConsensusApp.recommend_method` reads `self.discussion.entities`
      server-side — so `consensus/static/setup.js`'s existing
      `api.recommendMethod(topic, answerType)` call needed no changes.
-     One purely cosmetic gap remains: `renderRecommendations()` in
-     `setup.js` shows `reasoning` as plain text, so the appended "Note:
-     requires tool-capable models..." sentence is legible but not
-     visually distinguished (e.g. a warning icon or muted badge) from
-     the rest of the reasoning. Not functional — the down-ranked
-     position and the note text already convey the signal.
+     (The cosmetic gap originally noted here is closed: down-ranked
+     recommendations now carry a `capability_warning` field rendered
+     as a ⚠ badge by `renderRecommendations()`, so the untouched
+     confidence score no longer visually contradicts the ordering.)
+   - **PR #39 post-review hardening (2026-07-14) is on the PR branch:**
+     `validate_skeleton` rejects non-string ids/text (a truthy int
+     previously crashed `format_skeleton_display` and the crash was
+     swallowed as a misleading "API error" without advancing the
+     extraction give-up counter); the `MAX_SURFACE_ROUNDS` /
+     `MAX_DECOMPOSE_ROUNDS` give-ups now log a warning and the
+     downstream zero-item transition/turn prompts explain the empty
+     list instead of announcing "0 assumptions"; structured items are
+     `rstrip('.')`-normalised to match the regex paths (hypothesize,
+     define_criteria, counterfactual claims); belief payloads must sum
+     to ~1 (`BELIEF_SUM_TOLERANCE`); the blocked-switch transcript
+     notice dedups per target method rather than globally; the belief
+     value schema carries `minimum`/`maximum` and the claims schema
+     `minItems`/`maxItems` (accumulative schemas stay deliberately
+     unbounded); `evaluate_matrix` prompts no longer name the tool
+     when the degenerate empty matrix means none is offered; and the
+     counterfactual extract display shows the conclusion actually kept,
+     not a discarded payload one. The shared `str(None)` validator
+     helper below remains open.
 
 ## Conventions and gotchas for the next session
 

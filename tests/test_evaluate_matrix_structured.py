@@ -244,3 +244,17 @@ class TestPromptsNameTheTool:
         disc = _discussion()
         prompt = handler.get_turn_prompt(entity, disc)
         assert "submit_matrix_ratings" in prompt
+
+    def test_degenerate_matrix_prompts_do_not_name_missing_tool(self):
+        """When hypotheses or evidence are empty get_output_tool
+        returns None (no forced tool), so the prompts must not
+        instruct calling a tool that is not offered (PR #39 review)."""
+        handler = EvaluateMatrixHandler()
+        entity = _entity()
+        for state in ({"evidence": []}, {"hypotheses": []}):
+            disc = _discussion(**state)
+            assert handler.get_output_tool(entity, disc) is None
+            assert "submit_matrix_ratings" not in handler.get_system_prompt(
+                entity, disc)
+            assert "submit_matrix_ratings" not in handler.get_turn_prompt(
+                entity, disc)

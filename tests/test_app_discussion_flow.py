@@ -607,6 +607,36 @@ class TestCompleteTurnBlockedTriageSwitch:
         )
 
     @pytest.mark.asyncio
+    async def test_blocked_switch_to_different_method_posts_new_notice(
+        self, tmp_db, sample_provider, monkeypatch,
+    ):
+        """The once-only dedup is per target method (PR #39 review):
+        a later blocked switch to a *different* method is new
+        information and must reach the transcript."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_model(tmp_db, "test/test-model", "temperature,top_p")
+        disc, mod, moderator, pricing = self._make_triage_pipeline(
+            tmp_db, sample_provider)
+
+        result = await self._drive_turn(
+            disc, mod, moderator, tmp_db, pricing)
+        assert result.get("switch_error")
+        assert len(self._blocked_notices(disc)) == 1
+
+        # Triage re-selects a different (also structured) method.
+        disc.method_state["chosen_method"] = "ach"
+        disc.method_state["recommended_method"] = "ach"
+        result = await complete_turn(
+            disc, moderator, tmp_db, pricing,
+            get_state_fn=lambda: {},
+            moderator_summary="Noted.",
+        )
+        assert result.get("switch_error")
+        notices = self._blocked_notices(disc)
+        assert len(notices) == 2
+        assert "Analysis of Competing Hypotheses" in notices[1].content
+
+    @pytest.mark.asyncio
     async def test_unknown_capability_switch_unchanged(
         self, tmp_db, sample_provider, monkeypatch,
     ):

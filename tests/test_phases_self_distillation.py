@@ -146,6 +146,34 @@ class TestValidateSkeleton:
         }
         assert validate_skeleton(data) is False
 
+    def test_non_string_id_rejected(self):
+        """Integer ids pass truthiness but crash display joins (PR #39)."""
+        data = {
+            "premises": [{"id": 1, "text": "X"}],
+            "inferences": [{"id": 2, "from": [1], "text": "Y"}],
+            "conclusions": [{"id": 3, "from": [2], "text": "Z"}],
+        }
+        assert validate_skeleton(data) is False
+
+    def test_non_string_text_rejected(self):
+        data = {
+            "premises": [{"id": "P1", "text": 42}],
+            "inferences": [{"id": "I1", "from": ["P1"], "text": "Y"}],
+            "conclusions": [{"id": "C1", "from": ["I1"], "text": "Z"}],
+        }
+        assert validate_skeleton(data) is False
+
+    def test_non_string_from_ref_rejected(self):
+        """Regression pin: a non-string ref fails the membership check
+        (valid_ids only ever holds strings) — there is no separate
+        isinstance check on refs, and none is needed."""
+        data = {
+            "premises": [{"id": "P1", "text": "X"}],
+            "inferences": [{"id": "I1", "from": [None], "text": "Y"}],
+            "conclusions": [{"id": "C1", "from": ["I1"], "text": "Z"}],
+        }
+        assert validate_skeleton(data) is False
+
     def test_inference_can_reference_prior_inference(self):
         """Inference I2 referencing I1 should be valid."""
         data = {

@@ -128,6 +128,20 @@ class TestDefineCriteriaHandlerStructured:
         assert (processed.display_content.index(PAYLOAD["reasoning"])
                 < processed.display_content.index("1."))
 
+    def test_process_structured_strips_trailing_period(self):
+        """Parity with the regex path: _parse_criteria rstrips '.' so
+        a structured 'X.' dedups against a human-parsed 'X' (PR #39
+        review)."""
+        handler = DefineCriteriaHandler()
+        disc = _discussion(criteria=["Productivity measured per hour"])
+        payload = {
+            "criteria": ["Productivity measured per hour."],
+            "reasoning": "Testing trailing-period normalization.",
+        }
+        handler.process_structured_response(payload, _entity(), disc)
+        assert disc.method_state["criteria"] == [
+            "Productivity measured per hour"]
+
     def test_process_structured_dedups_exact_membership(self):
         """Exact-membership dedup, same rule as the regex path."""
         handler = DefineCriteriaHandler()

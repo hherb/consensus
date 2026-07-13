@@ -46,6 +46,11 @@ class MethodRecommendation:
     confidence: float
     reasoning: str
     fit_factors: list[str] = field(default_factory=list)
+    #: Set by ``downrank_incompatible_recommendations`` when a panel
+    #: model is known to lack the tool support this method needs — the
+    #: UI shows it as a badge, since the untouched confidence score
+    #: would otherwise contradict the down-ranked ordering.
+    capability_warning: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -54,6 +59,7 @@ class MethodRecommendation:
             "confidence": self.confidence,
             "reasoning": self.reasoning,
             "fit_factors": self.fit_factors,
+            "capability_warning": self.capability_warning,
         }
 
 
@@ -258,5 +264,9 @@ def downrank_incompatible_recommendations(
             f"{rec.reasoning} Note: requires tool-capable models; "
             f"{unsupported_model} is known to lack tool support."
         ).strip()
+        rec.capability_warning = (
+            f"Requires tool-capable models — {unsupported_model} "
+            "lacks tool support"
+        )
         incompatible.append(rec)
     return compatible + incompatible

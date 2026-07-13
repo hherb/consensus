@@ -1,8 +1,10 @@
 """Matrix evaluation phase handler for Analysis of Competing Hypotheses.
 
 Each participant rates every hypothesis against every piece of evidence
-using +/-/0 ratings.  Ratings are parsed from JSON and stored in the
-discussion's method state.
+using +/-/0 ratings, submitted via the forced ``submit_matrix_ratings``
+output tool (issue #23); free-text JSON parsing remains as the fallback
+path for humans and non-tool turns.  Ratings are stored per entity in
+the discussion's method state.
 """
 
 from __future__ import annotations
@@ -139,6 +141,17 @@ class EvaluateMatrixHandler(PhaseHandler):
             f"Topic: {discussion.topic}\n\n"
         )
 
+        # Degenerate matrix (no hypotheses or no evidence):
+        # get_output_tool returns None, so no submit_matrix_ratings
+        # tool is offered — don't instruct the model to call it.
+        if not hypotheses or not evidence:
+            return base + (
+                "MATRIX EVALUATION PHASE\n\n"
+                "No rating matrix could be formed (missing hypotheses "
+                "or evidence). Give a brief qualitative assessment of "
+                "how the available material bears on the topic instead."
+            )
+
         hyp_list = "\n".join(f"  H{i+1}: {h}"
                              for i, h in enumerate(hypotheses))
         ev_list = "\n".join(
@@ -167,6 +180,12 @@ class EvaluateMatrixHandler(PhaseHandler):
 
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
+        state = discussion.method_state
+        if not state.get("hypotheses") or not state.get("evidence"):
+            return (
+                f"{entity.name}, no rating matrix could be formed — "
+                "give a brief qualitative assessment instead."
+            )
         return (
             f"{entity.name}, evaluate each hypothesis against each piece "
             "of evidence using the +/-/0 rating system by calling the "
