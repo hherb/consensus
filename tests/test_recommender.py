@@ -173,3 +173,155 @@ class TestRecommendAsync:
         )
         assert len(results) == 1
         assert results[0].method_name == "open_discussion"
+
+
+import time
+
+
+def _insert_pricing_row(tmp_db, model_id: str, supported: str) -> None:
+    """Insert a model_pricing row with a given supported_parameters value."""
+    tmp_db.conn.execute(
+        "INSERT INTO model_pricing (model_id, prompt_cost, completion_cost,"
+        " last_updated, input_modalities, context_length,"
+        " supported_parameters) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (model_id, 0.0, 0.0, time.time(), "text", 8192, supported),
+    )
+    tmp_db.conn.commit()
+
+
+def _mock_client_with_recommendations(recs: list[dict]) -> MagicMock:
+    """Build a mock AIClient whose complete() returns the given recommendations."""
+    mock_response = MagicMock()
+    mock_response.content = json.dumps({"recommendations": recs})
+    mock_client = MagicMock()
+    mock_client.complete = AsyncMock(return_value=mock_response)
+    mock_client.close = AsyncMock()
+    return mock_client
+
+
+class TestRecommendMethodCapabilityDownranking:
+    """``recommend_method`` (consensus.app_discussion_setup) down-ranks
+    structured-output methods when a panel model is known to lack tool
+    support (#23 recommender-awareness follow-up)."""
+
+    @pytest.mark.asyncio
+    async def test_downranks_structured_method_behind_compatible_ones(
+            self, tmp_db, monkeypatch):
+        from consensus.app_discussion_setup import recommend_method
+
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_pricing_row(tmp_db, "test/no-tools", "temperature,top_p")
+
+        mock_client = _mock_client_with_recommendations([
+            {"method_name": "delphi", "display_name": "Delphi",
+             "confidence": 0.9, "reasoning": "Forecasting fit.",
+             "fit_factors": []},
+            {"method_name": "premortem", "display_name": "Premortem",
+             "confidence": 0.6, "reasoning": "Risk fit.", "fit_factors": []},
+        ])
+
+        recs = await recommend_method(
+            "topic", "type", mock_client, {"model": "m"},
+            db=tmp_db, panel_models=[("test/no-tools", "")],
+        )
+
+        # premortem (no structured phases) must be ranked ahead of the
+        # down-ranked delphi (structured, incompatible panel model), even
+        # though the LLM ranked delphi first by confidence.
+        assert [r["method_name"] for r in recs] == ["premortem", "delphi"]
+        delphi_rec = recs[1]
+        assert "tool-capable" in delphi_rec["reasoning"]
+        assert "test/no-tools" in delphi_rec["reasoning"]
+        assert "Forecasting fit." in delphi_rec["reasoning"]
+
+    @pytest.mark.asyncio
+    async def test_never_drops_incompatible_recommendation(
+            self, tmp_db, monkeypatch):
+        from consensus.app_discussion_setup import recommend_method
+
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_pricing_row(tmp_db, "test/no-tools", "temperature,top_p")
+
+        mock_client = _mock_client_with_recommendations([
+            {"method_name": "delphi", "display_name": "Delphi",
+             "confidence": 0.9, "reasoning": "Forecasting fit.",
+             "fit_factors": []},
+        ])
+
+        recs = await recommend_method(
+            "topic", "type", mock_client, {"model": "m"},
+            db=tmp_db, panel_models=[("test/no-tools", "")],
+        )
+
+        assert len(recs) == 1
+        assert recs[0]["method_name"] == "delphi"
+
+    @pytest.mark.asyncio
+    async def test_unknown_capability_does_not_downrank(
+            self, tmp_db, monkeypatch):
+        from consensus.app_discussion_setup import recommend_method
+
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        # No pricing row at all -> supports_tools() returns None (unknown)
+
+        mock_client = _mock_client_with_recommendations([
+            {"method_name": "delphi", "display_name": "Delphi",
+             "confidence": 0.9, "reasoning": "Forecasting fit.",
+             "fit_factors": []},
+            {"method_name": "premortem", "display_name": "Premortem",
+             "confidence": 0.6, "reasoning": "Risk fit.", "fit_factors": []},
+        ])
+
+        recs = await recommend_method(
+            "topic", "type", mock_client, {"model": "m"},
+            db=tmp_db, panel_models=[("test/unknown-model", "")],
+        )
+
+        assert [r["method_name"] for r in recs] == ["delphi", "premortem"]
+        assert "tool-capable" not in recs[0]["reasoning"]
+
+    @pytest.mark.asyncio
+    async def test_no_panel_info_leaves_order_unchanged(
+            self, tmp_db, monkeypatch):
+        from consensus.app_discussion_setup import recommend_method
+
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_pricing_row(tmp_db, "test/no-tools", "temperature,top_p")
+
+        mock_client = _mock_client_with_recommendations([
+            {"method_name": "delphi", "display_name": "Delphi",
+             "confidence": 0.9, "reasoning": "Forecasting fit.",
+             "fit_factors": []},
+            {"method_name": "premortem", "display_name": "Premortem",
+             "confidence": 0.6, "reasoning": "Risk fit.", "fit_factors": []},
+        ])
+
+        # No panel_models and no db supplied at all -> unchanged behavior.
+        recs = await recommend_method(
+            "topic", "type", mock_client, {"model": "m"},
+        )
+
+        assert [r["method_name"] for r in recs] == ["delphi", "premortem"]
+
+    @pytest.mark.asyncio
+    async def test_compatible_panel_leaves_order_unchanged(
+            self, tmp_db, monkeypatch):
+        from consensus.app_discussion_setup import recommend_method
+
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_pricing_row(tmp_db, "test/tool-model", "temperature,tools")
+
+        mock_client = _mock_client_with_recommendations([
+            {"method_name": "delphi", "display_name": "Delphi",
+             "confidence": 0.9, "reasoning": "Forecasting fit.",
+             "fit_factors": []},
+            {"method_name": "premortem", "display_name": "Premortem",
+             "confidence": 0.6, "reasoning": "Risk fit.", "fit_factors": []},
+        ])
+
+        recs = await recommend_method(
+            "topic", "type", mock_client, {"model": "m"},
+            db=tmp_db, panel_models=[("test/tool-model", "")],
+        )
+
+        assert [r["method_name"] for r in recs] == ["delphi", "premortem"]

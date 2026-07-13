@@ -282,13 +282,27 @@ async def recommend_method(
     answer_type: str,
     ai_client,
     provider: dict,
+    db: Optional[Database] = None,
+    panel_models: Optional[list[tuple[str, str]]] = None,
 ) -> list[dict]:
     """Get LLM-based method recommendations for a topic.
+
+    When ``db`` and ``panel_models`` (``(model, base_url)`` pairs for the
+    discussion's AI participants) are both supplied, any recommendation
+    whose method ``requires_structured_output()`` is down-ranked — moved
+    after all capability-compatible recommendations, with a note appended
+    to its ``reasoning`` — when ``db.pricing.supports_tools()`` reports
+    ``False`` for any panel model. Recommendations are never dropped, only
+    reordered, and unknown capability (``None``, e.g. local models) never
+    down-ranks. When ``db`` or ``panel_models`` is omitted, behavior is
+    unchanged (backward compatible with existing call sites).
 
     Returns a list of recommendation dicts.
     """
     from .methods import list_methods
-    from .methods.recommender import MethodRecommender
+    from .methods.recommender import (
+        MethodRecommender, downrank_incompatible_recommendations,
+    )
 
     recommender = MethodRecommender()
     catalog = list_methods()
@@ -299,6 +313,10 @@ async def recommend_method(
         ai_client=ai_client,
         provider=provider,
     )
+    if db is not None and panel_models:
+        recommendations = downrank_incompatible_recommendations(
+            recommendations, db, panel_models,
+        )
     return [r.to_dict() for r in recommendations]
 
 

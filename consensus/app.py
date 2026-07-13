@@ -7,7 +7,7 @@ import time
 from typing import Any, Optional, Callable
 
 from .models import (
-    Discussion, Message, MessageRole,
+    Discussion, EntityType, Message, MessageRole,
     resolve_api_key,
 )
 from .moderator import Moderator
@@ -672,9 +672,19 @@ class ConsensusApp:
             base_url=mod.ai_config.base_url, api_key=api_key,
         )
         provider = {"model": mod.ai_config.model}
+        # Panel models already added to the roster (see the New Discussion
+        # tab layout: participants are picked before "Suggest Method" is
+        # clicked) let the recommender down-rank structured-output methods
+        # when a participant's model is known to lack tool support (#23).
+        panel_models = [
+            (e.ai_config.model, e.ai_config.base_url)
+            for e in self.discussion.entities
+            if e.entity_type == EntityType.AI and e.ai_config
+        ]
         try:
             recs = await app_discussion_setup.recommend_method(
                 topic, answer_type, ai_client, provider,
+                db=self.db, panel_models=panel_models,
             )
             return {"recommendations": recs}
         except Exception as e:
