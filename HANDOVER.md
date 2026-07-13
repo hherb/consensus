@@ -14,7 +14,8 @@ plan; delete sections that are finished and no longer instructive.
   (#30 Belief Diffusion abort), **PR #38** (#23 mechanism + first
   three conversions), and **PR #39** (#23 remaining conversions +
   hardening) are all **merged**.
-- **#24 Nominal Group Technique implemented** (this session).  Plan:
+- **#24 Nominal Group Technique implemented** (this session, **PR #40**
+  — merge it before building on this work).  Plan:
   `docs/superpowers/plans/2026-07-14-nominal-group-technique.md`.
   Method `nominal_group` (`consensus/methods/nominal_group.py`), five
   phases assembled from new handlers in `consensus/methods/phases/`
