@@ -53,6 +53,138 @@ def validate_skeleton(data: dict) -> bool:
     return True
 
 
+#: JSON Schema for the submit_skeleton output tool (issue #23).
+#: Mirrors ``validate_skeleton``'s expected structure: premises need
+#: only ``id``/``text``; inferences and conclusions additionally need
+#: a ``from`` array of dependency ids.  ``rich_summary`` replaces the
+#: free-text ``RICH SUMMARY:`` line the moderator used to prefix the
+#: JSON code block with.
+SKELETON_TOOL_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "premises": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Unique id, e.g. 'P1'.",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": (
+                            "A factual claim, assumption, or starting "
+                            "point participants stated or relied on."
+                        ),
+                    },
+                },
+                "required": ["id", "text"],
+            },
+            "description": (
+                "Factual claims/assumptions the argument relies on."
+            ),
+        },
+        "inferences": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Unique id, e.g. 'I1'.",
+                    },
+                    "from": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Ids of the premises/prior inferences this "
+                            "step depends on."
+                        ),
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": (
+                            "What follows from the referenced premises "
+                            "or prior inferences."
+                        ),
+                    },
+                },
+                "required": ["id", "from", "text"],
+            },
+            "description": (
+                "Logical steps combining premises (or prior "
+                "inferences) to reach a new claim."
+            ),
+        },
+        "conclusions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Unique id, e.g. 'C1'.",
+                    },
+                    "from": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Ids of the inferences (or premises) this "
+                            "conclusion depends on."
+                        ),
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "The final claim reached.",
+                    },
+                },
+                "required": ["id", "from", "text"],
+            },
+            "description": "The final claims the argument arrives at.",
+        },
+        "rich_summary": {
+            "type": "string",
+            "description": (
+                "A short paragraph capturing the original discussion's "
+                "most persuasive arguments and rhetorical moves -- the "
+                "examples, analogies, and appeals that carried the "
+                "most force -- to later be contrasted with the bare "
+                "logic."
+            ),
+        },
+    },
+    "required": ["premises", "inferences", "conclusions", "rich_summary"],
+}
+
+
+def validate_skeleton_payload(payload: dict) -> str:
+    """Return '' if a submit_skeleton payload is usable, else an error.
+
+    Delegates the structural checks (premises/inferences/conclusions
+    as non-empty lists of ``{id, text}`` objects, with valid ``from``
+    references on inferences/conclusions) to ``validate_skeleton``,
+    adapting its bool return into the ``""`` = valid / error-string
+    contract used by the other structured-output validators.
+    Additionally requires a non-empty ``rich_summary`` string, since
+    the forced tool call has no free-text ``RICH SUMMARY:`` line for
+    ``process_response`` to capture.
+    """
+    if not validate_skeleton(payload):
+        return (
+            "Invalid skeleton: 'premises', 'inferences', and "
+            "'conclusions' must each be a non-empty array of objects "
+            "with 'id' and 'text'; every inference/conclusion also "
+            "needs a 'from' array referencing valid premise/inference "
+            "ids."
+        )
+    if not str(payload.get("rich_summary", "")).strip():
+        return ("'rich_summary' must contain a short paragraph on the "
+                "discussion's most persuasive arguments and rhetorical "
+                "moves.")
+    return ""
+
+
 def format_skeleton_display(skeleton: dict) -> str:
     """Format a skeleton as readable markdown."""
     lines: list[str] = []

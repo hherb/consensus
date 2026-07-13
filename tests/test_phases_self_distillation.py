@@ -430,14 +430,14 @@ class TestDistillSkeletonHandler:
         prompt = handler.get_turn_prompt(entity, sd_discussion)
         assert "premises" in prompt.lower()
         assert "inferences" in prompt.lower()
-        assert "json" in prompt.lower()
+        assert "submit_skeleton" in prompt
 
     def test_turn_prompt_retry(self, handler, entity, sd_discussion):
         sd_discussion.method_state["extraction_failed"] = True
         sd_discussion.method_state["extraction_attempts"] = 1
         prompt = handler.get_turn_prompt(entity, sd_discussion)
         assert "try again" in prompt.lower() or "did not produce" in prompt.lower()
-        assert "json" in prompt.lower()
+        assert "submit_skeleton" in prompt
 
     def test_process_response_valid_skeleton(self, handler, moderator, sd_discussion):
         import json
