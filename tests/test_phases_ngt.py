@@ -16,6 +16,7 @@ from consensus.methods.phases._ngt_helpers import (
     record_candidates,
     record_ideas,
 )
+from consensus.methods.phases.clarify_ideas import ClarifyIdeasHandler
 from consensus.methods.phases.cluster_ideas import ClusterIdeasHandler
 from consensus.methods.phases.generate_ideas import GenerateIdeasHandler
 from consensus.models import Discussion, Entity, EntityType
@@ -223,3 +224,50 @@ class TestClusterIdeasHandler:
         disc = self._disc_with_ideas()
         msg = ClusterIdeasHandler().get_transition_message(disc)
         assert "2 idea(s)" in msg
+
+
+class TestClarifyIdeasHandler:
+    def _disc(self):
+        disc = make_disc(current_phase="clarify")
+        record_candidates(disc.method_state, [
+            {"title": "Build a self-serve onboarding checklist"},
+            {"title": "Run recurring live office hours for customers"},
+        ])
+        return disc
+
+    def test_phase_metadata(self):
+        handler = ClarifyIdeasHandler()
+        assert handler.phase.name == "clarify"
+        assert handler.phase.rounds == 1
+        assert handler.requires_structured_output is False
+
+    def test_system_prompt_lists_candidates_and_forbids_ranking(
+            self, ai_entity):
+        prompt = ClarifyIdeasHandler().get_system_prompt(
+            ai_entity, self._disc())
+        assert "CLARIFICATION PHASE" in prompt
+        assert "Candidate 1:" in prompt
+        assert "Do NOT advocate" in prompt
+
+    def test_turn_prompt(self, ai_entity):
+        prompt = ClarifyIdeasHandler().get_turn_prompt(
+            ai_entity, self._disc())
+        assert "TestAI" in prompt
+        assert "clarify" in prompt.lower()
+
+    def test_context_is_anonymised(self):
+        disc = self._disc()
+        out = ClarifyIdeasHandler().filter_context_message(
+            "TestAI", "TestAI asked about candidate 2", "assistant", disc)
+        assert "TestAI" not in out
+
+    def test_default_advancement_after_one_round(self):
+        disc = self._disc()
+        assert ClarifyIdeasHandler().should_advance(disc) is False
+        disc.method_state["phase_round"] = 2
+        assert ClarifyIdeasHandler().should_advance(disc) is True
+
+    def test_transition_message_lists_candidates(self):
+        msg = ClarifyIdeasHandler().get_transition_message(self._disc())
+        assert "2 candidate idea(s)" in msg
+        assert "Candidate 1:" in msg
