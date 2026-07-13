@@ -234,14 +234,22 @@ async def generate_ai_turn(
         resp = await moderator.generate_turn(
             current, participant_role=participant_role)
 
-        # Detect if the participant chose to pass
-        passed = is_pass(resp.content)
+        # Detect if the participant chose to pass.  A validated
+        # structured payload is never a pass — its content field is
+        # incidental side text next to the forced tool call (issue #23).
+        passed = resp.structured_output is None and is_pass(resp.content)
 
         # Method-specific response post-processing
         method = get_active_method(discussion)
         if method and not passed:
-            processed = method.process_response(
-                resp.content, current, discussion)
+            if resp.structured_output is not None:
+                # Forced-tool path (issue #23): the payload was already
+                # validated by the method's validate_output hook.
+                processed = method.process_structured_response(
+                    resp.structured_output, current, discussion)
+            else:
+                processed = method.process_response(
+                    resp.content, current, discussion)
             content = processed.display_content
             # Persist updated method_state
             if discussion.id:

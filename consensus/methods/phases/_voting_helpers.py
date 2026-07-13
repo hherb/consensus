@@ -12,7 +12,7 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ...models import Discussion
+    from ...models import Discussion, Entity
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,88 @@ VALID_VOTES = {"for", "against", "abstain"}
 
 # Default deliberation rounds before voting
 DEFAULT_DELIBERATION_ROUNDS = 2
+
+#: JSON Schema for the submit_votes output tool (issue #23).
+VOTES_TOOL_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "votes": {
+            "type": "array",
+            "description": "One entry per motion you are voting on.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "motion_id": {"type": "integer"},
+                    "vote": {"type": "string",
+                             "enum": ["for", "against", "abstain"]},
+                    "rationale": {"type": "string"},
+                },
+                "required": ["motion_id", "vote", "rationale"],
+            },
+        },
+    },
+    "required": ["votes"],
+}
+
+
+def record_votes(state: dict, entity: Entity, votes: list[dict]) -> int:
+    """Validate, dedupe, and append votes to state; return count accepted.
+
+    Shared by the free-text and structured-output paths (issue #23).
+    """
+    valid_motion_ids = {m["id"] for m in state.get("motions", [])}
+    accepted = 0
+
+    for vote_data in votes:
+        # str(... or "") guards non-string JSON values (null, 1, ...)
+        vote_val = str(vote_data.get("vote") or "").lower()
+        motion_id = vote_data.get("motion_id")
+
+        if vote_val not in VALID_VOTES:
+            logger.warning(
+                "Invalid vote value '%s' from %s, skipping",
+                vote_val, entity.name,
+            )
+            continue
+        # Motion ids are stored as ints; models sometimes emit them as
+        # JSON strings ("1").  Coerce so the membership test below does
+        # not silently drop an otherwise-valid vote.
+        try:
+            motion_id = int(motion_id)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Vote with non-numeric motion_id %r from %s, skipping",
+                motion_id, entity.name,
+            )
+            continue
+        if motion_id not in valid_motion_ids:
+            logger.warning(
+                "Vote for unknown motion %s from %s, skipping",
+                motion_id, entity.name,
+            )
+            continue
+        # Prevent double-voting
+        already_voted = any(
+            v["entity_id"] == entity.id and v["motion_id"] == motion_id
+            for v in state.get("votes", [])
+        )
+        if already_voted:
+            logger.info(
+                "%s already voted on motion %d, skipping duplicate",
+                entity.name, motion_id,
+            )
+            continue
+
+        state.setdefault("votes", []).append({
+            "entity_id": entity.id,
+            "entity_name": entity.name,
+            "motion_id": motion_id,
+            "vote": vote_val,
+            "rationale": vote_data.get("rationale", ""),
+        })
+        accepted += 1
+
+    return accepted
 
 
 def extract_motions(content: str) -> list[str]:

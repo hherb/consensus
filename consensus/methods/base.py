@@ -12,6 +12,7 @@ always take precedence over handler delegation via normal Python MRO.
 
 from __future__ import annotations
 
+import json
 import logging
 from abc import ABC
 from dataclasses import dataclass
@@ -64,6 +65,32 @@ class ProcessedResponse:
     display_content: str  # what gets stored as the message content
 
 
+@dataclass
+class OutputToolSpec:
+    """Declares the forced output tool for a structured phase (issue #23).
+
+    Phases that declare a spec have their AI turns generated through a
+    forced tool call instead of free-text parsing: the model must call
+    ``name`` with arguments matching ``parameters`` (a JSON Schema
+    object), making extraction near-deterministic.
+    """
+
+    name: str  # e.g. "submit_estimate"
+    description: str  # shown to the model as the tool description
+    parameters: dict  # JSON Schema for the tool arguments
+
+    def to_openai_schema(self) -> dict:
+        """Return the OpenAI function-tool schema for this spec."""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
+
+
 class DiscussionMethod(ABC):
     """Abstract base for all discussion methods.
 
@@ -110,6 +137,14 @@ class DiscussionMethod(ABC):
             if h.phase.name == phase_name:
                 return h
         return None
+
+    def requires_structured_output(self) -> bool:
+        """True when any phase of this method forces structured output.
+
+        Read at discussion setup to require tool-capable models for all
+        AI participants (issue #23, owner decision 2026-07-12).
+        """
+        return any(h.requires_structured_output for h in self.phase_handlers)
 
     def _active_handler(self, discussion: Discussion) -> Optional[_PhaseHandler]:
         """Return the PhaseHandler for the discussion's current phase."""
@@ -355,6 +390,39 @@ class DiscussionMethod(ABC):
         if handler is not None:
             return handler.process_response(content, entity, discussion)
         return ProcessedResponse(display_content=content)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> Optional[OutputToolSpec]:
+        """Return the active phase's forced output tool, if any."""
+        handler = self._active_handler(discussion)
+        if handler is not None:
+            return handler.get_output_tool(entity, discussion)
+        return None
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        """Delegate payload validation to the active handler.
+
+        Returns "" when the payload is acceptable, else a human-readable
+        error the model can act on.
+        """
+        handler = self._active_handler(discussion)
+        if handler is not None:
+            return handler.validate_output(payload, entity, discussion)
+        return ""
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        """Delegate structured-payload processing to the active handler."""
+        handler = self._active_handler(discussion)
+        if handler is not None:
+            return handler.process_structured_response(
+                payload, entity, discussion)
+        return ProcessedResponse(display_content=json.dumps(payload, indent=2))
 
     # ------------------------------------------------------------------
     # Round lifecycle hooks

@@ -13,11 +13,15 @@ from typing import TYPE_CHECKING
 
 import logging
 
-from ..base import LINEAR_NEXT, Phase, ProcessedResponse
+from ..base import LINEAR_NEXT, OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
 from ._belief_helpers import (
     DEFAULT_CONVERGENCE_THRESHOLD,
+    HYPOTHESES_TOOL_PARAMETERS,
     MAX_DIFFUSE_ROUNDS,
+    MAX_HYPOTHESES,
+    MIN_HYPOTHESES,
+    MIN_HYPOTHESIS_LENGTH,
     extract_hypotheses_from_framing,
 )
 
@@ -84,20 +88,14 @@ class FrameHypothesesHandler(PhaseHandler):
         state = discussion.method_state
         if state.get("framing_attempts", 0) > 0:
             return (
-                "The previous framing did not contain a parseable "
-                "numbered list.  Please restate the competing hypotheses "
-                "as a plain NUMBERED LIST, one hypothesis per line:\n"
-                "1. <first hypothesis>\n"
-                "2. <second hypothesis>\n"
-                "..."
+                "The previous framing was not usable.  Please call the "
+                "submit_hypotheses tool with 3-5 specific, mutually "
+                "exclusive hypotheses, one complete statement each."
             )
         return (
             "Decompose the topic into 3-5 competing hypotheses.  Each "
             "should be specific and mutually exclusive where possible.  "
-            "State them as a NUMBERED LIST, one hypothesis per line:\n"
-            "1. <first hypothesis>\n"
-            "2. <second hypothesis>\n"
-            "..."
+            "Submit them by calling the submit_hypotheses tool."
         )
 
     # ------------------------------------------------------------------
@@ -119,6 +117,49 @@ class FrameHypothesesHandler(PhaseHandler):
                 state["framing_attempts"],
             )
         return ProcessedResponse(display_content=content)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    requires_structured_output = True
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec:
+        return OutputToolSpec(
+            name="submit_hypotheses",
+            description=("Submit the 3-5 competing hypotheses that "
+                         "frame this Belief Diffusion exercise."),
+            parameters=HYPOTHESES_TOOL_PARAMETERS,
+        )
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        hypotheses = payload.get("hypotheses")
+        if not isinstance(hypotheses, list):
+            return "'hypotheses' must be an array of strings."
+        cleaned = [str(h).strip() for h in hypotheses if str(h).strip()]
+        if not (MIN_HYPOTHESES <= len(cleaned) <= MAX_HYPOTHESES):
+            return (f"Provide between {MIN_HYPOTHESES} and "
+                    f"{MAX_HYPOTHESES} hypotheses (aim for 3-5).")
+        if any(len(h) <= MIN_HYPOTHESIS_LENGTH for h in cleaned):
+            return ("Each hypothesis must be a specific, substantive "
+                    "statement, not a label.")
+        return ""
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        state = discussion.method_state
+        hypotheses = [str(h).strip() for h in payload["hypotheses"]
+                      if str(h).strip()]
+        state["hypotheses"] = hypotheses
+        logger.info("Recorded %d hypotheses from structured framing",
+                    len(hypotheses))
+        numbered = "\n".join(f"{i}. {h}"
+                             for i, h in enumerate(hypotheses, 1))
+        rationale = str(payload.get("rationale", "")).strip()
+        display = (f"{rationale}\n\n{numbered}" if rationale else numbered)
+        return ProcessedResponse(display_content=display)
 
     def should_advance(self, discussion: Discussion) -> bool:
         state = discussion.method_state

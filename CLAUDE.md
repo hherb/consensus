@@ -27,7 +27,7 @@ python -m consensus --web --port 8080 --debug
 consensus                      # via pyproject.toml [project.scripts]
 ```
 
-1227 tests in `tests/`. No linter or build system configured yet.
+1472 tests in `tests/`. No linter or build system configured yet.
 
 ## Architecture
 
@@ -70,6 +70,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
 - `tools_python.py` — Sandboxed Python code execution tool provider: `execute_python` runs code in a subprocess with AST pre-analysis, restricted builtins/imports, resource limits (dynamic: 70% of free RAM, 70% of CPU cores), and optional macOS `sandbox-exec`. `install_python_package` lets participants request PyPI package installation with user approval via the ask_user event pattern. Allowed modules include stdlib (math, json, re, etc.) plus scientific/ML libraries (numpy, scipy, pandas, torch, hypercomplex, etc.)
 - `sandbox_worker.py` — Standalone subprocess entry point for sandboxed code execution. Applies `RLIMIT_AS`/`RLIMIT_CPU`, restricts builtins, whitelists imports, sandboxes `open()` to a temp directory, patches `io.open`/`io.FileIO`, captures stdout/stderr + last expression value (REPL-like), outputs JSON results
 - `context_strategies.py` — Per-participant context loading: `ContextStrategy` enum (full/sliding_window/summary/semantic), `ContextConfig` dataclass, `load_context_messages()` (sync) and `load_context_messages_async()` (async, required for semantic strategy). Semantic strategy uses embedding-based RAG: hybrid recency window + cosine-similarity retrieval over `message_embeddings`, with lazy background indexing and graceful fallback to sliding_window. Each participant queries DB with its own strategy instead of reading from the shared in-memory message list
+- `structured_output.py` — Forced tool-call turn generation for structured method phases (issue #23): phases declare an `OutputToolSpec`, the model must call it (`tool_choice`), payloads are validated by the handler's `validate_output` hook with bounded retries (`MAX_STRUCTURED_OUTPUT_ATTEMPTS`), and non-tool-capable models are rejected at discussion setup via `PricingCache.supports_tools()`
 - `methods/` — Discussion method subpackage: `base.py` (`DiscussionMethod` ABC, `Phase`, `ProcessedResponse`), `phase_handler.py` (`PhaseHandler` ABC), `parsing.py` (shared parsing utilities), `recommender.py` (`MethodRecommender` — LLM-based method classification engine), 13 method classes including `triage.py` (Guided Triage meta-method) and `self_distillation.py` (Recursive Self-Distillation), `phases/` subpackage with 43 composable handler implementations + 4 helper modules
 - `db/` — Database subpackage with domain-specific mixins: `providers.py`, `entities.py`, `discussions.py`, `messages.py`, `prompts.py`, `tools.py`, `mcp.py`, `memory.py`, `documents.py`
 

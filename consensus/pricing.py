@@ -27,6 +27,10 @@ _MODEL_ALIASES = {
     "open-mistral-nemo": "mistralai/mistral-nemo",
 }
 
+# Column list for model_pricing row lookups (see _lookup_row)
+_ROW_COLUMNS = ("model_id, prompt_cost, completion_cost, "
+                "input_modalities, context_length, supported_parameters")
+
 # Map base_url hostnames to OpenRouter provider prefixes for disambiguation
 _HOST_TO_PROVIDER = {
     "api.openai.com": "openai",
@@ -47,6 +51,9 @@ class PricingCache:
                  lock: threading.Lock) -> None:
         self._conn = conn
         self._lock = lock
+        # One capability refresh per process: a failed attempt (e.g.
+        # offline) must not re-block every supports_tools() call.
+        self._capability_refresh_attempted = False
 
     def _needs_refresh(self) -> bool:
         """Check if pricing data is stale (> 1 week old) or empty."""
@@ -97,10 +104,12 @@ class PricingCache:
             input_mods = arch.get("input_modalities") or ["text"]
             input_modalities = ",".join(input_mods)
             context_length = m.get("context_length")
+            supported_parameters = ",".join(
+                m.get("supported_parameters") or [])
             if model_id:
                 rows.append((
                     model_id, prompt_cost, completion_cost, now,
-                    input_modalities, context_length,
+                    input_modalities, context_length, supported_parameters,
                 ))
 
         if not rows:
@@ -110,8 +119,8 @@ class PricingCache:
             self._conn.executemany(
                 "INSERT OR REPLACE INTO model_pricing "
                 "(model_id, prompt_cost, completion_cost, last_updated,"
-                " input_modalities, context_length) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                " input_modalities, context_length, supported_parameters) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
             self._conn.commit()
@@ -203,6 +212,49 @@ class PricingCache:
             return None
         return row.get("context_length")
 
+    def supports_tools(self, model_name: str,
+                       base_url: str = "") -> Optional[bool]:
+        """Check if a model supports native tool/function calling.
+
+        Uses the same fuzzy matching logic as ``lookup()`` and refreshes
+        the cache once if the model is unknown, or (at most once per
+        process) when the whole cache predates the
+        ``supported_parameters`` column (migration 014) so the setup
+        gate works right after an upgrade.  Returns True/False when
+        OpenRouter reports the model's supported parameters, or None
+        when the model — or its capability data — is unknown (e.g.
+        local models).
+        """
+        row = self._lookup_row(model_name, base_url)
+        if row is None and self.needs_refresh_for_model(model_name):
+            self.refresh()
+            row = self._lookup_row(model_name, base_url)
+        if row is None:
+            return None
+        params = (row.get("supported_parameters") or "").strip()
+        if (not params and not self._capability_refresh_attempted
+                and self._capability_data_missing()):
+            self._capability_refresh_attempted = True
+            if self.refresh():
+                row = self._lookup_row(model_name, base_url) or row
+                params = (row.get("supported_parameters") or "").strip()
+        if not params:
+            return None
+        return "tools" in params.split(",")
+
+    def _capability_data_missing(self) -> bool:
+        """True when no cached row carries capability data.
+
+        This is the signature of a cache populated before migration 014
+        added ``supported_parameters``; after any successful refresh the
+        column is populated and this check stays cheap and False.
+        """
+        cur = self._conn.execute(
+            "SELECT 1 FROM model_pricing "
+            "WHERE IFNULL(supported_parameters, '') != '' LIMIT 1"
+        )
+        return cur.fetchone() is None
+
     def _lookup_row(self, model_name: str,
                     base_url: str = "") -> Optional[dict]:
         """Look up the full model_pricing row for a model name.
@@ -215,8 +267,8 @@ class PricingCache:
         alias = _MODEL_ALIASES.get(model_name)
         if alias:
             cur = self._conn.execute(
-                "SELECT model_id, prompt_cost, completion_cost, "
-                "input_modalities, context_length FROM model_pricing WHERE model_id = ?",
+                f"SELECT {_ROW_COLUMNS} FROM model_pricing "
+                "WHERE model_id = ?",
                 (alias,),
             )
             row = cur.fetchone()
@@ -224,8 +276,8 @@ class PricingCache:
                 return dict(row)
 
         cur = self._conn.execute(
-            "SELECT model_id, prompt_cost, completion_cost, "
-            "input_modalities, context_length FROM model_pricing WHERE model_id = ?",
+            f"SELECT {_ROW_COLUMNS} FROM model_pricing "
+            "WHERE model_id = ?",
             (model_name,),
         )
         row = cur.fetchone()
@@ -237,8 +289,7 @@ class PricingCache:
         matches = []
         for name in variants:
             cur = self._conn.execute(
-                "SELECT model_id, prompt_cost, completion_cost, "
-                "input_modalities, context_length FROM model_pricing "
+                f"SELECT {_ROW_COLUMNS} FROM model_pricing "
                 "WHERE model_id LIKE ?",
                 (f"%/{name}",),
             )
@@ -249,8 +300,7 @@ class PricingCache:
         if not matches:
             for name in variants:
                 cur = self._conn.execute(
-                    "SELECT model_id, prompt_cost, completion_cost, "
-                    "input_modalities, context_length FROM model_pricing "
+                    f"SELECT {_ROW_COLUMNS} FROM model_pricing "
                     "WHERE model_id LIKE ?",
                     (f"%/{name}%",),
                 )

@@ -210,7 +210,7 @@ class TestEstimateHandler:
         handler = EstimateHandler()
         prompt = handler.get_turn_prompt(entity, discussion)
         assert entity.name in prompt
-        assert "JSON code block" in prompt
+        assert "submit_estimate" in prompt
 
     def test_summary_prompt(self, discussion):
         handler = EstimateHandler()
@@ -406,7 +406,7 @@ class TestDelphiMethodEquivalence:
     def test_estimate_turn_prompt(self, method, entity, discussion):
         prompt = method.get_turn_prompt(entity, discussion)
         assert entity.name in prompt
-        assert "CRITICAL" in prompt
+        assert "submit_estimate" in prompt
 
     def test_revise_turn_prompt(self, method, entity, discussion):
         discussion.method_state["current_phase"] = "revise"

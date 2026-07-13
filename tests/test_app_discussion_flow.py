@@ -184,6 +184,67 @@ class TestCostLimitEnforcement:
         assert "error" not in result
 
     @pytest.mark.asyncio
+    async def test_structured_payload_routed(
+        self, monkeypatch, tmp_db, discussion_with_entities
+    ):
+        """generate_ai_turn routes structured payloads to
+        process_structured_response (issue #23)."""
+        import consensus.methods as methods_registry
+        from consensus.ai_client import AIResponse
+        from consensus.methods.base import (
+            DiscussionMethod, Phase, ProcessedResponse,
+        )
+        from consensus.methods.phase_handler import PhaseHandler
+        from consensus.moderator import Moderator
+
+        calls = {}
+
+        class _Handler(PhaseHandler):
+            phase = Phase("p", "P")
+            requires_structured_output = True
+
+            def get_system_prompt(self, entity, discussion):
+                return ""
+
+            def get_turn_prompt(self, entity, discussion):
+                return ""
+
+            def process_structured_response(self, payload, entity,
+                                            discussion):
+                calls["payload"] = payload
+                return ProcessedResponse(display_content="structured!")
+
+            def process_response(self, content, entity, discussion):
+                calls["free_text"] = content
+                return ProcessedResponse(display_content=content)
+
+        class _M(DiscussionMethod):
+            name = "_test_routing"
+            display_name = "Routing"
+            description = "test"
+            phase_handlers = (_Handler(),)
+
+        disc = discussion_with_entities
+        disc.discussion_method = "_test_routing"
+        disc.method_state = _M().init_state(disc)
+        monkeypatch.setitem(methods_registry._METHODS,
+                            "_test_routing", _M)
+        did = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.id = did
+
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = Moderator(disc, tmp_db)
+        moderator.generate_turn = AsyncMock(return_value=AIResponse(
+            content="", structured_output={"estimate": 3}))
+        moderator.prompt_id = MagicMock(return_value=None)
+
+        result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
+
+        assert calls["payload"] == {"estimate": 3}
+        assert "free_text" not in calls
+        assert result["content"] == "structured!"
+
+    @pytest.mark.asyncio
     async def test_no_limit_when_zero(
         self, tmp_db, discussion_with_entities
     ):
@@ -213,3 +274,131 @@ class TestCostLimitEnforcement:
 
         result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
         assert "cost_limit_reached" not in result
+
+
+class TestStructuredOutputFlowRouting:
+    """End-to-end routing of structured turns through generate_ai_turn
+    (issue #23 review follow-ups)."""
+
+    def _install_method(self, monkeypatch, disc, name):
+        """Register a hybrid test method and return its call recorder.
+
+        ``name`` must be unique per test: get_method() caches instances
+        in _INSTANCES, which monkeypatch does not restore.
+        """
+        import consensus.methods as methods_registry
+        from consensus.methods.base import (
+            DiscussionMethod, Phase, ProcessedResponse,
+        )
+        from consensus.methods.phase_handler import PhaseHandler
+
+        calls = {}
+
+        class _Handler(PhaseHandler):
+            phase = Phase("p", "P")
+            requires_structured_output = True
+
+            def get_system_prompt(self, entity, discussion):
+                return ""
+
+            def get_turn_prompt(self, entity, discussion):
+                return ""
+
+            def process_structured_response(self, payload, entity,
+                                            discussion):
+                calls["payload"] = payload
+                return ProcessedResponse(display_content="structured!")
+
+            def process_response(self, content, entity, discussion):
+                calls["free_text"] = content
+                return ProcessedResponse(display_content=content)
+
+        class _M(DiscussionMethod):
+            display_name = "Flow Routing"
+            description = "test"
+            phase_handlers = (_Handler(),)
+
+        _M.name = name
+        disc.discussion_method = name
+        disc.method_state = _M().init_state(disc)
+        monkeypatch.setitem(methods_registry._METHODS, name, _M)
+        return calls
+
+    def _moderator(self, disc, tmp_db, resp=None, error=None):
+        from consensus.moderator import Moderator
+
+        moderator = Moderator(disc, tmp_db)
+        if error is not None:
+            moderator.generate_turn = AsyncMock(side_effect=error)
+        else:
+            moderator.generate_turn = AsyncMock(return_value=resp)
+        moderator.prompt_id = MagicMock(return_value=None)
+        return moderator
+
+    @pytest.mark.asyncio
+    async def test_pass_content_beside_payload_is_not_a_pass(
+        self, monkeypatch, tmp_db, discussion_with_entities
+    ):
+        """'PASS' as side content next to a validated tool call must not
+        discard the structured payload."""
+        from consensus.ai_client import AIResponse
+
+        disc = discussion_with_entities
+        calls = self._install_method(monkeypatch, disc,
+                                     "_test_flow_pass")
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = self._moderator(disc, tmp_db, resp=AIResponse(
+            content="PASS", structured_output={"estimate": 3}))
+
+        result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
+
+        assert calls["payload"] == {"estimate": 3}
+        assert "passed" not in result
+        assert result["content"] == "structured!"
+
+    @pytest.mark.asyncio
+    async def test_fallback_free_text_routed_with_warning(
+        self, monkeypatch, tmp_db, discussion_with_entities
+    ):
+        """Exhausted retries (structured_output=None + warning) fall back
+        to process_response and surface the warning to the user."""
+        from consensus.ai_client import AIResponse
+
+        disc = discussion_with_entities
+        calls = self._install_method(monkeypatch, disc,
+                                     "_test_flow_fallback")
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = self._moderator(disc, tmp_db, resp=AIResponse(
+            content="prose only", structured_output=None,
+            warning="could not produce a valid output"))
+
+        result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
+
+        assert calls["free_text"] == "prose only"
+        assert "payload" not in calls
+        assert result["warning"] == "could not produce a valid output"
+
+    @pytest.mark.asyncio
+    async def test_structured_output_error_skips_participant(
+        self, monkeypatch, tmp_db, discussion_with_entities
+    ):
+        """A runtime StructuredOutputError posts a visible skip notice
+        with the actionable message in the error field."""
+        from consensus.structured_output import StructuredOutputError
+
+        disc = discussion_with_entities
+        self._install_method(monkeypatch, disc, "_test_flow_error")
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = self._moderator(disc, tmp_db, error=StructuredOutputError(
+            "model-x rejected the forced tool call"))
+
+        result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
+
+        assert result["skipped"] is True
+        assert "model-x rejected the forced tool call" in result["error"]

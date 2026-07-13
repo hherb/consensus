@@ -116,6 +116,7 @@ class AIResponse:
     latency_ms: int = 0
     tool_calls: list = field(default_factory=list)  # list[ToolCallRecord]
     warning: str = ""
+    structured_output: Optional[dict] = None  # forced-tool-call payload (issue #23)
 
 
 class AIClient:
@@ -321,6 +322,7 @@ class AIClient:
         messages: list[dict],
         model: str,
         tools: Optional[list[dict]] = None,
+        tool_choice: Optional[dict] = None,
         temperature: float = 0.7,
         max_tokens: int = 1024,
     ) -> dict:
@@ -328,6 +330,9 @@ class AIClient:
 
         Unlike complete(), this returns the raw choices[0].message dict
         which may contain tool_calls in addition to content.
+
+        ``tool_choice`` forces the model to call a specific tool, in
+        OpenAI format: ``{"type": "function", "function": {"name": ...}}``.
         """
         payload: dict = {
             "model": model,
@@ -338,6 +343,8 @@ class AIClient:
         }
         if tools:
             payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
 
         start = time.monotonic()
         response = await self._post_with_retry(
