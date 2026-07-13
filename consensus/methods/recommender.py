@@ -20,8 +20,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Methods excluded from recommendation candidates
-_EXCLUDED_METHODS = {"triage", "open_discussion"}
+# Methods excluded from recommendation candidates (the Guided Triage
+# meta-method recommends methods itself and must not recurse).  Open
+# Discussion became recommendable once the catalog gained a generative
+# method (issue #24, owner decision 2026-07-12).
+_EXCLUDED_METHODS = {"triage"}
 
 # Answer type options presented to the user
 ANSWER_TYPES = [
@@ -85,7 +88,8 @@ Problem-type taxonomy — method strengths:
 - Stress-testing positions / adversarial analysis → Red Team / Blue Team
 - Complex multi-faceted questions / decomposition → Recursive Decomposition
 - Decision-making with formal group consensus → Participant Voting
-- General exploration from multiple perspectives → Open Discussion (fallback only)
+- Generating and prioritising options / structured brainstorming → Nominal Group Technique (NGT)
+- General exploration from multiple perspectives → Open Discussion
 """
 
 
