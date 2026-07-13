@@ -15,6 +15,7 @@ from consensus.methods.phases._ngt_helpers import (
     MAX_GENERATE_ROUNDS,
     MIN_IDEA_LENGTH,
     POINTS_PER_VOTER,
+    check_free_text_allocations,
     entities_with_allocations,
     extract_allocations,
     fallback_candidates_from_ideas,
@@ -244,6 +245,12 @@ class TestAllocationsValidator:
                "reasoning": "x"}
         assert validate_allocations_payload(bad, {1, 2}, 10) != ""
 
+    def test_boolean_candidate_id_rejected(self):
+        """True must not silently coerce to candidate id 1."""
+        bad = {"allocations": [{"candidate_id": True, "points": 10}],
+               "reasoning": "x"}
+        assert validate_allocations_payload(bad, {1, 2}, 10) != ""
+
     def test_zero_points_rejected(self):
         bad = {"allocations": [{"candidate_id": 1, "points": 0}],
                "reasoning": "x"}
@@ -301,6 +308,80 @@ class TestRecordAllocations:
         record_allocations(state, _entity(2, "Bob"),
                            [{"candidate_id": 2, "points": 10}])
         assert entities_with_allocations(state) == {1, 2}
+
+
+class TestCheckFreeTextAllocations:
+    """The free-text path must enforce the same point-pool rules as the
+    structured validator — otherwise a human (or an AI whose structured
+    retries were exhausted) could allocate an arbitrary total, or top up
+    further candidates on a later turn, silently multiplying their
+    voting power."""
+
+    def test_valid_batch_passes_and_coerces_strings(self):
+        state = _state_with_candidates()
+        normalised, error = check_free_text_allocations(
+            state, _entity(),
+            [{"candidate_id": "1", "points": "6"},
+             {"candidate_id": 2, "points": 4}])
+        assert error == ""
+        assert normalised == [
+            {"candidate_id": 1, "points": 6, "rationale": ""},
+            {"candidate_id": 2, "points": 4, "rationale": ""},
+        ]
+
+    def test_over_allocation_rejected(self):
+        state = _state_with_candidates()
+        normalised, error = check_free_text_allocations(
+            state, _entity(), [{"candidate_id": 1, "points": 100}])
+        assert normalised == []
+        assert str(POINTS_PER_VOTER) in error
+
+    def test_under_allocation_rejected(self):
+        state = _state_with_candidates()
+        normalised, error = check_free_text_allocations(
+            state, _entity(), [{"candidate_id": 1, "points": 4}])
+        assert normalised == []
+        assert str(POINTS_PER_VOTER) in error
+
+    def test_unknown_candidate_rejected(self):
+        state = _state_with_candidates()
+        _, error = check_free_text_allocations(
+            state, _entity(),
+            [{"candidate_id": 99, "points": POINTS_PER_VOTER}])
+        assert "99" in error
+
+    def test_duplicate_candidate_rejected(self):
+        state = _state_with_candidates()
+        _, error = check_free_text_allocations(
+            state, _entity(),
+            [{"candidate_id": 1, "points": POINTS_PER_VOTER - 4},
+             {"candidate_id": 1, "points": 4}])
+        assert error != ""
+
+    def test_already_allocated_entity_rejected(self):
+        state = _state_with_candidates()
+        record_allocations(state, _entity(),
+                           [{"candidate_id": 1,
+                             "points": POINTS_PER_VOTER}])
+        normalised, error = check_free_text_allocations(
+            state, _entity(),
+            [{"candidate_id": 2, "points": POINTS_PER_VOTER}])
+        assert normalised == []
+        assert "already allocated" in error
+
+    def test_boolean_points_rejected_despite_coercion(self):
+        state = _state_with_candidates()
+        _, error = check_free_text_allocations(
+            state, _entity(), [{"candidate_id": 1, "points": True}])
+        assert error != ""
+
+    def test_respects_points_per_voter_override(self):
+        state = _state_with_candidates()
+        state["points_per_voter"] = 5
+        normalised, error = check_free_text_allocations(
+            state, _entity(), [{"candidate_id": 1, "points": 5}])
+        assert error == ""
+        assert normalised[0]["points"] == 5
 
 
 class TestExtractAllocations:

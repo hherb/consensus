@@ -210,43 +210,105 @@ def fallback_candidates_from_ideas(state: dict) -> None:
     )
 
 
-def validate_allocations_payload(payload: dict, valid_ids: set[int],
-                                 points_pool: int) -> str:
-    """Return '' if a submit_points payload is usable, else an error."""
-    allocations = payload.get("allocations")
+def _validated_allocation_entries(
+        allocations: object, valid_ids: set[int], points_pool: int, *,
+        coerce_types: bool) -> tuple[list[dict], str]:
+    """Check allocation entries against the point-pool rules.
+
+    Shared by the structured validator and the free-text batch check:
+    every candidate must exist and appear at most once, every points
+    value must be a positive integer, and the points must sum to
+    exactly ``points_pool``.  With ``coerce_types=True`` (the free-text
+    path) numeric strings are int()-coerced; booleans are rejected on
+    both paths — bool is an int subtype, so ``True`` would otherwise
+    silently count as candidate 1 or as a single point.
+
+    Returns ``(normalised_entries, "")`` when valid, else
+    ``([], error)`` with a human-readable reason.
+    """
     if not isinstance(allocations, list) or not allocations:
-        return "'allocations' must be a non-empty array."
+        return [], "'allocations' must be a non-empty array."
+    normalised: list[dict] = []
     seen: set[int] = set()
     total = 0
     for a in allocations:
         if not isinstance(a, dict):
-            return "Each entry in 'allocations' must be an object."
+            return [], "Each entry in 'allocations' must be an object."
+        raw_id = a.get("candidate_id")
+        raw_points = a.get("points")
+        if isinstance(raw_id, bool) or isinstance(raw_points, bool):
+            return [], ("'candidate_id' and 'points' must be integers, "
+                        "not booleans.")
         try:
-            candidate_id = int(a.get("candidate_id"))
+            candidate_id = int(raw_id)
         except (TypeError, ValueError):
-            return "Each allocation needs an integer 'candidate_id'."
+            return [], "Each allocation needs an integer 'candidate_id'."
+        if coerce_types:
+            try:
+                points = int(raw_points)
+            except (TypeError, ValueError):
+                return [], "Each 'points' value must be a positive integer."
+        else:
+            if not isinstance(raw_points, int):
+                return [], "Each 'points' value must be a positive integer."
+            points = raw_points
         if candidate_id not in valid_ids:
-            return (f"Candidate {candidate_id} does not exist. Valid "
-                    f"candidate ids: {sorted(valid_ids)}.")
+            return [], (f"Candidate {candidate_id} does not exist. Valid "
+                        f"candidate ids: {sorted(valid_ids)}.")
         if candidate_id in seen:
-            return (f"Candidate {candidate_id} appears more than once — "
-                    "submit at most one entry per candidate.")
+            return [], (f"Candidate {candidate_id} appears more than once — "
+                        "submit at most one entry per candidate.")
         seen.add(candidate_id)
-        points = a.get("points")
-        if isinstance(points, bool) or not isinstance(points, int):
-            # bool is an int subtype and True would silently count as 1 —
-            # reject non-ints here; record_allocations coerces on the
-            # tolerant free-text path.
-            return "Each 'points' value must be a positive integer."
         if points < 1:
-            return "Each 'points' value must be a positive integer."
+            return [], "Each 'points' value must be a positive integer."
         total += points
+        normalised.append({
+            "candidate_id": candidate_id,
+            "points": points,
+            "rationale": str(a.get("rationale") or ""),
+        })
     if total != points_pool:
-        return (f"Your points must sum to exactly {points_pool} "
-                f"(you allocated {total}).")
+        return [], (f"Your points must sum to exactly {points_pool} "
+                    f"(you allocated {total}).")
+    return normalised, ""
+
+
+def validate_allocations_payload(payload: dict, valid_ids: set[int],
+                                 points_pool: int) -> str:
+    """Return '' if a submit_points payload is usable, else an error."""
+    _, error = _validated_allocation_entries(
+        payload.get("allocations"), valid_ids, points_pool,
+        coerce_types=False)
+    if error:
+        return error
     if not str(payload.get("reasoning") or "").strip():
         return "'reasoning' must contain your prioritisation rationale."
     return ""
+
+
+def check_free_text_allocations(
+        state: dict, entity: Entity,
+        allocations: list[dict]) -> tuple[list[dict], str]:
+    """Enforce the point-pool rules on a free-text allocation batch.
+
+    The structured path enforces these rules in
+    ``validate_allocations_payload``; without the same gate here a
+    free-text turn (a human participant, or an AI that exhausted its
+    structured retries) could allocate an arbitrary total, or top up
+    further candidates on a later turn — silently multiplying that
+    participant's voting power.  Numeric strings are coerced (humans
+    and JSON blocks may quote numbers); the batch is all-or-nothing.
+
+    Returns ``(normalised_allocations, "")`` when the batch may be
+    recorded, else ``([], error)`` with a user-facing reason.
+    """
+    if entity.id in entities_with_allocations(state):
+        return [], ("You have already allocated your points — additional "
+                    "allocations are not counted.")
+    valid_ids = {c["id"] for c in state.get("candidates", [])}
+    pool = state.get("points_per_voter", POINTS_PER_VOTER)
+    return _validated_allocation_entries(
+        allocations, valid_ids, pool, coerce_types=True)
 
 
 def record_allocations(state: dict, entity: Entity,

@@ -20,6 +20,7 @@ from ._ngt_helpers import (
     ALLOCATIONS_TOOL_PARAMETERS,
     MAX_ALLOCATE_ROUNDS,
     POINTS_PER_VOTER,
+    check_free_text_allocations,
     entities_with_allocations,
     extract_allocations,
     format_candidates,
@@ -115,11 +116,22 @@ class AllocatePointsHandler(PhaseHandler):
     def process_response(self, content: str, entity: Entity,
                          discussion: Discussion) -> ProcessedResponse:
         state = discussion.method_state
-        accepted = record_allocations(state, entity,
-                                      extract_allocations(content))
-        if accepted:
-            content += (f"\n\n---\n**Point allocations recorded:** "
-                        f"{accepted}")
+        allocations = extract_allocations(content)
+        if not allocations:
+            # Prose turn (e.g. an "already allocated" acknowledgment) —
+            # nothing to record, nothing to annotate.
+            return ProcessedResponse(display_content=content)
+        normalised, error = check_free_text_allocations(
+            state, entity, allocations)
+        if error:
+            logger.warning(
+                "Rejecting free-text point allocation from %s: %s",
+                entity.name, error)
+            content += (f"\n\n---\n**Point allocations not recorded.** "
+                        f"{error}")
+            return ProcessedResponse(display_content=content)
+        accepted = record_allocations(state, entity, normalised)
+        content += f"\n\n---\n**Point allocations recorded:** {accepted}"
         return ProcessedResponse(display_content=content)
 
     # ------------------------------------------------------------------

@@ -357,6 +357,38 @@ class TestAllocatePointsHandler:
         assert "Point allocations recorded: 2" in (
             processed.display_content.replace("**", ""))
 
+    def test_free_text_over_allocation_not_recorded(self, ai_entity):
+        """The pool must bind on the free-text path too — otherwise a
+        participant could silently multiply their voting power."""
+        handler = AllocatePointsHandler()
+        disc = self._disc()
+        processed = handler.process_response(
+            "Candidate 1: 100 points", ai_entity, disc)
+        assert disc.method_state["point_allocations"] == []
+        assert "not recorded" in processed.display_content
+        assert str(POINTS_PER_VOTER) in processed.display_content
+
+    def test_free_text_top_up_after_allocation_not_recorded(
+            self, ai_entity):
+        """An entity that already allocated cannot add points to other
+        candidates on a later free-text turn."""
+        handler = AllocatePointsHandler()
+        disc = self._disc()
+        record_allocations(disc.method_state, ai_entity,
+                           [{"candidate_id": 1,
+                             "points": POINTS_PER_VOTER}])
+        processed = handler.process_response(
+            f"Candidate 2: {POINTS_PER_VOTER} points", ai_entity, disc)
+        assert len(disc.method_state["point_allocations"]) == 1
+        assert "not recorded" in processed.display_content
+
+    def test_free_text_prose_turn_left_unannotated(self, ai_entity):
+        handler = AllocatePointsHandler()
+        disc = self._disc()
+        content = "I have already allocated my points, thank you."
+        processed = handler.process_response(content, ai_entity, disc)
+        assert processed.display_content == content
+
     def test_advances_when_all_participants_allocated(self):
         disc = self._disc()
         record_allocations(disc.method_state,

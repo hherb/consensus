@@ -25,7 +25,10 @@ plan; delete sections that are finished and no longer instructive.
     (participants, anonymised silent generation), `submit_candidates`
     (moderator-only clustering), `submit_points` (fixed pool of
     `POINTS_PER_VOTER` points, validator enforces exact sum).
-    Clarify and rank are free-text phases.
+    Clarify and rank are free-text phases.  The point-pool rules bind
+    on the free-text path too (`check_free_text_allocations`): batches
+    are all-or-nothing and an entity that has allocated cannot top up
+    on a later turn — review finding on PR #40.
   - Give-up caps: `MAX_GENERATE_ROUNDS`, `MAX_CLUSTER_ATTEMPTS`,
     `MAX_ALLOCATE_ROUNDS`.  Generation with zero ideas aborts the
     method (frame_hypotheses pattern); clustering give-up instead
