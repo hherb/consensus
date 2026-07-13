@@ -24,6 +24,7 @@ from .recursive_decomposition import RecursiveDecomposition
 from .triage import TriageMethod
 from .self_distillation import RecursiveSelfDistillation
 from .court_of_law import CourtOfLaw
+from .nominal_group import NominalGroupTechnique
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ _METHODS: dict[str, type[DiscussionMethod]] = {
     "triage": TriageMethod,
     "self_distillation": RecursiveSelfDistillation,
     "court_of_law": CourtOfLaw,
+    "nominal_group": NominalGroupTechnique,
 }
 _INSTANCES: dict[str, DiscussionMethod] = {}
 _METHODS_METADATA: list[dict] | None = None
@@ -112,4 +114,5 @@ __all__ = [
     "TriageMethod",
     "RecursiveSelfDistillation",
     "CourtOfLaw",
+    "NominalGroupTechnique",
 ]

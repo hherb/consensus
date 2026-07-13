@@ -7,6 +7,7 @@ the cluster-phase fallback promotion, and method-level assembly.
 
 import pytest
 
+from consensus.methods import get_method
 from consensus.methods.base import LINEAR_NEXT, ProcessedResponse
 from consensus.methods.phases._ngt_helpers import (
     MAX_ALLOCATE_ROUNDS,
@@ -21,6 +22,7 @@ from consensus.methods.phases.allocate_points import AllocatePointsHandler
 from consensus.methods.phases.clarify_ideas import ClarifyIdeasHandler
 from consensus.methods.phases.cluster_ideas import ClusterIdeasHandler
 from consensus.methods.phases.generate_ideas import GenerateIdeasHandler
+from consensus.methods.phases.rank_ideas import RankIdeasHandler
 from consensus.models import Discussion, Entity, EntityType
 
 
@@ -44,16 +46,8 @@ def make_disc(**state) -> Discussion:
                       entities=[mod, alice, bob],
                       moderator_id=99,
                       turn_order=[1, 2])
-    disc.method_state = {
-        "current_phase": "generate",
-        "phase_round": 1,
-        "ideas": [],
-        "candidates": [],
-        "cluster_attempts": 0,
-        "point_allocations": [],
-        "points_per_voter": POINTS_PER_VOTER,
-        **state,
-    }
+    disc.method_state = get_method("nominal_group").init_state(disc)
+    disc.method_state.update(state)
     return disc
 
 
@@ -391,3 +385,86 @@ class TestAllocatePointsHandler:
         msg = AllocatePointsHandler().get_transition_message(self._disc())
         assert str(POINTS_PER_VOTER) in msg
         assert "Candidate 1:" in msg
+
+
+class TestRankIdeasHandler:
+    def _disc(self):
+        disc = make_disc(current_phase="rank")
+        record_candidates(disc.method_state, [
+            {"title": "Build a self-serve onboarding checklist"},
+            {"title": "Run recurring live office hours for customers"},
+        ])
+        record_allocations(disc.method_state,
+                           Entity(name="TestAI", entity_type=EntityType.AI,
+                                  id=1),
+                           [{"candidate_id": 2, "points": POINTS_PER_VOTER}])
+        return disc
+
+    def test_moderator_only_turn_order(self):
+        disc = self._disc()
+        assert RankIdeasHandler().get_turn_order([1, 2], disc) == [99]
+
+    def test_system_prompt_contains_ranked_totals(self, moderator):
+        prompt = RankIdeasHandler().get_system_prompt(moderator, self._disc())
+        assert "RANKED RESULTS" in prompt
+        assert f"{POINTS_PER_VOTER} point(s)" in prompt
+
+    def test_turn_prompt_requests_presentation(self, moderator):
+        prompt = RankIdeasHandler().get_turn_prompt(moderator, self._disc())
+        assert "ranked" in prompt.lower()
+
+    def test_advances_after_one_round(self):
+        disc = self._disc()
+        assert RankIdeasHandler().should_advance(disc) is False
+        disc.method_state["phase_round"] = 2
+        assert RankIdeasHandler().should_advance(disc) is True
+
+    def test_transition_message_shows_ranking(self):
+        msg = RankIdeasHandler().get_transition_message(self._disc())
+        assert "office hours" in msg
+
+
+class TestNominalGroupMethod:
+    def test_registered(self):
+        method = get_method("nominal_group")
+        assert method.name == "nominal_group"
+        assert method.display_name == "Nominal Group Technique"
+
+    def test_phase_order(self):
+        method = get_method("nominal_group")
+        assert [p.name for p in method.default_phases] == [
+            "generate", "cluster", "clarify", "allocate", "rank"]
+
+    def test_requires_structured_output(self):
+        assert get_method("nominal_group").requires_structured_output() is True
+
+    def test_init_state_merges_handler_keys(self):
+        disc = make_disc()
+        state = disc.method_state
+        assert state["current_phase"] == "generate"
+        assert state["ideas"] == []
+        assert state["candidates"] == []
+        assert state["cluster_attempts"] == 0
+        assert state["point_allocations"] == []
+        assert state["points_per_voter"] == POINTS_PER_VOTER
+
+    def test_listed_in_catalog(self):
+        from consensus.methods import list_methods
+        names = [m["name"] for m in list_methods()]
+        assert "nominal_group" in names
+
+    def test_conclusion_prompt_contains_ranking(self):
+        method = get_method("nominal_group")
+        disc = make_disc()
+        record_candidates(disc.method_state, [
+            {"title": "Build a self-serve onboarding checklist"},
+            {"title": "Run recurring live office hours for customers"},
+        ])
+        record_allocations(disc.method_state,
+                           Entity(name="TestAI", entity_type=EntityType.AI,
+                                  id=1),
+                           [{"candidate_id": 1, "points": POINTS_PER_VOTER}])
+        prompt = method.get_conclusion_prompt(disc)
+        assert "Nominal Group Technique" in prompt
+        assert "Ranked shortlist" in prompt
+        assert "onboarding checklist" in prompt
