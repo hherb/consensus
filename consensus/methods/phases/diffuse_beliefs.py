@@ -18,6 +18,7 @@ from ._belief_helpers import (
     check_convergence,
     extract_beliefs,
     format_belief_bar,
+    format_labelled_hypotheses,
     format_others_beliefs,
     record_beliefs,
     validate_beliefs_payload,
@@ -47,8 +48,7 @@ class DiffuseBeliefsHandler(PhaseHandler):
                           discussion: Discussion) -> str:
         state = discussion.method_state
         hypotheses = state.get("hypotheses", [])
-        hyp_list = "\n".join(f"  H{i+1}: {h}"
-                             for i, h in enumerate(hypotheses))
+        hyp_list = format_labelled_hypotheses(hypotheses)
         others_text = format_others_beliefs(entity, discussion)
         return (
             f"You are {entity.name}, a participant in a structured Belief "
@@ -58,8 +58,8 @@ class DiffuseBeliefsHandler(PhaseHandler):
             f"Other participants' current beliefs:\n{others_text}\n\n"
             "Review the other participants' reasoning carefully.  Then "
             "provide your UPDATED probability distribution by calling the "
-            "submit_beliefs tool, mapping each hypothesis (quoted "
-            "verbatim) to your probability.  Probabilities should sum "
+            "submit_beliefs tool, mapping each hypothesis label (H1, "
+            "H2, ...) to your probability.  Probabilities should sum "
             "to 1.0.\n\n"
             "In the 'reasoning' field, explain:\n"
             "1. What changed in your beliefs and WHY\n"
@@ -130,11 +130,12 @@ class DiffuseBeliefsHandler(PhaseHandler):
             # payload could pass validation, so forcing the tool would
             # burn every retry.  Fall through to the free-text path.
             return None
-        hyp_list = "\n".join(f"  - {h}" for h in hypotheses)
+        hyp_list = format_labelled_hypotheses(hypotheses)
         return OutputToolSpec(
             name="submit_beliefs",
-            description=("Submit your updated probability distribution "
-                         f"over these hypotheses:\n{hyp_list}"),
+            description=("Submit your updated probability distribution, "
+                         "keyed by hypothesis label, over these "
+                         f"hypotheses:\n{hyp_list}"),
             parameters=BELIEFS_TOOL_PARAMETERS,
         )
 

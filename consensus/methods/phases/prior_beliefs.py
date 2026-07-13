@@ -15,6 +15,7 @@ from ._belief_helpers import (
     BELIEFS_TOOL_PARAMETERS,
     extract_beliefs,
     format_belief_bar,
+    format_labelled_hypotheses,
     record_beliefs,
     validate_beliefs_payload,
 )
@@ -42,8 +43,7 @@ class PriorBeliefsHandler(PhaseHandler):
                           discussion: Discussion) -> str:
         state = discussion.method_state
         hypotheses = state.get("hypotheses", [])
-        hyp_list = "\n".join(f"  {i+1}. {h}"
-                             for i, h in enumerate(hypotheses))
+        hyp_list = format_labelled_hypotheses(hypotheses)
         return (
             f"You are {entity.name}, a participant in a structured Belief "
             f"State Diffusion analysis.\n"
@@ -53,9 +53,9 @@ class PriorBeliefsHandler(PhaseHandler):
             "You must provide your INITIAL probability distribution over "
             "these hypotheses.  Your probabilities must sum to 1.0.\n\n"
             "Submit your distribution by calling the submit_beliefs tool, "
-            "mapping each hypothesis (quoted verbatim) to your probability "
-            "estimate, with 2-3 sentences of reasoning in the "
-            "'reasoning' field."
+            "mapping each hypothesis label (H1, H2, ...) to your "
+            "probability estimate, with 2-3 sentences of reasoning in "
+            "the 'reasoning' field."
         )
 
     def get_turn_prompt(self, entity: Entity,
@@ -115,11 +115,12 @@ class PriorBeliefsHandler(PhaseHandler):
             # burn every retry.  Fall through to the free-text path,
             # which surfaces the warning transition message instead.
             return None
-        hyp_list = "\n".join(f"  - {h}" for h in hypotheses)
+        hyp_list = format_labelled_hypotheses(hypotheses)
         return OutputToolSpec(
             name="submit_beliefs",
-            description=("Submit your initial probability distribution "
-                         f"over these hypotheses:\n{hyp_list}"),
+            description=("Submit your initial probability distribution, "
+                         "keyed by hypothesis label, over these "
+                         f"hypotheses:\n{hyp_list}"),
             parameters=BELIEFS_TOOL_PARAMETERS,
         )
 
