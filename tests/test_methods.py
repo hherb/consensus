@@ -169,7 +169,7 @@ class TestBeliefDiffusion:
         disc.method_state["current_phase"] = "prior"
         prompt = method.get_system_prompt(ai_entity, disc)
         assert "probability distribution" in prompt.lower()
-        assert "json" in prompt.lower()
+        assert "submit_beliefs" in prompt
 
         # Diffuse phase — shows others' beliefs
         disc.method_state["current_phase"] = "diffuse"

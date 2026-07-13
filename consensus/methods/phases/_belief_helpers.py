@@ -56,6 +56,81 @@ HYPOTHESES_TOOL_PARAMETERS: dict = {
     "required": ["hypotheses"],
 }
 
+#: Lower/upper bound for an individual belief probability.
+BELIEF_MIN = 0.0
+BELIEF_MAX = 1.0
+
+#: JSON Schema for the submit_beliefs output tool (issue #23).
+BELIEFS_TOOL_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "beliefs": {
+            "type": "object",
+            "description": (
+                "Map of every framed hypothesis, quoted verbatim, to your "
+                "probability estimate for it (0.0-1.0). Include one entry "
+                "per hypothesis."
+            ),
+            "additionalProperties": {"type": "number"},
+        },
+        "reasoning": {
+            "type": "string",
+            "description": "Brief explanation of your probability assignments.",
+        },
+    },
+    "required": ["beliefs"],
+}
+
+
+def validate_beliefs_payload(payload: dict, hypotheses: list[str]) -> str:
+    """Return '' if a submit_beliefs payload is usable, else an error.
+
+    Every key in ``beliefs`` must exactly match one of the framed
+    ``hypotheses`` (verbatim text, not an "H1" label), every value must
+    be numeric in [0, 1], and every hypothesis must have a belief.
+    """
+    beliefs = payload.get("beliefs")
+    if not isinstance(beliefs, dict) or not beliefs:
+        return ("'beliefs' must be a non-empty object mapping each "
+                "hypothesis (verbatim) to a probability.")
+
+    valid = list(hypotheses)
+    for key in beliefs:
+        if key not in valid:
+            return (f"'{key}' does not match any framed hypothesis. "
+                    f"Valid hypotheses: {valid}.")
+
+    for key, value in beliefs.items():
+        try:
+            v = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return (f"The belief for '{key}' must be a number between "
+                    f"{BELIEF_MIN} and {BELIEF_MAX}.")
+        if not (BELIEF_MIN <= v <= BELIEF_MAX):
+            return (f"The belief for '{key}' must be between "
+                    f"{BELIEF_MIN} and {BELIEF_MAX}.")
+
+    missing = [h for h in valid if h not in beliefs]
+    if missing:
+        return f"Provide a belief for every hypothesis. Missing: {missing}."
+
+    return ""
+
+
+def record_beliefs(state: dict, entity: Entity, round_num: int,
+                   beliefs: dict[str, float]) -> None:
+    """Append a beliefs entry to method_state['belief_history'].
+
+    Shared by prior_beliefs.py and diffuse_beliefs.py to avoid
+    duplicating the entry shape both handlers append.
+    """
+    state.setdefault("belief_history", []).append({
+        "round": round_num,
+        "entity_id": entity.id,
+        "entity_name": entity.name,
+        "beliefs": beliefs,
+    })
+
 
 def extract_beliefs(content: str) -> dict[str, float]:
     """Parse a belief JSON block from the response content."""

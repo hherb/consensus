@@ -10,14 +10,17 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
 from ._belief_helpers import (
+    BELIEFS_TOOL_PARAMETERS,
     MAX_DIFFUSE_ROUNDS,
     check_convergence,
     extract_beliefs,
     format_belief_bar,
     format_others_beliefs,
+    record_beliefs,
+    validate_beliefs_payload,
 )
 
 if TYPE_CHECKING:
@@ -54,13 +57,11 @@ class DiffuseBeliefsHandler(PhaseHandler):
             f"Hypotheses:\n{hyp_list}\n\n"
             f"Other participants' current beliefs:\n{others_text}\n\n"
             "Review the other participants' reasoning carefully.  Then "
-            "provide your UPDATED probability distribution.\n\n"
-            "You MUST include this JSON block:\n"
-            "```json\n"
-            '{"beliefs": {"H1": 0.XX, "H2": 0.XX, ...}}\n'
-            "```\n"
-            "Probabilities must sum to 1.0.\n\n"
-            "After the JSON, explain:\n"
+            "provide your UPDATED probability distribution by calling the "
+            "submit_beliefs tool, mapping each hypothesis (quoted "
+            "verbatim) to your probability.  Probabilities should sum "
+            "to 1.0.\n\n"
+            "In the 'reasoning' field, explain:\n"
             "1. What changed in your beliefs and WHY\n"
             "2. Which argument(s) from others were most persuasive\n"
             "3. What concerns remain\n\n"
@@ -73,8 +74,9 @@ class DiffuseBeliefsHandler(PhaseHandler):
         round_num = discussion.method_state.get("diffuse_round", 0) + 1
         return (
             f"Diffusion round {round_num}.  It is your turn, {entity.name}.  "
-            "Review others' beliefs and reasoning, then provide your "
-            "updated probability distribution with explanation."
+            "Review others' beliefs and reasoning, then call the "
+            "submit_beliefs tool with your updated probability "
+            "distribution and explanation."
         )
 
     def get_summary_prompt(self, discussion: Discussion,
@@ -112,6 +114,45 @@ class DiffuseBeliefsHandler(PhaseHandler):
             )
             display = content
 
+        return ProcessedResponse(display_content=display)
+
+    # ------------------------------------------------------------------
+    # Structured output (issue #23)
+    # ------------------------------------------------------------------
+
+    requires_structured_output = True
+
+    def get_output_tool(self, entity: Entity,
+                        discussion: Discussion) -> OutputToolSpec | None:
+        hypotheses = discussion.method_state.get("hypotheses", [])
+        if not hypotheses:
+            # No hypotheses to assign probabilities to: no submit_beliefs
+            # payload could pass validation, so forcing the tool would
+            # burn every retry.  Fall through to the free-text path.
+            return None
+        hyp_list = "\n".join(f"  - {h}" for h in hypotheses)
+        return OutputToolSpec(
+            name="submit_beliefs",
+            description=("Submit your updated probability distribution "
+                         f"over these hypotheses:\n{hyp_list}"),
+            parameters=BELIEFS_TOOL_PARAMETERS,
+        )
+
+    def validate_output(self, payload: dict, entity: Entity,
+                        discussion: Discussion) -> str:
+        hypotheses = discussion.method_state.get("hypotheses", [])
+        return validate_beliefs_payload(payload, hypotheses)
+
+    def process_structured_response(self, payload: dict, entity: Entity,
+                                    discussion: Discussion) -> ProcessedResponse:
+        state = discussion.method_state
+        round_num = state.get("diffuse_round", 0) + 1
+        beliefs = {k: float(v) for k, v in payload["beliefs"].items()}
+        record_beliefs(state, entity, round_num, beliefs)
+        belief_bar = format_belief_bar(beliefs, discussion)
+        reasoning = str(payload.get("reasoning", "")).strip()
+        display = (f"{reasoning}\n\n---\n{belief_bar}" if reasoning
+                   else belief_bar)
         return ProcessedResponse(display_content=display)
 
     def should_advance(self, discussion: Discussion) -> bool:
