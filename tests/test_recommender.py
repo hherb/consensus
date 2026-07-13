@@ -43,20 +43,28 @@ from consensus.methods.recommender import (
 
 
 class TestMethodRecommender:
-    def test_build_catalog_excludes_triage_and_open(self):
+    def test_build_catalog_excludes_only_triage(self):
+        """Owner decision (issue #24): with NGT in the catalog, Open
+        Discussion is recommendable again — only the Guided Triage
+        meta-method stays excluded."""
         catalog = [
             {"name": "ach", "display_name": "ACH", "description": "...", "phases": []},
             {"name": "triage", "display_name": "Guided Triage", "description": "...", "phases": []},
             {"name": "open_discussion", "display_name": "Open Discussion", "description": "...", "phases": []},
-            {"name": "delphi", "display_name": "Delphi", "description": "...", "phases": []},
+            {"name": "nominal_group", "display_name": "Nominal Group Technique", "description": "...", "phases": []},
         ]
         recommender = MethodRecommender()
         filtered = recommender._filter_catalog(catalog)
         names = [m["name"] for m in filtered]
         assert "ach" in names
-        assert "delphi" in names
+        assert "nominal_group" in names
+        assert "open_discussion" in names
         assert "triage" not in names
-        assert "open_discussion" not in names
+
+    def test_taxonomy_mentions_ngt_and_drops_fallback_marker(self):
+        from consensus.methods.recommender import _TAXONOMY
+        assert "Nominal Group Technique" in _TAXONOMY
+        assert "(fallback only)" not in _TAXONOMY
 
     def test_build_system_prompt_contains_methods(self):
         catalog = [

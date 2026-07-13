@@ -37,8 +37,9 @@ consensus/methods/
     counterfactual.py    — CounterfactualStressTest
     recursive_decomposition.py — RecursiveDecomposition
     triage.py            — TriageMethod (Guided Triage meta-method)
+    nominal_group.py     — NominalGroupTechnique (structured brainstorming, NGT)
     recommender.py       — MethodRecommender (LLM-based method classification)
-    phases/              — 34 PhaseHandler implementations + 4 helper modules
+    phases/              — 53 PhaseHandler implementations + 8 helper modules
         __init__.py
         _belief_helpers.py
         _delphi_helpers.py
@@ -56,6 +57,9 @@ consensus/methods/
         counterfactual_stress.py, counterfactual_synthesize.py
         decompose.py, analyze_subquestions.py, integrate_subquestions.py, recompose.py
         triage_intake.py, triage_recommend.py, triage_confirm.py
+        _ngt_helpers.py
+        generate_ideas.py, cluster_ideas.py, clarify_ideas.py
+        allocate_points.py, rank_ideas.py
 ```
 
 ---
@@ -262,6 +266,7 @@ phase in a custom analytical method.
 | Counterfactual Stress Testing | 4 | Deliberate → Extract Claims → Stress Test → Synthesize |
 | Recursive Decomposition | 4 | Decompose → Analyze Sub-questions → Integrate → Recompose |
 | Guided Triage | 3 | Intake → Recommend → Confirm |
+| Nominal Group Technique | 5 | Generate → Cluster → Clarify → Allocate → Rank |
 
 ---
 
