@@ -216,3 +216,52 @@ class TestWeightCriteriaHandler:
         handler = WeightCriteriaHandler()
         assert handler.next_phase(disc) == LINEAR_NEXT
         assert handler.get_method_complete_message(disc) == ""
+
+
+from consensus.methods.phases.score_options import (  # noqa: E402
+    ScoreOptionsHandler,
+)
+
+
+class TestScoreOptionsHandler:
+    def test_phase_metadata(self):
+        handler = ScoreOptionsHandler()
+        assert handler.phase.name == "score"
+        assert handler.phase.rounds == 1
+
+    def test_system_prompt_embeds_options_and_criteria(self, ai_entity):
+        disc = populated_disc(current_phase="score")
+        prompt = ScoreOptionsHandler().get_system_prompt(ai_entity, disc)
+        assert "SCORING PHASE" in prompt
+        assert "O1: Build the platform in-house" in prompt
+        assert "C1: Total cost" in prompt
+        assert "submit_scores" in prompt
+
+    def test_degenerate_prompt_omits_tool(self, ai_entity):
+        disc = make_disc(current_phase="score")
+        prompt = ScoreOptionsHandler().get_system_prompt(ai_entity, disc)
+        assert "submit_scores" not in prompt
+        assert ScoreOptionsHandler().get_output_tool(ai_entity, disc) is None
+
+    def test_process_response_records_json_scores(self, ai_entity):
+        disc = populated_disc(current_phase="score")
+        disc.method_state.pop("scores")
+        ScoreOptionsHandler().process_response(
+            'My scores:\n```json\n'
+            '{"scores": {"O1": {"C1": 5, "C2": 1}}}\n```',
+            ai_entity, disc)
+        assert disc.method_state["scores"]["1"] == {"O1": {"C1": 5,
+                                                           "C2": 1}}
+
+    def test_process_response_prose_records_nothing(self, ai_entity):
+        disc = populated_disc(current_phase="score")
+        disc.method_state.pop("scores")
+        ScoreOptionsHandler().process_response(
+            "I broadly prefer the first option.", ai_entity, disc)
+        assert "scores" not in disc.method_state
+
+    def test_advances_after_single_round(self):
+        assert ScoreOptionsHandler().should_advance(
+            populated_disc(current_phase="score", phase_round=2)) is True
+        assert ScoreOptionsHandler().should_advance(
+            populated_disc(current_phase="score", phase_round=1)) is False
