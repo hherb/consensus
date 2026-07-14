@@ -50,6 +50,16 @@ plan; delete sections that are finished and no longer instructive.
     degenerate guards (`get_output_tool -> None`).
   - Recommender: `_TAXONOMY` gained an MCDA line ("Decision-making by
     scoring options against weighted criteria").
+  - Review follow-ups (same PR): `record_scores` drops unknown O/C
+    labels, so a mislabelled free-text matrix no longer counts its
+    author as a scorer with every cell defaulted (which inflated
+    divergence); the decision artifact gains an explicit caveat when
+    zero participants scored (the ranking is contentless);
+    `record_criteria` no longer reports a criterion twice when one
+    submission merges two similar names into it; score tables round
+    floats to the artifact's 2-dp precision.  Order-dependent
+    word-overlap merging (first-name-wins) is catalog-wide, not
+    MCDA-specific — tracked as **issue #42**.
 - **#24 Nominal Group Technique** (2026-07-14 session, **PR #40**,
   merged).  Plan:
   `docs/superpowers/plans/2026-07-14-nominal-group-technique.md`.

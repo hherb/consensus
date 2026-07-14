@@ -284,7 +284,8 @@ def record_criteria(state: dict, entity: Entity,
                         "weight_votes": {}}
             criteria.append(existing)
         existing["weight_votes"][str(entity.id)] = weight
-        touched.append(existing)
+        if not any(t is existing for t in touched):
+            touched.append(existing)
     return touched
 
 
@@ -366,19 +367,25 @@ def validate_scores_payload(payload: dict, options: list[dict],
 def record_scores(state: dict, entity: Entity, scores: dict) -> int:
     """Sanitise and store one participant's score matrix.
 
-    Keeps only integer-coercible, in-range cells (the free-text path
-    may carry quoted numbers or junk; booleans are rejected — bool is
-    an int subtype and ``True`` would silently count as a score of 1).
+    Keeps only cells addressing a recorded option and criterion label
+    with an integer-coercible, in-range score (the free-text path may
+    carry junk labels, quoted numbers, or junk values; booleans are
+    rejected — bool is an int subtype and ``True`` would silently
+    count as a score of 1).  Unknown labels are dropped rather than
+    stored: a stored-but-unaggregatable matrix would count its author
+    as a scorer with every cell defaulted, inflating divergence.
     Returns the number of cells kept; records nothing when no cell
     survives.  Shared by the free-text and structured paths.
     """
+    valid_o = {option_label(o["id"]) for o in state.get("options", [])}
+    valid_c = {criterion_label(c["id"]) for c in state.get("criteria", [])}
     cleaned: dict[str, dict[str, int]] = {}
     kept = 0
     for okey, row in scores.items():
-        if not isinstance(row, dict):
+        if str(okey) not in valid_o or not isinstance(row, dict):
             continue
         for ckey, value in row.items():
-            if isinstance(value, bool):
+            if str(ckey) not in valid_c or isinstance(value, bool):
                 continue
             try:
                 score = int(value)

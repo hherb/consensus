@@ -178,6 +178,12 @@ def build_decision_artifact(state: dict, recommended_option_id: int,
     """
     means = mean_scores(state)
     options_by_id = {o["id"]: o for o in state.get("options", [])}
+    caveats = list(caveats)
+    if not state.get("scores"):
+        caveats.append(
+            "No participant scores were recorded — every cell defaulted "
+            "to the scale midpoint, so the weighted ranking does not "
+            "differentiate the options.")
     artifact = {
         "method": "decision_matrix",
         "criteria": [{"id": c["id"], "name": c["name"],
@@ -202,7 +208,7 @@ def build_decision_artifact(state: dict, recommended_option_id: int,
         "recommended_option": options_by_id.get(
             recommended_option_id, {}).get("text", ""),
         "rationale": rationale,
-        "caveats": list(caveats),
+        "caveats": caveats,
     }
     state["decision_artifact"] = artifact
     return artifact
@@ -235,7 +241,8 @@ def format_score_table(scores: dict, state: dict) -> str:
     """Render any option×criterion mapping as a markdown table.
 
     Works for a participant's integer scores and for the float mean
-    matrix alike; missing cells render as ``?``.
+    matrix alike; float cells are rounded to two decimals (the
+    artifact's precision) and missing cells render as ``?``.
     """
     options = state.get("options", [])
     criteria = state.get("criteria", [])
@@ -249,7 +256,7 @@ def format_score_table(scores: dict, state: dict) -> str:
         cells = []
         for c in criteria:
             value = row.get(criterion_label(c["id"]), "?")
-            cells.append(f"{value:g}" if isinstance(value, float)
+            cells.append(f"{round(value, 2):g}" if isinstance(value, float)
                          else str(value))
         lines.append(f"| **O{o['id']}** {o['text']} | "
                      + " | ".join(cells) + " |")

@@ -205,6 +205,17 @@ class TestRecordCriteria:
                         [{"name": "Total cost of ownership", "weight": 1}])
         assert state["criteria"][0]["weight_votes"] == {"1": 1}
 
+    def test_touched_deduplicates_merged_criteria(self, alice):
+        """Two similar names in one submission touch one criterion once."""
+        state: dict = {}
+        touched = record_criteria(state, alice, [
+            {"name": "Total cost", "weight": 4},
+            {"name": "Total Cost", "weight": 2},
+        ])
+        assert len(state["criteria"]) == 1
+        assert len(touched) == 1
+        assert state["criteria"][0]["weight_votes"] == {"1": 2}
+
     def test_free_text_weight_clamped_into_range(self, alice):
         state: dict = {}
         record_criteria(state, alice,
@@ -313,6 +324,26 @@ class TestRecordScores:
     def test_all_invalid_records_nothing(self, alice):
         state = two_options_two_criteria(alice)
         assert record_scores(state, alice, {"O1": "junk"}) == 0
+        assert "scores" not in state
+
+    def test_unknown_labels_dropped(self, alice):
+        state = two_options_two_criteria(alice)
+        kept = record_scores(state, alice, {
+            "O1": {"C1": 4, "C9": 2},
+            "Option 2": {"C1": 3},
+        })
+        assert kept == 1
+        assert state["scores"]["1"] == {"O1": {"C1": 4}}
+
+    def test_all_unknown_labels_records_nothing(self, alice):
+        """Mislabelled free text must not count its author as a scorer.
+
+        A stored-but-unaggregatable matrix would default every cell in
+        ``participant_totals``, inflating divergence.
+        """
+        state = two_options_two_criteria(alice)
+        assert record_scores(state, alice,
+                             {"Option 1": {"Cost": 4}}) == 0
         assert "scores" not in state
 
 
@@ -511,6 +542,18 @@ class TestDecisionArtifact:
             scored_state(alice, bob), 2, "Rationale.", [])
         assert json.loads(json.dumps(artifact)) == artifact
 
+    def test_zero_scorer_artifact_carries_caveat(self, alice):
+        """With no scores the ranking is contentless — say so."""
+        state = two_options_two_criteria(alice)
+        artifact = build_decision_artifact(state, 1, "Rationale.", [])
+        assert artifact["scorers"] == 0
+        assert any("scale midpoint" in c for c in artifact["caveats"])
+
+    def test_scored_artifact_has_no_midpoint_caveat(self, alice, bob):
+        artifact = build_decision_artifact(
+            scored_state(alice, bob), 1, "Rationale.", [])
+        assert not any("scale midpoint" in c for c in artifact["caveats"])
+
 
 class TestFormatting:
     def test_format_options(self, alice, bob):
@@ -538,6 +581,13 @@ class TestFormatting:
     def test_format_mean_score_matrix(self, alice, bob):
         assert "| **O1**" in format_mean_score_matrix(
             scored_state(alice, bob))
+
+    def test_format_score_table_rounds_long_floats(self, alice):
+        state = two_options_two_criteria(alice)
+        table = format_score_table(
+            {"O1": {"C1": 10 / 3}}, state)
+        assert "3.33" in table
+        assert "3.33333" not in table
 
     def test_format_weighted_ranking(self, alice, bob):
         text = format_weighted_ranking(scored_state(alice, bob))
