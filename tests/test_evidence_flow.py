@@ -1,7 +1,15 @@
 """Flow-level wiring for evidence-tracked phases (#28)."""
-from consensus.app_discussion_flow import submit_human_message
+from unittest.mock import AsyncMock
+
+import pytest
+
+from consensus.ai_client import AIResponse
+from consensus.app_discussion_flow import generate_ai_turn, submit_human_message
 from consensus.methods.base import Phase, ProcessedResponse
 from consensus.models import Discussion, Entity
+from consensus.moderator import Moderator
+from consensus.pricing import PricingCache
+from consensus.tools import ToolCallRecord
 
 
 class _FakePhaseMethod:
@@ -16,6 +24,9 @@ class _FakePhaseMethod:
 
     def process_response(self, content, entity, discussion):
         return ProcessedResponse(display_content=content)
+
+    def process_structured_response(self, payload, entity, discussion):
+        return ProcessedResponse(display_content=str(payload))
 
 
 def _human_turn_discussion(db, phase="test_crux"):
@@ -52,3 +63,40 @@ def test_human_turn_untracked_phase_no_log(tmp_db, monkeypatch):
         lambda d: _FakePhaseMethod(track=False))
     submit_human_message(disc, tmp_db, alice.id, "Just my opinion.")
     assert "evidence_log" not in disc.method_state
+
+
+@pytest.mark.asyncio
+async def test_ai_turn_tool_call_is_logged(tmp_db, monkeypatch,
+                                           discussion_with_entities):
+    """A tracked-phase AI turn whose AIResponse carries an evidence tool
+    call records a grounded entry with the AI's id, turn, and source.
+
+    Exercises the real ``generate_ai_turn`` — only ``generate_turn``
+    (network) and ``get_active_method`` are stubbed.
+    """
+    disc = discussion_with_entities  # current speaker is the AI entity
+    ai = disc.current_speaker
+    disc.method_state = {"current_phase": "test_crux"}
+    disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+
+    monkeypatch.setattr(
+        "consensus.app_discussion_flow.get_active_method",
+        lambda d: _FakePhaseMethod(track=True))
+
+    moderator = Moderator(disc, tmp_db)
+    moderator.generate_turn = AsyncMock(return_value=AIResponse(
+        content="Per the document.", model="test-model",
+        prompt_tokens=1, completion_tokens=1, total_tokens=2,
+        tool_calls=[ToolCallRecord(
+            "doc_ask", {"document_id": 7, "question": "q"},
+            result="...", is_error=False)]))
+    pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+
+    await generate_ai_turn(disc, moderator, tmp_db, pricing,
+                           key_resolver=lambda *a, **k: "")
+
+    entry = disc.method_state["evidence_log"][0]
+    assert entry["grounded"] is True
+    assert entry["entity_id"] == ai.id
+    assert entry["turn"] == disc.turn_number
+    assert entry["sources"][0]["document_id"] == 7
