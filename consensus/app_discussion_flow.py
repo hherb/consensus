@@ -7,6 +7,7 @@ import time
 from typing import Callable, Optional
 
 from .database import Database
+from .evidence import record_and_annotate_evidence
 from .methods import get_active_method, get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole, StoryboardEntry
 from .moderator import Moderator
@@ -120,6 +121,11 @@ def submit_human_message(
     if method and not is_pass(content):
         processed = method.process_response(content, entity, discussion)
         content = processed.display_content
+        phase = method.current_phase(discussion)
+        if phase is not None and phase.track_evidence:
+            content = record_and_annotate_evidence(
+                discussion, entity, discussion.turn_number, content,
+                tool_calls=[])
         if discussion.id:
             db.update_discussion(
                 discussion.id,
@@ -252,6 +258,11 @@ async def generate_ai_turn(
                 processed = method.process_response(
                     resp.content, current, discussion)
             content = processed.display_content
+            phase = method.current_phase(discussion)
+            if phase is not None and phase.track_evidence:
+                content = record_and_annotate_evidence(
+                    discussion, current, discussion.turn_number, content,
+                    resp.tool_calls)
             # Persist updated method_state
             if discussion.id:
                 db.update_discussion(
