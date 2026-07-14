@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .tools import ToolCallRecord
@@ -141,3 +141,46 @@ def classify_turn_grounding(content: str,
                 sources.append(src)
     sources.extend(_inline_sources(content))
     return GroundingResult(grounded=bool(sources), sources=sources)
+
+
+#: Prefix for the grounded-turn sources footer.
+GROUNDED_NOTE_PREFIX = "\n\n— sources: "
+#: Footer appended to reasoning-based (ungrounded) turns.
+UNGROUNDED_NOTE = "\n\n— reasoning-based contribution (no cited evidence)"
+
+
+def format_sources(sources: list[dict]) -> str:
+    """Render sources as a compact ``; ``-joined human string."""
+    parts: list[str] = []
+    for s in sources:
+        if s.get("type") == "document":
+            parts.append(f"document {s.get('document_id')}")
+        elif s.get("type") in {"web", "web_search"}:
+            parts.append(s.get("url") or s.get("query", "web"))
+        elif s.get("type") == "inline":
+            parts.append(str(s.get("ref", "")))
+    return "; ".join(p for p in parts if p)
+
+
+def record_and_annotate_evidence(discussion: Any, entity: Any,
+                                 turn_number: int, content: str,
+                                 tool_calls: list) -> str:
+    """Classify the turn, log it, and return annotated display content.
+
+    Appends an entry to ``discussion.method_state["evidence_log"]`` and
+    annotates ``content`` (grounded → sources footer; ungrounded →
+    reasoning-based note).  Never rejects.
+    """
+    state = discussion.method_state
+    result = classify_turn_grounding(content, tool_calls)
+    state.setdefault("evidence_log", []).append({
+        "entity_id": entity.id,
+        "entity_name": entity.name,
+        "turn": turn_number,
+        "phase": state.get("current_phase", ""),
+        "grounded": result.grounded,
+        "sources": result.sources,
+    })
+    if result.grounded:
+        return content + GROUNDED_NOTE_PREFIX + format_sources(result.sources)
+    return content + UNGROUNDED_NOTE

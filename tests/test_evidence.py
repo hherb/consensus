@@ -189,3 +189,53 @@ class TestClassifyInlinePath:
             {"type": "web",
              "url": "https://en.wikipedia.org/wiki/Foo_(bar)"}
         ]
+
+
+from consensus.evidence import record_and_annotate_evidence
+from consensus.models import Discussion, Entity, EntityType
+
+
+def _discussion():
+    d = Discussion(topic="t")
+    d.method_state = {"current_phase": "test_crux"}
+    return d
+
+
+def _entity(eid=1, name="Alice"):
+    return Entity(id=eid, name=name, entity_type=EntityType.AI)
+
+
+class TestRecordAndAnnotate:
+    def test_grounded_turn_logs_and_annotates(self):
+        d = _discussion()
+        out = record_and_annotate_evidence(
+            d, _entity(), turn_number=4, content="Per docs.",
+            tool_calls=[_tc("doc_ask", {"document_id": 3, "question": "q"})])
+        log = d.method_state["evidence_log"]
+        assert len(log) == 1
+        entry = log[0]
+        assert entry["entity_id"] == 1
+        assert entry["entity_name"] == "Alice"
+        assert entry["turn"] == 4
+        assert entry["phase"] == "test_crux"
+        assert entry["grounded"] is True
+        assert entry["sources"][0]["document_id"] == 3
+        assert "sources:" in out.lower()
+        assert out.startswith("Per docs.")
+
+    def test_ungrounded_turn_logs_and_annotates(self):
+        d = _discussion()
+        out = record_and_annotate_evidence(
+            d, _entity(2, "Bob"), turn_number=5,
+            content="Pure reasoning.", tool_calls=[])
+        entry = d.method_state["evidence_log"][0]
+        assert entry["grounded"] is False
+        assert entry["sources"] == []
+        assert "reasoning-based" in out.lower()
+
+    def test_appends_across_turns(self):
+        d = _discussion()
+        record_and_annotate_evidence(
+            d, _entity(), 1, "a", [_tc("web_search", {"query": "x"})])
+        record_and_annotate_evidence(d, _entity(2, "Bob"), 2, "b", [])
+        assert len(d.method_state["evidence_log"]) == 2
