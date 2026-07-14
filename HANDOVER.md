@@ -15,8 +15,8 @@ plan; delete sections that are finished and no longer instructive.
   three conversions), **PR #39** (#23 remaining conversions +
   hardening), **PR #40** (#24 NGT), **PR #41** (#25 MCDA), and
   **PR #43** (#27 Double Crux) are all **merged**.
-- **#26 Tree of Thoughts implemented** (this session — merge its PR
-  before building on this work).  Spec:
+- **#26 Tree of Thoughts implemented** (this session, **PR #44** —
+  merge it before building on this work).  Spec:
   `docs/superpowers/specs/2026-07-14-tree-of-thoughts-design.md`; plan:
   `docs/superpowers/plans/2026-07-14-tree-of-thoughts.md`.
   Method `tree_of_thoughts` (`consensus/methods/tree_of_thoughts.py`),
