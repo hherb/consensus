@@ -40,13 +40,22 @@ EVIDENCE_MARKER_RE = re.compile(r"\[evidence:\s*([^\]]+?)\s*\]",
 URL_RE = re.compile(r"https?://[^\s<>\]]+")
 
 
-
 @dataclass
 class GroundingResult:
     """Whether a turn is grounded and the sources it rests on."""
 
     grounded: bool
     sources: list[dict] = field(default_factory=list)
+
+
+def _strip_trailing_punct(url: str) -> str:
+    """Trim sentence punctuation a URL commonly picks up in prose."""
+    while url and url[-1] in ".,;:!?\"'":
+        url = url[:-1]
+    # A closing paren belongs to the URL only if it has a matching open one.
+    if url.endswith(")") and url.count("(") < url.count(")"):
+        url = url[:-1]
+    return url
 
 
 def _inline_sources(content: str) -> list[dict]:
@@ -60,7 +69,8 @@ def _inline_sources(content: str) -> list[dict]:
         # Skip URLs already captured inside an [evidence: …] marker.
         if any(s <= m.start() < e for s, e in marked_spans):
             continue
-        sources.append({"type": "web", "url": m.group(0)})
+        sources.append(
+            {"type": "web", "url": _strip_trailing_punct(m.group(0))})
     return sources
 
 

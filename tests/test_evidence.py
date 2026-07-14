@@ -159,3 +159,33 @@ class TestClassifyInlinePath:
             [_tc("doc_ask", {"document_id": 1, "question": "q"})])
         assert res.grounded is True
         assert len(res.sources) == 2
+        web = [s for s in res.sources if s["type"] == "web"]
+        assert web == [{"type": "web", "url": "https://a.example"}]
+
+    def test_bare_url_trailing_period_is_stripped(self):
+        res = classify_turn_grounding("See https://a.example.", [])
+        assert res.sources == [
+            {"type": "web", "url": "https://a.example"}
+        ]
+
+    def test_parenthesized_url_is_stripped(self):
+        res = classify_turn_grounding(
+            "(https://example.org/paper).", [])
+        assert res.sources == [
+            {"type": "web", "url": "https://example.org/paper"}
+        ]
+
+    def test_bare_url_trailing_comma_is_stripped(self):
+        res = classify_turn_grounding(
+            "See https://example.org/paper, and more.", [])
+        assert res.sources == [
+            {"type": "web", "url": "https://example.org/paper"}
+        ]
+
+    def test_url_with_matched_parens_is_preserved(self):
+        res = classify_turn_grounding(
+            "See https://en.wikipedia.org/wiki/Foo_(bar) now.", [])
+        assert res.sources == [
+            {"type": "web",
+             "url": "https://en.wikipedia.org/wiki/Foo_(bar)"}
+        ]
