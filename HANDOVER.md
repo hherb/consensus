@@ -25,8 +25,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 
 Suite total after #44: **2250 tests passing**.
 
-> **Loose end:** GitHub issue **#27 is still OPEN** despite PR #43 merging its
-> implementation — close it (the "Closes #27" trailer did not fire).
+All method-catalog issues (#24–#27) are merged and their GitHub issues closed.
 
 ## Open work
 
