@@ -40,7 +40,7 @@ phase, with the summary surfaced in Double Crux's `crux_map` artifact and
 factual conclusion prompt; minimal "Attach evidence" UI button inserting the
 `[evidence: …]` marker. **Soft by design** (owner decision): ungrounded turns
 are annotated + logged, never blocked — see
-`memory/evidence-gating-philosophy.md`. Suite after #28: **2292 passing**.
+`memory/evidence-gating-philosophy.md`. Suite after #28: **2295 passing**.
 
 Deferred #28 follow-ups (not built this slice): per-claim citation mapping;
 opting in Adversarial Collab `gather_evidence` and ACH `present_evidence`
