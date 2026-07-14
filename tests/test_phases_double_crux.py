@@ -5,11 +5,18 @@ identification / testing / resolution handlers, the identify-phase loop
 routing (issue #22 mechanism), and method-level assembly.
 """
 
+from consensus.methods.base import LINEAR_NEXT
 from consensus.methods.phases._crux_helpers import (
+    MAX_CRUX_SEARCH_ROUNDS,
     MAX_HUNT_ROUNDS,
+    MAX_IDENTIFY_ATTEMPTS,
+    VERDICT_FACTUAL,
+    VERDICT_NONE,
+    VERDICT_VALUES,
     record_cruxes,
 )
 from consensus.methods.phases.hunt_cruxes import HuntCruxesHandler
+from consensus.methods.phases.identify_crux import IdentifyCruxHandler
 from consensus.methods.phases.state_positions import StatePositionsHandler
 from consensus.models import Discussion, Entity, EntityType
 
@@ -140,9 +147,125 @@ class TestHuntCruxesAdvancement:
         assert handler.get_method_complete_message(disc) != ""
 
     def test_no_abort_when_cruxes_exist(self):
-        from consensus.methods.base import LINEAR_NEXT
         handler = HuntCruxesHandler()
         disc = _crux_discussion(phase_round=2)
         record_cruxes(disc.method_state, _entity(), [_payload_crux()])
         assert handler.next_phase(disc) == LINEAR_NEXT
         assert handler.get_method_complete_message(disc) == ""
+
+
+def _hunted_discussion(**state) -> Discussion:
+    disc = _crux_discussion(phase="identify_crux", **state)
+    record_cruxes(disc.method_state, _entity(1, "Alice"),
+                  [_payload_crux(CLAIM_A, 0.9)])
+    record_cruxes(disc.method_state, _entity(2, "Bob"),
+                  [_payload_crux(CLAIM_B, 0.4)])
+    return disc
+
+
+class TestIdentifyCruxBasics:
+    def test_moderator_only_turn_order(self):
+        disc = _hunted_discussion()
+        assert IdentifyCruxHandler().get_turn_order([1, 2, 3], disc) == [99]
+
+    def test_prompts_show_cruxes_and_name_the_tool(self):
+        handler = IdentifyCruxHandler()
+        disc = _hunted_discussion()
+        disc.method_state["positions"] = {"Alice": "Remote-first"}
+        system = handler.get_system_prompt(_entity(99, "Mod"), disc)
+        assert CLAIM_A in system and CLAIM_B in system
+        assert "Remote-first" in system
+        assert "submit_crux_selection" in handler.get_turn_prompt(
+            _entity(99, "Mod"), disc)
+
+    def test_validate_output_uses_recorded_ids(self):
+        handler = IdentifyCruxHandler()
+        disc = _hunted_discussion()
+        good = {"verdict": "factual", "crux_ids": [1, 2],
+                "claim": CLAIM_A, "reasoning": "overlap"}
+        assert handler.validate_output(good, _entity(99), disc) == ""
+        bad = {"verdict": "factual", "crux_ids": [9],
+               "claim": CLAIM_A, "reasoning": "overlap"}
+        assert handler.validate_output(bad, _entity(99), disc) != ""
+
+
+class TestIdentifyCruxProcessing:
+    def test_structured_records_selection(self):
+        handler = IdentifyCruxHandler()
+        disc = _hunted_discussion()
+        result = handler.process_structured_response(
+            {"verdict": "factual", "crux_ids": [1], "claim": CLAIM_A,
+             "reasoning": "Both circle it."},
+            _entity(99, "Mod"), disc)
+        assert disc.method_state["crux_verdict"] == VERDICT_FACTUAL
+        assert disc.method_state["shared_crux"]["claim"] == CLAIM_A
+        assert "Both circle it." in result.display_content
+
+    def test_free_text_json_records_selection(self):
+        handler = IdentifyCruxHandler()
+        disc = _hunted_discussion()
+        content = ('```json\n{"verdict": "values", "claim": '
+                   '"Autonomy matters more than throughput", '
+                   '"reasoning": "value split"}\n```')
+        handler.process_response(content, _entity(99, "Mod"), disc)
+        assert disc.method_state["crux_verdict"] == VERDICT_VALUES
+
+    def test_free_text_invalid_counts_attempt(self):
+        handler = IdentifyCruxHandler()
+        disc = _hunted_discussion()
+        handler.process_response("Hard to say.", _entity(99, "Mod"), disc)
+        assert disc.method_state["identify_attempts"] == 1
+        assert disc.method_state["crux_verdict"] == ""
+
+    def test_free_text_json_failing_validation_counts_attempt(self):
+        handler = IdentifyCruxHandler()
+        disc = _hunted_discussion()
+        content = '```json\n{"verdict": "factual", "reasoning": "r"}\n```'
+        handler.process_response(content, _entity(99, "Mod"), disc)
+        assert disc.method_state["identify_attempts"] == 1
+
+
+class TestIdentifyCruxRouting:
+    def test_advances_on_verdict_or_give_up(self):
+        handler = IdentifyCruxHandler()
+        assert handler.should_advance(_hunted_discussion()) is False
+        assert handler.should_advance(
+            _hunted_discussion(crux_verdict=VERDICT_FACTUAL)) is True
+        assert handler.should_advance(_hunted_discussion(
+            identify_attempts=MAX_IDENTIFY_ATTEMPTS)) is True
+
+    def test_factual_continues_linearly(self):
+        disc = _hunted_discussion(crux_verdict=VERDICT_FACTUAL)
+        assert IdentifyCruxHandler().next_phase(disc) == LINEAR_NEXT
+
+    def test_values_jumps_to_resolve(self):
+        disc = _hunted_discussion(crux_verdict=VERDICT_VALUES)
+        assert IdentifyCruxHandler().next_phase(disc) == "resolve"
+
+    def test_none_with_rounds_left_loops_back(self):
+        disc = _hunted_discussion(crux_verdict=VERDICT_NONE,
+                                  crux_search_rounds=1)
+        assert IdentifyCruxHandler().next_phase(disc) == "hunt_cruxes"
+        state = disc.method_state
+        assert state["crux_search_rounds"] == 2
+        assert state["crux_verdict"] == ""  # reset for the next visit
+
+    def test_none_exhausted_goes_to_resolve(self):
+        disc = _hunted_discussion(crux_verdict=VERDICT_NONE,
+                                  crux_search_rounds=MAX_CRUX_SEARCH_ROUNDS)
+        assert IdentifyCruxHandler().next_phase(disc) == "resolve"
+        assert disc.method_state["crux_verdict"] == VERDICT_NONE
+
+    def test_give_up_without_verdict_treated_as_none(self):
+        disc = _hunted_discussion(
+            identify_attempts=MAX_IDENTIFY_ATTEMPTS,
+            crux_search_rounds=MAX_CRUX_SEARCH_ROUNDS)
+        assert IdentifyCruxHandler().next_phase(disc) == "resolve"
+        assert disc.method_state["crux_verdict"] == VERDICT_NONE
+
+    def test_give_up_without_verdict_loops_when_rounds_left(self):
+        disc = _hunted_discussion(identify_attempts=MAX_IDENTIFY_ATTEMPTS,
+                                  crux_search_rounds=1)
+        handler = IdentifyCruxHandler()
+        assert handler.next_phase(disc) == "hunt_cruxes"
+        assert disc.method_state["identify_attempts"] == 0  # fresh visit
