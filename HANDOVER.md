@@ -14,8 +14,8 @@ plan; delete sections that are finished and no longer instructive.
   (#30 Belief Diffusion abort), **PR #38** (#23 mechanism + first
   three conversions), and **PR #39** (#23 remaining conversions +
   hardening) are all **merged**.
-- **#25 Weighted Decision Matrix implemented** (this session — merge
-  its PR before building on this work).  Plan:
+- **#25 Weighted Decision Matrix implemented** (this session, **PR #41**
+  — merge it before building on this work).  Plan:
   `docs/superpowers/plans/2026-07-14-weighted-decision-matrix.md`.
   Method `decision_matrix` (`consensus/methods/decision_matrix.py`),
   five phases from new handlers in `consensus/methods/phases/`
