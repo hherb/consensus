@@ -305,3 +305,74 @@ class TestSensitivityHandler:
         disc = populated_disc(current_phase="sensitivity")
         assert "weighted total" in \
             SensitivityHandler().get_transition_message(disc)
+
+
+from consensus.methods.phases.decide import DecideHandler  # noqa: E402
+
+
+class TestDecideHandler:
+    def test_phase_metadata(self):
+        handler = DecideHandler()
+        assert handler.phase.name == "decide"
+        assert handler.phase.rounds == 1
+        assert handler.requires_structured_output is True
+
+    def test_moderator_only_turn_order(self):
+        disc = populated_disc(current_phase="decide")
+        assert DecideHandler().get_turn_order([1, 2], disc) == [99]
+
+    def test_system_prompt_embeds_analysis(self, moderator):
+        disc = populated_disc(current_phase="decide")
+        prompt = DecideHandler().get_system_prompt(moderator, disc)
+        assert "DECISION PHASE" in prompt
+        assert "submit_decision" in prompt
+        assert "weighted total 20.0" in prompt
+
+    def test_output_tool_none_without_options(self, moderator):
+        disc = make_disc(current_phase="decide")
+        assert DecideHandler().get_output_tool(moderator, disc) is None
+
+    def test_validate_output_rejects_unknown_option(self, moderator):
+        disc = populated_disc(current_phase="decide")
+        error = DecideHandler().validate_output(
+            {"recommended_option_id": 9, "rationale": "x"},
+            moderator, disc)
+        assert "9" in error
+
+    def test_structured_response_builds_artifact(self, moderator):
+        disc = populated_disc(current_phase="decide")
+        result = DecideHandler().process_structured_response(
+            {"recommended_option_id": 2,
+             "rationale": "Speed to market outweighs the cost premium.",
+             "caveats": ["Cost criterion is pivotal."]},
+            moderator, disc)
+        artifact = disc.method_state["decision_artifact"]
+        assert artifact["recommended_option_id"] == 2
+        assert artifact["recommended_option"] == (
+            "Buy a commercial platform")
+        assert artifact["caveats"] == ["Cost criterion is pivotal."]
+        assert "Decision: Buy a commercial platform" in \
+            result.display_content
+
+    def test_free_text_fallback_defaults_to_top_ranked(self, moderator):
+        disc = populated_disc(current_phase="decide")
+        result = DecideHandler().process_response(
+            "On balance the in-house option wins.", moderator, disc)
+        artifact = disc.method_state["decision_artifact"]
+        # Top-ranked option is O1 (weighted total 20.0 vs 18.0).
+        assert artifact["recommended_option_id"] == 1
+        assert artifact["rationale"] == (
+            "On balance the in-house option wins.")
+        assert any("top-ranked" in c for c in artifact["caveats"])
+        assert "Decision:" in result.display_content
+
+    def test_free_text_fallback_without_options_records_nothing(
+            self, moderator):
+        disc = make_disc(current_phase="decide")
+        DecideHandler().process_response("Nothing to decide.", moderator,
+                                         disc)
+        assert "decision_artifact" not in disc.method_state
+
+    def test_advances_after_single_round(self):
+        assert DecideHandler().should_advance(
+            populated_disc(current_phase="decide", phase_round=2)) is True
