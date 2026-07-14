@@ -239,3 +239,54 @@ class TestRecordAndAnnotate:
             d, _entity(), 1, "a", [_tc("web_search", {"query": "x"})])
         record_and_annotate_evidence(d, _entity(2, "Bob"), 2, "b", [])
         assert len(d.method_state["evidence_log"]) == 2
+
+    def test_grounded_empty_query_has_no_dangling_footer(self):
+        d = _discussion()
+        out = record_and_annotate_evidence(
+            d, _entity(), turn_number=7, content="Searched.",
+            tool_calls=[_tc("web_search", {"query": ""})])
+        entry = d.method_state["evidence_log"][0]
+        assert entry["grounded"] is True
+        # Footer must end with a real token, not empty after "sources: ".
+        assert "— sources: " in out
+        assert not out.rstrip().endswith("— sources:")
+        assert out.rstrip().endswith("web source")
+
+
+from consensus.evidence import format_sources
+
+
+class TestFormatSources:
+    def test_web_search_empty_query_falls_through(self):
+        assert format_sources(
+            [{"type": "web_search", "query": ""}]) == "web source"
+
+    def test_document_none_id_renders_placeholder(self):
+        assert format_sources(
+            [{"type": "document", "document_id": None}]) == "a document"
+
+    def test_document_with_id(self):
+        assert format_sources(
+            [{"type": "document", "document_id": 5}]) == "document 5"
+
+    def test_web_prefers_url(self):
+        assert format_sources(
+            [{"type": "web", "url": "https://a.example"}]) == "https://a.example"
+
+    def test_web_search_uses_query(self):
+        assert format_sources(
+            [{"type": "web_search", "query": "climate"}]) == "climate"
+
+    def test_inline_ref(self):
+        assert format_sources(
+            [{"type": "inline", "ref": "doc:5"}]) == "doc:5"
+
+    def test_inline_empty_ref_placeholder(self):
+        assert format_sources(
+            [{"type": "inline", "ref": ""}]) == "inline citation"
+
+    def test_multiple_joined(self):
+        assert format_sources([
+            {"type": "document", "document_id": 3},
+            {"type": "web_search", "query": ""},
+        ]) == "document 3; web source"

@@ -150,15 +150,23 @@ UNGROUNDED_NOTE = "\n\n— reasoning-based contribution (no cited evidence)"
 
 
 def format_sources(sources: list[dict]) -> str:
-    """Render sources as a compact ``; ``-joined human string."""
+    """Render sources as a compact ``; ``-joined human string.
+
+    Every recognised source yields a non-empty, sensible token so a
+    grounded turn never produces a dangling ``— sources: `` footer with
+    nothing after it (e.g. an empty ``web_search`` query or a document
+    with no ``document_id``).
+    """
     parts: list[str] = []
     for s in sources:
         if s.get("type") == "document":
-            parts.append(f"document {s.get('document_id')}")
+            doc_id = s.get("document_id")
+            parts.append(f"document {doc_id}" if doc_id is not None
+                         else "a document")
         elif s.get("type") in {"web", "web_search"}:
-            parts.append(s.get("url") or s.get("query", "web"))
+            parts.append(s.get("url") or s.get("query") or "web source")
         elif s.get("type") == "inline":
-            parts.append(str(s.get("ref", "")))
+            parts.append(str(s.get("ref", "")) or "inline citation")
     return "; ".join(p for p in parts if p)
 
 
@@ -182,5 +190,7 @@ def record_and_annotate_evidence(discussion: Any, entity: Any,
         "sources": result.sources,
     })
     if result.grounded:
-        return content + GROUNDED_NOTE_PREFIX + format_sources(result.sources)
+        rendered = format_sources(result.sources)
+        # Defensive: never emit a bare dangling footer if rendering is empty.
+        return content + GROUNDED_NOTE_PREFIX + (rendered or "(unspecified)")
     return content + UNGROUNDED_NOTE
