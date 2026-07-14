@@ -194,3 +194,26 @@ def record_and_annotate_evidence(discussion: Any, entity: Any,
         # Defensive: never emit a bare dangling footer if rendering is empty.
         return content + GROUNDED_NOTE_PREFIX + (rendered or "(unspecified)")
     return content + UNGROUNDED_NOTE
+
+
+def build_evidence_summary(state: dict) -> dict:
+    """Summarise ``evidence_log`` for the conclusion / artifact.
+
+    Partitions logged turns into grounded (with their sources) and
+    reasoning-based, with counts.  Deterministic.
+    """
+    log = state.get("evidence_log", []) if state else []
+    grounded: list[dict] = []
+    reasoning: list[dict] = []
+    for e in log:
+        if e.get("grounded"):
+            grounded.append({"entity_name": e.get("entity_name"),
+                             "sources": e.get("sources", [])})
+        else:
+            reasoning.append({"entity_name": e.get("entity_name")})
+    return {
+        "grounded": grounded,
+        "reasoning_based": reasoning,
+        "counts": {"grounded": len(grounded),
+                   "reasoning_based": len(reasoning)},
+    }

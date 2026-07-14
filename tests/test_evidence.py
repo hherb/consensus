@@ -290,3 +290,27 @@ class TestFormatSources:
             {"type": "document", "document_id": 3},
             {"type": "web_search", "query": ""},
         ]) == "document 3; web source"
+
+
+from consensus.evidence import build_evidence_summary
+
+
+class TestBuildEvidenceSummary:
+    def test_empty_log(self):
+        assert build_evidence_summary({}) == {
+            "grounded": [], "reasoning_based": [],
+            "counts": {"grounded": 0, "reasoning_based": 0},
+        }
+
+    def test_partitions_entries(self):
+        state = {"evidence_log": [
+            {"entity_name": "Alice", "grounded": True,
+             "sources": [{"type": "document", "document_id": 3}]},
+            {"entity_name": "Bob", "grounded": False, "sources": []},
+            {"entity_name": "Alice", "grounded": True,
+             "sources": [{"type": "web", "url": "https://a"}]},
+        ]}
+        out = build_evidence_summary(state)
+        assert out["counts"] == {"grounded": 2, "reasoning_based": 1}
+        assert len(out["grounded"]) == 2
+        assert out["reasoning_based"] == [{"entity_name": "Bob"}]
