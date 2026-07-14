@@ -1,6 +1,7 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-14 (after PR #44 Tree of Thoughts merged)._
+_Last updated: 2026-07-14 (after #28 evidence-tracked phases implemented on
+branch, pending PR)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -27,14 +28,35 @@ Suite total after #44: **2250 tests passing**.
 
 All method-catalog issues (#24–#27) are merged and their GitHub issues closed.
 
+**#28 evidence-tracked phases** is implemented on branch
+`claude/handover-update-next-slice-8030ed` (this session), **pending PR** —
+spec `docs/superpowers/specs/2026-07-14-evidence-gated-phases-design.md`, plan
+`docs/superpowers/plans/2026-07-14-evidence-tracked-phases.md`. New module
+`consensus/evidence.py` (turn-level grounding classifier — tool-call + inline
+paths, `record_and_annotate_evidence`, `build_evidence_summary`); opt-in
+`Phase.track_evidence` flag; flow wiring in `app_discussion_flow.py` (AI +
+human turns, gated on the active phase); `test_crux` is the sole opted-in
+phase, with the summary surfaced in Double Crux's `crux_map` artifact and
+factual conclusion prompt; minimal "Attach evidence" UI button inserting the
+`[evidence: …]` marker. **Soft by design** (owner decision): ungrounded turns
+are annotated + logged, never blocked — see
+`memory/evidence-gating-philosophy.md`. Suite after #28: **2292 passing**.
+
+Deferred #28 follow-ups (not built this slice): per-claim citation mapping;
+opting in Adversarial Collab `gather_evidence` and ACH `present_evidence`
+(prove on `test_crux` first); a hard-retry enforcement variant (deliberately
+rejected for now); a richer source-picker UI beyond the marker inserter;
+knowledge-graph grounding (no KG participant tool exists yet); and the
+**live browser click-through of the Attach-evidence button** (verified
+statically only — no JS test harness in this project). Minor cleanups logged
+in `.superpowers/sdd/progress.md`: a `DOCUMENT_TOOL_NAMES` constant to dedup
+the document-tool name set in `evidence.py`, and `tests/test_crux_helpers.py`
+crossing the ~500-line guideline (507).
+
 ## Open work
 
 ### Cross-cutting quality (open GitHub issues — these are the next slices)
 
-- **#28 evidence-gated phases** — opt-in `require_citations` so evidence
-  phases must ground claims via the existing RAG/web tools. Flagship
-  consumer: Double Crux `test_crux` (its prompt already points participants
-  at research/document tools).
 - **#29 same-model-panel warning** for Delphi / Belief Diffusion — warn (or
   actively diversify) when every panelist shares one model, which collapses
   the independence those methods assume.
