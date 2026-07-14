@@ -19,6 +19,7 @@ from consensus.methods.phases._tot_helpers import (
     record_thought_scores,
     record_thoughts,
 )
+from consensus.methods.phases.expand_thoughts import ExpandThoughtsHandler
 from consensus.methods.phases.propose_thoughts import ProposeThoughtsHandler
 from consensus.methods.phases.prune_thoughts import PruneThoughtsHandler
 from consensus.methods.phases.score_thoughts import ScoreThoughtsHandler
@@ -303,3 +304,65 @@ class TestPruneThoughtsHandler:
         _seed_thoughts(disc, 2)
         message = PruneThoughtsHandler().get_transition_message(disc)
         assert "prune" in message.lower() or "beam" in message.lower()
+
+
+def _disc_with_beam(**state) -> Discussion:
+    """A discussion after the first prune: beam = thoughts 1 and 2."""
+    disc = make_disc(current_phase="expand", **state)
+    _seed_thoughts(disc, 3)
+    disc.method_state["beam_history"] = [
+        {"depth": 1, "beam_ids": [1, 2],
+         "ranking": [{"id": 1, "composite": 12.0, "scorer_count": 1},
+                     {"id": 2, "composite": 10.0, "scorer_count": 1}]}]
+    return disc
+
+
+EXPANSIONS_BLOCK = (
+    'My deep-dive:\n```json\n'
+    '{"expansions": [{"thought_id": 1, "refinement": '
+    '"Pilot the marketplace with ten hand-picked partners first", '
+    '"obstacles": ["Payment integration"]}]}\n```'
+)
+
+
+class TestExpandThoughtsHandler:
+    def test_phase_metadata(self):
+        handler = ExpandThoughtsHandler()
+        assert handler.phase.name == "expand"
+        assert handler.phase.rounds == 1
+
+    def test_init_state(self):
+        assert ExpandThoughtsHandler().init_state(make_disc()) == {
+            "expansions": []}
+
+    def test_system_prompt_shows_beam_only(self, ai_entity):
+        disc = _disc_with_beam()
+        prompt = ExpandThoughtsHandler().get_system_prompt(
+            ai_entity, disc)
+        assert "submit_expansions" in prompt
+        assert "T1" in prompt and "T2" in prompt
+        assert "T3" not in prompt  # pruned
+        assert "obstacle" in prompt.lower()
+
+    def test_free_text_fallback_records_expansions(self, ai_entity):
+        disc = _disc_with_beam()
+        ExpandThoughtsHandler().process_response(
+            EXPANSIONS_BLOCK, ai_entity, disc)
+        recorded = disc.method_state["expansions"]
+        assert len(recorded) == 1
+        assert recorded[0]["thought_id"] == 1
+        assert recorded[0]["depth"] == 1
+
+    def test_unparseable_free_text_records_nothing(self, ai_entity):
+        disc = _disc_with_beam()
+        ExpandThoughtsHandler().process_response(
+            "It all looks good.", ai_entity, disc)
+        assert disc.method_state["expansions"] == []
+
+    def test_next_phase_loops_back_to_score(self):
+        assert ExpandThoughtsHandler().next_phase(
+            _disc_with_beam()) == "score"
+
+    def test_advances_after_one_round(self):
+        disc = _disc_with_beam(phase_round=2)
+        assert ExpandThoughtsHandler().should_advance(disc) is True

@@ -6,10 +6,12 @@ paths remain for humans.  Mirrors test_ngt_structured.
 """
 
 from consensus.methods.phases._tot_helpers import (
+    EXPANSIONS_TOOL_PARAMETERS,
     SCORES_TOOL_PARAMETERS,
     THOUGHTS_TOOL_PARAMETERS,
     record_thoughts,
 )
+from consensus.methods.phases.expand_thoughts import ExpandThoughtsHandler
 from consensus.methods.phases.propose_thoughts import ProposeThoughtsHandler
 from consensus.methods.phases.score_thoughts import ScoreThoughtsHandler
 from consensus.models import Discussion, Entity, EntityType
@@ -125,4 +127,61 @@ class TestScoreStructured:
         assert disc.method_state["thought_scores"]["7"]["T2"] == {
             "feasibility": 2, "impact": 3, "risk": 4}
         assert "marketplace compounds" in result.display_content
+        assert "T1" in result.display_content
+
+
+def _beam_discussion() -> Discussion:
+    disc = _discussion("expand")
+    record_thoughts(disc.method_state, _entity(50, "Seed"),
+                    THOUGHTS_PAYLOAD["thoughts"])
+    disc.method_state["beam_history"] = [
+        {"depth": 1, "beam_ids": [1],
+         "ranking": [{"id": 1, "composite": 12.0, "scorer_count": 1}]}]
+    return disc
+
+
+EXPANSIONS_PAYLOAD = {
+    "expansions": [
+        {"thought_id": 1,
+         "refinement": "Pilot with ten hand-picked launch partners",
+         "obstacles": ["Payment-provider integration"]}],
+    "reasoning": "The marketplace needs a de-risked first step.",
+}
+
+
+class TestExpandStructured:
+    def test_requires_structured_output(self):
+        assert ExpandThoughtsHandler().requires_structured_output is True
+
+    def test_output_tool_spec_names_beam(self):
+        disc = _beam_discussion()
+        spec = ExpandThoughtsHandler().get_output_tool(_entity(), disc)
+        assert spec.name == "submit_expansions"
+        assert spec.parameters is EXPANSIONS_TOOL_PARAMETERS
+        assert "T1" in spec.description
+
+    def test_output_tool_none_without_beam_thoughts(self):
+        disc = _discussion("expand")
+        assert ExpandThoughtsHandler().get_output_tool(_entity(),
+                                                       disc) is None
+
+    def test_validate_output_restricts_to_beam(self):
+        disc = _beam_discussion()
+        handler = ExpandThoughtsHandler()
+        assert handler.validate_output(EXPANSIONS_PAYLOAD, _entity(),
+                                       disc) == ""
+        bad = {"expansions": [{"thought_id": 2,
+                               "refinement": "Long enough refinement"}],
+               "reasoning": "r"}
+        assert "2" in handler.validate_output(bad, _entity(), disc)
+
+    def test_process_structured_records_with_depth(self):
+        disc = _beam_discussion()
+        result = ExpandThoughtsHandler().process_structured_response(
+            EXPANSIONS_PAYLOAD, _entity(7, "Bob"), disc)
+        recorded = disc.method_state["expansions"]
+        assert len(recorded) == 1
+        assert recorded[0]["depth"] == 1
+        assert recorded[0]["entity_name"] == "Bob"
+        assert "de-risked first step" in result.display_content
         assert "T1" in result.display_content
