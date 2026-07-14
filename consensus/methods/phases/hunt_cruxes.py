@@ -21,6 +21,7 @@ from ..base import LINEAR_NEXT, OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
 from ._crux_helpers import (
     CRUXES_TOOL_PARAMETERS,
+    MAX_CRUXES_PER_ENTITY,
     MAX_HUNT_ROUNDS,
     extract_cruxes,
     record_cruxes,
@@ -72,7 +73,8 @@ class HuntCruxesHandler(PhaseHandler):
             "2. Genuinely load-bearing — being wrong about it really "
             "would move you\n"
             "3. Stated with your current probability that it is true\n\n"
-            "Submit 1-5 cruxes by calling the submit_cruxes tool: each "
+            f"Submit 1-{MAX_CRUXES_PER_ENTITY} cruxes by calling the "
+            "submit_cruxes tool: each "
             "with a 'claim', your 'belief' (0-1 probability the claim "
             "is true), and 'why_pivotal'."
         )

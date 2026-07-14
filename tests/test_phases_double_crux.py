@@ -177,6 +177,9 @@ class TestIdentifyCruxBasics:
         system = handler.get_system_prompt(_entity(99, "Mod"), disc)
         assert CLAIM_A in system and CLAIM_B in system
         assert "Remote-first" in system
+        # Belief carry-over depends on the shared claim keeping the
+        # cited cruxes' polarity — the prompt must say so.
+        assert "polarity" in system.lower()
         assert "submit_crux_selection" in handler.get_turn_prompt(
             _entity(99, "Mod"), disc)
 
@@ -386,6 +389,39 @@ class TestResolveCruxAdvancement:
                                    phase_round=MAX_RESOLVE_ROUNDS + 1)
         assert ResolveCruxHandler().should_advance(disc) is True
 
+    def test_waits_for_stragglers_when_roster_known(self):
+        # One of two participants resolved: keep the phase open so the
+        # straggler's belief restatement gets further rounds.
+        handler = ResolveCruxHandler()
+        disc = _factual_discussion(phase="resolve", phase_round=2)
+        disc.turn_order = [1, 2]
+        handler.process_structured_response(
+            {"stance": "unchanged", "position": "Remote-first remains",
+             "crux_belief": 0.8, "reasoning": "r"}, _entity(1), disc)
+        assert handler.should_advance(disc) is False
+
+    def test_advances_once_all_participants_resolved(self):
+        handler = ResolveCruxHandler()
+        disc = _factual_discussion(phase="resolve", phase_round=1)
+        disc.turn_order = [1, 2]
+        for eid, name in ((1, "Alice"), (2, "Bob")):
+            handler.process_structured_response(
+                {"stance": "unchanged", "position": "Remote-first remains",
+                 "crux_belief": 0.8, "reasoning": "r"},
+                _entity(eid, name), disc)
+        assert handler.should_advance(disc) is True
+
+    def test_gives_up_after_cap_with_roster_known(self):
+        from consensus.methods.phases._crux_helpers import MAX_RESOLVE_ROUNDS
+        handler = ResolveCruxHandler()
+        disc = _factual_discussion(phase="resolve",
+                                   phase_round=MAX_RESOLVE_ROUNDS + 1)
+        disc.turn_order = [1, 2]
+        handler.process_structured_response(
+            {"stance": "unchanged", "position": "Remote-first remains",
+             "crux_belief": 0.8, "reasoning": "r"}, _entity(1), disc)
+        assert handler.should_advance(disc) is True
+
     def test_next_phase_builds_crux_map(self):
         handler = ResolveCruxHandler()
         disc = _factual_discussion(phase="resolve", phase_round=2)
@@ -450,10 +486,11 @@ class TestDoubleCruxMethod:
         assert method.advance_phase(disc).name == "resolve"
 
     def test_worst_case_looping_never_trips_loop_guard(self):
+        from consensus.methods.base import MAX_PHASE_VISITS_PER_PHASE
         # positions→hunt→(identify→hunt)×(MAX-1)→identify→resolve
         transitions = 2 + 2 * (MAX_CRUX_SEARCH_ROUNDS - 1) + 1
         method = self._method()
-        cap = len(method.default_phases) * 5  # MAX_PHASE_VISITS_PER_PHASE
+        cap = len(method.default_phases) * MAX_PHASE_VISITS_PER_PHASE
         assert transitions < cap
 
     def test_conclusion_prompt_factual(self):

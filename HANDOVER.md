@@ -54,8 +54,15 @@ plan; delete sections that are finished and no longer instructive.
     exactly the shared-crux signal.
   - Recommender `_TAXONOMY` gained: "Resolving disagreements by
     finding the pivotal factual claim beneath them → Double Crux".
+  - Review follow-ups applied in-PR: resolve now waits for *all*
+    participants' resolutions (the `allocate_points.py`
+    `entities_with_resolutions` pattern, round-capped) instead of
+    advancing on the first; `MAX_CRUXES_PER_ENTITY` bounds the
+    free-text path too (`record_cruxes` truncates per turn); the
+    identify prompt tells the moderator to keep the shared claim in
+    the cited cruxes' polarity so belief carry-over stays meaningful.
   - Tests: `test_crux_helpers.py`, `test_phases_double_crux.py`,
-    `test_double_crux_structured.py` (139 tests; suite total 2120).
+    `test_double_crux_structured.py` (145 tests; suite total 2126).
 - **#25 Weighted Decision Matrix implemented** (PR #41, merged).  Plan:
   `docs/superpowers/plans/2026-07-14-weighted-decision-matrix.md`.
   Method `decision_matrix` (`consensus/methods/decision_matrix.py`),
@@ -197,13 +204,20 @@ plan; delete sections that are finished and no longer instructive.
    - **#29 same-model-panel warning** for Delphi/Belief Diffusion.
 
 3. **New known follow-ups (#27 session, 2026-07-14):**
-   - **Double Crux belief shift is only measured for crux authors.**
+   - **Double Crux belief shift is only measured for crux authors,
+     and initial/final beliefs can refer to different phrasings.**
      `initial_beliefs` is snapshotted from the cruxes the moderator
      selects, so a participant whose own crux wasn't selected has no
-     "initial" end (map shows `? → final`, no shift).  An optional
-     pre-testing belief poll on the shared crux (one structured
-     micro-turn after identification) would complete the metric —
-     evaluate whether the extra turn is worth it.
+     "initial" end (map shows `? → final`, no shift).  Worse, the
+     initial belief is stated on the author's *own* phrasing while
+     the final `crux_belief` is stated on the moderator's synthesized
+     claim — if the moderator flips polarity or reframes scope, the
+     shift compares different propositions (the identify prompt now
+     instructs the moderator to keep the cited cruxes' polarity, but
+     a prompt is not a guarantee).  An optional pre-testing belief
+     poll on the shared claim itself (one structured micro-turn after
+     identification) would fix both — evaluate whether the extra turn
+     is worth it.
    - **The identify loop re-runs positions' context, not the phase.**
      Loop-backs re-enter `hunt_cruxes` only; if hunting keeps failing
      because positions were vague, there is no path back to

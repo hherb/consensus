@@ -10,6 +10,7 @@ from consensus.methods.phases._crux_helpers import (
     CRUX_SELECTION_TOOL_PARAMETERS,
     CRUXES_TOOL_PARAMETERS,
     MAX_CRUX_SEARCH_ROUNDS,
+    MAX_CRUXES_PER_ENTITY,
     MAX_HUNT_ROUNDS,
     MAX_IDENTIFY_ATTEMPTS,
     MAX_RESOLVE_ROUNDS,
@@ -81,6 +82,18 @@ class TestValidateCruxesPayload:
         assert validate_cruxes_payload(
             {"cruxes": [], "reasoning": "x"}) != ""
 
+    def test_too_many_cruxes_rejected(self):
+        # The schema's maxItems is only advisory to the model; the
+        # validator enforces the cap server-side with a retry message.
+        cruxes = [_crux(f"{CLAIM_A} variant number {n}")
+                  for n in range(MAX_CRUXES_PER_ENTITY + 1)]
+        assert validate_cruxes_payload(
+            {"cruxes": cruxes, "reasoning": "Traced my position."}) != ""
+
+    def test_schema_max_items_uses_the_constant(self):
+        assert (CRUXES_TOOL_PARAMETERS["properties"]["cruxes"]["maxItems"]
+                == MAX_CRUXES_PER_ENTITY)
+
     def test_short_claim_rejected(self):
         payload = {"cruxes": [_crux(claim="Too short")],
                    "reasoning": "Traced my position."}
@@ -145,6 +158,28 @@ class TestRecordCruxes:
         state: dict = {}
         record_cruxes(state, _entity(), [_crux("  " + CLAIM_A + ".  ")])
         assert state["cruxes"][0]["claim"] == CLAIM_A
+
+    def test_per_turn_bound_applies_to_free_text_path(self):
+        # record_cruxes is the free-text path's only gate, so it must
+        # honour the same per-turn cap the schema puts on the tool path.
+        # Claims share no words, so the dedupe never fires and only the
+        # cap limits what gets recorded.
+        distinct_claims = [
+            "Remote work reduces measured team productivity",
+            "Office presence improves informal knowledge transfer",
+            "Commuting time damages employee wellbeing",
+            "Hybrid schedules complicate meeting coordination",
+            "Junior staff onboard faster with mentors nearby",
+            "Real estate savings outweigh collaboration losses",
+            "Asynchronous writing sharpens decision quality",
+            "Timezone spread widens the hiring pool",
+        ]
+        assert len(distinct_claims) > MAX_CRUXES_PER_ENTITY
+        state: dict = {}
+        accepted = record_cruxes(state, _entity(),
+                                 [_crux(c) for c in distinct_claims])
+        assert len(accepted) == MAX_CRUXES_PER_ENTITY
+        assert len(state["cruxes"]) == MAX_CRUXES_PER_ENTITY
 
     def test_belief_clamped_and_none_allowed(self):
         state: dict = {}

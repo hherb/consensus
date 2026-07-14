@@ -30,6 +30,7 @@ from ._crux_helpers import (
     MAX_CRUX_SEARCH_ROUNDS,
     MAX_IDENTIFY_ATTEMPTS,
     VERDICT_NONE,
+    VERDICT_VALUES,
     extract_crux_selection,
     format_cruxes,
     format_positions,
@@ -93,7 +94,11 @@ class IdentifyCruxHandler(PhaseHandler):
             "pivot on the same checkable claim (they need not agree on "
             "it — disagreeing about a shared pivotal claim is exactly "
             "what a crux is).  State it as ONE neutral claim and cite "
-            "the crux ids it comes from.\n"
+            "the crux ids it comes from.  Keep the claim in the same "
+            "polarity as the cited cruxes wherever possible — each "
+            "participant's stated belief is carried over as their "
+            "initial belief on the shared claim, so a reversed or "
+            "reframed claim would make those numbers meaningless.\n"
             "- verdict 'values': the positions rest on different values "
             "or priorities rather than a factual dispute.  State the "
             "value difference.\n"
@@ -221,7 +226,7 @@ class IdentifyCruxHandler(PhaseHandler):
                 "resolution with a disagreement map",
                 MAX_CRUX_SEARCH_ROUNDS)
             return "resolve"
-        if verdict == "values":
+        if verdict == VERDICT_VALUES:
             # Nothing factual to test — jump straight to resolution.
             return "resolve"
         return LINEAR_NEXT  # factual → test_crux

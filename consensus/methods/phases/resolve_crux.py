@@ -22,6 +22,7 @@ from ._crux_helpers import (
     VERDICT_FACTUAL,
     VERDICT_VALUES,
     build_crux_map,
+    entities_with_resolutions,
     extract_resolution,
     format_shared_crux,
     record_resolution,
@@ -189,7 +190,20 @@ class ResolveCruxHandler(PhaseHandler):
     # ------------------------------------------------------------------
 
     def should_advance(self, discussion: Discussion) -> bool:
+        """Advance when every participant has a recorded resolution.
+
+        The belief-shift metric needs both ends per participant, so
+        stragglers whose resolutions could not be parsed get further
+        rounds (up to ``MAX_RESOLVE_ROUNDS``) rather than being cut
+        off after the first.  When the roster is unknown (empty
+        ``turn_order``), fall back to advancing once any resolution
+        has been recorded and a full round has run.
+        """
         state = discussion.method_state
+        participant_ids = set(discussion.turn_order)
+        if participant_ids and participant_ids.issubset(
+                entities_with_resolutions(state)):
+            return True
         phase_round = state.get("phase_round", 1)
         if phase_round > MAX_RESOLVE_ROUNDS:
             logger.warning(
@@ -198,6 +212,8 @@ class ResolveCruxHandler(PhaseHandler):
                 phase_round, len(state.get("resolutions", [])),
             )
             return True
+        if participant_ids:
+            return False  # roster known: keep waiting for stragglers
         return bool(state.get("resolutions")) and phase_round > 1
 
     def next_phase(self, discussion: Discussion) -> str | None:

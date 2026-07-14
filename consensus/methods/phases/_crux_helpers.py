@@ -25,6 +25,9 @@ MIN_CLAIM_LENGTH = 10
 #: Word-overlap ratio above which two of the *same entity's* cruxes are
 #: considered duplicates (cross-entity overlap is the shared-crux signal).
 SIMILARITY_THRESHOLD = 0.7
+#: Maximum cruxes a participant may submit in one turn (schema
+#: ``maxItems``; also enforced on the free-text path).
+MAX_CRUXES_PER_ENTITY = 5
 #: Give up on a hunt visit after this many rounds without any cruxes.
 MAX_HUNT_ROUNDS = 3
 #: Total hunt visits (initial + identify loop-backs) before the verdict
@@ -49,7 +52,8 @@ CRUXES_TOOL_PARAMETERS: dict = {
     "type": "object",
     "properties": {
         "cruxes": {
-            "type": "array", "minItems": 1, "maxItems": 5,
+            "type": "array", "minItems": 1,
+            "maxItems": MAX_CRUXES_PER_ENTITY,
             "items": {
                 "type": "object",
                 "properties": {
@@ -154,6 +158,9 @@ def validate_cruxes_payload(payload: dict) -> str:
     cruxes = payload.get("cruxes")
     if not isinstance(cruxes, list) or not cruxes:
         return "'cruxes' must be a non-empty array of crux objects."
+    if len(cruxes) > MAX_CRUXES_PER_ENTITY:
+        return (f"Submit at most {MAX_CRUXES_PER_ENTITY} cruxes — pick "
+                "the claims your position genuinely rests on.")
     for crux in cruxes:
         if not isinstance(crux, dict):
             return "Each entry in 'cruxes' must be an object."
@@ -182,11 +189,13 @@ def record_cruxes(state: dict, entity: Entity,
     entities are kept, because cross-party overlap is exactly the
     shared-crux signal the identify phase looks for.  Beliefs are
     float-coerced and clamped to [0, 1]; ``None`` (the free-text path)
-    is preserved.  Shared by the free-text and structured paths.
+    is preserved.  At most ``MAX_CRUXES_PER_ENTITY`` items are taken
+    per call, so the free-text path honours the same per-turn bound
+    the schema puts on the tool path.  Shared by both paths.
     """
     cruxes = state.setdefault("cruxes", [])
     accepted: list[dict] = []
-    for item in items:
+    for item in items[:MAX_CRUXES_PER_ENTITY]:
         claim = str(item.get("claim") or "").strip().rstrip('.')
         if len(claim) < MIN_CLAIM_LENGTH:
             continue
