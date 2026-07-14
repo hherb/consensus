@@ -63,7 +63,13 @@ def _inline_sources(content: str) -> list[dict]:
     sources: list[dict] = []
     marked_spans: list[tuple[int, int]] = []
     for m in EVIDENCE_MARKER_RE.finditer(content or ""):
-        sources.append({"type": "inline", "ref": m.group(1).strip()})
+        ref = m.group(1).strip()
+        if not ref:
+            # Empty marker (e.g. the UI button's inserted ``[evidence: ]``
+            # left unfilled) cites nothing — do not ground on it.  No URL
+            # to dedup, so its span is not recorded.
+            continue
+        sources.append({"type": "inline", "ref": ref})
         marked_spans.append(m.span())
     for m in URL_RE.finditer(content or ""):
         # Skip URLs already captured inside an [evidence: …] marker.
@@ -199,7 +205,7 @@ def record_and_annotate_evidence(discussion: Any, entity: Any,
 def build_evidence_summary(state: dict) -> dict:
     """Summarise ``evidence_log`` for the conclusion / artifact.
 
-    Partitions logged turns into grounded (with their sources) and
+    Partitions logged entries into grounded (with their sources) and
     reasoning-based, with counts.  Deterministic.
     """
     log = state.get("evidence_log", []) if state else []

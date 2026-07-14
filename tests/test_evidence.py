@@ -190,6 +190,22 @@ class TestClassifyInlinePath:
              "url": "https://en.wikipedia.org/wiki/Foo_(bar)"}
         ]
 
+    def test_empty_marker_is_not_grounded(self):
+        res = classify_turn_grounding(
+            "I think the crux holds. [evidence: ]", [])
+        assert res.grounded is False
+        assert res.sources == []
+
+    def test_whitespace_only_marker_is_not_grounded(self):
+        res = classify_turn_grounding("[evidence:   ]", [])
+        assert res.grounded is False
+        assert res.sources == []
+
+    def test_filled_marker_still_grounds(self):
+        res = classify_turn_grounding("[evidence: doc:3]", [])
+        assert res.grounded is True
+        assert res.sources == [{"type": "inline", "ref": "doc:3"}]
+
 
 from consensus.evidence import record_and_annotate_evidence
 from consensus.models import Discussion, Entity, EntityType
