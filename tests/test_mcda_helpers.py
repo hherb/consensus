@@ -359,3 +359,212 @@ class TestDecisionSchemaAndValidator:
         assert validate_decision_payload(
             {"recommended_option_id": 1, "rationale": "x",
              "caveats": [42]}, {1, 2}) != ""
+
+
+# ---------------------------------------------------------------------------
+# Aggregation, sensitivity, artifact & formatting (Task 2)
+# ---------------------------------------------------------------------------
+
+from consensus.methods.phases._mcda_helpers import (  # noqa: E402
+    build_decision_artifact,
+    divergence_by_option,
+    format_criteria,
+    format_decision_artifact,
+    format_divergence,
+    format_mean_score_matrix,
+    format_options,
+    format_score_table,
+    format_sensitivity,
+    format_weighted_ranking,
+    mean_scores,
+    participant_totals,
+    ranked_options,
+    sensitivity_report,
+    weighted_totals,
+)
+
+
+def scored_state(alice: Entity, bob: Entity) -> dict:
+    """Two options, two criteria (weights 4 and 2), two scorers.
+
+    Mean scores: O1 = {C1: 4.0, C2: 2.0}, O2 = {C1: 2.0, C2: 5.0}.
+    Weighted totals: O1 = 4*4 + 2*2 = 20.0, O2 = 4*2 + 2*5 = 18.0.
+    """
+    state = two_options_two_criteria(alice)
+    record_scores(state, alice, {"O1": {"C1": 4, "C2": 2},
+                                 "O2": {"C1": 1, "C2": 5}})
+    record_scores(state, bob, {"O1": {"C1": 4, "C2": 2},
+                               "O2": {"C1": 3, "C2": 5}})
+    return state
+
+
+class TestAggregation:
+    def test_mean_scores(self, alice, bob):
+        means = mean_scores(scored_state(alice, bob))
+        assert means["O1"] == {"C1": 4.0, "C2": 2.0}
+        assert means["O2"] == {"C1": 2.0, "C2": 5.0}
+
+    def test_unscored_cell_defaults_to_midpoint(self, alice):
+        state = two_options_two_criteria(alice)
+        record_scores(state, alice, {"O1": {"C1": 4}})
+        means = mean_scores(state)
+        assert means["O1"]["C2"] == float(DEFAULT_SCORE)
+        assert means["O2"]["C1"] == float(DEFAULT_SCORE)
+
+    def test_weighted_totals(self, alice, bob):
+        totals = weighted_totals(scored_state(alice, bob))
+        assert totals == {1: 20.0, 2: 18.0}
+
+    def test_ranked_options_sorted_desc(self, alice, bob):
+        ranking = ranked_options(scored_state(alice, bob))
+        assert [r["id"] for r in ranking] == [1, 2]
+        assert ranking[0]["total"] == 20.0
+        assert ranking[0]["text"] == "Build the feature in-house"
+
+    def test_ranked_options_tie_breaks_by_lower_id(self, alice):
+        state = two_options_two_criteria(alice)
+        record_scores(state, alice, {"O1": {"C1": 3, "C2": 3},
+                                     "O2": {"C1": 3, "C2": 3}})
+        ranking = ranked_options(state)
+        assert [r["id"] for r in ranking] == [1, 2]
+
+    def test_participant_totals_use_own_scores(self, alice, bob):
+        per = participant_totals(scored_state(alice, bob))
+        # Alice: O2 = 4*1 + 2*5 = 14; Bob: O2 = 4*3 + 2*5 = 22.
+        assert per["1"][2] == 14.0
+        assert per["2"][2] == 22.0
+
+    def test_divergence_is_spread_of_participant_totals(self, alice, bob):
+        div = divergence_by_option(scored_state(alice, bob))
+        assert div[1] == 0.0
+        assert div[2] == 8.0
+
+    def test_divergence_zero_with_single_scorer(self, alice):
+        state = two_options_two_criteria(alice)
+        record_scores(state, alice, {"O1": {"C1": 4}})
+        assert divergence_by_option(state) == {1: 0.0, 2: 0.0}
+
+
+class TestSensitivity:
+    def test_robust_ranking_reports_no_pivots(self, alice, bob):
+        state = two_options_two_criteria(alice)
+        # O1 dominates on every criterion: no variation can flip it.
+        record_scores(state, alice, {"O1": {"C1": 5, "C2": 5},
+                                     "O2": {"C1": 1, "C2": 1}})
+        report = sensitivity_report(state)
+        assert report["baseline_winner_id"] == 1
+        assert report["pivotal_criteria"] == []
+        assert report["close_call"] is False
+
+    def test_pivotal_criterion_detected(self, alice, bob):
+        report = sensitivity_report(scored_state(alice, bob))
+        # O1 wins only through C1: excluding C1 gives O1=2*2=4 < O2=2*5=10;
+        # doubling C2 gives O1=16+8=24 < O2=8+20=28.  Both variations flip.
+        variations = {(p["criterion_id"], p["variation"])
+                      for p in report["pivotal_criteria"]}
+        assert (1, "excluded") in variations
+        assert (2, "doubled") in variations
+        assert all(p["new_winner_id"] == 2
+                   for p in report["pivotal_criteria"])
+
+    def test_close_call_flagged(self, alice, bob):
+        report = sensitivity_report(scored_state(alice, bob))
+        # Margin 2.0 on a top total of 20.0 = 10% > 5%: not close.
+        assert report["close_call"] is False
+        assert report["margin"] == 2.0
+
+    def test_single_option_short_circuits(self, alice):
+        state: dict = {}
+        record_options(state, alice, ["Build the feature in-house"])
+        record_criteria(state, alice, [{"name": "Total cost", "weight": 4}])
+        report = sensitivity_report(state)
+        assert report["baseline_winner_id"] == 1
+        assert report["pivotal_criteria"] == []
+
+
+class TestDecisionArtifact:
+    def test_builds_and_stores_artifact(self, alice, bob):
+        state = scored_state(alice, bob)
+        artifact = build_decision_artifact(
+            state, 1, "Wins on the dominant cost criterion.",
+            ["C1 is pivotal."])
+        assert state["decision_artifact"] is artifact
+        assert artifact["method"] == "decision_matrix"
+        assert artifact["recommended_option_id"] == 1
+        assert artifact["recommended_option"] == (
+            "Build the feature in-house")
+        assert artifact["rationale"].startswith("Wins on")
+        assert artifact["caveats"] == ["C1 is pivotal."]
+        assert [r["option_id"] for r in artifact["ranking"]] == [1, 2]
+        assert artifact["ranking"][0]["weighted_total"] == 20.0
+        assert artifact["ranking"][0]["mean_scores"] == {"C1": 4.0,
+                                                         "C2": 2.0}
+        assert artifact["criteria"][0] == {"id": 1, "name": "Total cost",
+                                           "weight": 4.0}
+        assert {d["option_id"]: d["spread"]
+                for d in artifact["divergence"]} == {1: 0.0, 2: 8.0}
+        assert artifact["scorers"] == 2
+        assert artifact["sensitivity"]["baseline_winner_id"] == 1
+
+    def test_artifact_is_json_serialisable(self, alice, bob):
+        artifact = build_decision_artifact(
+            scored_state(alice, bob), 2, "Rationale.", [])
+        assert json.loads(json.dumps(artifact)) == artifact
+
+
+class TestFormatting:
+    def test_format_options(self, alice, bob):
+        text = format_options(scored_state(alice, bob))
+        assert "O1: Build the feature in-house" in text
+        assert "O2: Buy a commercial solution" in text
+        assert format_options({}) == "  (No options)"
+
+    def test_format_criteria_shows_weights_and_votes(self, alice, bob):
+        text = format_criteria(scored_state(alice, bob))
+        assert "C1: Total cost — weight 4.0 (1 vote(s))" in text
+        assert format_criteria({}) == "  (No criteria)"
+
+    def test_format_score_table_renders_matrix(self, alice, bob):
+        state = scored_state(alice, bob)
+        table = format_score_table(state["scores"]["1"], state)
+        assert "| **O1**" in table
+        assert "C1 (Total cost)" in table
+
+    def test_format_score_table_marks_missing_cells(self, alice):
+        state = two_options_two_criteria(alice)
+        record_scores(state, alice, {"O1": {"C1": 4}})
+        assert "?" in format_score_table(state["scores"]["1"], state)
+
+    def test_format_mean_score_matrix(self, alice, bob):
+        assert "| **O1**" in format_mean_score_matrix(
+            scored_state(alice, bob))
+
+    def test_format_weighted_ranking(self, alice, bob):
+        text = format_weighted_ranking(scored_state(alice, bob))
+        assert "1. O1: Build the feature in-house — weighted total 20.0" \
+            in text
+
+    def test_format_divergence(self, alice, bob):
+        assert "O2: Buy a commercial solution — spread 8.0" in \
+            format_divergence(scored_state(alice, bob))
+
+    def test_format_sensitivity_names_pivots(self, alice, bob):
+        text = format_sensitivity(scored_state(alice, bob))
+        assert "Pivotal" in text
+        assert "C1 (Total cost) excluded" in text
+
+    def test_format_sensitivity_robust_message(self, alice):
+        state = two_options_two_criteria(alice)
+        record_scores(state, alice, {"O1": {"C1": 5, "C2": 5},
+                                     "O2": {"C1": 1, "C2": 1}})
+        assert "robust" in format_sensitivity(state)
+
+    def test_format_decision_artifact(self, alice, bob):
+        artifact = build_decision_artifact(
+            scored_state(alice, bob), 1, "Cost dominates.",
+            ["Revisit if costs change."])
+        text = format_decision_artifact(artifact)
+        assert "**Decision: Build the feature in-house**" in text
+        assert "Cost dominates." in text
+        assert "weighted total 20.0" in text
+        assert "Revisit if costs change." in text
