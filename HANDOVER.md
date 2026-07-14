@@ -57,8 +57,26 @@ plan; delete sections that are finished and no longer instructive.
   - Recommender `_TAXONOMY` gained: "Open-ended problem-solving by
     exploring, scoring, and iteratively refining parallel solution
     paths → Tree of Thoughts".
+  - Review follow-ups applied in-PR: anonymisation holds for the
+    whole method (score/prune/expand/synthesise all filter context —
+    the propose turns replay in later phases and would otherwise leak
+    authorship exactly at scoring time; `format_expansions` is
+    author-free too); scored thoughts always rank above unscored
+    (an invented default composite can no longer beat real data into
+    the beam); convergence additionally requires ≥1 score recorded in
+    the pass (`scores_by_pass` — stability under zero new data proves
+    nothing); the conclusion prompt is honest when no outcome exists
+    (propose abort / mid-method conclude / loop-guard trip) instead of
+    narrating a fabricated "depth budget spent" story; prune and
+    synthesise transition messages embed the deterministic
+    ranking/digest so HUMAN moderators see the numbers (system prompts
+    are AI-only); re-score tables render only eligible thoughts (no
+    stale pruned entries) in numeric label order; the balanced-brace
+    JSON extractor moved to `methods/parsing.extract_json_payload`
+    (handles whitespace/reordered keys, logs parse failures) — the
+    MCDA/ACH copies still duplicate it, see follow-ups.
   - Tests: `test_tot_helpers.py`, `test_phases_tot.py`,
-    `test_tot_structured.py` (104 tests; suite total 2230).
+    `test_tot_structured.py` (119 tests; suite total 2245).
 - **#27 Double Crux implemented** (this session, **PR #43** — merge it
   before building on this work).  Plan:
   `docs/superpowers/plans/2026-07-14-double-crux.md`.
@@ -259,6 +277,20 @@ plan; delete sections that are finished and no longer instructive.
      `complete_turn`-driven end-to-end flow test** (see item below) —
      ToT would exercise the expand→score loop and the prune jumps
      through the real `advance_phase` path.
+   - **The balanced-brace inline-JSON scanner now has one shared home
+     (`methods/parsing.extract_json_payload`) but two older copies
+     remain**: `_mcda_helpers.extract_scores` and
+     `evaluate_matrix._parse_ratings`.  Both should delegate to the
+     parsing helper (minor behavioral deltas: they return `{}` instead
+     of `None` and only accept dicts).  The shared scanner still
+     miscounts braces inside JSON strings — accepted limitation, now
+     documented in one place.
+   - **`record_thoughts`/`validate_thoughts_payload` duplicate NGT's
+     `record_ideas`/`validate_ideas_payload` near-verbatim** (only the
+     state key and noun differ).  A shared parametrised helper would
+     keep dedup/validation fixes in sync across the two generative
+     methods; same for the propose-phase give-up block mirroring
+     `generate_ideas.py`.
 
 3. **Known follow-ups (#27 session, 2026-07-14):**
    - **Double Crux belief shift is only measured for crux authors,

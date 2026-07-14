@@ -67,14 +67,17 @@ def compute_beam(state: dict) -> tuple[list[int], list[dict]]:
     """Rank eligible thoughts and cut the beam.
 
     Returns ``(beam_ids, ranking)``: the full ranking (id, composite,
-    scorer_count) sorted by composite descending with id ascending as
-    the deterministic tie-break, and the top ``BEAM_WIDTH`` ids.
+    scorer_count) and the top ``BEAM_WIDTH`` ids.  Sort order: scored
+    thoughts always rank above unscored ones (an invented default
+    composite must never beat real data into the beam), then composite
+    descending, then id ascending as the deterministic tie-break.
     """
     composites = thought_composites(state)
     ranking = [{"id": tid, **stats}
                for tid, stats in sorted(
                    composites.items(),
-                   key=lambda item: (-item[1]["composite"], item[0]))]
+                   key=lambda item: (item[1]["scorer_count"] == 0,
+                                     -item[1]["composite"], item[0]))]
     beam_ids = [entry["id"] for entry in ranking[:BEAM_WIDTH]]
     return beam_ids, ranking
 
@@ -95,13 +98,13 @@ def build_tot_artifact(state: dict, stop_reason: str) -> dict:
     history = state.get("beam_history", [])
     final = history[-1] if history else {"beam_ids": [], "ranking": []}
     by_id = {t["id"]: t for t in state.get("thoughts", [])}
+    # The beam is by construction the ranking's prefix (compute_beam).
     final_beam = [
         {"id": entry["id"],
          "text": by_id.get(entry["id"], {}).get("text", ""),
          "composite": entry["composite"],
          "scorer_count": entry["scorer_count"]}
-        for entry in final["ranking"]
-        if entry["id"] in set(final["beam_ids"])
+        for entry in final["ranking"][:len(final["beam_ids"])]
     ]
     recommendation = (
         {"id": final_beam[0]["id"], "text": final_beam[0]["text"],
@@ -151,10 +154,16 @@ def format_thoughts(thoughts: list[dict]) -> str:
         f"  {thought_label(t['id'])}: {t['text']}" for t in thoughts)
 
 
-def format_ranking(state: dict) -> str:
-    """Current deterministic ranking of the eligible thoughts."""
+def format_ranking(state: dict,
+                   ranking: list[dict] | None = None) -> str:
+    """Current deterministic ranking of the eligible thoughts.
+
+    Pass a precomputed ``ranking`` (from ``compute_beam``) to avoid
+    re-aggregating when the caller already has it.
+    """
     by_id = {t["id"]: t for t in state.get("thoughts", [])}
-    _, ranking = compute_beam(state)
+    if ranking is None:
+        _, ranking = compute_beam(state)
     if not ranking:
         return "  (Nothing to rank)"
     return "\n".join(
@@ -183,15 +192,19 @@ def format_beam(state: dict) -> str:
 
 
 def format_expansions(state: dict, depth: int) -> str:
-    """Deep-dive expansions recorded at the given depth."""
+    """Deep-dive expansions recorded at the given depth.
+
+    Deliberately author-free: the method anonymises authorship end to
+    end (approaches are judged on content), so the display names no
+    contributor even though ``entity_name`` is recorded in the state.
+    """
     entries = [e for e in state.get("expansions", [])
                if e.get("depth") == depth]
     if not entries:
         return "  (No expansions)"
     lines = []
     for e in entries:
-        line = (f"  {thought_label(e['thought_id'])} — {e['entity_name']}: "
-                f"{e['refinement']}")
+        line = (f"  {thought_label(e['thought_id'])}: {e['refinement']}")
         if e.get("obstacles"):
             line += f" [obstacles: {'; '.join(e['obstacles'])}]"
         lines.append(line)
@@ -209,4 +222,57 @@ def format_beam_trajectory(state: dict) -> str:
                            for tid in entry.get("beam_ids", []))
         lines.append(f"  Pass {entry.get('depth', '?')}: beam = "
                      f"{labels or '(empty)'}")
+    return "\n".join(lines)
+
+
+def latest_expansion_depth(state: dict) -> int | None:
+    """Depth of the most recent deep-dive pass, or None if none ran.
+
+    The single source of the "which pass's expansions are current"
+    rule — used by the synthesis prompt and the conclusion prompt so
+    the tag written by ``record_expansions`` and its inverse cannot
+    drift apart.
+    """
+    depths = [e["depth"] for e in state.get("expansions", [])
+              if isinstance(e.get("depth"), int)]
+    return max(depths) if depths else None
+
+
+def format_artifact_digest(state: dict) -> str:
+    """Human-readable digest of ``tot_artifact`` for prompts.
+
+    Shared by the synthesis-phase system prompt and the method's
+    conclusion prompt so both turns describe the same outcome
+    identically.
+    """
+    artifact = state.get("tot_artifact", {})
+    recommendation = artifact.get("recommendation") or {}
+    lines = [
+        f"Stop reason: {artifact.get('stop_reason') or 'unknown'} after "
+        f"{artifact.get('depth', 0)} prune pass(es).",
+        "Final beam:",
+    ]
+    final_beam = artifact.get("final_beam", [])
+    if final_beam:
+        lines.extend(
+            f"  {thought_label(entry['id'])} (composite "
+            f"{entry['composite']}, {entry['scorer_count']} scorer(s)): "
+            f"{entry['text']}"
+            for entry in final_beam)
+    else:
+        lines.append("  (none)")
+    if recommendation:
+        lines.append(
+            f"Top-ranked approach: {thought_label(recommendation['id'])} "
+            f"(composite {recommendation['composite']}): "
+            f"{recommendation['text']}")
+    lines.append(f"Beam trajectory:\n{format_beam_trajectory(state)}")
+    depth = latest_expansion_depth(state)
+    if depth is not None:
+        lines.append("Deep-dives from the final pass:\n"
+                     f"{format_expansions(state, depth)}")
+    caveats = artifact.get("caveats", [])
+    if caveats:
+        lines.append("Caveats:")
+        lines.extend(f"  - {caveat}" for caveat in caveats)
     return "\n".join(lines)

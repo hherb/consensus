@@ -1,19 +1,18 @@
 """Recording and validation helpers for Tree of Thoughts (issue #26).
 
 Constants, JSON Schemas, payload validators, thought/score/expansion
-recording with deduplication, eligibility/depth queries, and JSON
-extraction for the free-text fallback paths — used by the propose,
-score, prune, expand, and synthesise phase handlers.  The deterministic
+recording with deduplication, and eligibility/depth queries — used
+by the propose, score, prune, expand, and synthesise phase handlers.
+The free-text JSON extraction lives in ``..parsing.extract_json_payload``.  The deterministic
 composite/beam/artifact/formatting layer lives in ``_tot_analysis.py``.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
-from ..parsing import extract_json_block, word_overlap_similar
+from ..parsing import word_overlap_similar
 
 if TYPE_CHECKING:
     from ...models import Entity
@@ -314,6 +313,9 @@ def record_thought_scores(state: dict, entity: Entity,
         entity_scores = state.setdefault("thought_scores", {}).setdefault(
             str(entity.id), {})
         entity_scores.update(cleaned)
+        by_pass = state.setdefault("scores_by_pass", {})
+        pass_key = str(current_depth(state))
+        by_pass[pass_key] = by_pass.get(pass_key, 0) + kept
     return kept
 
 
@@ -398,41 +400,3 @@ def record_expansions(state: dict, entity: Entity,
         })
         accepted += 1
     return accepted
-
-
-# ----------------------------------------------------------------------
-# Free-text extraction (human/fallback path)
-# ----------------------------------------------------------------------
-
-def extract_json_payload(content: str,
-                         key: str) -> Optional[Union[dict, list]]:
-    """Extract the value of ``key`` from JSON embedded in free text.
-
-    Tries a fenced JSON block first, then an inline (unfenced) object
-    scanned to its balanced closing brace — a lazy regex would truncate
-    at the first inner brace (the ``extract_scores`` pattern from
-    ``_mcda_helpers``, generalised over the key).
-    """
-    data = extract_json_block(content)
-    if isinstance(data, dict) and isinstance(data.get(key), (dict, list)):
-        return data[key]
-    start = content.find(f'{{"{key}"')
-    if start != -1:
-        depth = 0
-        for pos in range(start, len(content)):
-            if content[pos] == "{":
-                depth += 1
-            elif content[pos] == "}":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        data = json.loads(content[start:pos + 1])
-                        value = data.get(key)
-                        return value if isinstance(value,
-                                                   (dict, list)) else None
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-                    break
-    return None
-
-

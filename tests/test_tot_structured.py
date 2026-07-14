@@ -129,6 +129,22 @@ class TestScoreStructured:
         assert "marketplace compounds" in result.display_content
         assert "T1" in result.display_content
 
+    def test_display_filters_stale_pruned_scores(self):
+        """A re-score table must not render pass-1 entries for pruned
+        thoughts as if they were part of the current submission."""
+        disc = _scored_discussion()
+        handler = ScoreThoughtsHandler()
+        handler.process_structured_response(
+            SCORES_PAYLOAD, _entity(7, "Bob"), disc)
+        disc.method_state["beam_history"] = [
+            {"depth": 1, "beam_ids": [1], "ranking": []}]
+        result = handler.process_structured_response(
+            {"scores": {"T1": {"feasibility": 5, "impact": 5, "risk": 1}},
+             "reasoning": "Updated after the deep-dive."},
+            _entity(7, "Bob"), disc)
+        assert "T2" not in result.display_content
+        assert "feasibility 5" in result.display_content
+
 
 def _beam_discussion() -> Discussion:
     disc = _discussion("expand")

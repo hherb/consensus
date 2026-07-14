@@ -16,7 +16,9 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
+from ..parsing import extract_json_payload
 from ..phase_handler import PhaseHandler
+from ._delphi_helpers import anonymise_content
 from ._tot_analysis import format_expansions, format_thoughts
 from ._tot_helpers import (
     DIMENSIONS,
@@ -25,7 +27,6 @@ from ._tot_helpers import (
     SCORES_TOOL_PARAMETERS,
     current_depth,
     eligible_thoughts,
-    extract_json_payload,
     record_thought_scores,
     thought_label,
     validate_scores_payload,
@@ -135,6 +136,17 @@ class ScoreThoughtsHandler(PhaseHandler):
         )
 
     # ------------------------------------------------------------------
+    # Context filtering — anonymise authorship (whole-method blindness)
+    # ------------------------------------------------------------------
+
+    def filter_context_message(self, entity_name: str, content: str,
+                               role: str,
+                               discussion: Discussion, *,
+                               current_entity_id: int | None = None) -> str:
+        """Scoring must stay blind to who authored each approach."""
+        return anonymise_content(content, discussion)
+
+    # ------------------------------------------------------------------
     # Response processing (free-text / human fallback path)
     # ------------------------------------------------------------------
 
@@ -145,8 +157,7 @@ class ScoreThoughtsHandler(PhaseHandler):
         kept = (record_thought_scores(state, entity, scores)
                 if isinstance(scores, dict) else 0)
         if kept:
-            recorded = state["thought_scores"][str(entity.id)]
-            table = self._format_entity_scores(recorded)
+            table = self._format_entity_scores(state, entity)
             display = f"{content}\n\n---\n{table}"
         else:
             logger.warning(
@@ -156,12 +167,21 @@ class ScoreThoughtsHandler(PhaseHandler):
         return ProcessedResponse(display_content=display)
 
     @staticmethod
-    def _format_entity_scores(recorded: dict[str, dict[str, int]]) -> str:
-        """One participant's recorded scores as a compact table."""
+    def _format_entity_scores(state: dict, entity: Entity) -> str:
+        """One participant's current scores as a compact table.
+
+        Restricted to the eligible thoughts and sorted numerically —
+        the persistent per-entity map may still hold entries for
+        pruned thoughts from earlier passes, which must not render as
+        part of the current submission.
+        """
+        recorded = state.get("thought_scores", {}).get(str(entity.id), {})
+        eligible_labels = [thought_label(t["id"])
+                           for t in eligible_thoughts(state)]
         return "\n".join(
-            f"  {label}: " + ", ".join(f"{dim} {values[dim]}"
+            f"  {label}: " + ", ".join(f"{dim} {recorded[label][dim]}"
                                        for dim in DIMENSIONS)
-            for label, values in sorted(recorded.items()))
+            for label in eligible_labels if label in recorded)
 
     # ------------------------------------------------------------------
     # Structured output (issue #23)
@@ -206,8 +226,7 @@ class ScoreThoughtsHandler(PhaseHandler):
         """
         state = discussion.method_state
         record_thought_scores(state, entity, payload["scores"])
-        recorded = state.get("thought_scores", {}).get(str(entity.id), {})
-        table = self._format_entity_scores(recorded)
+        table = self._format_entity_scores(state, entity)
         reasoning = str(payload.get("reasoning") or "").strip()
         display = f"{reasoning}\n\n---\n{table}" if reasoning else table
         return ProcessedResponse(display_content=display)

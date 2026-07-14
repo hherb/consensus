@@ -15,36 +15,13 @@ from typing import TYPE_CHECKING
 
 from ..base import Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
-from ._tot_analysis import format_beam_trajectory, format_expansions
+from ._delphi_helpers import anonymise_content
+from ._tot_analysis import format_artifact_digest
 
 if TYPE_CHECKING:
     from ...models import Discussion, Entity
 
 logger = logging.getLogger(__name__)
-
-
-def _artifact_summary(state: dict) -> str:
-    """Human-readable digest of the outcome artifact for prompts."""
-    artifact = state.get("tot_artifact", {})
-    recommendation = artifact.get("recommendation") or {}
-    lines = [
-        f"Stop reason: {artifact.get('stop_reason', 'unknown')} after "
-        f"{artifact.get('depth', 0)} prune pass(es).",
-        "Final beam:",
-    ]
-    for entry in artifact.get("final_beam", []):
-        lines.append(f"  T{entry['id']} (composite {entry['composite']}, "
-                     f"{entry['scorer_count']} scorer(s)): {entry['text']}")
-    if recommendation:
-        lines.append(f"Top-ranked approach: T{recommendation['id']} "
-                     f"(composite {recommendation['composite']}): "
-                     f"{recommendation['text']}")
-    lines.append(f"Beam trajectory:\n{format_beam_trajectory(state)}")
-    caveats = artifact.get("caveats", [])
-    if caveats:
-        lines.append("Caveats:")
-        lines.extend(f"  - {c}" for c in caveats)
-    return "\n".join(lines)
 
 
 class SynthesiseThoughtsHandler(PhaseHandler):
@@ -77,7 +54,6 @@ class SynthesiseThoughtsHandler(PhaseHandler):
     def get_system_prompt(self, entity: Entity,
                           discussion: Discussion) -> str:
         state = discussion.method_state
-        depth = len(state.get("beam_history", []))
         return (
             "You are the moderator of a Tree of Thoughts session.\n"
             f"Topic: {discussion.topic}\n\n"
@@ -85,15 +61,24 @@ class SynthesiseThoughtsHandler(PhaseHandler):
             "The exploration is complete.  All numbers below were "
             "computed deterministically from the participants' scores — "
             "do not alter them.\n\n"
-            f"{_artifact_summary(state)}\n\n"
-            "Recorded deep-dives from the final pass:\n"
-            f"{format_expansions(state, max(depth - 1, 1))}\n\n"
+            f"{format_artifact_digest(state)}\n\n"
             "Present the outcome to the group: the surviving "
             "approaches, how their standing evolved across passes, the "
             "obstacles that emerged, and what the composite scores say "
             "about the recommendation.  Keep it factual — quote the "
             "numbers above."
         )
+
+    # ------------------------------------------------------------------
+    # Context filtering — anonymise authorship (whole-method blindness)
+    # ------------------------------------------------------------------
+
+    def filter_context_message(self, entity_name: str, content: str,
+                               role: str,
+                               discussion: Discussion, *,
+                               current_entity_id: int | None = None) -> str:
+        """The outcome is presented on content, not authorship."""
+        return anonymise_content(content, discussion)
 
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
@@ -115,7 +100,15 @@ class SynthesiseThoughtsHandler(PhaseHandler):
     # ------------------------------------------------------------------
 
     def get_transition_message(self, discussion: Discussion) -> str:
-        artifact = discussion.method_state.get("tot_artifact", {})
+        """Embed the outcome digest in the transcript.
+
+        The system prompt is only rendered for AI moderators; putting
+        the deterministic outcome in the transition message keeps a
+        HUMAN moderator (and the group) looking at the same numbers
+        the artifact records.
+        """
+        state = discussion.method_state
+        artifact = state.get("tot_artifact", {})
         reason = artifact.get("stop_reason", "")
         reason_text = {
             "converged": "the beam stabilised — further passes would "
@@ -126,6 +119,7 @@ class SynthesiseThoughtsHandler(PhaseHandler):
         }.get(reason, "the exploration ended")
         return (
             f"**Phase: {self.phase.display_name}**\n\n"
-            f"The exploration has ended: {reason_text}.  The moderator "
-            "will now present the outcome."
+            f"The exploration has ended: {reason_text}.\n\n"
+            f"{format_artifact_digest(state)}\n\n"
+            "The moderator will now present the outcome."
         )

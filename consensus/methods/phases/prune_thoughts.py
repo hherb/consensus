@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from ..base import LINEAR_NEXT, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
+from ._delphi_helpers import anonymise_content
 from ._tot_analysis import build_tot_artifact, compute_beam, format_ranking
 from ._tot_helpers import (
     BEAM_WIDTH,
@@ -83,7 +84,7 @@ class PruneThoughtsHandler(PhaseHandler):
     def get_system_prompt(self, entity: Entity,
                           discussion: Discussion) -> str:
         state = discussion.method_state
-        beam_ids, _ = compute_beam(state)
+        beam_ids, ranking = compute_beam(state)
         labels = ", ".join(thought_label(tid) for tid in beam_ids)
         return (
             "You are the moderator of a Tree of Thoughts session.\n"
@@ -92,13 +93,24 @@ class PruneThoughtsHandler(PhaseHandler):
             "The composite ranking below was computed deterministically "
             "from the participants' scores (feasibility + impact + "
             "inverted risk, averaged over scorers).  Do not alter it.\n\n"
-            f"Ranking:\n{format_ranking(state)}\n\n"
+            f"Ranking:\n{format_ranking(state, ranking)}\n\n"
             f"The top {BEAM_WIDTH} approaches survive the cut: {labels}."
             "\n\nPresent the outcome to the group: which approaches "
             "survive, what the scores say about why, and what stands "
             "out about the ones eliminated.  Keep it factual — quote "
             "the composites above."
         )
+
+    # ------------------------------------------------------------------
+    # Context filtering — anonymise authorship (whole-method blindness)
+    # ------------------------------------------------------------------
+
+    def filter_context_message(self, entity_name: str, content: str,
+                               role: str,
+                               discussion: Discussion, *,
+                               current_entity_id: int | None = None) -> str:
+        """The cut is presented on content, not authorship."""
+        return anonymise_content(content, discussion)
 
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
@@ -123,11 +135,19 @@ class PruneThoughtsHandler(PhaseHandler):
         """Record the beam and route: loop onward or stop to synthesise."""
         state = discussion.method_state
         beam_ids, ranking = compute_beam(state)
+        # Scores recorded during the pass that just ended carry this
+        # pre-append depth tag (see record_thought_scores).
+        fresh_scores = state.get("scores_by_pass", {}).get(
+            str(current_depth(state)), 0)
         history = state.setdefault("beam_history", [])
         prev = history[-1]["beam_ids"] if history else None
         history.append({"depth": current_depth(state) + 1,
                         "beam_ids": beam_ids, "ranking": ranking})
-        converged = prev is not None and prev == beam_ids
+        # An unchanged ordered beam only counts as convergence when the
+        # pass actually re-scored something — stability under zero new
+        # data (all extractions failed, humans skipped) proves nothing.
+        converged = (prev is not None and prev == beam_ids
+                     and fresh_scores > 0)
         degenerate = len(beam_ids) < MIN_BEAM_SIZE
         depth_spent = current_depth(state) >= MAX_TOT_DEPTH
         if converged or degenerate or depth_spent:
@@ -148,9 +168,20 @@ class PruneThoughtsHandler(PhaseHandler):
     # ------------------------------------------------------------------
 
     def get_transition_message(self, discussion: Discussion) -> str:
+        """Embed the computed ranking in the transcript.
+
+        The system prompt is only rendered for AI moderators; putting
+        the deterministic ranking in the transition message keeps a
+        HUMAN moderator (and the group) looking at the same numbers
+        the beam cut is recorded from (the ``rank_ideas.py`` /
+        ``analyse_sensitivity.py`` precedent).
+        """
+        state = discussion.method_state
         return (
             f"**Phase: {self.phase.display_name}**\n\n"
-            "Scoring is complete.  The composite ranking is computed "
-            f"deterministically and the top {BEAM_WIDTH} approaches "
-            "survive the prune; the moderator will present the cut."
+            "Scoring is complete.  Computed ranking (feasibility + "
+            "impact + inverted risk, averaged over scorers):\n"
+            f"{format_ranking(state)}\n\n"
+            f"The top {BEAM_WIDTH} approaches survive the prune; the "
+            "moderator will present the cut."
         )

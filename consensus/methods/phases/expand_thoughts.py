@@ -20,13 +20,14 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
+from ..parsing import extract_json_payload
 from ..phase_handler import PhaseHandler
+from ._delphi_helpers import anonymise_content
 from ._tot_analysis import format_thoughts
 from ._tot_helpers import (
     EXPANSIONS_TOOL_PARAMETERS,
     current_depth,
     eligible_thoughts,
-    extract_json_payload,
     record_expansions,
     thought_label,
     validate_expansions_payload,
@@ -114,6 +115,17 @@ class ExpandThoughtsHandler(PhaseHandler):
             "highlight any new obstacle or refinement that changes the "
             f"picture, then invite {next_speaker_name}."
         )
+
+    # ------------------------------------------------------------------
+    # Context filtering — anonymise authorship (whole-method blindness)
+    # ------------------------------------------------------------------
+
+    def filter_context_message(self, entity_name: str, content: str,
+                               role: str,
+                               discussion: Discussion, *,
+                               current_entity_id: int | None = None) -> str:
+        """Deep-dives build on approaches, not on their authors."""
+        return anonymise_content(content, discussion)
 
     # ------------------------------------------------------------------
     # Response processing (free-text / human fallback path)

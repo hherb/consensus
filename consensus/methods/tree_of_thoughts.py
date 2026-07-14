@@ -21,8 +21,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .base import DiscussionMethod
-from .phases._tot_analysis import format_beam_trajectory, format_expansions
+from .phases._tot_analysis import format_artifact_digest
 from .phases._tot_helpers import (
+    MAX_PROPOSE_ROUNDS,
     STOP_CONVERGED,
     STOP_DEGENERATE,
     thought_label,
@@ -71,22 +72,17 @@ class TreeOfThoughts(DiscussionMethod):
         artifact = state.get("tot_artifact", {})
         recommendation = artifact.get("recommendation") or {}
         stop_reason = artifact.get("stop_reason", "")
-        depth = artifact.get("depth", len(state.get("beam_history", [])))
-        beam_lines = "\n".join(
-            f"  {thought_label(e['id'])} (composite {e['composite']}, "
-            f"{e['scorer_count']} scorer(s)): {e['text']}"
-            for e in artifact.get("final_beam", [])) or "  (none)"
-        caveat_lines = "\n".join(
-            f"  - {c}" for c in artifact.get("caveats", [])) or "  (none)"
+        if not stop_reason:
+            # The exploration never finished: the propose phase aborted
+            # with zero thoughts, the user concluded mid-method, or the
+            # loop guard tripped — there is no outcome to synthesise
+            # and no narrative ("depth budget spent") may be invented.
+            return self._incomplete_conclusion_prompt(state)
         header = (
-            "The Tree of Thoughts exploration is complete "
-            f"({depth} prune pass(es), stop reason: "
-            f"{stop_reason or 'unknown'}).\n\n"
-            f"Final beam:\n{beam_lines}\n\n"
-            f"Beam trajectory:\n{format_beam_trajectory(state)}\n\n"
-            f"Deep-dives from the final pass:\n"
-            f"{format_expansions(state, max(depth - 1, 1))}\n\n"
-            f"Caveats:\n{caveat_lines}\n\n"
+            "The Tree of Thoughts exploration is complete.  All numbers "
+            "below were computed deterministically from the "
+            "participants' scores — do not alter them.\n\n"
+            f"{format_artifact_digest(state)}\n\n"
         )
         if stop_reason == STOP_CONVERGED and recommendation:
             outcome = (
@@ -133,3 +129,37 @@ class TreeOfThoughts(DiscussionMethod):
                 "iteration would settle the ranking."
             )
         return header + outcome
+
+    @staticmethod
+    def _incomplete_conclusion_prompt(state: dict) -> str:
+        """Honest conclusion instructions when no outcome was recorded."""
+        if not state.get("thoughts"):
+            return (
+                "The Tree of Thoughts session ended before any "
+                "candidate approaches were collected (the generation "
+                f"phase found nothing usable within "
+                f"{MAX_PROPOSE_ROUNDS} rounds).\n\n"
+                "Provide a brief, honest wrap-up:\n"
+                "1. **What happened** — State plainly that no "
+                "approaches were generated, so there is no ranking and "
+                "no recommendation\n"
+                "2. **Likely cause** — Whether the topic was too "
+                "narrow, ambiguous, or not an open problem\n"
+                "3. **Next steps** — How to rephrase the topic (e.g. "
+                "as a 'How might we…' question) for a fresh session.\n\n"
+                "Do NOT invent approaches, scores, or a recommendation."
+            )
+        return (
+            "The Tree of Thoughts exploration ended before completing "
+            "(no final prune outcome was recorded).\n\n"
+            "Provide a brief, honest wrap-up of what exists so far:\n"
+            "1. **Collected approaches** — Summarise the candidate "
+            "approaches that were proposed\n"
+            "2. **State of evaluation** — How far scoring/pruning got, "
+            "citing only numbers that actually appear in the "
+            "discussion\n"
+            "3. **Next steps** — What remained to be done and whether "
+            "re-running the method is worthwhile.\n\n"
+            "Do NOT invent a ranking, a convergence claim, or a "
+            "recommendation — the exploration did not finish."
+        )

@@ -40,6 +40,12 @@ propose → score → prune ──(continue)──→ expand
    `MAX_PROPOSE_ROUNDS` aborts the method (`generate_ideas.py`
    pattern) — every later phase needs candidates.
 
+   Anonymisation holds for the **whole method** (the NGT precedent:
+   every phase filters context through `anonymise_content`) — the
+   propose turns replay in later phases' context, so dropping the
+   filter after propose would leak authorship exactly when scoring
+   needs to be blind.
+
 2. **SCORE** (`score_thoughts.py`, participants, rounds=1) — every
    participant scores every *eligible* thought on the issue's three
    fixed dimensions — **feasibility, impact, risk** — each an integer
@@ -60,16 +66,23 @@ propose → score → prune ──(continue)──→ expand
    composite per scorer = `feasibility + impact + (SCORE_MIN +
    SCORE_MAX − risk)` (risk inverted), mean over scorers, thoughts
    nobody scored default to the all-midpoint composite with a caveat,
-   ties broken by thought id (deterministic).  Top `BEAM_WIDTH` (3)
-   survive.  The moderator takes one free-text presentational turn
+   ties broken by thought id (deterministic).  **Scored thoughts
+   always rank above unscored ones** — an invented default composite
+   must never beat real data into the beam (partial coverage is a
+   normal path, not an edge case).  Top `BEAM_WIDTH` (3) survive.  The moderator takes one free-text presentational turn
    (the `rank_ideas.py` / `analyse_sensitivity.py` pattern) explaining
    the cut.  Routing happens in this handler's `next_phase` (#22):
    - **converged** — the new **ordered** beam equals the previous
-     iteration's ordered beam → jump to `synthesise`.  (Ordered, not
-     set, equality: eligibility restricts scoring to the previous
-     beam, so the id *set* is necessarily unchanged after the first
-     prune — reordering is the only movement re-scoring can produce,
-     and a stable order means the deep-dives changed nothing);
+     iteration's ordered beam *and at least one score was recorded
+     during the pass* → jump to `synthesise`.  (Ordered, not set,
+     equality: eligibility restricts scoring to the previous beam, so
+     the id *set* is necessarily unchanged after the first prune —
+     reordering is the only movement re-scoring can produce, and a
+     stable order means the deep-dives changed nothing.  The
+     fresh-scores gate — `scores_by_pass`, stamped by
+     `record_thought_scores` — prevents declaring convergence when a
+     re-score pass recorded nothing at all: stability under zero new
+     data proves nothing);
    - **depth budget** — `MAX_TOT_DEPTH` (3) prune passes done → jump
      to `synthesise`;
    - **degenerate** — fewer than 2 surviving thoughts (nothing to

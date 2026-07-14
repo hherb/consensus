@@ -7,15 +7,18 @@ tie-breaks), eligibility narrowing after a prune, expansion recording,
 the outcome artifact, JSON extraction, and display formatting.
 """
 
+from consensus.methods.parsing import extract_json_payload
 from consensus.methods.phases._tot_analysis import (
     build_tot_artifact,
     composite_of,
     compute_beam,
+    format_artifact_digest,
     format_beam,
     format_beam_trajectory,
     format_expansions,
     format_ranking,
     format_thoughts,
+    latest_expansion_depth,
     thought_composites,
 )
 from consensus.methods.phases._tot_helpers import (
@@ -37,7 +40,6 @@ from consensus.methods.phases._tot_helpers import (
     THOUGHTS_TOOL_PARAMETERS,
     current_depth,
     eligible_thoughts,
-    extract_json_payload,
     record_expansions,
     record_thought_scores,
     record_thoughts,
@@ -256,6 +258,27 @@ class TestCompositeAndBeam:
             composite_of({d: DEFAULT_DIMENSION_SCORE for d in DIMENSIONS}))
         assert composites[2]["scorer_count"] == 0
 
+    def test_unscored_thought_never_outranks_scored(self):
+        state = _state_with_thoughts(2)
+        # T1 scored below the midpoint default (composite 7 < 9) —
+        # real data must still beat the invented default of T2.
+        record_thought_scores(state, _entity(),
+                              {"T1": _full_scores(2, 3, 4)})
+        beam_ids, ranking = compute_beam(state)
+        assert [r["id"] for r in ranking] == [1, 2]
+        assert beam_ids[0] == 1
+
+    def test_record_scores_stamps_current_pass(self):
+        state = _state_with_thoughts(2)
+        record_thought_scores(state, _entity(),
+                              {"T1": _full_scores(), "T2": _full_scores()})
+        assert state["scores_by_pass"] == {"0": 2}
+        state["beam_history"] = [
+            {"depth": 1, "beam_ids": [1, 2], "ranking": []}]
+        record_thought_scores(state, _entity(7, "Bob"),
+                              {"T1": _full_scores()})
+        assert state["scores_by_pass"] == {"0": 2, "1": 1}
+
     def test_beam_is_top_beam_width(self):
         state = _state_with_thoughts(BEAM_WIDTH + 2)
         scores = {thought_label(t["id"]):
@@ -415,6 +438,18 @@ class TestExtractJsonPayload:
     def test_no_payload_returns_none(self):
         assert extract_json_payload("no json here", "scores") is None
 
+    def test_inline_with_whitespace_after_brace(self):
+        content = ('{ "scores": {"T1": {"feasibility": 4, "impact": 5, '
+                   '"risk": 2}} }')
+        data = extract_json_payload(content, "scores")
+        assert data == {"T1": {"feasibility": 4, "impact": 5, "risk": 2}}
+
+    def test_inline_with_key_not_first(self):
+        content = ('{"reasoning": "because", "scores": '
+                   '{"T1": {"feasibility": 4, "impact": 5, "risk": 2}}}')
+        data = extract_json_payload(content, "scores")
+        assert data == {"T1": {"feasibility": 4, "impact": 5, "risk": 2}}
+
 
 class TestFormatting:
     def test_format_thoughts_lists_labels(self):
@@ -447,6 +482,29 @@ class TestFormatting:
             {"depth": 1, "beam_ids": [1],
              "ranking": [{"id": 1, "composite": 9.0, "scorer_count": 0}]}]
         assert "Pass 1" in format_beam_trajectory(state)
+
+    def test_latest_expansion_depth(self):
+        state = _state_with_thoughts(1)
+        assert latest_expansion_depth(state) is None
+        record_expansions(state, _entity(), [
+            {"thought_id": 1,
+             "refinement": "A refinement recorded at depth two"}],
+            depth=2)
+        assert latest_expansion_depth(state) == 2
+
+    def test_format_artifact_digest_quotes_numbers(self):
+        state = _state_with_thoughts(2)
+        record_thought_scores(state, _entity(),
+                              {"T1": _full_scores(5, 5, 1),
+                               "T2": _full_scores(2, 2, 4)})
+        beam_ids, ranking = compute_beam(state)
+        state["beam_history"] = [
+            {"depth": 1, "beam_ids": beam_ids, "ranking": ranking}]
+        state["tot_artifact"] = build_tot_artifact(state, STOP_CONVERGED)
+        digest = format_artifact_digest(state)
+        assert "T1" in digest and "15.0" in digest
+        assert "Pass 1" in digest
+        assert STOP_CONVERGED in digest
 
 
 class TestConstants:

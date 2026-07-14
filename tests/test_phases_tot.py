@@ -209,6 +209,15 @@ class TestScoreThoughtsHandler:
         disc = make_disc(current_phase="score", phase_round=2)
         assert ScoreThoughtsHandler().should_advance(disc) is True
 
+    def test_context_is_anonymised(self, ai_entity):
+        """Scoring must stay blind to authorship: the propose-phase
+        turns replay in context and would otherwise leak names."""
+        disc = make_disc(current_phase="score")
+        filtered = ScoreThoughtsHandler().filter_context_message(
+            "TestAI", "TestAI: 1. my idea", "assistant", disc,
+            current_entity_id=2)
+        assert "TestAI" not in filtered
+
 
 def _score_all(disc: Discussion, entity_id: int = 1,
                feasibility_by_id: dict[int, int] | None = None) -> None:
@@ -257,18 +266,33 @@ class TestPruneThoughtsHandler:
         assert history[0]["beam_ids"] == [1, 2, 3]
         assert disc.method_state["tot_artifact"] == {}
 
-    def test_identical_beam_converges_to_synthesise(self):
+    def test_identical_beam_with_fresh_scores_converges(self):
         disc = make_disc(current_phase="prune")
         _seed_thoughts(disc, 4)
         _score_all(disc, feasibility_by_id={1: 5, 2: 4, 3: 2, 4: 1})
         beam_ids, ranking = compute_beam(disc.method_state)
         disc.method_state["beam_history"] = [
             {"depth": 1, "beam_ids": beam_ids, "ranking": ranking}]
+        # A genuine re-score pass lands (same values → same order).
+        _score_all(disc, entity_id=2,
+                   feasibility_by_id={1: 5, 2: 4, 3: 2, 4: 1})
         assert PruneThoughtsHandler().next_phase(disc) == "synthesise"
         artifact = disc.method_state["tot_artifact"]
         assert artifact["stop_reason"] == STOP_CONVERGED
         assert artifact["converged"] is True
         assert len(disc.method_state["beam_history"]) == 2
+
+    def test_identical_beam_without_fresh_scores_keeps_looping(self):
+        disc = make_disc(current_phase="prune")
+        _seed_thoughts(disc, 4)
+        _score_all(disc, feasibility_by_id={1: 5, 2: 4, 3: 2, 4: 1})
+        beam_ids, ranking = compute_beam(disc.method_state)
+        disc.method_state["beam_history"] = [
+            {"depth": 1, "beam_ids": beam_ids, "ranking": ranking}]
+        # No score landed during the re-score pass (all extractions
+        # failed): stability under zero new data is not convergence.
+        assert PruneThoughtsHandler().next_phase(disc) == LINEAR_NEXT
+        assert disc.method_state["tot_artifact"] == {}
 
     def test_reordered_beam_is_not_converged(self):
         disc = make_disc(current_phase="prune")
@@ -303,11 +327,22 @@ class TestPruneThoughtsHandler:
         assert (disc.method_state["tot_artifact"]["stop_reason"]
                 == STOP_DEGENERATE)
 
-    def test_transition_message_mentions_prune(self):
+    def test_transition_message_embeds_ranking(self):
+        """A human moderator must see the computed ranking in the
+        transcript — the system prompt is only rendered for AI."""
         disc = make_disc(current_phase="prune")
         _seed_thoughts(disc, 2)
+        _score_all(disc, feasibility_by_id={1: 5, 2: 2})
         message = PruneThoughtsHandler().get_transition_message(disc)
-        assert "prune" in message.lower() or "beam" in message.lower()
+        assert "T1" in message and "T2" in message
+        assert "prune" in message.lower()
+
+    def test_context_is_anonymised(self, ai_entity):
+        disc = make_disc(current_phase="prune")
+        filtered = PruneThoughtsHandler().filter_context_message(
+            "TestAI", "TestAI: my scores", "assistant", disc,
+            current_entity_id=99)
+        assert "TestAI" not in filtered
 
 
 def _disc_with_beam(**state) -> Discussion:
@@ -371,6 +406,13 @@ class TestExpandThoughtsHandler:
         disc = _disc_with_beam(phase_round=2)
         assert ExpandThoughtsHandler().should_advance(disc) is True
 
+    def test_context_is_anonymised(self, ai_entity):
+        disc = _disc_with_beam()
+        filtered = ExpandThoughtsHandler().filter_context_message(
+            "TestAI", "TestAI: obstacles are…", "assistant", disc,
+            current_entity_id=2)
+        assert "TestAI" not in filtered
+
 
 def _artifact(stop_reason: str = STOP_CONVERGED) -> dict:
     return {
@@ -409,6 +451,22 @@ class TestSynthesiseThoughtsHandler:
         assert "12.5" in prompt
         assert "caveat about scoring coverage" in prompt
 
+    def test_transition_message_embeds_digest(self):
+        """A human moderator must see the outcome numbers in the
+        transcript, not only in the AI-only system prompt."""
+        disc = make_disc(current_phase="synthesise",
+                         tot_artifact=_artifact())
+        message = SynthesiseThoughtsHandler().get_transition_message(disc)
+        assert "plugin marketplace" in message
+        assert "12.5" in message
+
+    def test_context_is_anonymised(self, moderator):
+        disc = make_disc(current_phase="synthesise")
+        filtered = SynthesiseThoughtsHandler().filter_context_message(
+            "TestAI", "TestAI said things", "assistant", disc,
+            current_entity_id=99)
+        assert "TestAI" not in filtered
+
 
 class TestTreeOfThoughtsMethod:
     def test_registry_and_metadata(self):
@@ -444,6 +502,23 @@ class TestTreeOfThoughtsMethod:
         depth = method.get_conclusion_prompt(
             make_disc(tot_artifact=_artifact(STOP_DEPTH)))
         assert converged != depth
+
+    def test_conclusion_honest_after_propose_abort(self):
+        """No artifact + no thoughts → no invented depth-budget story."""
+        method = get_method("tree_of_thoughts")
+        prompt = method.get_conclusion_prompt(make_disc())
+        assert "depth budget" not in prompt.lower()
+        assert "no approaches were generated" in prompt.lower()
+        assert "Do NOT invent" in prompt
+
+    def test_conclusion_honest_when_ended_mid_method(self):
+        """Thoughts exist but no prune outcome was recorded."""
+        method = get_method("tree_of_thoughts")
+        disc = make_disc()
+        _seed_thoughts(disc, 2)
+        prompt = method.get_conclusion_prompt(disc)
+        assert "depth budget" not in prompt.lower()
+        assert "did not finish" in prompt
 
     def test_taxonomy_mentions_tree_of_thoughts(self):
         from consensus.methods.recommender import _TAXONOMY
