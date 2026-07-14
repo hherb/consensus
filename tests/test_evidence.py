@@ -123,3 +123,39 @@ class TestClassifyToolPath:
             {"type": "document", "document_id": 11,
              "detail": "", "tool": "doc_get_sections"}
         ]
+
+
+class TestClassifyInlinePath:
+    def test_bare_url_is_grounded(self):
+        res = classify_turn_grounding(
+            "See https://example.org/paper for details.", [])
+        assert res.grounded is True
+        assert res.sources == [
+            {"type": "web", "url": "https://example.org/paper"}
+        ]
+
+    def test_evidence_marker_doc_ref_is_grounded(self):
+        res = classify_turn_grounding(
+            "This holds [evidence: doc:5].", [])
+        assert res.grounded is True
+        assert res.sources == [{"type": "inline", "ref": "doc:5"}]
+
+    def test_evidence_marker_url_ref_is_grounded(self):
+        res = classify_turn_grounding(
+            "As shown [evidence: https://a.example/x].", [])
+        assert res.grounded is True
+        assert res.sources == [
+            {"type": "inline", "ref": "https://a.example/x"}
+        ]
+
+    def test_plain_text_is_not_grounded(self):
+        res = classify_turn_grounding("No citation here at all.", [])
+        assert res.grounded is False
+        assert res.sources == []
+
+    def test_tool_and_inline_sources_combine(self):
+        res = classify_turn_grounding(
+            "Per docs and https://a.example.",
+            [_tc("doc_ask", {"document_id": 1, "question": "q"})])
+        assert res.grounded is True
+        assert len(res.sources) == 2

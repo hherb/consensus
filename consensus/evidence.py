@@ -10,6 +10,7 @@ rejected.  Classification is computed in code, never by the model.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,16 @@ EVIDENCE_TOOL_NAMES: frozenset[str] = frozenset({
     "fetch_webpage",
 })
 
+#: Explicit inline citation marker, e.g. ``[evidence: doc:5]`` or
+#: ``[evidence: https://…]``.  Inserted by the frontend "Attach
+#: evidence" control; also typeable by hand.
+EVIDENCE_MARKER_RE = re.compile(r"\[evidence:\s*([^\]]+?)\s*\]",
+                                re.IGNORECASE)
+
+#: Bare http(s) URL.
+URL_RE = re.compile(r"https?://[^\s<>\]]+")
+
+
 
 @dataclass
 class GroundingResult:
@@ -36,6 +47,21 @@ class GroundingResult:
 
     grounded: bool
     sources: list[dict] = field(default_factory=list)
+
+
+def _inline_sources(content: str) -> list[dict]:
+    """Parse inline citations (explicit markers, then bare URLs)."""
+    sources: list[dict] = []
+    marked_spans: list[tuple[int, int]] = []
+    for m in EVIDENCE_MARKER_RE.finditer(content or ""):
+        sources.append({"type": "inline", "ref": m.group(1).strip()})
+        marked_spans.append(m.span())
+    for m in URL_RE.finditer(content or ""):
+        # Skip URLs already captured inside an [evidence: …] marker.
+        if any(s <= m.start() < e for s, e in marked_spans):
+            continue
+        sources.append({"type": "web", "url": m.group(0)})
+    return sources
 
 
 def _document_detail(name: str, args: dict) -> str:
@@ -103,4 +129,5 @@ def classify_turn_grounding(content: str,
             src = _source_from_tool_call(tc)
             if src is not None:
                 sources.append(src)
+    sources.extend(_inline_sources(content))
     return GroundingResult(grounded=bool(sources), sources=sources)
