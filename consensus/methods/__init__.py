@@ -25,6 +25,7 @@ from .triage import TriageMethod
 from .self_distillation import RecursiveSelfDistillation
 from .court_of_law import CourtOfLaw
 from .nominal_group import NominalGroupTechnique
+from .decision_matrix import WeightedDecisionMatrix
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ _METHODS: dict[str, type[DiscussionMethod]] = {
     "self_distillation": RecursiveSelfDistillation,
     "court_of_law": CourtOfLaw,
     "nominal_group": NominalGroupTechnique,
+    "decision_matrix": WeightedDecisionMatrix,
 }
 _INSTANCES: dict[str, DiscussionMethod] = {}
 _METHODS_METADATA: list[dict] | None = None
@@ -115,4 +117,5 @@ __all__ = [
     "RecursiveSelfDistillation",
     "CourtOfLaw",
     "NominalGroupTechnique",
+    "WeightedDecisionMatrix",
 ]

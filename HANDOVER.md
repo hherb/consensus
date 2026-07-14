@@ -1,7 +1,7 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-14 (session: #24 Nominal Group Technique, branch
-`claude/handover-instructions-3dd9e3`)._
+_Last updated: 2026-07-14 (session: #25 Weighted Decision Matrix, branch
+`claude/handover-instructions-377332`)._
 
 This file briefs the next session(s) on what was done, what is in flight,
 and what to do next. Update it whenever a session materially changes the
@@ -14,8 +14,54 @@ plan; delete sections that are finished and no longer instructive.
   (#30 Belief Diffusion abort), **PR #38** (#23 mechanism + first
   three conversions), and **PR #39** (#23 remaining conversions +
   hardening) are all **merged**.
-- **#24 Nominal Group Technique implemented** (this session, **PR #40**
+- **#25 Weighted Decision Matrix implemented** (this session, **PR #41**
   — merge it before building on this work).  Plan:
+  `docs/superpowers/plans/2026-07-14-weighted-decision-matrix.md`.
+  Method `decision_matrix` (`consensus/methods/decision_matrix.py`),
+  five phases from new handlers in `consensus/methods/phases/`
+  (`enumerate_options`, `weight_criteria`, `score_options`,
+  `analyse_sensitivity`, `decide`) over two shared helper modules —
+  `_mcda_helpers.py` (recording/validation) and `_mcda_analysis.py`
+  (aggregation/sensitivity/artifact/formatting; split to respect the
+  ~500-line file rule):
+  - Generalises the two handlers named in issue #25: `define_criteria`
+    → weighted criteria (weight votes averaged per participant, merge
+    by name similarity, resubmission replaces own vote), and
+    `evaluate_matrix` → option×criterion scoring (O/C labels, two-level
+    `additionalProperties` schema, partial coverage defaults missing
+    cells to the midpoint `DEFAULT_SCORE`).
+  - Four structured phases per the #23 pattern: `submit_options`,
+    `submit_weighted_criteria`, `submit_scores`, `submit_decision`
+    (its required `rationale` plays the `reasoning` role, like
+    `submit_claims`).  Sensitivity is a moderator-only presentational
+    phase — all numbers (weighted totals, divergence, one-at-a-time
+    sensitivity) are computed deterministically in `_mcda_analysis`,
+    never by the model.
+  - **The decision artifact** (`method_state["decision_artifact"]`) is
+    the issue's machine-readable output: ranked options with weighted
+    totals + per-criterion means, effective weights, per-participant
+    divergence, sensitivity report, recommendation, rationale, caveats.
+    Both the structured and free-text decide paths record it (the
+    fallback defaults the recommendation to the top-ranked option with
+    an explanatory caveat).
+  - Aborts: zero options after `MAX_OPTIONS_ROUNDS` or zero criteria
+    after `MAX_CRITERIA_ROUNDS` end the method early
+    (`generate_ideas.py` pattern); score/decide carry defensive
+    degenerate guards (`get_output_tool -> None`).
+  - Recommender: `_TAXONOMY` gained an MCDA line ("Decision-making by
+    scoring options against weighted criteria").
+  - Review follow-ups (same PR): `record_scores` drops unknown O/C
+    labels, so a mislabelled free-text matrix no longer counts its
+    author as a scorer with every cell defaulted (which inflated
+    divergence); the decision artifact gains an explicit caveat when
+    zero participants scored (the ranking is contentless);
+    `record_criteria` no longer reports a criterion twice when one
+    submission merges two similar names into it; score tables round
+    floats to the artifact's 2-dp precision.  Order-dependent
+    word-overlap merging (first-name-wins) is catalog-wide, not
+    MCDA-specific — tracked as **issue #42**.
+- **#24 Nominal Group Technique** (2026-07-14 session, **PR #40**,
+  merged).  Plan:
   `docs/superpowers/plans/2026-07-14-nominal-group-technique.md`.
   Method `nominal_group` (`consensus/methods/nominal_group.py`), five
   phases assembled from new handlers in `consensus/methods/phases/`
@@ -99,9 +145,6 @@ plan; delete sections that are finished and no longer instructive.
 ## Next steps, in order
 
 1. **New methods (highest value first):**
-   - **#25 Weighted decision matrix (MCDA)** — generalise
-     `define_criteria` + `evaluate_matrix` into a standalone decision
-     method with a structured, machine-readable final artifact.
    - **#27 Double Crux** — disagreement resolution by crux-finding;
      pairs with belief tracking.
    - **#26 Tree-of-Thoughts** — generate/score/prune/expand; the #22
@@ -112,7 +155,20 @@ plan; delete sections that are finished and no longer instructive.
      evidence phases must ground claims via the existing RAG/web tools.
    - **#29 same-model-panel warning** for Delphi/Belief Diffusion.
 
-3. **New known follow-ups (this session):**
+3. **New known follow-ups (#25 session, 2026-07-14):**
+   - **MCDA free-text weights only parse the `(weight: N)` suffix.**
+     `extract_weighted_criteria` recognises `1. Name (weight: 4)` /
+     `[weight = 4]`; a human writing weights in prose gets
+     `DEFAULT_WEIGHT` silently.  Fine for the AI path (structured tool
+     enforces weights); a UI hint for human participants would close
+     the gap.
+   - **No real-pipeline (`complete_turn`) flow test for the NGT/MCDA
+     methods yet** — handler-level and structured-conversion coverage
+     matches the NGT precedent, but neither method has a
+     `tests/test_turn_order_flow.py`-style end-to-end test driving the
+     moderator flow.  Worth adding once, covering both.
+
+4. **Known follow-ups (older sessions):**
    - **Blocked Triage switch still auto-concludes the discussion.** When
      `switch_discussion_method` rejects a handoff (non-tool-capable
      model), Triage currently falls through to `method_complete` and the
