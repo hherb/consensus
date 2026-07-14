@@ -10,7 +10,7 @@ Consider what you want from the discussion:
 |------|-------------------|
 | Explore a topic openly | Open Discussion |
 | Generate and prioritise new ideas or options | Nominal Group Technique |
-| Make a decision between options | Adversarial Collaboration, Voting |
+| Make a decision between options | Weighted Decision Matrix (MCDA), Adversarial Collaboration, Voting |
 | Forecast or estimate | Delphi Method, Belief State Diffusion |
 | Identify risks and blind spots | Premortem Analysis, Red Team / Blue Team |
 | Test whether reasoning is sound | Counterfactual Stress Testing, Recursive Self-Distillation |
@@ -216,6 +216,21 @@ Structured brainstorming — the catalog's generative method. Participants first
 5. **Rank** — The moderator presents the ranked shortlist
 
 **Best for:** Open problem-solving, generating options, prioritising features or interventions, any question of the form "What should we do?" rather than "Is this right?"
+
+---
+
+### Weighted Decision Matrix (MCDA)
+
+Multi-criteria decision analysis — the catalog's structured decision method. Participants enumerate the alternatives, jointly define the decision criteria with importance weights (1–5, averaged across participants), and score every option against every criterion (1–5). The weighted totals produce a ranked result, a deterministic sensitivity analysis shows whether the winner survives weight changes, and the moderator records a structured, machine-readable decision artifact (recommendation, rationale, ranking, divergence, caveats) that the storyboard or a follow-up discussion can consume.
+
+**Phases:**
+1. **Options** — Enumerate the decision alternatives
+2. **Criteria & Weights** — Jointly define weighted decision criteria (locked before scoring)
+3. **Score** — Every participant scores every option against every criterion
+4. **Sensitivity** — The moderator presents the computed robustness analysis
+5. **Decide** — The moderator records the structured decision
+
+**Best for:** Making a concrete decision between identifiable options — "Should we do A, B, or C?" — where the trade-offs deserve explicit criteria rather than a straight vote.
 
 ---
 

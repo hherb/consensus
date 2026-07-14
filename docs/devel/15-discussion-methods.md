@@ -38,8 +38,9 @@ consensus/methods/
     recursive_decomposition.py — RecursiveDecomposition
     triage.py            — TriageMethod (Guided Triage meta-method)
     nominal_group.py     — NominalGroupTechnique (structured brainstorming, NGT)
+    decision_matrix.py   — WeightedDecisionMatrix (multi-criteria decision analysis)
     recommender.py       — MethodRecommender (LLM-based method classification)
-    phases/              — 53 PhaseHandler implementations + 8 helper modules
+    phases/              — 58 PhaseHandler implementations + 10 helper modules
         __init__.py
         _belief_helpers.py
         _delphi_helpers.py
@@ -60,6 +61,9 @@ consensus/methods/
         _ngt_helpers.py
         generate_ideas.py, cluster_ideas.py, clarify_ideas.py
         allocate_points.py, rank_ideas.py
+        _mcda_helpers.py, _mcda_analysis.py
+        enumerate_options.py, weight_criteria.py, score_options.py
+        analyse_sensitivity.py, decide.py
 ```
 
 ---
@@ -267,6 +271,7 @@ phase in a custom analytical method.
 | Recursive Decomposition | 4 | Decompose → Analyze Sub-questions → Integrate → Recompose |
 | Guided Triage | 3 | Intake → Recommend → Confirm |
 | Nominal Group Technique | 5 | Generate → Cluster → Clarify → Allocate → Rank |
+| Weighted Decision Matrix (MCDA) | 5 | Options → Criteria & Weights → Score → Sensitivity → Decide |
 
 ---
 
