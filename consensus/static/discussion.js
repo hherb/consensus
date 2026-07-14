@@ -257,6 +257,9 @@ function updateInputArea() {
         else hide(consultBtn);
     }
 
+    const evidenceBtn = $('#attach-evidence-btn');
+    if (evidenceBtn) hide(evidenceBtn);
+
     if (state.status === 'paused') {
         turnInfo.textContent = 'Discussion is paused. Manage participants, then click Resume.';
         input.disabled = false; sendBtn.disabled = false;
@@ -286,6 +289,7 @@ function updateInputArea() {
         turnInfo.textContent = `${speaker.name}'s turn to speak`;
         input.disabled = false; sendBtn.disabled = false;
         input.placeholder = `Type ${speaker.name}'s message...`;
+        if (evidenceBtn) show(evidenceBtn);
         input.focus();
     }
 }

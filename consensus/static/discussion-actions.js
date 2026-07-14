@@ -92,6 +92,24 @@ export async function onSendMessage() {
 }
 
 /**
+ * Insert an `[evidence: ]` marker at the caret in the message input, so a
+ * human participant can cite grounding evidence for a `track_evidence`
+ * phase. Caret is placed just before the closing bracket so the user can
+ * type the citation immediately.
+ */
+export function insertEvidenceMarker() {
+    const input = $('#message-input');
+    if (!input) return;
+    const marker = '[evidence: ]';
+    const pos = input.selectionStart ?? input.value.length;
+    input.value = input.value.slice(0, pos) + marker + input.value.slice(pos);
+    // Place caret just before the closing bracket.
+    const caret = pos + marker.length - 1;
+    input.focus();
+    input.setSelectionRange(caret, caret);
+}
+
+/**
  * Complete the current turn — AI moderator auto-summarizes, human moderator gets prompted.
  * @returns {Promise<boolean>} True if turn is fully completed, false if waiting for input
  */

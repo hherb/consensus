@@ -12,7 +12,7 @@ import { renderProfiles, openEntityDialog, confirmEntity, editProfile, removePro
 import { renderPrompts, openPromptDialog, confirmPrompt, editPrompt, removePrompt } from './prompts.js';
 import { renderHistory, deleteSelectedDiscussions, loadDiscussion } from './history.js';
 import { renderSetupTab, renderAvailableEntities, updateStartButton, addToDiscussion, removeFromDiscussion, setModerator, setDevilsAdvocate, onMethodChange, onDefaultContextChange } from './setup.js';
-import { onStartDiscussion, onSendMessage, onConfirmModeratorInput, onReassign, doReassign, onMediate, onConclude, onPause, onResume, onReopen, onBack, reopenFromHistory, onCostLimitContinue, onCostLimitConclude } from './discussion-actions.js';
+import { onStartDiscussion, onSendMessage, onConfirmModeratorInput, onReassign, doReassign, onMediate, onConclude, onPause, onResume, onReopen, onBack, reopenFromHistory, onCostLimitContinue, onCostLimitConclude, insertEvidenceMarker } from './discussion-actions.js';
 import { exportAsJson, exportAsHtml, exportAsPdf, toggleExportMenu, closeExportMenu, toggleHistoryExportMenu, closeAllHistoryMenus, exportHistoryDiscussion } from './export.js';
 import { openMcpServerDialog, confirmMcpServer, toggleMcpServer, deleteMcpServer, testMcpConnection, initMcpTransportToggle } from './mcp.js';
 import { showConsultExpertDialog, onToolProgress } from './experts.js';
@@ -198,6 +198,7 @@ function init() {
             case 'edit-mcp': { const srv = (state.mcp_servers || []).find(s => s.id === id); if (srv) openMcpServerDialog(srv); break; }
             case 'delete-mcp': deleteMcpServer(id); break;
             case 'consult-expert-btn': showConsultExpertDialog(); break;
+            case 'attach-evidence-btn': insertEvidenceMarker(); break;
         }
     });
 
