@@ -15,8 +15,8 @@ plan; delete sections that are finished and no longer instructive.
   three conversions), **PR #39** (#23 remaining conversions +
   hardening), **PR #40** (#24 NGT), and **PR #41** (#25 MCDA) are all
   **merged**.
-- **#27 Double Crux implemented** (this session — merge its PR before
-  building on this work).  Plan:
+- **#27 Double Crux implemented** (this session, **PR #43** — merge it
+  before building on this work).  Plan:
   `docs/superpowers/plans/2026-07-14-double-crux.md`.
   Method `double_crux` (`consensus/methods/double_crux.py`), five
   phases: the reused `StatePositionsHandler` (now parametrized with
