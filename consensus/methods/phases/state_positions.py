@@ -1,7 +1,9 @@
-"""State Positions phase handler for Adversarial Collaboration.
+"""State Positions phase handler for position-first methods.
 
 Each participant states their position on the question and their
-strongest reasons for holding it.
+strongest reasons for holding it.  Originally written for Adversarial
+Collaboration; the ``context_label`` constructor parameter makes it
+reusable by other disagreement-resolution methods (Double Crux, #27).
 """
 
 from __future__ import annotations
@@ -15,8 +17,23 @@ if TYPE_CHECKING:
     from ...models import Discussion, Entity
 
 
+#: Default context label — preserves the original Adversarial
+#: Collaboration wording for existing call sites.
+DEFAULT_CONTEXT_LABEL = "an Adversarial Collaboration"
+
+
 class StatePositionsHandler(PhaseHandler):
     """Phase 1: Each participant states their position."""
+
+    def __init__(self, context_label: str = DEFAULT_CONTEXT_LABEL) -> None:
+        """Store the method context named in the system prompt.
+
+        Args:
+            context_label: Phrase completing "participating in …",
+                e.g. "an Adversarial Collaboration" (default) or
+                "a Double Crux session".
+        """
+        self._context_label = context_label
 
     phase = Phase(
         name="positions",
@@ -42,8 +59,8 @@ class StatePositionsHandler(PhaseHandler):
     def get_system_prompt(self, entity: Entity,
                           discussion: Discussion) -> str:
         base = (
-            f"You are {entity.name}, participating in an Adversarial "
-            f"Collaboration.\n"
+            f"You are {entity.name}, participating in "
+            f"{self._context_label}.\n"
             f"Topic: {discussion.topic}\n\n"
         )
         return base + (

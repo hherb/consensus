@@ -1,7 +1,7 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-14 (session: #25 Weighted Decision Matrix, branch
-`claude/handover-instructions-377332`)._
+_Last updated: 2026-07-14 (session: #27 Double Crux, branch
+`claude/handover-instructions-86694a`)._
 
 This file briefs the next session(s) on what was done, what is in flight,
 and what to do next. Update it whenever a session materially changes the
@@ -12,10 +12,58 @@ plan; delete sections that are finished and no longer instructive.
 - **PR #18** (six defect classes, issues #12–#17), **PR #31**
   (#19/#20/#21), **PR #35** (#22 phase-machine loop support), **PR #36**
   (#30 Belief Diffusion abort), **PR #38** (#23 mechanism + first
-  three conversions), and **PR #39** (#23 remaining conversions +
-  hardening) are all **merged**.
-- **#25 Weighted Decision Matrix implemented** (this session, **PR #41**
-  — merge it before building on this work).  Plan:
+  three conversions), **PR #39** (#23 remaining conversions +
+  hardening), **PR #40** (#24 NGT), and **PR #41** (#25 MCDA) are all
+  **merged**.
+- **#27 Double Crux implemented** (this session, **PR #43** — merge it
+  before building on this work).  Plan:
+  `docs/superpowers/plans/2026-07-14-double-crux.md`.
+  Method `double_crux` (`consensus/methods/double_crux.py`), five
+  phases: the reused `StatePositionsHandler` (now parametrized with
+  `context_label` — default preserves the Adversarial Collaboration
+  wording) plus four new handlers in `consensus/methods/phases/`
+  (`hunt_cruxes`, `identify_crux`, `test_crux`, `resolve_crux`) over a
+  shared `_crux_helpers.py`:
+  - Three structured phases per the #23 pattern: `submit_cruxes`
+    (participants name the claims that would change their mind, each
+    with a 0–1 belief probability), `submit_crux_selection`
+    (moderator-only verdict: `factual` / `values` / `none`), and
+    `submit_resolution` (final stance + position + `crux_belief`,
+    required iff a factual crux was tested).  Positions and crux
+    testing are free-text phases.
+  - **Verdict routing uses the #22 `next_phase` mechanism:** `factual`
+    → linear to `test_crux`; `values` → jump to `resolve` (nothing
+    factual to test); `none` → loop back to `hunt_cruxes` (verdict and
+    attempt counter reset, `crux_search_rounds` incremented) until
+    `MAX_CRUX_SEARCH_ROUNDS`, then finalised as `none` and `resolve`
+    still runs — the method reports a clean disagreement map instead
+    of a resolution.  Worst-case transitions stay well under the loop
+    guard.
+  - **Belief shift is the success metric** (per the issue): initial
+    beliefs are snapshotted from the selected cruxes at identification
+    time, final beliefs restated at resolution, and shifts computed
+    deterministically (never by the model) into
+    `method_state["crux_map"]` — the machine-readable outcome artifact
+    (verdict, shared crux, positions, cruxes, resolutions,
+    belief_shifts, caveats), mirroring MCDA's `decision_artifact`.
+  - Aborts/give-ups: zero cruxes after `MAX_HUNT_ROUNDS` aborts the
+    method (`generate_ideas.py` pattern); `MAX_IDENTIFY_ATTEMPTS`
+    gates the moderator fallback path; `MAX_RESOLVE_ROUNDS` gates
+    resolution.  Same-entity cruxes are word-overlap deduped but
+    cross-entity near-duplicates are kept — overlap between parties is
+    exactly the shared-crux signal.
+  - Recommender `_TAXONOMY` gained: "Resolving disagreements by
+    finding the pivotal factual claim beneath them → Double Crux".
+  - Review follow-ups applied in-PR: resolve now waits for *all*
+    participants' resolutions (the `allocate_points.py`
+    `entities_with_resolutions` pattern, round-capped) instead of
+    advancing on the first; `MAX_CRUXES_PER_ENTITY` bounds the
+    free-text path too (`record_cruxes` truncates per turn); the
+    identify prompt tells the moderator to keep the shared claim in
+    the cited cruxes' polarity so belief carry-over stays meaningful.
+  - Tests: `test_crux_helpers.py`, `test_phases_double_crux.py`,
+    `test_double_crux_structured.py` (145 tests; suite total 2126).
+- **#25 Weighted Decision Matrix implemented** (PR #41, merged).  Plan:
   `docs/superpowers/plans/2026-07-14-weighted-decision-matrix.md`.
   Method `decision_matrix` (`consensus/methods/decision_matrix.py`),
   five phases from new handlers in `consensus/methods/phases/`
@@ -145,30 +193,54 @@ plan; delete sections that are finished and no longer instructive.
 ## Next steps, in order
 
 1. **New methods (highest value first):**
-   - **#27 Double Crux** — disagreement resolution by crux-finding;
-     pairs with belief tracking.
    - **#26 Tree-of-Thoughts** — generate/score/prune/expand; the #22
      `next_phase` hook it needed now exists.
 
 2. **Cross-cutting quality:**
    - **#28 evidence-gated phases** — opt-in `require_citations` so
      evidence phases must ground claims via the existing RAG/web tools.
+     The Double Crux `test_crux` phase is the flagship consumer (its
+     prompt already directs participants at research/document tools).
    - **#29 same-model-panel warning** for Delphi/Belief Diffusion.
 
-3. **New known follow-ups (#25 session, 2026-07-14):**
+3. **New known follow-ups (#27 session, 2026-07-14):**
+   - **Double Crux belief shift is only measured for crux authors,
+     and initial/final beliefs can refer to different phrasings.**
+     `initial_beliefs` is snapshotted from the cruxes the moderator
+     selects, so a participant whose own crux wasn't selected has no
+     "initial" end (map shows `? → final`, no shift).  Worse, the
+     initial belief is stated on the author's *own* phrasing while
+     the final `crux_belief` is stated on the moderator's synthesized
+     claim — if the moderator flips polarity or reframes scope, the
+     shift compares different propositions (the identify prompt now
+     instructs the moderator to keep the cited cruxes' polarity, but
+     a prompt is not a guarantee).  An optional pre-testing belief
+     poll on the shared claim itself (one structured micro-turn after
+     identification) would fix both — evaluate whether the extra turn
+     is worth it.
+   - **The identify loop re-runs positions' context, not the phase.**
+     Loop-backs re-enter `hunt_cruxes` only; if hunting keeps failing
+     because positions were vague, there is no path back to
+     `positions`.  Acceptable for now (the hunt prompt asks for
+     convergence), noting it in case real transcripts show otherwise.
+
+4. **Known follow-ups (#25 session, 2026-07-14):**
    - **MCDA free-text weights only parse the `(weight: N)` suffix.**
      `extract_weighted_criteria` recognises `1. Name (weight: 4)` /
      `[weight = 4]`; a human writing weights in prose gets
      `DEFAULT_WEIGHT` silently.  Fine for the AI path (structured tool
      enforces weights); a UI hint for human participants would close
      the gap.
-   - **No real-pipeline (`complete_turn`) flow test for the NGT/MCDA
-     methods yet** — handler-level and structured-conversion coverage
-     matches the NGT precedent, but neither method has a
-     `tests/test_turn_order_flow.py`-style end-to-end test driving the
-     moderator flow.  Worth adding once, covering both.
+   - **No real-pipeline (`complete_turn`) flow test for the
+     NGT/MCDA/Double Crux methods yet** — handler-level and
+     structured-conversion coverage matches the NGT precedent, but
+     none of the three has a `tests/test_turn_order_flow.py`-style
+     end-to-end test driving the moderator flow.  Worth adding once,
+     covering all three (Double Crux would also exercise the identify
+     loop through the real `advance_phase` path — only
+     `test_phase_machine_loops.py` covers loops end-to-end today).
 
-4. **Known follow-ups (older sessions):**
+5. **Known follow-ups (older sessions):**
    - **Blocked Triage switch still auto-concludes the discussion.** When
      `switch_discussion_method` rejects a handoff (non-tool-capable
      model), Triage currently falls through to `method_complete` and the

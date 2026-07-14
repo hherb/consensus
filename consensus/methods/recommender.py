@@ -85,6 +85,7 @@ Problem-type taxonomy — method strengths:
 - Testing claim robustness / structural importance → Counterfactual Stress Testing
 - Assumption examination / foundation checking → Key Assumptions Check
 - Resolving disagreements / principled comparison → Adversarial Collaboration
+- Resolving disagreements by finding the pivotal factual claim beneath them → Double Crux
 - Stress-testing positions / adversarial analysis → Red Team / Blue Team
 - Complex multi-faceted questions / decomposition → Recursive Decomposition
 - Decision-making with formal group consensus → Participant Voting

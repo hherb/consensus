@@ -11,6 +11,7 @@ Consider what you want from the discussion:
 | Explore a topic openly | Open Discussion |
 | Generate and prioritise new ideas or options | Nominal Group Technique |
 | Make a decision between options | Weighted Decision Matrix (MCDA), Adversarial Collaboration, Voting |
+| Resolve a genuine disagreement | Double Crux, Adversarial Collaboration |
 | Forecast or estimate | Delphi Method, Belief State Diffusion |
 | Identify risks and blind spots | Premortem Analysis, Red Team / Blue Team |
 | Test whether reasoning is sound | Counterfactual Stress Testing, Recursive Self-Distillation |
@@ -231,6 +232,21 @@ Multi-criteria decision analysis — the catalog's structured decision method. P
 5. **Decide** — The moderator records the structured decision
 
 **Best for:** Making a concrete decision between identifiable options — "Should we do A, B, or C?" — where the trade-offs deserve explicit criteria rather than a straight vote.
+
+---
+
+### Double Crux
+
+Disagreement resolution by crux-finding. Where adjudication formats (Court of Law, Red Team) sharpen positions, Double Crux searches for the underlying belief that actually drives the disagreement: each party names the factual claims that, if they were wrong about them, would change their mind (with a probability attached), the moderator identifies a shared crux — a claim multiple positions pivot on — and the discussion then focuses evidence on that crux alone. If no shared crux emerges, hunting repeats (up to a bounded number of rounds); if the disagreement turns out to rest on values rather than facts, that is reported as the finding. Each party finally restates their position and their probability on the crux, so belief shift is measured, and a machine-readable *crux map* records the outcome.
+
+**Phases:**
+1. **Positions** — Each party states their position and strongest reasons
+2. **Crux Hunting** — "What claim, if you were wrong about it, would change your mind?"
+3. **Crux Identification** — The moderator finds the shared crux (or loops back for more hunting)
+4. **Crux Testing** — Evidence and reasoning focused on the crux alone (skipped for values differences)
+5. **Resolution** — Final positions and belief restatement
+
+**Best for:** Genuine two-sided disagreements where debate would only entrench positions — the outcome is either a resolution or a clean map: "the disagreement reduces to X" or "this is a values difference, not a factual one".
 
 ---
 
