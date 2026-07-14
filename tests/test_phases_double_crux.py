@@ -17,6 +17,8 @@ from consensus.methods.phases._crux_helpers import (
 )
 from consensus.methods.phases.hunt_cruxes import HuntCruxesHandler
 from consensus.methods.phases.identify_crux import IdentifyCruxHandler
+from consensus.methods.phases.resolve_crux import ResolveCruxHandler
+from consensus.methods.phases.test_crux import TestCruxHandler
 from consensus.methods.phases.state_positions import StatePositionsHandler
 from consensus.models import Discussion, Entity, EntityType
 
@@ -269,3 +271,128 @@ class TestIdentifyCruxRouting:
         handler = IdentifyCruxHandler()
         assert handler.next_phase(disc) == "hunt_cruxes"
         assert disc.method_state["identify_attempts"] == 0  # fresh visit
+
+
+def _factual_discussion(phase: str = "test_crux", **state) -> Discussion:
+    disc = _hunted_discussion(**state)
+    disc.method_state["current_phase"] = phase
+    disc.method_state["crux_verdict"] = VERDICT_FACTUAL
+    disc.method_state["shared_crux"] = {
+        "claim": CLAIM_A, "description": "", "source_crux_ids": [1],
+        "initial_beliefs": {"Alice": 0.9},
+    }
+    return disc
+
+
+class TestTestCruxHandler:
+    def test_free_text_phase(self):
+        handler = TestCruxHandler()
+        assert handler.requires_structured_output is False
+        assert handler.get_output_tool(
+            _entity(), _factual_discussion()) is None
+        assert handler.phase.rounds > 0
+
+    def test_prompt_focuses_on_the_crux(self):
+        disc = _factual_discussion()
+        system = TestCruxHandler().get_system_prompt(_entity(), disc)
+        assert CLAIM_A in system
+        assert "crux" in system.lower()
+
+    def test_turn_prompt_mentions_evidence(self):
+        disc = _factual_discussion()
+        assert "evidence" in TestCruxHandler().get_turn_prompt(
+            _entity(), disc).lower()
+
+
+class TestResolveCruxPrompts:
+    def test_factual_prompt_requires_belief(self):
+        disc = _factual_discussion(phase="resolve")
+        handler = ResolveCruxHandler()
+        system = handler.get_system_prompt(_entity(), disc)
+        assert "submit_resolution" in system
+        assert CLAIM_A in system
+        assert "probability" in system.lower()
+
+    def test_values_prompt_mentions_the_difference(self):
+        disc = _crux_discussion(
+            phase="resolve", crux_verdict=VERDICT_VALUES,
+            shared_crux={"claim": "", "description": "Autonomy over output",
+                         "source_crux_ids": [], "initial_beliefs": {}})
+        system = ResolveCruxHandler().get_system_prompt(_entity(), disc)
+        assert "Autonomy over output" in system
+
+    def test_none_prompt_asks_for_the_map(self):
+        disc = _crux_discussion(phase="resolve", crux_verdict=VERDICT_NONE)
+        system = ResolveCruxHandler().get_system_prompt(_entity(), disc)
+        assert "reduces" in system.lower() or "map" in system.lower()
+
+
+class TestResolveCruxProcessing:
+    def _payload(self) -> dict:
+        return {"stance": "updated",
+                "position": "Hybrid with quarterly on-sites",
+                "crux_belief": 0.55, "reasoning": "The trial data moved me."}
+
+    def test_validate_requires_belief_iff_factual(self):
+        handler = ResolveCruxHandler()
+        payload = self._payload()
+        del payload["crux_belief"]
+        assert handler.validate_output(
+            payload, _entity(), _factual_discussion(phase="resolve")) != ""
+        disc_values = _crux_discussion(phase="resolve",
+                                       crux_verdict=VERDICT_VALUES)
+        assert handler.validate_output(payload, _entity(), disc_values) == ""
+
+    def test_structured_records_resolution(self):
+        handler = ResolveCruxHandler()
+        disc = _factual_discussion(phase="resolve")
+        result = handler.process_structured_response(
+            self._payload(), _entity(), disc)
+        assert disc.method_state["resolutions"][0]["crux_belief"] == 0.55
+        assert "Hybrid with quarterly on-sites" in result.display_content
+
+    def test_free_text_json_records_resolution(self):
+        handler = ResolveCruxHandler()
+        disc = _factual_discussion(phase="resolve")
+        content = ('```json\n{"stance": "unchanged", "position": '
+                   '"Remote-first remains right", "reasoning": "unmoved"}'
+                   "\n```")
+        handler.process_response(content, _entity(), disc)
+        assert disc.method_state["resolutions"][0]["stance"] == "unchanged"
+
+    def test_free_text_plain_records_nothing(self):
+        handler = ResolveCruxHandler()
+        disc = _factual_discussion(phase="resolve")
+        handler.process_response("I feel the same.", _entity(), disc)
+        assert disc.method_state["resolutions"] == []
+
+
+class TestResolveCruxAdvancement:
+    def test_stays_without_resolutions(self):
+        disc = _factual_discussion(phase="resolve", phase_round=2)
+        assert ResolveCruxHandler().should_advance(disc) is False
+
+    def test_advances_with_resolutions(self):
+        handler = ResolveCruxHandler()
+        disc = _factual_discussion(phase="resolve", phase_round=2)
+        handler.process_structured_response(
+            {"stance": "unchanged", "position": "Remote-first remains",
+             "crux_belief": 0.8, "reasoning": "r"}, _entity(), disc)
+        assert handler.should_advance(disc) is True
+
+    def test_gives_up_after_cap(self):
+        from consensus.methods.phases._crux_helpers import MAX_RESOLVE_ROUNDS
+        disc = _factual_discussion(phase="resolve",
+                                   phase_round=MAX_RESOLVE_ROUNDS + 1)
+        assert ResolveCruxHandler().should_advance(disc) is True
+
+    def test_next_phase_builds_crux_map(self):
+        handler = ResolveCruxHandler()
+        disc = _factual_discussion(phase="resolve", phase_round=2)
+        handler.process_structured_response(
+            {"stance": "updated", "position": "Hybrid works best",
+             "crux_belief": 0.55, "reasoning": "r"}, _entity(), disc)
+        assert handler.next_phase(disc) == LINEAR_NEXT
+        crux_map = disc.method_state["crux_map"]
+        assert crux_map["verdict"] == VERDICT_FACTUAL
+        assert crux_map["belief_shifts"]["Alice"]["shift"] == -0.35
