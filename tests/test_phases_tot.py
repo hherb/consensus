@@ -294,6 +294,24 @@ class TestPruneThoughtsHandler:
         assert PruneThoughtsHandler().next_phase(disc) == LINEAR_NEXT
         assert disc.method_state["tot_artifact"] == {}
 
+    def test_partial_fresh_coverage_keeps_looping(self):
+        """One re-scored survivor is not enough — convergence needs
+        every beam thought freshly re-examined during the pass, or
+        stale scores from earlier passes decide the outcome."""
+        disc = make_disc(current_phase="prune")
+        _seed_thoughts(disc, 4)
+        _score_all(disc, feasibility_by_id={1: 5, 2: 4, 3: 2, 4: 1})
+        beam_ids, ranking = compute_beam(disc.method_state)
+        disc.method_state["beam_history"] = [
+            {"depth": 1, "beam_ids": beam_ids, "ranking": ranking}]
+        # Only T1 gets a fresh score (same value → same order).
+        record_thought_scores(
+            disc.method_state,
+            Entity(name="Scorer", entity_type=EntityType.AI, id=2),
+            {"T1": {"feasibility": 5, "impact": 3, "risk": 3}})
+        assert PruneThoughtsHandler().next_phase(disc) == LINEAR_NEXT
+        assert disc.method_state["tot_artifact"] == {}
+
     def test_reordered_beam_is_not_converged(self):
         disc = make_disc(current_phase="prune")
         _seed_thoughts(disc, 4)

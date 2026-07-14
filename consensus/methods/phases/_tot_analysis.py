@@ -70,7 +70,9 @@ def compute_beam(state: dict) -> tuple[list[int], list[dict]]:
     scorer_count) and the top ``BEAM_WIDTH`` ids.  Sort order: scored
     thoughts always rank above unscored ones (an invented default
     composite must never beat real data into the beam), then composite
-    descending, then id ascending as the deterministic tie-break.
+    descending, then id ascending as the deterministic tie-break —
+    on equal composites the earlier-proposed thought wins, a mild,
+    known bias toward earlier proposers accepted for reproducibility.
     """
     composites = thought_composites(state)
     ranking = [{"id": tid, **stats}

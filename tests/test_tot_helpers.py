@@ -139,6 +139,15 @@ class TestRecordThoughts:
         assert record_thoughts(state, _entity(), ["tiny"]) == []
         assert state["thoughts"] == []
 
+    def test_preserves_ellipsis_strips_single_trailing_period(self):
+        state: dict = {}
+        accepted = record_thoughts(state, _entity(), [
+            "Scale gradually through partner networks, pilots, etc...",
+            "Ship a hosted SaaS version with usage billing.",
+        ])
+        assert accepted[0]["text"].endswith("etc...")
+        assert accepted[1]["text"].endswith("usage billing")
+
 
 class TestValidateScoresPayload:
     def test_valid_payload_passes(self):
@@ -268,16 +277,21 @@ class TestCompositeAndBeam:
         assert [r["id"] for r in ranking] == [1, 2]
         assert beam_ids[0] == 1
 
-    def test_record_scores_stamps_current_pass(self):
+    def test_record_scores_stamps_fresh_labels_per_pass(self):
         state = _state_with_thoughts(2)
         record_thought_scores(state, _entity(),
                               {"T1": _full_scores(), "T2": _full_scores()})
-        assert state["scores_by_pass"] == {"0": 2}
+        assert state["scores_by_pass"] == {"0": ["T1", "T2"]}
         state["beam_history"] = [
             {"depth": 1, "beam_ids": [1, 2], "ranking": []}]
         record_thought_scores(state, _entity(7, "Bob"),
                               {"T1": _full_scores()})
-        assert state["scores_by_pass"] == {"0": 2, "1": 1}
+        assert state["scores_by_pass"] == {"0": ["T1", "T2"],
+                                           "1": ["T1"]}
+        # A second scorer covering the same label adds no duplicate.
+        record_thought_scores(state, _entity(8, "Cara"),
+                              {"T1": _full_scores()})
+        assert state["scores_by_pass"]["1"] == ["T1"]
 
     def test_beam_is_top_beam_width(self):
         state = _state_with_thoughts(BEAM_WIDTH + 2)
@@ -337,6 +351,16 @@ class TestValidateExpansionsPayload:
              "reasoning": "r"}, {1, 2})
         assert "obstacles" in error
 
+    def test_duplicate_thought_ids_rejected(self):
+        error = validate_expansions_payload(
+            {"expansions": [
+                {"thought_id": 1,
+                 "refinement": "A long enough refinement text here"},
+                {"thought_id": 1,
+                 "refinement": "Another long enough refinement text"}],
+             "reasoning": "r"}, {1, 2})
+        assert "duplicate" in error.lower() and "1" in error
+
     def test_blank_reasoning_rejected(self):
         error = validate_expansions_payload(
             {"expansions": [
@@ -358,6 +382,19 @@ class TestRecordExpansions:
         assert exp["depth"] == 2 and exp["thought_id"] == 1
         assert exp["entity_name"] == "Cara"
         assert exp["obstacles"] == ["Partner recruitment", "42"]
+
+    def test_duplicate_ids_within_call_keep_first_accepted(self):
+        state = _state_with_thoughts(2)
+        accepted = record_expansions(state, _entity(), [
+            {"thought_id": 1, "refinement": "meh"},  # junk, skipped
+            {"thought_id": 1,
+             "refinement": "Pilot with three design partners first"},
+            {"thought_id": 1,
+             "refinement": "A second bite at the same thought here"},
+        ], depth=1)
+        assert accepted == 1
+        assert len(state["expansions"]) == 1
+        assert state["expansions"][0]["refinement"].startswith("Pilot")
 
     def test_skips_unknown_ids_and_short_refinements(self):
         state = _state_with_thoughts(1)
@@ -449,6 +486,18 @@ class TestExtractJsonPayload:
                    '{"T1": {"feasibility": 4, "impact": 5, "risk": 2}}}')
         data = extract_json_payload(content, "scores")
         assert data == {"T1": {"feasibility": 4, "impact": 5, "risk": 2}}
+
+    def test_closed_objects_before_key_are_not_candidates(self):
+        """A sibling or decoy object that closes before the key can
+        never enclose it — only braces still open at the key count."""
+        content = ('{"meta": {"x": 1}, "scores": '
+                   '{"T1": {"feasibility": 4, "impact": 5, "risk": 2}}}')
+        data = extract_json_payload(content, "scores")
+        assert data == {"T1": {"feasibility": 4, "impact": 5, "risk": 2}}
+        decoyed = ('Decoy {"done": true} first, then {"scores": '
+                   '{"T1": {"feasibility": 1, "impact": 2, "risk": 3}}}')
+        assert extract_json_payload(decoyed, "scores") == {
+            "T1": {"feasibility": 1, "impact": 2, "risk": 3}}
 
 
 class TestFormatting:

@@ -197,7 +197,9 @@ def record_thoughts(state: dict, entity: Entity,
     thoughts = state.setdefault("thoughts", [])
     accepted: list[dict] = []
     for text in texts:
-        cleaned = str(text).strip().rstrip('.')
+        cleaned = str(text).strip()
+        if cleaned.endswith(".") and not cleaned.endswith(".."):
+            cleaned = cleaned[:-1]  # lone full stop, not an ellipsis
         if len(cleaned) < MIN_THOUGHT_LENGTH:
             continue
         if any(word_overlap_similar(cleaned, existing["text"],
@@ -285,8 +287,11 @@ def record_thought_scores(state: dict, entity: Entity,
     **per thought label** into the entity's existing scores, so a
     re-score pass replaces only the thoughts it addresses — earlier
     scores for pruned thoughts stay recorded but are ignored by the
-    eligibility-scoped aggregation.  Returns the number of thought
-    entries kept.  Shared by the free-text and structured paths.
+    eligibility-scoped aggregation.  ``scores_by_pass`` records which
+    labels received a fresh score in each pass (the prune phase's
+    convergence gate demands full beam coverage).  Returns the number
+    of thought entries kept.  Shared by the free-text and structured
+    paths.
     """
     valid = {thought_label(t["id"]) for t in eligible_thoughts(state)}
     kept = 0
@@ -314,8 +319,8 @@ def record_thought_scores(state: dict, entity: Entity,
             str(entity.id), {})
         entity_scores.update(cleaned)
         by_pass = state.setdefault("scores_by_pass", {})
-        pass_key = str(current_depth(state))
-        by_pass[pass_key] = by_pass.get(pass_key, 0) + kept
+        fresh = by_pass.setdefault(str(current_depth(state)), [])
+        fresh.extend(label for label in cleaned if label not in fresh)
     return kept
 
 
@@ -330,6 +335,7 @@ def validate_expansions_payload(payload: dict,
     if not isinstance(expansions, list) or not expansions:
         return ("'expansions' must be a non-empty array of "
                 "{thought_id, refinement} objects.")
+    seen: set[int] = set()
     for entry in expansions:
         if not isinstance(entry, dict):
             return "Each entry in 'expansions' must be an object."
@@ -339,6 +345,10 @@ def validate_expansions_payload(payload: dict,
         if raw_id not in beam_ids:
             return (f"Thought {raw_id} is not in the surviving beam. "
                     f"Valid thought ids: {sorted(beam_ids)}.")
+        if raw_id in seen:
+            return (f"Duplicate entry for thought {raw_id} — merge your "
+                    "points into one entry per surviving thought.")
+        seen.add(raw_id)
         refinement = entry.get("refinement")
         if (not isinstance(refinement, str)
                 or len(refinement.strip()) < MIN_REFINEMENT_LENGTH):
@@ -359,14 +369,17 @@ def record_expansions(state: dict, entity: Entity,
                       items: list[dict], depth: int) -> int:
     """Sanitise and append depth-tagged expansions; return count accepted.
 
-    Skips entries with an id outside the current beam or a refinement
-    below the minimum length (the free-text path may carry junk).
-    Obstacles are coerced to a list of strings.  Shared by the
-    free-text and structured paths.
+    Skips entries with an id outside the current beam, a refinement
+    below the minimum length, or an id already accepted earlier in the
+    same call — the schema asks for one entry per surviving thought
+    (the free-text path may carry junk or repeats).  Obstacles are
+    coerced to a list of strings.  Shared by the free-text and
+    structured paths.
     """
     beam_ids = {t["id"] for t in eligible_thoughts(state)}
     recorded = state.setdefault("expansions", [])
     accepted = 0
+    seen: set[int] = set()
     for entry in items:
         if not isinstance(entry, dict):
             continue
@@ -381,11 +394,17 @@ def record_expansions(state: dict, entity: Entity,
             logger.warning("Expansion for unknown/pruned thought %s from "
                            "%s, skipping", thought_id, entity.name)
             continue
+        if thought_id in seen:
+            logger.warning("Duplicate expansion for thought %s from %s in "
+                           "one submission, keeping the first accepted",
+                           thought_id, entity.name)
+            continue
         refinement = str(entry.get("refinement") or "").strip()
         if len(refinement) < MIN_REFINEMENT_LENGTH:
             logger.warning("Expansion with too-short refinement from %s, "
                            "skipping", entity.name)
             continue
+        seen.add(thought_id)
         raw_obstacles = entry.get("obstacles")
         obstacles = ([str(o).strip() for o in raw_obstacles
                       if str(o).strip()]

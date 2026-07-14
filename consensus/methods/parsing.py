@@ -92,14 +92,16 @@ def extract_json_payload(content: str,
                          key: str) -> Optional[Union[dict, list]]:
     """Extract the value of ``key`` from JSON embedded in free text.
 
-    Tries a fenced JSON block first, then any inline (unfenced) object
-    containing ``"key"``: every candidate ``{`` before the key is
-    tried nearest-first and scanned to its balanced closing brace — a
-    lazy regex would truncate at the first inner brace, and requiring
-    the key in first position would miss pretty-printed or reordered
-    objects.  Returns the value only when it is a dict or list.
-    Candidates that fail to parse are logged and the next is tried;
-    callers own the user-facing warning when nothing is extracted.
+    Tries a fenced JSON block first, then the inline (unfenced)
+    objects enclosing ``"key"``, innermost first: only a ``{`` still
+    unclosed at the key's position can enclose it, so one pass builds
+    that open-brace stack and each candidate is scanned to its
+    balanced closing brace — a lazy regex would truncate at the first
+    inner brace, and requiring the key in first position would miss
+    pretty-printed or reordered objects.  Returns the value only when
+    it is a dict or list.  Candidates that fail to parse are logged
+    and the next is tried; callers own the user-facing warning when
+    nothing is extracted.
     """
     data = extract_json_block(content)
     if isinstance(data, dict) and isinstance(data.get(key), (dict, list)):
@@ -107,12 +109,16 @@ def extract_json_payload(content: str,
     marker = content.find(f'"{key}"')
     if marker == -1:
         return None
-    starts = [pos for pos, char in enumerate(content[:marker])
-              if char == "{"]
-    for start in reversed(starts):
+    open_stack: list[int] = []
+    for pos in range(marker):
+        if content[pos] == "{":
+            open_stack.append(pos)
+        elif content[pos] == "}" and open_stack:
+            open_stack.pop()
+    for start in reversed(open_stack):
         end = _balanced_object_end(content, start)
-        if end is None or end < marker:
-            continue  # candidate closes before the key — not enclosing
+        if end is None:
+            continue
         try:
             data = json.loads(content[start:end + 1])
         except (json.JSONDecodeError, ValueError) as exc:

@@ -63,9 +63,17 @@ plan; delete sections that are finished and no longer instructive.
     authorship exactly at scoring time; `format_expansions` is
     author-free too); scored thoughts always rank above unscored
     (an invented default composite can no longer beat real data into
-    the beam); convergence additionally requires ≥1 score recorded in
-    the pass (`scores_by_pass` — stability under zero new data proves
-    nothing); the conclusion prompt is honest when no outcome exists
+    the beam); convergence additionally requires every survivor to
+    have been freshly re-scored during the pass (`scores_by_pass`
+    records the labels per pass — stability under zero or partial new
+    data would let stale scores decide); duplicate `thought_id`
+    entries in one `submit_expansions` payload are rejected by
+    validation and deduped (first accepted wins) on the free-text
+    path; `record_thoughts` preserves trailing ellipses when
+    stripping the final period; the inline-JSON scanner only tries
+    braces still unclosed at the key (the enclosing stack, innermost
+    first) instead of every earlier `{`; the conclusion prompt is
+    honest when no outcome exists
     (propose abort / mid-method conclude / loop-guard trip) instead of
     narrating a fabricated "depth budget spent" story; prune and
     synthesise transition messages embed the deterministic
@@ -76,7 +84,7 @@ plan; delete sections that are finished and no longer instructive.
     (handles whitespace/reordered keys, logs parse failures) — the
     MCDA/ACH copies still duplicate it, see follow-ups.
   - Tests: `test_tot_helpers.py`, `test_phases_tot.py`,
-    `test_tot_structured.py` (119 tests; suite total 2245).
+    `test_tot_structured.py` (124 tests; suite total 2250).
 - **#27 Double Crux implemented** (this session, **PR #43** — merge it
   before building on this work).  Plan:
   `docs/superpowers/plans/2026-07-14-double-crux.md`.

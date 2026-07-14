@@ -7,9 +7,11 @@ thoughts by mean composite — is computed deterministically in
 the cut.  Routing happens in ``next_phase`` (the issue-#22 hook):
 
 - **converged** — the new *ordered* beam equals the previous pass's
-  ordered beam (eligibility restricts scoring to the previous beam, so
-  the id set is vacuously stable after the first prune; order is the
-  only movement re-scoring can produce) → jump to ``synthesise``;
+  ordered beam and every survivor was freshly re-scored during the
+  pass (eligibility restricts scoring to the previous beam, so the id
+  set is vacuously stable after the first prune; order is the only
+  movement re-scoring can produce, and partial coverage would let
+  stale scores decide) → jump to ``synthesise``;
 - **degenerate** — fewer than ``MIN_BEAM_SIZE`` survivors (nothing to
   explore in parallel) → jump to ``synthesise``;
 - **depth budget** — ``MAX_TOT_DEPTH`` prune passes done → jump to
@@ -135,19 +137,21 @@ class PruneThoughtsHandler(PhaseHandler):
         """Record the beam and route: loop onward or stop to synthesise."""
         state = discussion.method_state
         beam_ids, ranking = compute_beam(state)
-        # Scores recorded during the pass that just ended carry this
-        # pre-append depth tag (see record_thought_scores).
-        fresh_scores = state.get("scores_by_pass", {}).get(
-            str(current_depth(state)), 0)
+        # Labels freshly scored during the pass that just ended carry
+        # this pre-append depth tag (see record_thought_scores).
+        fresh_labels = set(state.get("scores_by_pass", {}).get(
+            str(current_depth(state)), []))
         history = state.setdefault("beam_history", [])
         prev = history[-1]["beam_ids"] if history else None
         history.append({"depth": current_depth(state) + 1,
                         "beam_ids": beam_ids, "ranking": ranking})
         # An unchanged ordered beam only counts as convergence when the
-        # pass actually re-scored something — stability under zero new
-        # data (all extractions failed, humans skipped) proves nothing.
+        # pass freshly re-scored EVERY survivor — stability under zero
+        # or partial new data (extractions failed, humans skipped)
+        # would let stale earlier-pass scores decide the outcome.
         converged = (prev is not None and prev == beam_ids
-                     and fresh_scores > 0)
+                     and {thought_label(tid) for tid in prev}
+                     <= fresh_labels)
         degenerate = len(beam_ids) < MIN_BEAM_SIZE
         depth_spent = current_depth(state) >= MAX_TOT_DEPTH
         if converged or degenerate or depth_spent:

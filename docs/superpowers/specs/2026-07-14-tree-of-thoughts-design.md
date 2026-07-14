@@ -73,16 +73,18 @@ propose → score → prune ──(continue)──→ expand
    (the `rank_ideas.py` / `analyse_sensitivity.py` pattern) explaining
    the cut.  Routing happens in this handler's `next_phase` (#22):
    - **converged** — the new **ordered** beam equals the previous
-     iteration's ordered beam *and at least one score was recorded
-     during the pass* → jump to `synthesise`.  (Ordered, not set,
-     equality: eligibility restricts scoring to the previous beam, so
-     the id *set* is necessarily unchanged after the first prune —
-     reordering is the only movement re-scoring can produce, and a
-     stable order means the deep-dives changed nothing.  The
-     fresh-scores gate — `scores_by_pass`, stamped by
-     `record_thought_scores` — prevents declaring convergence when a
-     re-score pass recorded nothing at all: stability under zero new
-     data proves nothing);
+     iteration's ordered beam *and every survivor received a fresh
+     score during the pass* → jump to `synthesise`.  (Ordered, not
+     set, equality: eligibility restricts scoring to the previous
+     beam, so the id *set* is necessarily unchanged after the first
+     prune — reordering is the only movement re-scoring can produce,
+     and a stable order means the deep-dives changed nothing.  The
+     full-coverage gate — `scores_by_pass` records the freshly scored
+     labels per pass, stamped by `record_thought_scores` — prevents
+     declaring convergence when a re-score pass recorded nothing or
+     covered only part of the beam: stability under zero or partial
+     new data would let stale earlier-pass scores decide the
+     outcome);
    - **depth budget** — `MAX_TOT_DEPTH` (3) prune passes done → jump
      to `synthesise`;
    - **degenerate** — fewer than 2 surviving thoughts (nothing to
