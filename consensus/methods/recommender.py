@@ -88,6 +88,7 @@ Problem-type taxonomy — method strengths:
 - Stress-testing positions / adversarial analysis → Red Team / Blue Team
 - Complex multi-faceted questions / decomposition → Recursive Decomposition
 - Decision-making with formal group consensus → Participant Voting
+- Decision-making by scoring options against weighted criteria → Weighted Decision Matrix (MCDA)
 - Generating and prioritising options / structured brainstorming → Nominal Group Technique (NGT)
 - General exploration from multiple perspectives → Open Discussion
 """

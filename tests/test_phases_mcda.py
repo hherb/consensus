@@ -376,3 +376,49 @@ class TestDecideHandler:
     def test_advances_after_single_round(self):
         assert DecideHandler().should_advance(
             populated_disc(current_phase="decide", phase_round=2)) is True
+
+
+from consensus.methods import get_method, list_methods  # noqa: E402
+
+
+class TestWeightedDecisionMatrixMethod:
+    def test_registered(self):
+        names = [m["name"] for m in list_methods()]
+        assert "decision_matrix" in names
+
+    def test_phase_order(self):
+        method = get_method("decision_matrix")
+        assert [p.name for p in method.default_phases] == [
+            "options", "criteria", "score", "sensitivity", "decide"]
+
+    def test_requires_structured_output(self):
+        assert get_method("decision_matrix").requires_structured_output() \
+            is True
+
+    def test_init_state_merges_handler_state(self):
+        disc = make_disc()
+        state = get_method("decision_matrix").init_state(disc)
+        assert state["current_phase"] == "options"
+        assert state["options"] == []
+        assert state["criteria"] == []
+
+    def test_conclusion_prompt_uses_artifact(self, moderator):
+        disc = populated_disc(current_phase="decide")
+        DecideHandler().process_structured_response(
+            {"recommended_option_id": 1,
+             "rationale": "Cost dominates the decision."},
+            moderator, disc)
+        prompt = get_method("decision_matrix").get_conclusion_prompt(disc)
+        assert "Decision: Build the platform in-house" in prompt
+        assert "Cost dominates the decision." in prompt
+
+    def test_conclusion_prompt_without_artifact_shows_ranking(self):
+        disc = populated_disc(current_phase="decide")
+        prompt = get_method("decision_matrix").get_conclusion_prompt(disc)
+        assert "weighted total 20.0" in prompt
+
+
+class TestRecommenderTaxonomy:
+    def test_taxonomy_mentions_decision_matrix(self):
+        from consensus.methods.recommender import _TAXONOMY
+        assert "Weighted Decision Matrix" in _TAXONOMY
