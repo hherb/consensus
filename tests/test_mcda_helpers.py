@@ -365,7 +365,7 @@ class TestDecisionSchemaAndValidator:
 # Aggregation, sensitivity, artifact & formatting (Task 2)
 # ---------------------------------------------------------------------------
 
-from consensus.methods.phases._mcda_helpers import (  # noqa: E402
+from consensus.methods.phases._mcda_analysis import (  # noqa: E402
     build_decision_artifact,
     divergence_by_option,
     format_criteria,
