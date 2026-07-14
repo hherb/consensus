@@ -265,3 +265,43 @@ class TestScoreOptionsHandler:
             populated_disc(current_phase="score", phase_round=2)) is True
         assert ScoreOptionsHandler().should_advance(
             populated_disc(current_phase="score", phase_round=1)) is False
+
+
+from consensus.methods.phases.analyse_sensitivity import (  # noqa: E402
+    SensitivityHandler,
+)
+
+
+class TestSensitivityHandler:
+    def test_phase_metadata(self):
+        handler = SensitivityHandler()
+        assert handler.phase.name == "sensitivity"
+        assert handler.phase.rounds == 1
+        assert handler.requires_structured_output is False
+
+    def test_moderator_only_turn_order(self):
+        disc = populated_disc(current_phase="sensitivity")
+        assert SensitivityHandler().get_turn_order([1, 2], disc) == [99]
+
+    def test_system_prompt_embeds_computed_analysis(self, moderator):
+        disc = populated_disc(current_phase="sensitivity")
+        prompt = SensitivityHandler().get_system_prompt(moderator, disc)
+        assert "SENSITIVITY ANALYSIS" in prompt
+        # Weighted ranking computed from the recorded scores:
+        # O1 = 4*4 + 2*2 = 20, O2 = 4*2 + 2*5 = 18.
+        assert "weighted total 20.0" in prompt
+        assert "Pivotal" in prompt
+
+    def test_no_structured_tool(self, moderator):
+        disc = populated_disc(current_phase="sensitivity")
+        assert SensitivityHandler().get_output_tool(moderator, disc) is None
+
+    def test_advances_after_single_round(self):
+        assert SensitivityHandler().should_advance(
+            populated_disc(current_phase="sensitivity",
+                           phase_round=2)) is True
+
+    def test_transition_message_shows_ranking(self):
+        disc = populated_disc(current_phase="sensitivity")
+        assert "weighted total" in \
+            SensitivityHandler().get_transition_message(disc)
