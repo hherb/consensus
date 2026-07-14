@@ -1,447 +1,168 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-14 (session: #26 Tree of Thoughts, branch
-`claude/handover-instructions-80a7dd`)._
+_Last updated: 2026-07-14 (after PR #44 Tree of Thoughts merged)._
 
-This file briefs the next session(s) on what was done, what is in flight,
-and what to do next. Update it whenever a session materially changes the
-plan; delete sections that are finished and no longer instructive.
+This file briefs the next session on what is done, what is still open, and
+the conventions to keep. Update it whenever a session materially changes the
+plan; delete sections that are finished and no longer instructive. Per-PR
+implementation detail lives in git history, `docs/superpowers/specs/`, and
+`docs/superpowers/plans/` — do not re-narrate it here.
 
-## Where things stand
+## What is done (all merged)
 
-- **PR #18** (six defect classes, issues #12–#17), **PR #31**
-  (#19/#20/#21), **PR #35** (#22 phase-machine loop support), **PR #36**
-  (#30 Belief Diffusion abort), **PR #38** (#23 mechanism + first
-  three conversions), **PR #39** (#23 remaining conversions +
-  hardening), **PR #40** (#24 NGT), **PR #41** (#25 MCDA), and
-  **PR #43** (#27 Double Crux) are all **merged**.
-- **#26 Tree of Thoughts implemented** (this session, **PR #44** —
-  merge it before building on this work).  Spec:
-  `docs/superpowers/specs/2026-07-14-tree-of-thoughts-design.md`; plan:
-  `docs/superpowers/plans/2026-07-14-tree-of-thoughts.md`.
-  Method `tree_of_thoughts` (`consensus/methods/tree_of_thoughts.py`),
-  five phases from new handlers in `consensus/methods/phases/`
-  (`propose_thoughts`, `score_thoughts`, `prune_thoughts`,
-  `expand_thoughts`, `synthesise_thoughts`) over two shared helper
-  modules — `_tot_helpers.py` (schemas/validation/recording) and
-  `_tot_analysis.py` (composite/beam/artifact/formatting; split to
-  respect the ~500-line file rule, the `_mcda_*` precedent):
-  - Three structured phases per the #23 pattern: `submit_thoughts`
-    (anonymised independent approach generation, `generate_ideas.py`
-    pattern incl. the zero-thoughts abort), `submit_thought_scores`
-    (fixed feasibility/impact/risk dimensions — no criteria
-    elicitation; outer `additionalProperties` for T-labels, inner
-    object requires all three dimensions), and `submit_expansions`
-    (deep-dive of survivors: refinement + obstacles, depth-tagged).
-    Prune and synthesise are free-text moderator-only presentational
-    phases.
-  - **The prune phase routes the loop (#22 `next_phase`):** the beam
-    (top `BEAM_WIDTH`=3 by mean composite, risk inverted, ties by id)
-    is computed deterministically — never by the model.  Continue →
-    linear to `expand` (which always jumps back to `score`); stop →
-    jump to `synthesise` on **converged** / **degenerate** (<2
-    survivors) / **depth_budget** (`MAX_TOT_DEPTH`=3 prune passes).
-    **Convergence compares the ORDERED beam, not the id set** —
-    eligibility restricts re-scoring to the previous beam, so the set
-    is vacuously stable after the first prune; order is the only
-    movement re-scoring can produce (caught during implementation;
-    spec updated).
-  - `method_state["tot_artifact"]` is the machine-readable outcome
-    (recommendation, stop_reason, final beam, beam trajectory,
-    expansions, caveats — e.g. zero scorers, never-scored survivors),
-    built in prune's `next_phase` when routing to synthesis;
-    the conclusion prompt varies by stop reason.
-  - Re-scores merge per thought label (an entity's later submission
-    replaces only the thoughts it addresses); stale scores for pruned
-    thoughts stay recorded but the aggregation is eligibility-scoped.
-  - Recommender `_TAXONOMY` gained: "Open-ended problem-solving by
-    exploring, scoring, and iteratively refining parallel solution
-    paths → Tree of Thoughts".
-  - Review follow-ups applied in-PR: anonymisation holds for the
-    whole method (score/prune/expand/synthesise all filter context —
-    the propose turns replay in later phases and would otherwise leak
-    authorship exactly at scoring time; `format_expansions` is
-    author-free too); scored thoughts always rank above unscored
-    (an invented default composite can no longer beat real data into
-    the beam); convergence additionally requires every survivor to
-    have been freshly re-scored during the pass (`scores_by_pass`
-    records the labels per pass — stability under zero or partial new
-    data would let stale scores decide); duplicate `thought_id`
-    entries in one `submit_expansions` payload are rejected by
-    validation and deduped (first accepted wins) on the free-text
-    path; `record_thoughts` preserves trailing ellipses when
-    stripping the final period; the inline-JSON scanner only tries
-    braces still unclosed at the key (the enclosing stack, innermost
-    first) instead of every earlier `{`; the conclusion prompt is
-    honest when no outcome exists
-    (propose abort / mid-method conclude / loop-guard trip) instead of
-    narrating a fabricated "depth budget spent" story; prune and
-    synthesise transition messages embed the deterministic
-    ranking/digest so HUMAN moderators see the numbers (system prompts
-    are AI-only); re-score tables render only eligible thoughts (no
-    stale pruned entries) in numeric label order; the balanced-brace
-    JSON extractor moved to `methods/parsing.extract_json_payload`
-    (handles whitespace/reordered keys, logs parse failures) — the
-    MCDA/ACH copies still duplicate it, see follow-ups.
-  - Tests: `test_tot_helpers.py`, `test_phases_tot.py`,
-    `test_tot_structured.py` (124 tests; suite total 2250).
-- **#27 Double Crux implemented** (this session, **PR #43** — merge it
-  before building on this work).  Plan:
-  `docs/superpowers/plans/2026-07-14-double-crux.md`.
-  Method `double_crux` (`consensus/methods/double_crux.py`), five
-  phases: the reused `StatePositionsHandler` (now parametrized with
-  `context_label` — default preserves the Adversarial Collaboration
-  wording) plus four new handlers in `consensus/methods/phases/`
-  (`hunt_cruxes`, `identify_crux`, `test_crux`, `resolve_crux`) over a
-  shared `_crux_helpers.py`:
-  - Three structured phases per the #23 pattern: `submit_cruxes`
-    (participants name the claims that would change their mind, each
-    with a 0–1 belief probability), `submit_crux_selection`
-    (moderator-only verdict: `factual` / `values` / `none`), and
-    `submit_resolution` (final stance + position + `crux_belief`,
-    required iff a factual crux was tested).  Positions and crux
-    testing are free-text phases.
-  - **Verdict routing uses the #22 `next_phase` mechanism:** `factual`
-    → linear to `test_crux`; `values` → jump to `resolve` (nothing
-    factual to test); `none` → loop back to `hunt_cruxes` (verdict and
-    attempt counter reset, `crux_search_rounds` incremented) until
-    `MAX_CRUX_SEARCH_ROUNDS`, then finalised as `none` and `resolve`
-    still runs — the method reports a clean disagreement map instead
-    of a resolution.  Worst-case transitions stay well under the loop
-    guard.
-  - **Belief shift is the success metric** (per the issue): initial
-    beliefs are snapshotted from the selected cruxes at identification
-    time, final beliefs restated at resolution, and shifts computed
-    deterministically (never by the model) into
-    `method_state["crux_map"]` — the machine-readable outcome artifact
-    (verdict, shared crux, positions, cruxes, resolutions,
-    belief_shifts, caveats), mirroring MCDA's `decision_artifact`.
-  - Aborts/give-ups: zero cruxes after `MAX_HUNT_ROUNDS` aborts the
-    method (`generate_ideas.py` pattern); `MAX_IDENTIFY_ATTEMPTS`
-    gates the moderator fallback path; `MAX_RESOLVE_ROUNDS` gates
-    resolution.  Same-entity cruxes are word-overlap deduped but
-    cross-entity near-duplicates are kept — overlap between parties is
-    exactly the shared-crux signal.
-  - Recommender `_TAXONOMY` gained: "Resolving disagreements by
-    finding the pivotal factual claim beneath them → Double Crux".
-  - Review follow-ups applied in-PR: resolve now waits for *all*
-    participants' resolutions (the `allocate_points.py`
-    `entities_with_resolutions` pattern, round-capped) instead of
-    advancing on the first; `MAX_CRUXES_PER_ENTITY` bounds the
-    free-text path too (`record_cruxes` truncates per turn); the
-    identify prompt tells the moderator to keep the shared claim in
-    the cited cruxes' polarity so belief carry-over stays meaningful.
-  - Tests: `test_crux_helpers.py`, `test_phases_double_crux.py`,
-    `test_double_crux_structured.py` (145 tests; suite total 2126).
-- **#25 Weighted Decision Matrix implemented** (PR #41, merged).  Plan:
-  `docs/superpowers/plans/2026-07-14-weighted-decision-matrix.md`.
-  Method `decision_matrix` (`consensus/methods/decision_matrix.py`),
-  five phases from new handlers in `consensus/methods/phases/`
-  (`enumerate_options`, `weight_criteria`, `score_options`,
-  `analyse_sensitivity`, `decide`) over two shared helper modules —
-  `_mcda_helpers.py` (recording/validation) and `_mcda_analysis.py`
-  (aggregation/sensitivity/artifact/formatting; split to respect the
-  ~500-line file rule):
-  - Generalises the two handlers named in issue #25: `define_criteria`
-    → weighted criteria (weight votes averaged per participant, merge
-    by name similarity, resubmission replaces own vote), and
-    `evaluate_matrix` → option×criterion scoring (O/C labels, two-level
-    `additionalProperties` schema, partial coverage defaults missing
-    cells to the midpoint `DEFAULT_SCORE`).
-  - Four structured phases per the #23 pattern: `submit_options`,
-    `submit_weighted_criteria`, `submit_scores`, `submit_decision`
-    (its required `rationale` plays the `reasoning` role, like
-    `submit_claims`).  Sensitivity is a moderator-only presentational
-    phase — all numbers (weighted totals, divergence, one-at-a-time
-    sensitivity) are computed deterministically in `_mcda_analysis`,
-    never by the model.
-  - **The decision artifact** (`method_state["decision_artifact"]`) is
-    the issue's machine-readable output: ranked options with weighted
-    totals + per-criterion means, effective weights, per-participant
-    divergence, sensitivity report, recommendation, rationale, caveats.
-    Both the structured and free-text decide paths record it (the
-    fallback defaults the recommendation to the top-ranked option with
-    an explanatory caveat).
-  - Aborts: zero options after `MAX_OPTIONS_ROUNDS` or zero criteria
-    after `MAX_CRITERIA_ROUNDS` end the method early
-    (`generate_ideas.py` pattern); score/decide carry defensive
-    degenerate guards (`get_output_tool -> None`).
-  - Recommender: `_TAXONOMY` gained an MCDA line ("Decision-making by
-    scoring options against weighted criteria").
-  - Review follow-ups (same PR): `record_scores` drops unknown O/C
-    labels, so a mislabelled free-text matrix no longer counts its
-    author as a scorer with every cell defaulted (which inflated
-    divergence); the decision artifact gains an explicit caveat when
-    zero participants scored (the ranking is contentless);
-    `record_criteria` no longer reports a criterion twice when one
-    submission merges two similar names into it; score tables round
-    floats to the artifact's 2-dp precision.  Order-dependent
-    word-overlap merging (first-name-wins) is catalog-wide, not
-    MCDA-specific — tracked as **issue #42**.
-- **#24 Nominal Group Technique** (2026-07-14 session, **PR #40**,
-  merged).  Plan:
-  `docs/superpowers/plans/2026-07-14-nominal-group-technique.md`.
-  Method `nominal_group` (`consensus/methods/nominal_group.py`), five
-  phases assembled from new handlers in `consensus/methods/phases/`
-  (`generate_ideas`, `cluster_ideas`, `clarify_ideas`,
-  `allocate_points`, `rank_ideas`) over a shared `_ngt_helpers.py`:
-  - Three structured phases per the #23 pattern: `submit_ideas`
-    (participants, anonymised silent generation), `submit_candidates`
-    (moderator-only clustering), `submit_points` (fixed pool of
-    `POINTS_PER_VOTER` points, validator enforces exact sum).
-    Clarify and rank are free-text phases.  The point-pool rules bind
-    on the free-text path too (`check_free_text_allocations`): batches
-    are all-or-nothing and an entity that has allocated cannot top up
-    on a later turn — review finding on PR #40.
-  - Give-up caps: `MAX_GENERATE_ROUNDS`, `MAX_CLUSTER_ATTEMPTS`,
-    `MAX_ALLOCATE_ROUNDS`.  Generation with zero ideas aborts the
-    method (frame_hypotheses pattern); clustering give-up instead
-    *promotes raw deduplicated ideas to candidates 1:1* and continues.
-  - Open Discussion is now recommendable: `_EXCLUDED_METHODS` is
-    `{"triage"}` and `_TAXONOMY` gained an NGT line (owner decision
-    2026-07-12, executed with #24).
-- **#23 structured outputs — ALL remaining regex-parsing phases
-  converted** (2026-07-13 session, **PR #39**, merged). Plan:
-  `docs/superpowers/plans/2026-07-13-structured-conversions-remaining.md`
-  (all 11 tasks executed). See
-  `docs/superpowers/plans/2026-07-13-structured-method-outputs.md` for
-  the original mechanism design.
-  - Newly converted phases, each following the established pattern
-    (schema + `validate_output` + `process_structured_response`, prompts
-    rewritten to name the tool, regex `process_response` kept as the
-    human/fallback path):
-    - Belief Diffusion `prior_beliefs` / `diffuse_beliefs` →
-      `submit_beliefs` (H-label keyed belief distributions — a JSON
-      object mapping each hypothesis label to a probability).
-    - Self-Distillation `blind_evaluate` → `submit_validity_scores`.
-    - Adversarial Collab `define_criteria` → `submit_criteria`.
-    - ACH `evaluate_matrix` → `submit_matrix_ratings`.
-    - Self-Distillation `distill_skeleton` → `submit_skeleton`.
-    - ACH `hypothesize` → `submit_hypotheses` (ACH-specific spec —
-      distinct from Belief Diffusion's `frame`'s tool of the same name).
-    - Key Assumptions `surface_assumptions` → `submit_assumptions`.
-    - Recursive Decomposition `decompose` → `submit_subquestions`.
-    - Counterfactual `counterfactual_extract` → `submit_claims`.
-  - `tally.py` needed **no conversion**: `TallyHandler` has no
-    `process_response` override (the base `PhaseHandler` no-op is used
-    as-is) — the vote tally itself is computed by `_voting_helpers` at
-    conclusion, not parsed from a turn.
-  - Give-up caps added alongside their conversions:
-    `MAX_SURFACE_ROUNDS` (`surface_assumptions.py`) and
-    `MAX_DECOMPOSE_ROUNDS` (`decompose.py`), per the existing
-    condition-based-phase convention.
-  - **Both #23 gaps from the previous session are now closed:**
-    - `switch_discussion_method` (`app_discussion_flow.py`) now runs
-      `_validate_structured_output_support` before committing a Triage
-      handoff. The check itself moved to `consensus/structured_output.py`
-      (re-exported from `app_discussion_setup` for backward
-      compatibility) because `app_discussion_setup` and
-      `app_discussion_flow` import each other, and both needed the
-      helper — a same-module home would have created a circular import.
-      A blocked switch returns an error, is logged, posted to the
-      transcript as a system message, and surfaced to the frontend via a
-      `switch_error` field (toasted) instead of silently falling through.
-    - `MethodRecommender` is now capability-aware:
-      `consensus.methods.recommender.downrank_incompatible_recommendations()`
-      takes the ranked recommendations, a `db` handle, and a list of
-      `(model, base_url)` panel pairs; any recommendation whose method
-      `requires_structured_output()` is moved after all
-      capability-compatible recommendations when
-      `db.pricing.supports_tools()` is `False` for any panel model, with
-      a note appended to `reasoning` (never dropped). Unknown capability
-      (`None`) never down-ranks. `app_discussion_setup.recommend_method`
-      (the db-aware caller) accepts optional `db` and `panel_models`
-      parameters and calls the helper only when both are supplied;
-      omitting either leaves behavior unchanged. `ConsensusApp.recommend_method`
-      (`app.py`) is wired: the New Discussion tab already lists
-      participants (with their models) above the "Suggest Method" button
-      (`consensus/static/index.html` — roster at line ~123, button at
-      line ~174), so panel data is available at this call site and is
-      passed through as `(model, base_url)` pairs from
-      `self.discussion.entities`.
+| Work | Issues | PR |
+|------|--------|----|
+| Six defect classes | #12–#17 | #18 |
+| Method fixes | #19/#20/#21 | #31 |
+| Phase-machine loop support (`next_phase`) | #22 | #35 |
+| Belief Diffusion abort | #30 | #36 |
+| Structured outputs — mechanism + first conversions | #23 | #38 |
+| Structured outputs — all remaining regex phases converted + hardening | #23 | #39 |
+| Nominal Group Technique (`nominal_group`) | #24 | #40 |
+| Weighted Decision Matrix / MCDA (`decision_matrix`) | #25 | #41 |
+| Double Crux (`double_crux`) | #27 | #43 |
+| Tree of Thoughts (`tree_of_thoughts`) | #26 | #44 |
 
-## Next steps, in order
+Suite total after #44: **2250 tests passing**.
 
-1. **Cross-cutting quality:**
-   - **#28 evidence-gated phases** — opt-in `require_citations` so
-     evidence phases must ground claims via the existing RAG/web tools.
-     The Double Crux `test_crux` phase is the flagship consumer (its
-     prompt already directs participants at research/document tools).
-   - **#29 same-model-panel warning** for Delphi/Belief Diffusion.
-   - **#42 order-dependent word-overlap merging** (first-name-wins) is
-     catalog-wide; ToT's `record_thoughts` now shares the pattern too.
+> **Loose end:** GitHub issue **#27 is still OPEN** despite PR #43 merging its
+> implementation — close it (the "Closes #27" trailer did not fire).
 
-2. **New known follow-ups (#26 session, 2026-07-14):**
-   - **ToT expansion refines in place; it cannot spawn child
-     thoughts.**  True Tree-of-Thoughts expands surviving nodes into
-     new candidate children; issue #26's "deep-dive" wording was
-     implemented as refinements + obstacles attached to immutable
-     thoughts (label stability is what makes re-scoring and
-     convergence meaningful).  If real transcripts show the beam
-     starving (all survivors weak), a child-generation variant of the
-     expand phase — new thoughts entering the pool with fresh ids —
-     is the natural extension.
-   - **ToT joins NGT/MCDA/Double Crux in the missing
-     `complete_turn`-driven end-to-end flow test** (see item below) —
-     ToT would exercise the expand→score loop and the prune jumps
-     through the real `advance_phase` path.
-   - **The balanced-brace inline-JSON scanner now has one shared home
-     (`methods/parsing.extract_json_payload`) but two older copies
-     remain**: `_mcda_helpers.extract_scores` and
-     `evaluate_matrix._parse_ratings`.  Both should delegate to the
-     parsing helper (minor behavioral deltas: they return `{}` instead
-     of `None` and only accept dicts).  The shared scanner still
-     miscounts braces inside JSON strings — accepted limitation, now
-     documented in one place.
-   - **`record_thoughts`/`validate_thoughts_payload` duplicate NGT's
-     `record_ideas`/`validate_ideas_payload` near-verbatim** (only the
-     state key and noun differ).  A shared parametrised helper would
-     keep dedup/validation fixes in sync across the two generative
-     methods; same for the propose-phase give-up block mirroring
-     `generate_ideas.py`.
+## Open work
 
-3. **Known follow-ups (#27 session, 2026-07-14):**
-   - **Double Crux belief shift is only measured for crux authors,
-     and initial/final beliefs can refer to different phrasings.**
-     `initial_beliefs` is snapshotted from the cruxes the moderator
-     selects, so a participant whose own crux wasn't selected has no
-     "initial" end (map shows `? → final`, no shift).  Worse, the
-     initial belief is stated on the author's *own* phrasing while
-     the final `crux_belief` is stated on the moderator's synthesized
-     claim — if the moderator flips polarity or reframes scope, the
-     shift compares different propositions (the identify prompt now
-     instructs the moderator to keep the cited cruxes' polarity, but
-     a prompt is not a guarantee).  An optional pre-testing belief
-     poll on the shared claim itself (one structured micro-turn after
-     identification) would fix both — evaluate whether the extra turn
-     is worth it.
-   - **The identify loop re-runs positions' context, not the phase.**
-     Loop-backs re-enter `hunt_cruxes` only; if hunting keeps failing
-     because positions were vague, there is no path back to
-     `positions`.  Acceptable for now (the hunt prompt asks for
-     convergence), noting it in case real transcripts show otherwise.
+### Cross-cutting quality (open GitHub issues — these are the next slices)
 
-4. **Known follow-ups (#25 session, 2026-07-14):**
-   - **MCDA free-text weights only parse the `(weight: N)` suffix.**
-     `extract_weighted_criteria` recognises `1. Name (weight: 4)` /
-     `[weight = 4]`; a human writing weights in prose gets
-     `DEFAULT_WEIGHT` silently.  Fine for the AI path (structured tool
-     enforces weights); a UI hint for human participants would close
-     the gap.
-   - **No real-pipeline (`complete_turn`) flow test for the
-     NGT/MCDA/Double Crux/ToT methods yet** — handler-level and
-     structured-conversion coverage matches the NGT precedent, but
-     none of the four has a `tests/test_turn_order_flow.py`-style
-     end-to-end test driving the moderator flow.  Worth adding once,
-     covering all four (Double Crux and ToT would also exercise their
-     loops through the real `advance_phase` path — only
-     `test_phase_machine_loops.py` covers loops end-to-end today).
+- **#28 evidence-gated phases** — opt-in `require_citations` so evidence
+  phases must ground claims via the existing RAG/web tools. Flagship
+  consumer: Double Crux `test_crux` (its prompt already points participants
+  at research/document tools).
+- **#29 same-model-panel warning** for Delphi / Belief Diffusion — warn (or
+  actively diversify) when every panelist shares one model, which collapses
+  the independence those methods assume.
+- **#42 order-dependent word-overlap merging** (first-name-wins) — the
+  contribution-merge helper is catalog-wide (NGT `record_ideas`, MCDA
+  `record_criteria`, ToT `record_thoughts`, Double Crux crux dedup all share
+  the pattern). Merge order changes which surface form survives.
 
-5. **Known follow-ups (older sessions):**
-   - **Blocked Triage switch still auto-concludes the discussion.** When
-     `switch_discussion_method` rejects a handoff (non-tool-capable
-     model), Triage currently falls through to `method_complete` and the
-     discussion ends. A "reassign model and retry" UX — pause, let the
-     user swap the offending participant's model, then retry the
-     switch — would be considerably better than ending the discussion
-     outright. No mechanism for this exists yet.
-   - **Structured payload validators share a fragile string-coercion
-     pattern.** `str(payload.get(x, "")).strip()` (23 call sites across
-     `consensus/methods/phases/*.py`) silently accepts a JSON literal
-     `null` for `x` as the Python string `"None"`, because
-     `payload.get("x", "")` only substitutes the default when the key is
-     *absent*, not when it is present with value `null`. A model that
-     omits a field gets the safe `""` default; a model that includes the
-     field as `null` gets the misleading string `"None"`. One shared
-     helper (e.g. `_coerce_str(payload, key)` treating both `None` and
-     absence as `""`) applied across all structured phases would harden
-     this in one place rather than 23.
-   - **Recommender panel-model wiring needed no frontend change.** The
-     New Discussion tab already builds the roster (with each entity's
-     model) before "Suggest Method" is clickable, and
-     `ConsensusApp.recommend_method` reads `self.discussion.entities`
-     server-side — so `consensus/static/setup.js`'s existing
-     `api.recommendMethod(topic, answerType)` call needed no changes.
-     (The cosmetic gap originally noted here is closed: down-ranked
-     recommendations now carry a `capability_warning` field rendered
-     as a ⚠ badge by `renderRecommendations()`, so the untouched
-     confidence score no longer visually contradicts the ordering.)
-   - **PR #39 post-review hardening (2026-07-14) is on the PR branch:**
-     `validate_skeleton` rejects non-string ids/text (a truthy int
-     previously crashed `format_skeleton_display` and the crash was
-     swallowed as a misleading "API error" without advancing the
-     extraction give-up counter); the `MAX_SURFACE_ROUNDS` /
-     `MAX_DECOMPOSE_ROUNDS` give-ups now log a warning and the
-     downstream zero-item transition/turn prompts explain the empty
-     list instead of announcing "0 assumptions"; structured items are
-     `rstrip('.')`-normalised to match the regex paths (hypothesize,
-     define_criteria, counterfactual claims); belief payloads must sum
-     to ~1 (`BELIEF_SUM_TOLERANCE`); the blocked-switch transcript
-     notice dedups per target method rather than globally; the belief
-     value schema carries `minimum`/`maximum` and the claims schema
-     `minItems`/`maxItems` (accumulative schemas stay deliberately
-     unbounded); `evaluate_matrix` prompts no longer name the tool
-     when the degenerate empty matrix means none is offered; and the
-     counterfactual extract display shows the conclusion actually kept,
-     not a discarded payload one. The shared `str(None)` validator
-     helper below remains open.
+### Method-specific follow-ups (tech debt, no issue filed)
+
+- **ToT expansion refines in place; it cannot spawn child thoughts.** True
+  Tree-of-Thoughts expands survivors into new candidate children; #26's
+  "deep-dive" was implemented as refinements + obstacles on immutable
+  thoughts (label stability is what makes re-scoring/convergence meaningful).
+  If real transcripts show the beam starving, a child-generation expand
+  variant (new thoughts with fresh ids) is the natural extension.
+- **Double Crux belief shift is only measured for crux authors, and
+  initial/final beliefs can refer to different phrasings.** `initial_beliefs`
+  is snapshotted from the moderator's *selected* cruxes, so a participant
+  whose crux wasn't selected shows `? → final`. The initial belief is on the
+  author's own phrasing while `crux_belief` is on the moderator's synthesized
+  claim — a polarity flip/reframe compares different propositions (a prompt
+  instructs the moderator to preserve polarity, but that is not a guarantee).
+  An optional pre-testing belief poll on the shared claim (one structured
+  micro-turn after identification) would fix both — decide if the extra turn
+  earns its cost.
+- **Double Crux identify loop re-runs positions' context, not the phase.**
+  Loop-backs re-enter `hunt_cruxes` only; if hunting keeps failing because
+  positions were vague, there is no path back to `positions`. Acceptable for
+  now; revisit if transcripts show otherwise.
+- **MCDA free-text weights only parse the `(weight: N)` suffix.**
+  `extract_weighted_criteria` recognises `1. Name (weight: 4)` / `[weight = 4]`;
+  weights written in prose fall back to `DEFAULT_WEIGHT` silently. Fine for
+  the AI path (structured tool enforces weights); a UI hint for humans would
+  close the gap.
+
+### Shared-helper dedup (low priority)
+
+- **Balanced-brace inline-JSON scanner has one shared home
+  (`methods/parsing.extract_json_payload`) but two older copies remain:**
+  `_mcda_helpers.extract_scores` and `evaluate_matrix._parse_ratings`. Both
+  should delegate (minor deltas: they return `{}` not `None`, dict-only). The
+  shared scanner still miscounts braces inside JSON strings — accepted,
+  documented in one place.
+- **`record_thoughts`/`validate_thoughts_payload` duplicate NGT's
+  `record_ideas`/`validate_ideas_payload` near-verbatim** (only state key and
+  noun differ); the ToT propose give-up block also mirrors `generate_ideas.py`.
+  A shared parametrised helper would keep dedup/validation fixes in sync.
+- **Structured payload validators share a fragile string-coercion pattern.**
+  `str(payload.get(x, "")).strip()` (23 call sites across
+  `consensus/methods/phases/*.py`) turns a JSON `null` into the string
+  `"None"` (`.get` only substitutes the default when the key is *absent*). One
+  shared `_coerce_str(payload, key)` treating both `None` and absence as `""`
+  would harden this in one place.
+
+### Testing gap (applies to NGT / MCDA / Double Crux / ToT)
+
+- **No real-pipeline (`complete_turn`) end-to-end flow test** for the four
+  newest methods. Handler-level and structured-conversion coverage matches
+  the NGT precedent, but none has a `tests/test_turn_order_flow.py`-style test
+  driving the moderator flow. Worth adding once, covering all four — Double
+  Crux and ToT would also exercise their loops through the real
+  `advance_phase` path (only `test_phase_machine_loops.py` covers loops
+  end-to-end today).
+
+### UX gap (older follow-up)
+
+- **Blocked Triage switch still auto-concludes the discussion.** When
+  `switch_discussion_method` rejects a handoff (non-tool-capable model),
+  Triage falls through to `method_complete` and the discussion ends. A
+  "reassign model and retry" UX (pause, let the user swap the offending
+  participant's model, retry the switch) would beat ending outright. No
+  mechanism exists yet.
 
 ## Conventions and gotchas for the next session
 
-- **Structured-phase conversions must keep `process_response`.** Humans
-  type free text, and the structured path falls back to it after
-  exhausted retries — not dead code. Note the fallback rarely *extracts*
-  anything (the rewritten prompts no longer describe the JSON-block
-  format); the real extraction containment is each phase's give-up cap
-  (`MAX_FRAMING_ATTEMPTS`, `MAX_VOTE_ROUNDS`, `phase_round` advancement).
+- **Structured-phase conversions must keep `process_response`.** Humans type
+  free text, and the structured path falls back to it after exhausted
+  retries. The fallback rarely *extracts* anything (rewritten prompts no
+  longer describe the JSON-block format); the real containment is each
+  phase's give-up cap (`MAX_FRAMING_ATTEMPTS`, `MAX_VOTE_ROUNDS`,
+  `phase_round` advancement).
+- **Every condition-based phase (`rounds=0`) needs a give-up cap** so an
+  unparseable group cannot loop forever (`MAX_*_ATTEMPTS` / `MAX_*_ROUNDS`
+  constants — no magic numbers, per `docs/llm/golden_rules.md`).
+- **Structured conversions include a required `reasoning` field**, rendered
+  before the data display so a validated payload reads as a real contribution.
+  Exceptions: `submit_beliefs` declares `reasoning` optional; `submit_claims`
+  has none (its `preliminary_conclusion`, like `submit_skeleton`'s
+  `rich_summary`, plays that role for moderator extraction phases).
+  Dynamic-key maps (belief distributions keyed by hypothesis label, matrix
+  ratings keyed by hypothesis × evidence) declare `additionalProperties` in
+  their schema rather than enumerating keys (see `MATRIX_TOOL_PARAMETERS` in
+  `evaluate_matrix.py`, `BELIEFS_TOOL_PARAMETERS` in `_belief_helpers.py`).
 - **Never derive a phase turn order from the incoming `entity_ids` by
-  filtering the current order.** Handlers receive the full roster; if
-  you need "everyone except X", filter the roster. The flow guards
-  against empty orders, but don't rely on it.
+  filtering the current order.** Handlers receive the full roster; for
+  "everyone except X", filter the roster.
 - **`method_state` keys starting with `_` are internal bookkeeping**
   (`_turn_order`, `_panelist_map`, `_continuation_count`,
-  `_original_max_rounds`, `_original_cost_limit`, `_phase_entries` —
-  the loop-guard transition counter). `switch_discussion_method`
-  preserves the budget keys explicitly — if you add new bookkeeping that
-  must survive a method switch, add it to the preserved set in
-  `app_discussion_flow.switch_discussion_method`.
-- **Moderator summaries never pass through `process_response`.** If a
-  method must capture something from the moderator, give that phase
-  `get_turn_order -> [moderator_id]` so the moderator takes a real turn
-  (see `counterfactual_extract.py`, `distill_skeleton.py`,
-  `frame_hypotheses.py` for the pattern, including bounded retries).
-- **Every condition-based phase (`rounds=0`) needs a give-up cap** so an
-  unparseable group cannot loop forever (`MAX_*_ATTEMPTS` /
-  `MAX_*_ROUNDS` constants — no magic numbers, per
-  `docs/llm/golden_rules.md`).
-- **Structured conversions include a required `reasoning` field**,
-  rendered before the data display (belief bar, matrix, skeleton, ...) so
-  a validated payload still reads as a real contribution rather than a
-  bare data dump. Two exceptions: `submit_beliefs` declares `reasoning`
-  but leaves it optional (unvalidated — a belief turn may render as a
-  bare belief bar), and `submit_claims` has no `reasoning` field at all
-  (its `preliminary_conclusion` — like `submit_skeleton`'s
-  `rich_summary` — plays that role for the moderator extraction phases). Dynamic-key maps (belief distributions keyed by
-  hypothesis label, matrix ratings keyed by hypothesis × evidence label)
-  declare `additionalProperties` in their JSON Schema rather than
-  enumerating keys, since the key set is only known at runtime (see
-  `MATRIX_TOOL_PARAMETERS` in `evaluate_matrix.py` and the shared
-  `BELIEFS_TOOL_PARAMETERS` pattern in `_belief_helpers.py`).
+  `_original_max_rounds`, `_original_cost_limit`, `_phase_entries`). New
+  bookkeeping that must survive a method switch has to be added to the
+  preserved set in `app_discussion_flow.switch_discussion_method`.
+- **Moderator summaries never pass through `process_response`.** To capture
+  something from the moderator, give that phase `get_turn_order ->
+  [moderator_id]` so the moderator takes a real turn (see
+  `counterfactual_extract.py`, `distill_skeleton.py`, `frame_hypotheses.py`,
+  including bounded retries).
+- **All beam/composite/weight/sensitivity/shift numbers are computed in
+  code, never by the model.** Structured phases collect raw data; helper
+  modules aggregate. Keep it that way — it is the correctness contract for
+  every scored method.
 - **Test new flow behavior through the real pipeline.** The historical
-  failure mode here was unit tests feeding handlers idealized inputs the
-  moderator never produces. Use the patterns in
-  `tests/test_turn_order_flow.py` / `tests/test_method_state_persistence.py`:
-  drive `complete_turn` with a human moderator plus `moderator_summary`
-  (no network needed), and `Moderator._format_messages` for context
-  filtering. For structured turns, stub `complete_with_tools` (see
-  `tests/test_structured_output.py`).
-- Project rules: `uv` only (never pip), TDD (failing test first), files
-  under ~500 lines, docstrings + type hints mandatory.
+  failure mode was unit tests feeding handlers idealized inputs the moderator
+  never produces. Use `tests/test_turn_order_flow.py` /
+  `tests/test_method_state_persistence.py`: drive `complete_turn` with a human
+  moderator plus `moderator_summary` (no network), and `Moderator._format_messages`
+  for context filtering. For structured turns, stub `complete_with_tools`
+  (see `tests/test_structured_output.py`).
+- Project rules: `uv` only (never pip), TDD (failing test first), files under
+  ~500 lines, docstrings + type hints mandatory.
 
-## Decisions from the repo owner (2026-07-12)
+## Decisions from the repo owner
 
-- **#23: it is acceptable to require tool-capable models for methods
-  with structured phases.** The regex fallback does not need to remain
-  first-class — the implemented design forces tool calls and surfaces a
-  clear setup-time error (not a silent degrade) when a participant's
-  model/provider is known to lack tool support.
+- **#23 (2026-07-12): it is acceptable to require tool-capable models for
+  methods with structured phases.** The regex fallback need not stay
+  first-class — the design forces tool calls and surfaces a clear setup-time
+  error (not a silent degrade) when a participant's model/provider lacks tool
+  support.
+- **Open Discussion is recommendable** (2026-07-12, executed with #24):
+  `_EXCLUDED_METHODS = {"triage"}`.
