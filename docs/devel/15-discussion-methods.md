@@ -40,8 +40,9 @@ consensus/methods/
     nominal_group.py     — NominalGroupTechnique (structured brainstorming, NGT)
     decision_matrix.py   — WeightedDecisionMatrix (multi-criteria decision analysis)
     double_crux.py       — DoubleCrux (disagreement resolution by crux-finding)
+    tree_of_thoughts.py  — TreeOfThoughts (iterative parallel exploration)
     recommender.py       — MethodRecommender (LLM-based method classification)
-    phases/              — 62 PhaseHandler implementations + 11 helper modules
+    phases/              — 67 PhaseHandler implementations + 13 helper modules
         __init__.py
         _belief_helpers.py
         _delphi_helpers.py
@@ -67,6 +68,9 @@ consensus/methods/
         analyse_sensitivity.py, decide.py
         _crux_helpers.py
         hunt_cruxes.py, identify_crux.py, test_crux.py, resolve_crux.py
+        _tot_helpers.py, _tot_analysis.py
+        propose_thoughts.py, score_thoughts.py, prune_thoughts.py
+        expand_thoughts.py, synthesise_thoughts.py
 ```
 
 ---
@@ -276,6 +280,7 @@ phase in a custom analytical method.
 | Nominal Group Technique | 5 | Generate → Cluster → Clarify → Allocate → Rank |
 | Weighted Decision Matrix (MCDA) | 5 | Options → Criteria & Weights → Score → Sensitivity → Decide |
 | Double Crux | 5 | Positions → Hunt Cruxes → Identify Crux → Test Crux → Resolve (identify loops back to hunting when no shared crux is found yet; a values verdict skips testing) |
+| Tree of Thoughts | 5 | Propose → Score → Prune → Expand → Synthesise (prune loops the score→prune→expand cycle until the ordered beam stabilises, the depth budget is spent, or the tree is degenerate) |
 
 ---
 
