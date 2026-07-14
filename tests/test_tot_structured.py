@@ -6,10 +6,12 @@ paths remain for humans.  Mirrors test_ngt_structured.
 """
 
 from consensus.methods.phases._tot_helpers import (
+    SCORES_TOOL_PARAMETERS,
     THOUGHTS_TOOL_PARAMETERS,
     record_thoughts,
 )
 from consensus.methods.phases.propose_thoughts import ProposeThoughtsHandler
+from consensus.methods.phases.score_thoughts import ScoreThoughtsHandler
 from consensus.models import Discussion, Entity, EntityType
 
 
@@ -74,3 +76,53 @@ class TestProposeStructured:
             THOUGHTS_PAYLOAD, _entity(), disc)
         assert len(disc.method_state["thoughts"]) == 2
         assert "hackathons" in result.display_content
+
+
+def _scored_discussion(**state) -> Discussion:
+    disc = _discussion("score", **state)
+    record_thoughts(disc.method_state, _entity(50, "Seed"),
+                    THOUGHTS_PAYLOAD["thoughts"])
+    return disc
+
+
+SCORES_PAYLOAD = {
+    "scores": {"T1": {"feasibility": 4, "impact": 5, "risk": 2},
+               "T2": {"feasibility": 2, "impact": 3, "risk": 4}},
+    "reasoning": "The marketplace compounds; hackathons fade.",
+}
+
+
+class TestScoreStructured:
+    def test_requires_structured_output(self):
+        assert ScoreThoughtsHandler().requires_structured_output is True
+
+    def test_output_tool_spec_names_labels(self):
+        disc = _scored_discussion()
+        spec = ScoreThoughtsHandler().get_output_tool(_entity(), disc)
+        assert spec.name == "submit_thought_scores"
+        assert spec.parameters is SCORES_TOOL_PARAMETERS
+        assert "T1" in spec.description and "T2" in spec.description
+
+    def test_output_tool_none_without_thoughts(self):
+        disc = _discussion("score")
+        assert ScoreThoughtsHandler().get_output_tool(_entity(),
+                                                      disc) is None
+
+    def test_validate_output_restricts_to_eligible(self):
+        disc = _scored_discussion()
+        handler = ScoreThoughtsHandler()
+        assert handler.validate_output(SCORES_PAYLOAD, _entity(),
+                                       disc) == ""
+        disc.method_state["beam_history"] = [
+            {"depth": 1, "beam_ids": [2], "ranking": []}]
+        error = handler.validate_output(SCORES_PAYLOAD, _entity(), disc)
+        assert "T1" in error
+
+    def test_process_structured_records_and_renders(self):
+        disc = _scored_discussion()
+        result = ScoreThoughtsHandler().process_structured_response(
+            SCORES_PAYLOAD, _entity(7, "Bob"), disc)
+        assert disc.method_state["thought_scores"]["7"]["T2"] == {
+            "feasibility": 2, "impact": 3, "risk": 4}
+        assert "marketplace compounds" in result.display_content
+        assert "T1" in result.display_content

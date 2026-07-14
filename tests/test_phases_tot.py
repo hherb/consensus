@@ -20,6 +20,7 @@ from consensus.methods.phases._tot_helpers import (
     record_thoughts,
 )
 from consensus.methods.phases.propose_thoughts import ProposeThoughtsHandler
+from consensus.methods.phases.score_thoughts import ScoreThoughtsHandler
 from consensus.models import Discussion, Entity, EntityType
 
 
@@ -139,3 +140,65 @@ class TestProposeThoughtsHandler:
         assert ProposeThoughtsHandler().next_phase(disc) == LINEAR_NEXT
         assert ProposeThoughtsHandler().get_method_complete_message(
             disc) == ""
+
+
+SCORES_BLOCK = (
+    'Here are my scores:\n```json\n'
+    '{"scores": {"T1": {"feasibility": 4, "impact": 5, "risk": 2},'
+    ' "T2": {"feasibility": 2, "impact": 3, "risk": 4}}}\n```'
+)
+
+
+class TestScoreThoughtsHandler:
+    def test_phase_metadata(self):
+        handler = ScoreThoughtsHandler()
+        assert handler.phase.name == "score"
+        assert handler.phase.rounds == 1
+
+    def test_init_state(self):
+        assert ScoreThoughtsHandler().init_state(make_disc()) == {
+            "thought_scores": {}}
+
+    def test_system_prompt_lists_thoughts_and_dimensions(self, ai_entity):
+        disc = make_disc(current_phase="score")
+        _seed_thoughts(disc, 2)
+        prompt = ScoreThoughtsHandler().get_system_prompt(ai_entity, disc)
+        assert "submit_thought_scores" in prompt
+        assert "T1" in prompt and "T2" in prompt
+        assert "feasibility" in prompt.lower()
+        assert "risk" in prompt.lower()
+
+    def test_rescore_prompt_includes_expansions(self, ai_entity):
+        disc = make_disc(current_phase="score")
+        _seed_thoughts(disc, 3)
+        disc.method_state["beam_history"] = [
+            {"depth": 1, "beam_ids": [1, 2], "ranking": []}]
+        disc.method_state["expansions"] = [
+            {"depth": 1, "entity_id": 1, "entity_name": "TestAI",
+             "thought_id": 1,
+             "refinement": "Stage the marketplace rollout regionally",
+             "obstacles": ["Payment-provider integration"]}]
+        prompt = ScoreThoughtsHandler().get_system_prompt(ai_entity, disc)
+        assert "Stage the marketplace rollout" in prompt
+        assert "re-score" in prompt.lower() or "rescore" in prompt.lower()
+        assert "T3" not in prompt  # pruned thought is gone
+
+    def test_free_text_fallback_records_scores(self, ai_entity):
+        disc = make_disc(current_phase="score")
+        _seed_thoughts(disc, 2)
+        result = ScoreThoughtsHandler().process_response(
+            SCORES_BLOCK, ai_entity, disc)
+        assert disc.method_state["thought_scores"]["1"]["T1"] == {
+            "feasibility": 4, "impact": 5, "risk": 2}
+        assert "T1" in result.display_content
+
+    def test_unparseable_free_text_records_nothing(self, ai_entity):
+        disc = make_disc(current_phase="score")
+        _seed_thoughts(disc, 2)
+        ScoreThoughtsHandler().process_response(
+            "They all seem fine to me.", ai_entity, disc)
+        assert disc.method_state["thought_scores"] == {}
+
+    def test_advances_after_one_round(self):
+        disc = make_disc(current_phase="score", phase_round=2)
+        assert ScoreThoughtsHandler().should_advance(disc) is True
