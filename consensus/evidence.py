@@ -11,7 +11,7 @@ rejected.  Classification is computed in code, never by the model.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .tools import ToolCallRecord
@@ -38,6 +38,28 @@ class GroundingResult:
     sources: list[dict] = field(default_factory=list)
 
 
+def _document_detail(name: str, args: dict) -> str:
+    """Extract a human-readable identifying detail for a document tool.
+
+    Each document tool exposes a different identifying argument (see the
+    schemas in :mod:`consensus.tools_document`): ``doc_ask`` a
+    ``question``, ``doc_get_chapter`` a ``header``, and
+    ``doc_get_text``/``doc_summary`` a ``from_char``/``to_char`` range.
+    ``doc_get_sections`` has no identifying argument, so returns ``""``.
+    """
+    if name == "doc_ask":
+        return args.get("question", "")
+    if name == "doc_get_chapter":
+        return args.get("header", "")
+    if name in {"doc_get_text", "doc_summary"}:
+        from_char = args.get("from_char")
+        to_char = args.get("to_char")
+        if from_char is not None and to_char is not None:
+            return f"chars {from_char}-{to_char}"
+        return ""
+    return ""
+
+
 def _source_from_tool_call(tc: "ToolCallRecord") -> dict | None:
     """Derive a source descriptor from a tool call's name + arguments.
 
@@ -49,7 +71,7 @@ def _source_from_tool_call(tc: "ToolCallRecord") -> dict | None:
     args = tc.arguments or {}
     if name in {"doc_ask", "doc_get_text", "doc_summary",
                 "doc_get_sections", "doc_get_chapter"}:
-        detail = args.get("question") or args.get("range") or ""
+        detail = _document_detail(name, args)
         return {"type": "document",
                 "document_id": args.get("document_id"),
                 "detail": detail, "tool": name}
@@ -62,7 +84,8 @@ def _source_from_tool_call(tc: "ToolCallRecord") -> dict | None:
 
 
 def classify_turn_grounding(content: str,
-                            tool_calls: list) -> GroundingResult:
+                            tool_calls: list["ToolCallRecord"],
+                            ) -> GroundingResult:
     """Classify a turn as grounded or reasoning-based.
 
     Two detection paths, evaluated together — a turn is grounded if
