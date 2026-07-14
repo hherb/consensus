@@ -135,3 +135,84 @@ class TestEnumerateOptionsHandler:
                        ["Build the platform in-house"])
         assert EnumerateOptionsHandler().get_method_complete_message(
             disc) == ""
+
+
+from consensus.methods.phases.weight_criteria import (  # noqa: E402
+    WeightCriteriaHandler,
+)
+
+
+class TestWeightCriteriaHandler:
+    def disc_with_options(self, **state) -> Discussion:
+        disc = make_disc(current_phase="criteria", **state)
+        record_options(disc.method_state, disc.entities[1],
+                       ["Build the platform in-house",
+                        "Buy a commercial platform"])
+        return disc
+
+    def test_phase_metadata(self):
+        handler = WeightCriteriaHandler()
+        assert handler.phase.name == "criteria"
+        assert handler.phase.rounds == 2
+
+    def test_init_state(self):
+        assert WeightCriteriaHandler().init_state(make_disc()) == {
+            "criteria": []}
+
+    def test_system_prompt(self, ai_entity):
+        prompt = WeightCriteriaHandler().get_system_prompt(
+            ai_entity, self.disc_with_options())
+        assert "CRITERIA & WEIGHTS" in prompt
+        assert "submit_weighted_criteria" in prompt
+        assert "O1: Build the platform in-house" in prompt
+
+    def test_refinement_turn_prompt_differs(self, ai_entity):
+        handler = WeightCriteriaHandler()
+        first = handler.get_turn_prompt(
+            ai_entity, self.disc_with_options(phase_round=1))
+        second = handler.get_turn_prompt(
+            ai_entity, self.disc_with_options(phase_round=2))
+        assert first != second
+        assert "submit_weighted_criteria" in first
+        assert "submit_weighted_criteria" in second
+
+    def test_process_response_parses_weighted_list(self, ai_entity):
+        disc = self.disc_with_options()
+        WeightCriteriaHandler().process_response(
+            "1. Total cost of ownership (weight: 4)\n"
+            "2. Time to market (weight: 2)",
+            ai_entity, disc)
+        criteria = disc.method_state["criteria"]
+        assert [c["name"] for c in criteria] == [
+            "Total cost of ownership", "Time to market"]
+        assert criteria[0]["weight_votes"] == {"1": 4}
+
+    def test_advances_after_both_rounds_with_criteria(self, ai_entity):
+        disc = self.disc_with_options(phase_round=3)
+        record_criteria(disc.method_state, ai_entity,
+                        [{"name": "Total cost", "weight": 4}])
+        assert WeightCriteriaHandler().should_advance(disc) is True
+
+    def test_does_not_advance_during_refinement_round(self, ai_entity):
+        disc = self.disc_with_options(phase_round=2)
+        record_criteria(disc.method_state, ai_entity,
+                        [{"name": "Total cost", "weight": 4}])
+        assert WeightCriteriaHandler().should_advance(disc) is False
+
+    def test_gives_up_after_max_rounds(self):
+        disc = self.disc_with_options(phase_round=MAX_CRITERIA_ROUNDS + 1)
+        assert WeightCriteriaHandler().should_advance(disc) is True
+
+    def test_aborts_when_no_criteria_after_give_up(self):
+        disc = self.disc_with_options(phase_round=MAX_CRITERIA_ROUNDS + 1)
+        handler = WeightCriteriaHandler()
+        assert handler.next_phase(disc) is None
+        assert "ended early" in handler.get_method_complete_message(disc)
+
+    def test_linear_next_with_criteria(self, ai_entity):
+        disc = self.disc_with_options(phase_round=3)
+        record_criteria(disc.method_state, ai_entity,
+                        [{"name": "Total cost", "weight": 4}])
+        handler = WeightCriteriaHandler()
+        assert handler.next_phase(disc) == LINEAR_NEXT
+        assert handler.get_method_complete_message(disc) == ""
