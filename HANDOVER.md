@@ -1,7 +1,7 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-14 (session: #27 Double Crux, branch
-`claude/handover-instructions-86694a`)._
+_Last updated: 2026-07-14 (session: #26 Tree of Thoughts, branch
+`claude/handover-instructions-80a7dd`)._
 
 This file briefs the next session(s) on what was done, what is in flight,
 and what to do next. Update it whenever a session materially changes the
@@ -13,8 +13,78 @@ plan; delete sections that are finished and no longer instructive.
   (#19/#20/#21), **PR #35** (#22 phase-machine loop support), **PR #36**
   (#30 Belief Diffusion abort), **PR #38** (#23 mechanism + first
   three conversions), **PR #39** (#23 remaining conversions +
-  hardening), **PR #40** (#24 NGT), and **PR #41** (#25 MCDA) are all
-  **merged**.
+  hardening), **PR #40** (#24 NGT), **PR #41** (#25 MCDA), and
+  **PR #43** (#27 Double Crux) are all **merged**.
+- **#26 Tree of Thoughts implemented** (this session, **PR #44** —
+  merge it before building on this work).  Spec:
+  `docs/superpowers/specs/2026-07-14-tree-of-thoughts-design.md`; plan:
+  `docs/superpowers/plans/2026-07-14-tree-of-thoughts.md`.
+  Method `tree_of_thoughts` (`consensus/methods/tree_of_thoughts.py`),
+  five phases from new handlers in `consensus/methods/phases/`
+  (`propose_thoughts`, `score_thoughts`, `prune_thoughts`,
+  `expand_thoughts`, `synthesise_thoughts`) over two shared helper
+  modules — `_tot_helpers.py` (schemas/validation/recording) and
+  `_tot_analysis.py` (composite/beam/artifact/formatting; split to
+  respect the ~500-line file rule, the `_mcda_*` precedent):
+  - Three structured phases per the #23 pattern: `submit_thoughts`
+    (anonymised independent approach generation, `generate_ideas.py`
+    pattern incl. the zero-thoughts abort), `submit_thought_scores`
+    (fixed feasibility/impact/risk dimensions — no criteria
+    elicitation; outer `additionalProperties` for T-labels, inner
+    object requires all three dimensions), and `submit_expansions`
+    (deep-dive of survivors: refinement + obstacles, depth-tagged).
+    Prune and synthesise are free-text moderator-only presentational
+    phases.
+  - **The prune phase routes the loop (#22 `next_phase`):** the beam
+    (top `BEAM_WIDTH`=3 by mean composite, risk inverted, ties by id)
+    is computed deterministically — never by the model.  Continue →
+    linear to `expand` (which always jumps back to `score`); stop →
+    jump to `synthesise` on **converged** / **degenerate** (<2
+    survivors) / **depth_budget** (`MAX_TOT_DEPTH`=3 prune passes).
+    **Convergence compares the ORDERED beam, not the id set** —
+    eligibility restricts re-scoring to the previous beam, so the set
+    is vacuously stable after the first prune; order is the only
+    movement re-scoring can produce (caught during implementation;
+    spec updated).
+  - `method_state["tot_artifact"]` is the machine-readable outcome
+    (recommendation, stop_reason, final beam, beam trajectory,
+    expansions, caveats — e.g. zero scorers, never-scored survivors),
+    built in prune's `next_phase` when routing to synthesis;
+    the conclusion prompt varies by stop reason.
+  - Re-scores merge per thought label (an entity's later submission
+    replaces only the thoughts it addresses); stale scores for pruned
+    thoughts stay recorded but the aggregation is eligibility-scoped.
+  - Recommender `_TAXONOMY` gained: "Open-ended problem-solving by
+    exploring, scoring, and iteratively refining parallel solution
+    paths → Tree of Thoughts".
+  - Review follow-ups applied in-PR: anonymisation holds for the
+    whole method (score/prune/expand/synthesise all filter context —
+    the propose turns replay in later phases and would otherwise leak
+    authorship exactly at scoring time; `format_expansions` is
+    author-free too); scored thoughts always rank above unscored
+    (an invented default composite can no longer beat real data into
+    the beam); convergence additionally requires every survivor to
+    have been freshly re-scored during the pass (`scores_by_pass`
+    records the labels per pass — stability under zero or partial new
+    data would let stale scores decide); duplicate `thought_id`
+    entries in one `submit_expansions` payload are rejected by
+    validation and deduped (first accepted wins) on the free-text
+    path; `record_thoughts` preserves trailing ellipses when
+    stripping the final period; the inline-JSON scanner only tries
+    braces still unclosed at the key (the enclosing stack, innermost
+    first) instead of every earlier `{`; the conclusion prompt is
+    honest when no outcome exists
+    (propose abort / mid-method conclude / loop-guard trip) instead of
+    narrating a fabricated "depth budget spent" story; prune and
+    synthesise transition messages embed the deterministic
+    ranking/digest so HUMAN moderators see the numbers (system prompts
+    are AI-only); re-score tables render only eligible thoughts (no
+    stale pruned entries) in numeric label order; the balanced-brace
+    JSON extractor moved to `methods/parsing.extract_json_payload`
+    (handles whitespace/reordered keys, logs parse failures) — the
+    MCDA/ACH copies still duplicate it, see follow-ups.
+  - Tests: `test_tot_helpers.py`, `test_phases_tot.py`,
+    `test_tot_structured.py` (124 tests; suite total 2250).
 - **#27 Double Crux implemented** (this session, **PR #43** — merge it
   before building on this work).  Plan:
   `docs/superpowers/plans/2026-07-14-double-crux.md`.
@@ -192,18 +262,45 @@ plan; delete sections that are finished and no longer instructive.
 
 ## Next steps, in order
 
-1. **New methods (highest value first):**
-   - **#26 Tree-of-Thoughts** — generate/score/prune/expand; the #22
-     `next_phase` hook it needed now exists.
-
-2. **Cross-cutting quality:**
+1. **Cross-cutting quality:**
    - **#28 evidence-gated phases** — opt-in `require_citations` so
      evidence phases must ground claims via the existing RAG/web tools.
      The Double Crux `test_crux` phase is the flagship consumer (its
      prompt already directs participants at research/document tools).
    - **#29 same-model-panel warning** for Delphi/Belief Diffusion.
+   - **#42 order-dependent word-overlap merging** (first-name-wins) is
+     catalog-wide; ToT's `record_thoughts` now shares the pattern too.
 
-3. **New known follow-ups (#27 session, 2026-07-14):**
+2. **New known follow-ups (#26 session, 2026-07-14):**
+   - **ToT expansion refines in place; it cannot spawn child
+     thoughts.**  True Tree-of-Thoughts expands surviving nodes into
+     new candidate children; issue #26's "deep-dive" wording was
+     implemented as refinements + obstacles attached to immutable
+     thoughts (label stability is what makes re-scoring and
+     convergence meaningful).  If real transcripts show the beam
+     starving (all survivors weak), a child-generation variant of the
+     expand phase — new thoughts entering the pool with fresh ids —
+     is the natural extension.
+   - **ToT joins NGT/MCDA/Double Crux in the missing
+     `complete_turn`-driven end-to-end flow test** (see item below) —
+     ToT would exercise the expand→score loop and the prune jumps
+     through the real `advance_phase` path.
+   - **The balanced-brace inline-JSON scanner now has one shared home
+     (`methods/parsing.extract_json_payload`) but two older copies
+     remain**: `_mcda_helpers.extract_scores` and
+     `evaluate_matrix._parse_ratings`.  Both should delegate to the
+     parsing helper (minor behavioral deltas: they return `{}` instead
+     of `None` and only accept dicts).  The shared scanner still
+     miscounts braces inside JSON strings — accepted limitation, now
+     documented in one place.
+   - **`record_thoughts`/`validate_thoughts_payload` duplicate NGT's
+     `record_ideas`/`validate_ideas_payload` near-verbatim** (only the
+     state key and noun differ).  A shared parametrised helper would
+     keep dedup/validation fixes in sync across the two generative
+     methods; same for the propose-phase give-up block mirroring
+     `generate_ideas.py`.
+
+3. **Known follow-ups (#27 session, 2026-07-14):**
    - **Double Crux belief shift is only measured for crux authors,
      and initial/final beliefs can refer to different phrasings.**
      `initial_beliefs` is snapshotted from the cruxes the moderator
@@ -232,12 +329,12 @@ plan; delete sections that are finished and no longer instructive.
      enforces weights); a UI hint for human participants would close
      the gap.
    - **No real-pipeline (`complete_turn`) flow test for the
-     NGT/MCDA/Double Crux methods yet** — handler-level and
+     NGT/MCDA/Double Crux/ToT methods yet** — handler-level and
      structured-conversion coverage matches the NGT precedent, but
-     none of the three has a `tests/test_turn_order_flow.py`-style
+     none of the four has a `tests/test_turn_order_flow.py`-style
      end-to-end test driving the moderator flow.  Worth adding once,
-     covering all three (Double Crux would also exercise the identify
-     loop through the real `advance_phase` path — only
+     covering all four (Double Crux and ToT would also exercise their
+     loops through the real `advance_phase` path — only
      `test_phase_machine_loops.py` covers loops end-to-end today).
 
 5. **Known follow-ups (older sessions):**

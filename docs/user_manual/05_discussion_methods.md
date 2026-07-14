@@ -10,6 +10,7 @@ Consider what you want from the discussion:
 |------|-------------------|
 | Explore a topic openly | Open Discussion |
 | Generate and prioritise new ideas or options | Nominal Group Technique |
+| Explore solution approaches broadly before committing | Tree of Thoughts |
 | Make a decision between options | Weighted Decision Matrix (MCDA), Adversarial Collaboration, Voting |
 | Resolve a genuine disagreement | Double Crux, Adversarial Collaboration |
 | Forecast or estimate | Delphi Method, Belief State Diffusion |
@@ -247,6 +248,21 @@ Disagreement resolution by crux-finding. Where adjudication formats (Court of La
 5. **Resolution** — Final positions and belief restatement
 
 **Best for:** Genuine two-sided disagreements where debate would only entrench positions — the outcome is either a resolution or a clean map: "the disagreement reduces to X" or "this is a values difference, not a factual one".
+
+---
+
+### Tree of Thoughts
+
+Iterative parallel exploration for open problem-solving. Participants independently propose distinct solution approaches (anonymised so nobody anchors on anyone else), everyone scores every approach on feasibility, impact, and risk, and a deterministic *beam prune* keeps the strongest few. The survivors then get a deep-dive round — refinements and obstacles — and are re-scored in light of it; the score→prune→expand loop repeats until the ranking stabilises or a depth budget is spent. All composites and rankings are computed by the platform from the submitted scores, never by a model, and a machine-readable outcome artifact records the recommendation, the beam's trajectory across passes, and the obstacles raised.
+
+**Phases:**
+1. **Propose** — Anonymised independent generation of distinct solution approaches
+2. **Score** — Everyone scores every surviving approach on feasibility, impact, and risk
+3. **Prune** — The computed ranking cuts the field to the strongest few (the beam)
+4. **Expand** — Deep-dive of the survivors: refinements and obstacles (then back to scoring)
+5. **Synthesis** — The moderator presents the outcome and its trajectory
+
+**Best for:** Open questions where the solution space should be explored broadly before committing — the generative counterpart to the evaluative methods, with an iterative refine-and-re-rank loop that NGT's single voting pass does not have.
 
 ---
 
