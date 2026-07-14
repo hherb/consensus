@@ -306,6 +306,9 @@ class TestTestCruxHandler:
         assert "evidence" in TestCruxHandler().get_turn_prompt(
             _entity(), disc).lower()
 
+    def test_test_crux_phase_tracks_evidence(self):
+        assert TestCruxHandler().phase.track_evidence is True
+
 
 class TestResolveCruxPrompts:
     def test_factual_prompt_requires_belief(self):
@@ -518,3 +521,23 @@ class TestDoubleCruxMethod:
         disc.method_state["crux_verdict"] = VERDICT_NONE
         prompt = self._method().get_conclusion_prompt(disc)
         assert "no shared crux" in prompt.lower()
+
+
+def test_conclusion_prompt_lists_evidence_basis():
+    from consensus.methods.double_crux import DoubleCrux
+    from consensus.models import Discussion
+    d = Discussion(topic="t")
+    d.method_state = {
+        "crux_verdict": "factual",
+        "shared_crux": {}, "positions": {}, "resolutions": [],
+        "evidence_log": [
+            {"entity_name": "Alice", "grounded": True,
+             "sources": [{"type": "web", "url": "https://a.example"}]},
+            {"entity_name": "Bob", "grounded": False, "sources": []},
+        ],
+    }
+    prompt = DoubleCrux().get_conclusion_prompt(d)
+    assert "Grounded contributions (1)" in prompt
+    assert "https://a.example" in prompt
+    assert "Reasoning-based" in prompt
+    assert "Bob" in prompt

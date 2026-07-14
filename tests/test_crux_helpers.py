@@ -457,6 +457,19 @@ class TestBuildCruxMap:
         crux_map = build_crux_map(state)
         assert any("belief" in c.lower() for c in crux_map["caveats"])
 
+    def test_build_crux_map_includes_evidence_summary(self):
+        state = {
+            "crux_verdict": "factual",
+            "evidence_log": [
+                {"entity_name": "Alice", "grounded": True,
+                 "sources": [{"type": "document", "document_id": 3}]},
+                {"entity_name": "Bob", "grounded": False, "sources": []},
+            ],
+        }
+        artifact = build_crux_map(state)
+        assert artifact["evidence"]["counts"] == {
+            "grounded": 1, "reasoning_based": 1}
+
 
 class TestFormatters:
     def _state(self) -> dict:

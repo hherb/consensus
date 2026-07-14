@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from ..parsing import extract_json_block, parse_numbered_list, \
     word_overlap_similar
+from ...evidence import build_evidence_summary
 
 if TYPE_CHECKING:
     from ...models import Entity
@@ -429,6 +430,7 @@ def build_crux_map(state: dict) -> dict:
         "resolutions": list(resolutions),
         "belief_shifts": shifts,
         "caveats": caveats,
+        "evidence": build_evidence_summary(state),
     }
 
 

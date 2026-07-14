@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ..evidence import build_evidence_summary, format_sources
 from .base import DiscussionMethod
 from .phases._crux_helpers import (
     VERDICT_FACTUAL,
@@ -36,6 +37,25 @@ from .phases.test_crux import TestCruxHandler
 
 if TYPE_CHECKING:
     from ..models import Discussion
+
+
+def _format_evidence_basis(state: dict) -> str:
+    """Render the grounded/reasoning-based basis for the conclusion."""
+    summary = build_evidence_summary(state)
+    if not summary["grounded"] and not summary["reasoning_based"]:
+        return "Evidentiary basis: no contributions were logged."
+    lines = [
+        f"Grounded contributions ({summary['counts']['grounded']}):"
+    ]
+    for g in summary["grounded"]:
+        src = format_sources(g["sources"]) or "(sources recorded)"
+        lines.append(f"  - {g['entity_name']}: {src}")
+    reasoning = summary["reasoning_based"]
+    if reasoning:
+        names = ", ".join(r["entity_name"] for r in reasoning)
+        lines.append(
+            f"Reasoning-based (no cited evidence): {names}")
+    return "\n".join(lines)
 
 
 class DoubleCrux(DiscussionMethod):
@@ -80,6 +100,7 @@ class DoubleCrux(DiscussionMethod):
                 f"{format_shared_crux(state)}\n\n"
                 "Belief shifts on the crux (initial → final):\n"
                 f"{format_belief_shifts(state)}\n\n"
+                f"{_format_evidence_basis(state)}\n\n"
                 "Provide a comprehensive synthesis:\n"
                 "1. **The crux** — State the shared crux and why the "
                 "disagreement reduces to it\n"
