@@ -8,6 +8,7 @@ degenerate), turn orders, and method-level assembly.
 
 import pytest
 
+from consensus.methods import get_method, list_methods
 from consensus.methods.base import LINEAR_NEXT
 from consensus.methods.phases._tot_helpers import (
     MAX_PROPOSE_ROUNDS,
@@ -23,6 +24,9 @@ from consensus.methods.phases.expand_thoughts import ExpandThoughtsHandler
 from consensus.methods.phases.propose_thoughts import ProposeThoughtsHandler
 from consensus.methods.phases.prune_thoughts import PruneThoughtsHandler
 from consensus.methods.phases.score_thoughts import ScoreThoughtsHandler
+from consensus.methods.phases.synthesise_thoughts import (
+    SynthesiseThoughtsHandler,
+)
 from consensus.models import Discussion, Entity, EntityType
 
 
@@ -366,3 +370,81 @@ class TestExpandThoughtsHandler:
     def test_advances_after_one_round(self):
         disc = _disc_with_beam(phase_round=2)
         assert ExpandThoughtsHandler().should_advance(disc) is True
+
+
+def _artifact(stop_reason: str = STOP_CONVERGED) -> dict:
+    return {
+        "recommendation": {"id": 1, "text": "Launch a plugin marketplace",
+                           "composite": 12.5},
+        "converged": stop_reason == STOP_CONVERGED,
+        "stop_reason": stop_reason,
+        "depth": 2,
+        "final_beam": [{"id": 1, "text": "Launch a plugin marketplace",
+                        "composite": 12.5, "scorer_count": 2}],
+        "beam_history": [{"depth": 1, "beam_ids": [1], "ranking": []},
+                         {"depth": 2, "beam_ids": [1], "ranking": []}],
+        "expansions": [],
+        "caveats": ["A caveat about scoring coverage"],
+    }
+
+
+class TestSynthesiseThoughtsHandler:
+    def test_phase_metadata_and_not_structured(self):
+        handler = SynthesiseThoughtsHandler()
+        assert handler.phase.name == "synthesise"
+        assert handler.phase.rounds == 1
+        assert handler.requires_structured_output is False
+
+    def test_moderator_only_turn_order(self):
+        disc = make_disc(current_phase="synthesise")
+        assert SynthesiseThoughtsHandler().get_turn_order(
+            [1, 2], disc) == [99]
+
+    def test_system_prompt_quotes_artifact(self, moderator):
+        disc = make_disc(current_phase="synthesise",
+                         tot_artifact=_artifact())
+        prompt = SynthesiseThoughtsHandler().get_system_prompt(
+            moderator, disc)
+        assert "plugin marketplace" in prompt
+        assert "12.5" in prompt
+        assert "caveat about scoring coverage" in prompt
+
+
+class TestTreeOfThoughtsMethod:
+    def test_registry_and_metadata(self):
+        method = get_method("tree_of_thoughts")
+        assert method.display_name == "Tree of Thoughts"
+        assert [p.name for p in method.default_phases] == [
+            "propose", "score", "prune", "expand", "synthesise"]
+        assert any(m["name"] == "tree_of_thoughts" for m in list_methods())
+
+    def test_requires_structured_output(self):
+        assert (get_method("tree_of_thoughts").requires_structured_output()
+                is True)
+
+    def test_init_state_merges_handler_keys(self):
+        disc = make_disc()
+        state = get_method("tree_of_thoughts").init_state(disc)
+        for key in ("thoughts", "thought_scores", "beam_history",
+                    "tot_artifact", "expansions"):
+            assert key in state
+        assert state["current_phase"] == "propose"
+
+    def test_conclusion_prompt_quotes_artifact_numbers(self):
+        method = get_method("tree_of_thoughts")
+        disc = make_disc(tot_artifact=_artifact())
+        prompt = method.get_conclusion_prompt(disc)
+        assert "plugin marketplace" in prompt
+        assert "12.5" in prompt
+
+    def test_conclusion_prompt_varies_by_stop_reason(self):
+        method = get_method("tree_of_thoughts")
+        converged = method.get_conclusion_prompt(
+            make_disc(tot_artifact=_artifact(STOP_CONVERGED)))
+        depth = method.get_conclusion_prompt(
+            make_disc(tot_artifact=_artifact(STOP_DEPTH)))
+        assert converged != depth
+
+    def test_taxonomy_mentions_tree_of_thoughts(self):
+        from consensus.methods.recommender import _TAXONOMY
+        assert "Tree of Thoughts" in _TAXONOMY

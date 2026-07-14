@@ -27,6 +27,7 @@ from .court_of_law import CourtOfLaw
 from .nominal_group import NominalGroupTechnique
 from .decision_matrix import WeightedDecisionMatrix
 from .double_crux import DoubleCrux
+from .tree_of_thoughts import TreeOfThoughts
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ _METHODS: dict[str, type[DiscussionMethod]] = {
     "nominal_group": NominalGroupTechnique,
     "decision_matrix": WeightedDecisionMatrix,
     "double_crux": DoubleCrux,
+    "tree_of_thoughts": TreeOfThoughts,
 }
 _INSTANCES: dict[str, DiscussionMethod] = {}
 _METHODS_METADATA: list[dict] | None = None
@@ -121,4 +123,5 @@ __all__ = [
     "NominalGroupTechnique",
     "WeightedDecisionMatrix",
     "DoubleCrux",
+    "TreeOfThoughts",
 ]
