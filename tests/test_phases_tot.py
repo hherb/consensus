@@ -10,13 +10,13 @@ import pytest
 
 from consensus.methods import get_method, list_methods
 from consensus.methods.base import LINEAR_NEXT
+from consensus.methods.phases._tot_analysis import compute_beam
 from consensus.methods.phases._tot_helpers import (
     MAX_PROPOSE_ROUNDS,
     MAX_TOT_DEPTH,
     STOP_CONVERGED,
     STOP_DEGENERATE,
     STOP_DEPTH,
-    compute_beam,
     record_thought_scores,
     record_thoughts,
 )

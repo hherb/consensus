@@ -21,11 +21,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .base import DiscussionMethod
+from .phases._tot_analysis import format_beam_trajectory, format_expansions
 from .phases._tot_helpers import (
     STOP_CONVERGED,
     STOP_DEGENERATE,
-    format_beam_trajectory,
-    format_expansions,
     thought_label,
 )
 from .phases.expand_thoughts import ExpandThoughtsHandler

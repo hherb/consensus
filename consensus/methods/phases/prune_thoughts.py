@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from ..base import LINEAR_NEXT, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
+from ._tot_analysis import build_tot_artifact, compute_beam, format_ranking
 from ._tot_helpers import (
     BEAM_WIDTH,
     MAX_TOT_DEPTH,
@@ -35,10 +36,7 @@ from ._tot_helpers import (
     STOP_CONVERGED,
     STOP_DEGENERATE,
     STOP_DEPTH,
-    build_tot_artifact,
-    compute_beam,
     current_depth,
-    format_ranking,
     thought_label,
 )
 

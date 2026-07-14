@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from ..base import Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
-from ._tot_helpers import format_beam_trajectory, format_expansions
+from ._tot_analysis import format_beam_trajectory, format_expansions
 
 if TYPE_CHECKING:
     from ...models import Discussion, Entity

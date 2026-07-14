@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
+from ._tot_analysis import format_expansions, format_thoughts
 from ._tot_helpers import (
     DIMENSIONS,
     SCORE_MAX,
@@ -25,8 +26,6 @@ from ._tot_helpers import (
     current_depth,
     eligible_thoughts,
     extract_json_payload,
-    format_expansions,
-    format_thoughts,
     record_thought_scores,
     thought_label,
     validate_scores_payload,

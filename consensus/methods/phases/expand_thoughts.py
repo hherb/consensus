@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
+from ._tot_analysis import format_thoughts
 from ._tot_helpers import (
     EXPANSIONS_TOOL_PARAMETERS,
     current_depth,
     eligible_thoughts,
     extract_json_payload,
-    format_thoughts,
     record_expansions,
     thought_label,
     validate_expansions_payload,
