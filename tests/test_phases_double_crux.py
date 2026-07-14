@@ -396,3 +396,88 @@ class TestResolveCruxAdvancement:
         crux_map = disc.method_state["crux_map"]
         assert crux_map["verdict"] == VERDICT_FACTUAL
         assert crux_map["belief_shifts"]["Alice"]["shift"] == -0.35
+
+
+class TestDoubleCruxMethod:
+    def _method(self):
+        from consensus.methods import get_method
+        return get_method("double_crux")
+
+    def _discussion(self) -> Discussion:
+        disc = Discussion(topic="Should our company go remote-first?",
+                          discussion_method="double_crux",
+                          moderator_id=99)
+        disc.method_state = self._method().init_state(disc)
+        return disc
+
+    def test_registered_with_expected_phases(self):
+        method = self._method()
+        assert method.name == "double_crux"
+        assert [p.name for p in method.default_phases] == [
+            "positions", "hunt_cruxes", "identify_crux", "test_crux",
+            "resolve"]
+
+    def test_requires_structured_output(self):
+        assert self._method().requires_structured_output() is True
+
+    def test_init_state_has_all_keys(self):
+        state = self._discussion().method_state
+        for key in ("positions", "cruxes", "crux_verdict", "shared_crux",
+                    "identify_attempts", "crux_search_rounds",
+                    "resolutions", "crux_map"):
+            assert key in state, key
+
+    def test_positions_prompt_uses_double_crux_label(self):
+        disc = self._discussion()
+        prompt = self._method().get_system_prompt(_entity(), disc)
+        assert "Double Crux" in prompt
+        assert "Adversarial" not in prompt
+
+    def test_advance_phase_loops_on_none_verdict(self):
+        method = self._method()
+        disc = self._discussion()
+        disc.method_state["current_phase"] = "identify_crux"
+        disc.method_state["crux_verdict"] = VERDICT_NONE
+        phase = method.advance_phase(disc)
+        assert phase.name == "hunt_cruxes"
+        assert disc.method_state["crux_search_rounds"] == 2
+
+    def test_advance_phase_values_skips_testing(self):
+        method = self._method()
+        disc = self._discussion()
+        disc.method_state["current_phase"] = "identify_crux"
+        disc.method_state["crux_verdict"] = VERDICT_VALUES
+        assert method.advance_phase(disc).name == "resolve"
+
+    def test_worst_case_looping_never_trips_loop_guard(self):
+        # positions→hunt→(identify→hunt)×(MAX-1)→identify→resolve
+        transitions = 2 + 2 * (MAX_CRUX_SEARCH_ROUNDS - 1) + 1
+        method = self._method()
+        cap = len(method.default_phases) * 5  # MAX_PHASE_VISITS_PER_PHASE
+        assert transitions < cap
+
+    def test_conclusion_prompt_factual(self):
+        disc = self._discussion()
+        disc.method_state["crux_verdict"] = VERDICT_FACTUAL
+        disc.method_state["shared_crux"] = {
+            "claim": CLAIM_A, "description": "", "source_crux_ids": [1],
+            "initial_beliefs": {"Alice": 0.9}}
+        prompt = self._method().get_conclusion_prompt(disc)
+        assert CLAIM_A in prompt
+        assert "belief" in prompt.lower()
+
+    def test_conclusion_prompt_values(self):
+        disc = self._discussion()
+        disc.method_state["crux_verdict"] = VERDICT_VALUES
+        disc.method_state["shared_crux"] = {
+            "claim": "", "description": "Autonomy over output",
+            "source_crux_ids": [], "initial_beliefs": {}}
+        prompt = self._method().get_conclusion_prompt(disc)
+        assert "values difference" in prompt.lower()
+        assert "Autonomy over output" in prompt
+
+    def test_conclusion_prompt_none(self):
+        disc = self._discussion()
+        disc.method_state["crux_verdict"] = VERDICT_NONE
+        prompt = self._method().get_conclusion_prompt(disc)
+        assert "no shared crux" in prompt.lower()

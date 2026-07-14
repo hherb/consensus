@@ -66,6 +66,10 @@ class TestMethodRecommender:
         assert "Nominal Group Technique" in _TAXONOMY
         assert "(fallback only)" not in _TAXONOMY
 
+    def test_taxonomy_mentions_double_crux(self):
+        from consensus.methods.recommender import _TAXONOMY
+        assert "Double Crux" in _TAXONOMY
+
     def test_build_system_prompt_contains_methods(self):
         catalog = [
             {"name": "ach", "display_name": "ACH", "description": "Hypothesis testing", "phases": []},

@@ -26,6 +26,7 @@ from .self_distillation import RecursiveSelfDistillation
 from .court_of_law import CourtOfLaw
 from .nominal_group import NominalGroupTechnique
 from .decision_matrix import WeightedDecisionMatrix
+from .double_crux import DoubleCrux
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ _METHODS: dict[str, type[DiscussionMethod]] = {
     "court_of_law": CourtOfLaw,
     "nominal_group": NominalGroupTechnique,
     "decision_matrix": WeightedDecisionMatrix,
+    "double_crux": DoubleCrux,
 }
 _INSTANCES: dict[str, DiscussionMethod] = {}
 _METHODS_METADATA: list[dict] | None = None
@@ -118,4 +120,5 @@ __all__ = [
     "CourtOfLaw",
     "NominalGroupTechnique",
     "WeightedDecisionMatrix",
+    "DoubleCrux",
 ]
