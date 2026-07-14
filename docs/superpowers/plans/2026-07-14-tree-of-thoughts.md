@@ -161,7 +161,10 @@ def next_phase(self, discussion: Discussion) -> str | None:
     prev = state["beam_history"][-1]["beam_ids"] if state.get("beam_history") else None
     state.setdefault("beam_history", []).append(
         {"depth": current_depth(state) + 1, "beam_ids": beam_ids, "ranking": ranking})
-    converged = prev is not None and set(prev) == set(beam_ids)
+    # Ordered equality: eligibility restricts scoring to the previous
+    # beam, so the id SET is vacuously stable after the first prune —
+    # only the order can move, and a stable order means convergence.
+    converged = prev is not None and prev == beam_ids
     degenerate = len(beam_ids) < MIN_BEAM_SIZE          # MIN_BEAM_SIZE = 2
     depth_spent = current_depth(state) >= MAX_TOT_DEPTH
     if converged or degenerate or depth_spent:

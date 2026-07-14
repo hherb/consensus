@@ -64,8 +64,12 @@ propose → score → prune ──(continue)──→ expand
    survive.  The moderator takes one free-text presentational turn
    (the `rank_ideas.py` / `analyse_sensitivity.py` pattern) explaining
    the cut.  Routing happens in this handler's `next_phase` (#22):
-   - **converged** — the new beam's id set equals the previous
-     iteration's beam id set → jump to `synthesise`;
+   - **converged** — the new **ordered** beam equals the previous
+     iteration's ordered beam → jump to `synthesise`.  (Ordered, not
+     set, equality: eligibility restricts scoring to the previous
+     beam, so the id *set* is necessarily unchanged after the first
+     prune — reordering is the only movement re-scoring can produce,
+     and a stable order means the deep-dives changed nothing);
    - **depth budget** — `MAX_TOT_DEPTH` (3) prune passes done → jump
      to `synthesise`;
    - **degenerate** — fewer than 2 surviving thoughts (nothing to
@@ -178,10 +182,12 @@ preserved set.
   The *pattern* (labels, `additionalProperties`, midpoint defaults,
   partial coverage) is reused, per the issue's "reuse matrix-scoring
   machinery".
-- **Convergence by leader stability (top-1 unchanged) instead of beam
-  stability** — rejected: a stable leader with churning runners-up
-  means exploration is still moving; beam-set equality is the stricter
-  and still fully deterministic test.
+- **Convergence by leader stability (top-1 unchanged) or beam-set
+  equality** — rejected: a stable leader with churning runners-up
+  means exploration is still moving, and the beam *set* is vacuously
+  stable once eligibility restricts scoring to the previous beam.
+  Ordered-beam equality is the strictest fully deterministic test that
+  can actually vary between passes.
 
 ## Testing
 

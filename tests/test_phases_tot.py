@@ -20,6 +20,7 @@ from consensus.methods.phases._tot_helpers import (
     record_thoughts,
 )
 from consensus.methods.phases.propose_thoughts import ProposeThoughtsHandler
+from consensus.methods.phases.prune_thoughts import PruneThoughtsHandler
 from consensus.methods.phases.score_thoughts import ScoreThoughtsHandler
 from consensus.models import Discussion, Entity, EntityType
 
@@ -202,3 +203,103 @@ class TestScoreThoughtsHandler:
     def test_advances_after_one_round(self):
         disc = make_disc(current_phase="score", phase_round=2)
         assert ScoreThoughtsHandler().should_advance(disc) is True
+
+
+def _score_all(disc: Discussion, entity_id: int = 1,
+               feasibility_by_id: dict[int, int] | None = None) -> None:
+    """Record one entity's scores for every recorded thought."""
+    scores = {}
+    for t in disc.method_state["thoughts"]:
+        f = (feasibility_by_id or {}).get(t["id"], 3)
+        scores[f"T{t['id']}"] = {"feasibility": f, "impact": 3, "risk": 3}
+    record_thought_scores(
+        disc.method_state,
+        Entity(name="Scorer", entity_type=EntityType.AI, id=entity_id),
+        scores)
+
+
+class TestPruneThoughtsHandler:
+    def test_phase_metadata_and_not_structured(self):
+        handler = PruneThoughtsHandler()
+        assert handler.phase.name == "prune"
+        assert handler.phase.rounds == 1
+        assert handler.requires_structured_output is False
+
+    def test_init_state(self):
+        assert PruneThoughtsHandler().init_state(make_disc()) == {
+            "beam_history": [], "tot_artifact": {}}
+
+    def test_moderator_only_turn_order(self):
+        disc = make_disc(current_phase="prune")
+        assert PruneThoughtsHandler().get_turn_order([1, 2], disc) == [99]
+
+    def test_system_prompt_shows_ranking_without_mutating(self, moderator):
+        disc = make_disc(current_phase="prune")
+        _seed_thoughts(disc, 4)
+        _score_all(disc, feasibility_by_id={1: 5, 2: 4, 3: 2, 4: 1})
+        prompt = PruneThoughtsHandler().get_system_prompt(moderator, disc)
+        assert "T1" in prompt and "T4" in prompt
+        assert disc.method_state["beam_history"] == []  # pure read
+
+    def test_first_prune_continues_linearly_and_records_beam(self):
+        disc = make_disc(current_phase="prune")
+        _seed_thoughts(disc, 4)
+        _score_all(disc, feasibility_by_id={1: 5, 2: 4, 3: 2, 4: 1})
+        assert PruneThoughtsHandler().next_phase(disc) == LINEAR_NEXT
+        history = disc.method_state["beam_history"]
+        assert len(history) == 1
+        assert history[0]["depth"] == 1
+        assert history[0]["beam_ids"] == [1, 2, 3]
+        assert disc.method_state["tot_artifact"] == {}
+
+    def test_identical_beam_converges_to_synthesise(self):
+        disc = make_disc(current_phase="prune")
+        _seed_thoughts(disc, 4)
+        _score_all(disc, feasibility_by_id={1: 5, 2: 4, 3: 2, 4: 1})
+        beam_ids, ranking = compute_beam(disc.method_state)
+        disc.method_state["beam_history"] = [
+            {"depth": 1, "beam_ids": beam_ids, "ranking": ranking}]
+        assert PruneThoughtsHandler().next_phase(disc) == "synthesise"
+        artifact = disc.method_state["tot_artifact"]
+        assert artifact["stop_reason"] == STOP_CONVERGED
+        assert artifact["converged"] is True
+        assert len(disc.method_state["beam_history"]) == 2
+
+    def test_reordered_beam_is_not_converged(self):
+        disc = make_disc(current_phase="prune")
+        _seed_thoughts(disc, 4)
+        _score_all(disc, feasibility_by_id={1: 5, 2: 4, 3: 2, 4: 1})
+        # Same survivors, different order → still moving, keep looping.
+        disc.method_state["beam_history"] = [
+            {"depth": 1, "beam_ids": [2, 1, 3], "ranking": []}]
+        assert PruneThoughtsHandler().next_phase(disc) == LINEAR_NEXT
+        assert disc.method_state["tot_artifact"] == {}
+
+    def test_depth_budget_forces_synthesise(self):
+        disc = make_disc(current_phase="prune")
+        _seed_thoughts(disc, 4)
+        # The latest prior beam holds the same survivors in a different
+        # order, so convergence never triggers; the budget must.
+        disc.method_state["beam_history"] = [
+            {"depth": 1, "beam_ids": [1, 2, 3], "ranking": []},
+            {"depth": 2, "beam_ids": [2, 1, 3], "ranking": []},
+        ][:MAX_TOT_DEPTH - 1]
+        _score_all(disc, feasibility_by_id={1: 5, 2: 4, 3: 2, 4: 1})
+        assert PruneThoughtsHandler().next_phase(disc) == "synthesise"
+        artifact = disc.method_state["tot_artifact"]
+        assert artifact["stop_reason"] == STOP_DEPTH
+        assert artifact["depth"] == MAX_TOT_DEPTH
+
+    def test_single_thought_is_degenerate(self):
+        disc = make_disc(current_phase="prune")
+        _seed_thoughts(disc, 1)
+        _score_all(disc)
+        assert PruneThoughtsHandler().next_phase(disc) == "synthesise"
+        assert (disc.method_state["tot_artifact"]["stop_reason"]
+                == STOP_DEGENERATE)
+
+    def test_transition_message_mentions_prune(self):
+        disc = make_disc(current_phase="prune")
+        _seed_thoughts(disc, 2)
+        message = PruneThoughtsHandler().get_transition_message(disc)
+        assert "prune" in message.lower() or "beam" in message.lower()
