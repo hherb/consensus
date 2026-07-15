@@ -31,6 +31,7 @@ export function renderSetupTab() {
     loadDiscussionMethods();
     syncDefaultContextControls();
     initMethodRecommendation();
+    renderPanelAdvisory();
 }
 
 /**
@@ -283,6 +284,7 @@ export async function onMethodChange() {
     const s = await api.getState();
     onStateUpdate(s);
     renderDiscussionRoster();
+    renderPanelAdvisory();
 }
 
 // --- Method Recommendation ---
@@ -371,6 +373,22 @@ function updateMethodDescription() {
     if (!select || !desc || !_methodsCache) return;
     const method = _methodsCache.find(m => m.name === select.value);
     desc.textContent = method?.description || '';
+}
+
+/**
+ * Show or hide the same-model panel advisory based on current state (#29).
+ */
+function renderPanelAdvisory() {
+    const el = $('#method-advisory');
+    if (!el) return;
+    const advisory = state.panel_advisory;
+    if (advisory && advisory.message) {
+        el.textContent = `⚠ ${advisory.message}`;
+        el.style.display = '';
+    } else {
+        el.textContent = '';
+        el.style.display = 'none';
+    }
 }
 
 // --- Context Strategy Controls ---

@@ -1260,6 +1260,11 @@ input[type="checkbox"] { width: auto; }
   color: var(--warning, #b8860b);
   margin-top: 0.15rem;
 }
+.method-advisory {
+  font-size: 0.85em;
+  color: var(--warning, #b8860b);
+  margin-top: 0.25rem;
+}
 .recommendation-item .reasoning {
   font-size: 0.9em;
   margin-top: 0.25rem;

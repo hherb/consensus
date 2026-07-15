@@ -22,6 +22,9 @@ export async function onStartDiscussion() {
     const result = await api.startDiscussion(modParticipates, maxRounds, costLimit);
     if (result?.error) return showToast(result.error);
     onStateUpdate(result);
+    if (result.panel_advisory?.message) {
+        showToast(result.panel_advisory.message, 6000, 'warning');
+    }
     hide('#setup-phase');
     show('#discussion-phase');
     resetRenderedMessageCount(0);
