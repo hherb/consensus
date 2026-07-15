@@ -53,6 +53,7 @@ class BeliefDiffusion(DiscussionMethod):
         DiffuseBeliefsHandler(),
         DiagnoseHandler(),
     )
+    assumes_independent_panel = True
 
     # ------------------------------------------------------------------
     # Round lifecycle
@@ -118,7 +119,7 @@ class BeliefDiffusion(DiscussionMethod):
         hyp_list = "\n".join(f"  H{i+1}: {h}"
                              for i, h in enumerate(hypotheses))
 
-        return (
+        body = (
             "The Belief State Diffusion process is complete.\n\n"
             f"Hypotheses:\n{hyp_list}\n\n"
             f"Belief trajectories:\n{trajectory}\n\n"
@@ -136,3 +137,5 @@ class BeliefDiffusion(DiscussionMethod):
             "tell us about the original question?\n\n"
             "Be specific and cite the data."
         )
+        disclosure = self.panel_composition_disclosure(discussion)
+        return f"{disclosure}\n\n{body}" if disclosure else body

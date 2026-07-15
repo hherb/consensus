@@ -44,6 +44,7 @@ class DelphiMethod(DiscussionMethod):
         ReviseDelphiHandler(),
         SynthesiseDelphiHandler(),
     )
+    assumes_independent_panel = True
 
     # ------------------------------------------------------------------
     # Round lifecycle
@@ -64,7 +65,7 @@ class DelphiMethod(DiscussionMethod):
     def get_conclusion_prompt(self, discussion: Discussion) -> str:
         summary = self._build_full_trajectory(discussion)
 
-        return (
+        body = (
             "The Delphi Method process is complete.\n\n"
             f"Estimate trajectories:\n{summary}\n\n"
             "Provide a comprehensive synthesis:\n"
@@ -83,6 +84,8 @@ class DelphiMethod(DiscussionMethod):
             "uncertainty bounds.\n\n"
             "Present actual numbers and cite specific reasoning."
         )
+        disclosure = self.panel_composition_disclosure(discussion)
+        return f"{disclosure}\n\n{body}" if disclosure else body
 
     # ------------------------------------------------------------------
     # Helpers
