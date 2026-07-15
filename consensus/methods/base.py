@@ -111,6 +111,10 @@ class DiscussionMethod(ABC):
     name: str = ""
     display_name: str = ""
     description: str = ""
+    #: When True, the method's validity depends on estimators being
+    #: independent (Delphi, Belief State Diffusion).  Drives the same-model
+    #: panel warning and conclusion-time composition disclosure (#29).
+    assumes_independent_panel: bool = False
     default_phases: tuple[Phase, ...] = ()
     phase_handlers: tuple[_PhaseHandler, ...] = ()
     #: Loop guard: maximum total phase entries (transitions) before the
@@ -146,6 +150,22 @@ class DiscussionMethod(ABC):
         AI participants (issue #23, owner decision 2026-07-12).
         """
         return any(h.requires_structured_output for h in self.phase_handlers)
+
+    def panel_composition_disclosure(self, discussion: "Discussion") -> str:
+        """Return the model-composition disclosure for the conclusion prompt.
+
+        Empty string unless ``assumes_independent_panel`` is set.  Used by
+        independence-assuming methods to caveat convergence when the panel
+        shares a model (#29).
+        """
+        if not self.assumes_independent_panel:
+            return ""
+        from .panel_diversity import (
+            analyze_panel_diversity, estimator_models,
+            format_conclusion_disclosure,
+        )
+        report = analyze_panel_diversity(estimator_models(discussion))
+        return format_conclusion_disclosure(report)
 
     def _active_handler(self, discussion: Discussion) -> Optional[_PhaseHandler]:
         """Return the PhaseHandler for the discussion's current phase."""

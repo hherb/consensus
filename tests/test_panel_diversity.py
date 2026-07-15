@@ -170,3 +170,43 @@ class TestFormatConclusionDisclosure:
         assert "Panel composition" in text
         assert "2 of 3" in text
         assert "caveat" in text.lower()
+
+
+from consensus.methods.base import DiscussionMethod
+
+
+class _IndepMethod(DiscussionMethod):
+    name = "indep_test"
+    display_name = "Independent Test"
+    assumes_independent_panel = True
+    phase_handlers = ()
+
+
+class _PlainMethod(DiscussionMethod):
+    name = "plain_test"
+    display_name = "Plain Test"
+    phase_handlers = ()
+
+
+class TestPanelCompositionDisclosure:
+    def test_default_flag_false(self):
+        assert DiscussionMethod.assumes_independent_panel is False
+        assert _PlainMethod().assumes_independent_panel is False
+
+    def test_plain_method_returns_empty(self):
+        disc = Discussion(
+            id=1, topic="t",
+            entities=[_ai("A", 1, "gpt-4o"), _ai("B", 2, "gpt-4o")],
+            moderator_id=None,
+        )
+        assert _PlainMethod().panel_composition_disclosure(disc) == ""
+
+    def test_indep_method_discloses_concerning(self):
+        disc = Discussion(
+            id=1, topic="t",
+            entities=[_ai("A", 1, "gpt-4o"), _ai("B", 2, "gpt-4o")],
+            moderator_id=None,
+        )
+        text = _IndepMethod().panel_composition_disclosure(disc)
+        assert "Panel composition" in text
+        assert "caveat" in text.lower()
