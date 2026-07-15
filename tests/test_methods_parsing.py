@@ -166,10 +166,17 @@ class TestClusterBySimilarity:
         clusters = cluster_by_similarity(items, text_of=lambda s: s)
         assert clusters[0] == ["zzz distinct singleton"]
 
+    def test_empty_members_returns_empty_list(self):
+        assert cluster_by_similarity([], text_of=lambda s: s) == []
+
 
 class TestCanonicalIndex:
     def test_single_member(self):
         assert canonical_index(["only one here"], text_of=lambda s: s) == 0
+
+    def test_empty_members_raises(self):
+        with pytest.raises(ValueError):
+            canonical_index([], text_of=lambda s: s)
 
     def test_medoid_is_most_central(self):
         members = ["cost total ownership money", "cost total ownership",
@@ -200,3 +207,6 @@ class TestClusterTextContributions:
         assert view[0]["entity_name"] == "Alice"      # founder = min index
         assert view[0]["text"] == "shared idea alpha beta too"  # medoid
         assert len(touched) == 2                       # both clusters have idx>=1
+
+    def test_empty_raw_returns_empty_view_and_touched(self):
+        assert cluster_text_contributions([]) == ([], [])

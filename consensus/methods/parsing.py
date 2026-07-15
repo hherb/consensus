@@ -131,6 +131,8 @@ def canonical_index(members: list,
     the longest text, then the lexicographically smallest, so the result
     is fully deterministic.  *members* must be non-empty.
     """
+    if not members:
+        raise ValueError("canonical_index requires a non-empty members list")
     texts = [text_of(m) for m in members]
     central = [sum(word_overlap_ratio(texts[i], texts[j])
                    for j in range(len(texts)) if j != i)
