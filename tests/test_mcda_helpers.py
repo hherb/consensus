@@ -134,6 +134,19 @@ class TestRecordOptions:
         record_options(state, alice, ["ab"])
         assert state["options"] == []
 
+    def test_merging_is_order_independent_and_medoid_labelled(self, alice,
+                                                              bob):
+        forward: dict = {}
+        record_options(forward, alice, ["Buy a commercial solution now"])
+        record_options(forward, bob, ["Buy a commercial solution"])
+        reverse: dict = {}
+        record_options(reverse, bob, ["Buy a commercial solution"])
+        record_options(reverse, alice, ["Buy a commercial solution now"])
+        assert len(forward["options"]) == len(reverse["options"]) == 1
+        assert (forward["options"][0]["text"]
+                == reverse["options"][0]["text"]
+                == "Buy a commercial solution now")  # medoid = longer phrasing
+
 
 class TestCriteriaSchemaAndValidator:
     def test_schema_shape(self):

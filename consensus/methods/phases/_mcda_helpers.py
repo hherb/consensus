@@ -13,7 +13,14 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from ..parsing import extract_json_block, parse_numbered_list, word_overlap_similar
+from ..parsing import (
+    canonical_index,
+    cluster_by_similarity,
+    cluster_text_contributions,
+    extract_json_block,
+    parse_numbered_list,
+    word_overlap_similar,
+)
 
 if TYPE_CHECKING:
     from ...models import Entity
@@ -197,31 +204,30 @@ def validate_options_payload(payload: dict) -> str:
 
 def record_options(state: dict, entity: Entity,
                    texts: list[str]) -> list[dict]:
-    """Dedup, id, and append options; return the accepted option dicts.
+    """Append this turn's options as raw contributions, rebuild the
+    order-independent clustered view, and return the clusters this
+    turn's options landed in.
 
-    An option is dropped when it is word-overlap similar to an option
-    already recorded.  Shared by the free-text and structured-output
-    paths (issue #23).
+    Every submission is retained in ``state["options_raw"]``; the merged
+    view ``state["options"]`` is derived by clustering the whole raw set
+    and labelling each cluster with its medoid, so grouping and label are
+    independent of submission order (issue #42).  Ids are referenced
+    downstream as ``O1..On`` and are frozen once the scoring phase
+    begins (no options are added there).  Shared by the free-text and
+    structured-output paths (issue #23).
     """
-    options = state.setdefault("options", [])
-    accepted: list[dict] = []
+    raw = state.setdefault("options_raw", [])
+    since = len(raw)
     for text in texts:
         cleaned = str(text).strip().rstrip('.')
         if len(cleaned) < MIN_OPTION_LENGTH:
             continue
-        if any(word_overlap_similar(cleaned, existing["text"],
-                                    threshold=SIMILARITY_THRESHOLD)
-               for existing in options):
-            continue
-        option = {
-            "id": len(options) + 1,
-            "entity_id": entity.id,
-            "entity_name": entity.name,
-            "text": cleaned,
-        }
-        options.append(option)
-        accepted.append(option)
-    return accepted
+        raw.append({"entity_id": entity.id, "entity_name": entity.name,
+                    "text": cleaned})
+    view, touched = cluster_text_contributions(
+        raw, since=since, threshold=SIMILARITY_THRESHOLD)
+    state["options"] = view
+    return touched
 
 
 def validate_criteria_payload(payload: dict) -> str:
