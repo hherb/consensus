@@ -115,17 +115,38 @@ class TestRecordIdeas:
         assert accepted == state["ideas"]
         assert state["ideas"][0]["entity_name"] == "Alice"
 
-    def test_dedups_by_word_overlap(self):
+    def test_merges_and_returns_touched_clusters(self):
         state: dict = {}
         record_ideas(state, _entity(1, "Alice"), IDEAS_PAYLOAD["ideas"])
-        accepted = record_ideas(
+        touched = record_ideas(
             state, _entity(2, "Bob"),
             ["Offer a self-serve onboarding checklist inside the product now",
              "Publish a searchable public knowledge base"],
         )
-        assert len(accepted) == 1
-        assert "knowledge base" in accepted[0]["text"]
+        # Bob's near-duplicate merges into Alice's checklist cluster; his
+        # new idea founds its own -> three clusters total.
         assert len(state["ideas"]) == 3
+        # Bob touched both the merged cluster and the new one.
+        assert len(touched) == 2
+        assert any("knowledge base" in c["text"] for c in touched)
+        # First-name-wins is fixed: the medoid (Bob's longer phrasing)
+        # labels the merged cluster.
+        checklist = next(c for c in state["ideas"] if "checklist" in c["text"])
+        assert checklist["text"].endswith("now")
+
+    def test_grouping_is_order_independent(self):
+        forward: dict = {}
+        record_ideas(forward, _entity(1, "Alice"),
+                     ["alpha beta gamma delta epsilon"])
+        record_ideas(forward, _entity(2, "Bob"),
+                     ["alpha beta gamma delta zeta"])
+        reverse: dict = {}
+        record_ideas(reverse, _entity(2, "Bob"),
+                     ["alpha beta gamma delta zeta"])
+        record_ideas(reverse, _entity(1, "Alice"),
+                     ["alpha beta gamma delta epsilon"])
+        assert ([i["text"] for i in forward["ideas"]]
+                == [i["text"] for i in reverse["ideas"]])
 
     def test_strips_trailing_period(self):
         state: dict = {}
