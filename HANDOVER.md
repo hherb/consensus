@@ -1,7 +1,7 @@
 # HANDOVER — Discussion Methods Review & Repair
 
 _Last updated: 2026-07-14 (after #28 evidence-tracked phases implemented on
-branch, pending PR)._
+branch — PR #45)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -29,7 +29,7 @@ Suite total after #44: **2250 tests passing**.
 All method-catalog issues (#24–#27) are merged and their GitHub issues closed.
 
 **#28 evidence-tracked phases** is implemented on branch
-`claude/handover-update-next-slice-8030ed` (this session), **pending PR** —
+`claude/handover-update-next-slice-8030ed` (this session), **PR #45** —
 spec `docs/superpowers/specs/2026-07-14-evidence-gated-phases-design.md`, plan
 `docs/superpowers/plans/2026-07-14-evidence-tracked-phases.md`. New module
 `consensus/evidence.py` (turn-level grounding classifier — tool-call + inline
