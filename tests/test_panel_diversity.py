@@ -69,3 +69,62 @@ class TestAnalyzePanelDiversity:
 
     def test_fraction_constant(self):
         assert DIVERSITY_WARN_FRACTION == 0.5
+
+
+from consensus.methods.panel_diversity import estimator_models
+from consensus.models import (
+    AIConfig, Discussion, Entity, EntityType,
+)
+
+
+def _ai(name, eid, model):
+    return Entity(name=name, entity_type=EntityType.AI, id=eid,
+                  ai_config=AIConfig(model=model))
+
+
+class TestEstimatorModels:
+    def test_excludes_moderator(self):
+        disc = Discussion(
+            id=1, topic="t",
+            entities=[_ai("Mod", 100, "gpt-4o"),
+                      _ai("A", 1, "claude"),
+                      _ai("B", 2, "claude")],
+            moderator_id=100,
+        )
+        assert estimator_models(disc) == ["claude", "claude"]
+
+    def test_excludes_humans(self):
+        disc = Discussion(
+            id=1, topic="t",
+            entities=[_ai("A", 1, "gpt-4o"),
+                      Entity(name="Human", entity_type=EntityType.HUMAN, id=2)],
+            moderator_id=None,
+        )
+        assert estimator_models(disc) == ["gpt-4o"]
+
+    def test_excludes_experts(self):
+        disc = Discussion(
+            id=1, topic="t",
+            entities=[_ai("A", 1, "gpt-4o"),
+                      Entity(name="Exp", entity_type=EntityType.EXPERT, id=2,
+                             ai_config=AIConfig(model="gpt-4o"))],
+            moderator_id=None,
+        )
+        assert estimator_models(disc) == ["gpt-4o"]
+
+    def test_skips_ai_without_config(self):
+        disc = Discussion(
+            id=1, topic="t",
+            entities=[_ai("A", 1, "gpt-4o"),
+                      Entity(name="B", entity_type=EntityType.AI, id=2)],
+            moderator_id=None,
+        )
+        assert estimator_models(disc) == ["gpt-4o"]
+
+    def test_empty_when_no_ai(self):
+        disc = Discussion(
+            id=1, topic="t",
+            entities=[Entity(name="H", entity_type=EntityType.HUMAN, id=1)],
+            moderator_id=None,
+        )
+        assert estimator_models(disc) == []

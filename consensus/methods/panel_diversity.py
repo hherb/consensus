@@ -87,3 +87,21 @@ def analyze_panel_diversity(
         is_unanimous=is_unanimous,
         model_counts=ordered,
     )
+
+
+def estimator_models(discussion: "Discussion") -> list[str]:
+    """Return the model strings of a discussion's AI estimators.
+
+    Excludes the moderator, humans, experts, and AI entities with no
+    resolved ``ai_config``.
+    """
+    models: list[str] = []
+    for e in discussion.entities:
+        if e.entity_type != EntityType.AI:
+            continue
+        if e.id == discussion.moderator_id:
+            continue
+        if e.ai_config is None:
+            continue
+        models.append(e.ai_config.model)
+    return models
