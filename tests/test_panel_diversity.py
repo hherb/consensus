@@ -210,3 +210,53 @@ class TestPanelCompositionDisclosure:
         text = _IndepMethod().panel_composition_disclosure(disc)
         assert "Panel composition" in text
         assert "caveat" in text.lower()
+
+
+from consensus.methods.delphi import DelphiMethod
+from consensus.methods.belief_diffusion import BeliefDiffusion
+
+
+def _delphi_disc(models):
+    entities = [_ai("Mod", 100, "gpt-4o")]
+    for i, m in enumerate(models):
+        entities.append(_ai(f"E{i}", i + 1, m))
+    disc = Discussion(
+        id=1, topic="p?", entities=entities, moderator_id=100,
+        discussion_method="delphi",
+    )
+    disc.method_state = {"estimates": []}
+    return disc
+
+
+class TestMethodOptIn:
+    def test_flags_set(self):
+        assert DelphiMethod().assumes_independent_panel is True
+        assert BeliefDiffusion().assumes_independent_panel is True
+
+    def test_delphi_conclusion_discloses_same_model(self):
+        disc = _delphi_disc(["claude", "claude", "claude"])
+        prompt = DelphiMethod().get_conclusion_prompt(disc)
+        assert "Panel composition" in prompt
+        assert "caveat" in prompt.lower()
+        # Original body preserved:
+        assert "Delphi Method process is complete" in prompt
+
+    def test_delphi_conclusion_diverse_no_caveat(self):
+        disc = _delphi_disc(["a", "b", "c"])
+        prompt = DelphiMethod().get_conclusion_prompt(disc)
+        assert "caveat" not in prompt.lower()
+        assert "Delphi Method process is complete" in prompt
+
+    def test_belief_conclusion_discloses_same_model(self):
+        entities = [_ai("Mod", 100, "gpt-4o"),
+                    _ai("A", 1, "claude"), _ai("B", 2, "claude")]
+        disc = Discussion(
+            id=1, topic="p?", entities=entities, moderator_id=100,
+            discussion_method="belief_diffusion",
+        )
+        disc.method_state = {
+            "hypotheses": ["H1", "H2"], "beliefs": [], "diffuse_round": 0,
+        }
+        prompt = BeliefDiffusion().get_conclusion_prompt(disc)
+        assert "Panel composition" in prompt
+        assert "Belief State Diffusion process is complete" in prompt
