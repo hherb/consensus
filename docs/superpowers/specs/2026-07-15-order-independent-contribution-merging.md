@@ -30,12 +30,14 @@ convention that all scored quantities are computed in code, never by the model).
 
 ## Scope
 
-**In scope — the three display/aggregate merge sites** (owner decision,
+**In scope — the four display/aggregate merge sites** (owner decision,
 2026-07-15):
 
 - `_ngt_helpers.record_ideas` (NGT `generate_ideas` phase) → `state["ideas"]`
 - `_tot_helpers.record_thoughts` (ToT `propose_thoughts` phase) →
   `state["thoughts"]`
+- `_mcda_helpers.record_options` (MCDA `enumerate_options` phase) →
+  `state["options"]` (drop-on-dup; `id` referenced downstream as `O1..On`)
 - `_mcda_helpers.record_criteria` (MCDA `weight_criteria` phase) →
   `state["criteria"]` (dicts carrying `weight_votes`)
 
@@ -85,7 +87,7 @@ The shared helper owns *grouping + canonical-label selection*; each caller owns
 building its own view dict (differing payloads). This keeps the shared surface
 small and independently testable.
 
-### 2. Refactor the three call sites
+### 2. Refactor the four call sites
 
 Each `record_*` helper changes from "greedily merge into `state["<x>"]`" to:
 
@@ -124,8 +126,9 @@ label (`C2` in MCDA `score_options`, `T3` in ToT `score_thoughts` /
 
 - Each `record_*` runs in **exactly one** collection phase
   (`record_ideas`→`generate_ideas`, `record_thoughts`→`propose_thoughts`,
-  `record_criteria`→`weight_criteria`); no new raw items are added once the
-  scoring phase starts, so the cluster set is frozen across the phase boundary.
+  `record_options`→`enumerate_options`, `record_criteria`→`weight_criteria`);
+  no new raw items are added once the scoring phase starts, so the cluster set
+  is frozen across the phase boundary.
 - Within collection, MCDA refinement matches by **text similarity** (an entity
   restates the criterion), not by referring to an id, so mid-collection id
   drift is harmless.
