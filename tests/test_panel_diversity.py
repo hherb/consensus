@@ -133,6 +133,53 @@ class TestEstimatorModels:
         )
         assert estimator_models(disc) == []
 
+    def test_includes_participating_moderator(self):
+        # Moderator in base_turn_order == it takes estimate turns.
+        disc = Discussion(
+            id=1, topic="t",
+            entities=[_ai("Mod", 100, "gpt-4o"),
+                      _ai("A", 1, "gpt-4o"),
+                      _ai("B", 2, "claude")],
+            moderator_id=100,
+            base_turn_order=[100, 1, 2],
+        )
+        assert estimator_models(disc) == ["gpt-4o", "gpt-4o", "claude"]
+        assert analyze_panel_diversity(estimator_models(disc)).is_concerning
+
+    def test_excludes_non_participating_moderator(self):
+        # Started, but moderator not in the rotation -> excluded.
+        disc = Discussion(
+            id=1, topic="t",
+            entities=[_ai("Mod", 100, "gpt-4o"),
+                      _ai("A", 1, "gpt-4o"),
+                      _ai("B", 2, "claude")],
+            moderator_id=100,
+            base_turn_order=[1, 2],
+        )
+        assert estimator_models(disc) == ["gpt-4o", "claude"]
+        assert not analyze_panel_diversity(estimator_models(disc)).is_concerning
+
+    def test_participating_human_moderator_not_counted(self):
+        # A human moderator estimates but does not correlate a model.
+        disc = Discussion(
+            id=1, topic="t",
+            entities=[Entity(name="Mod", entity_type=EntityType.HUMAN, id=100),
+                      _ai("A", 1, "gpt-4o"),
+                      _ai("B", 2, "claude")],
+            moderator_id=100,
+            base_turn_order=[100, 1, 2],
+        )
+        assert estimator_models(disc) == ["gpt-4o", "claude"]
+
+    def test_moderator_id_none_with_turn_order_safe(self):
+        disc = Discussion(
+            id=1, topic="t",
+            entities=[_ai("A", 1, "gpt-4o"), _ai("B", 2, "claude")],
+            moderator_id=None,
+            base_turn_order=[1, 2],
+        )
+        assert estimator_models(disc) == ["gpt-4o", "claude"]
+
 
 class TestFormatSetupWarning:
     def test_none_when_not_concerning(self):
@@ -257,6 +304,19 @@ class TestMethodOptIn:
         assert "caveat" in prompt.lower()
         assert "Belief State Diffusion process is complete" in prompt
 
+    def test_delphi_conclusion_participating_moderator_discloses(self):
+        disc = _delphi_disc(["gpt-4o", "claude"])
+        disc.base_turn_order = [100, 1, 2]  # moderator participates
+        prompt = DelphiMethod().get_conclusion_prompt(disc)
+        assert "Panel composition" in prompt
+        assert "caveat" in prompt.lower()
+
+    def test_delphi_conclusion_non_participating_moderator_no_caveat(self):
+        # Same roster, moderator NOT in rotation -> panel is [gpt-4o, claude].
+        disc = _delphi_disc(["gpt-4o", "claude"])  # base_turn_order stays empty
+        prompt = DelphiMethod().get_conclusion_prompt(disc)
+        assert "caveat" not in prompt.lower()
+
 
 class TestGetStatePanelAdvisory:
     def _app(self, tmp_path):
@@ -298,3 +358,69 @@ class TestGetStatePanelAdvisory:
         app.add_to_discussion(b)
         # discussion_method defaults to open_discussion
         assert app.get_state()["panel_advisory"] is None
+
+    def test_participating_moderator_same_model_sets_advisory_on_start(
+        self, tmp_path,
+    ):
+        app = self._app(tmp_path)
+        pid = app.db.add_provider("Local", "http://x/v1", "")
+        mod = app.db.add_entity("Mod", "ai", "#a", pid, "gpt-4o", 0.5, 512, "")
+        a = app.db.add_entity("A", "ai", "#b", pid, "gpt-4o", 0.7, 512, "")
+        b = app.db.add_entity("B", "ai", "#c", pid, "claude", 0.7, 512, "")
+        app.set_topic("Estimate X")
+        app.add_to_discussion(mod, is_moderator=True)
+        app.add_to_discussion(a)
+        app.add_to_discussion(b)
+        app.set_discussion_method("delphi")
+        # Pre-start: participation unknown -> panel [gpt-4o, claude] -> quiet.
+        assert app.get_state()["panel_advisory"] is None
+        result = app.start_discussion(moderator_participates=True)
+        assert "error" not in result
+        assert result["panel_advisory"] is not None
+        assert result["panel_advisory"]["level"] == "warning"
+        assert "gpt-4o" in result["panel_advisory"]["message"]
+
+    def test_non_participating_moderator_same_model_no_advisory_on_start(
+        self, tmp_path,
+    ):
+        app = self._app(tmp_path)
+        pid = app.db.add_provider("Local", "http://x/v1", "")
+        mod = app.db.add_entity("Mod", "ai", "#a", pid, "gpt-4o", 0.5, 512, "")
+        a = app.db.add_entity("A", "ai", "#b", pid, "gpt-4o", 0.7, 512, "")
+        b = app.db.add_entity("B", "ai", "#c", pid, "claude", 0.7, 512, "")
+        app.set_topic("Estimate X")
+        app.add_to_discussion(mod, is_moderator=True)
+        app.add_to_discussion(a)
+        app.add_to_discussion(b)
+        app.set_discussion_method("delphi")
+        result = app.start_discussion(moderator_participates=False)
+        assert "error" not in result
+        assert result["panel_advisory"] is None
+
+    def test_participating_moderator_advisory_survives_reload(self, tmp_path):
+        # base_turn_order is rebuilt from discussion_members.turn_position on
+        # DB load, so a participating same-model moderator must stay in the
+        # estimator panel after a restart (#48).
+        db_path = str(tmp_path / "adv.db")
+        app = ConsensusApp(db_path=db_path)
+        pid = app.db.add_provider("Local", "http://x/v1", "")
+        mod = app.db.add_entity("Mod", "ai", "#a", pid, "gpt-4o", 0.5, 512, "")
+        a = app.db.add_entity("A", "ai", "#b", pid, "gpt-4o", 0.7, 512, "")
+        b = app.db.add_entity("B", "ai", "#c", pid, "claude", 0.7, 512, "")
+        app.set_topic("Estimate X")
+        app.add_to_discussion(mod, is_moderator=True)
+        app.add_to_discussion(a)
+        app.add_to_discussion(b)
+        app.set_discussion_method("delphi")
+        result = app.start_discussion(moderator_participates=True)
+        assert "error" not in result
+        did = app.discussion.id
+
+        # Fresh app on the same DB -> pure reload path, no in-memory state.
+        reloaded = ConsensusApp(db_path=db_path)
+        state = reloaded.load_discussion(did)
+        assert (reloaded.discussion.moderator_id
+                in reloaded.discussion.base_turn_order)
+        assert state["panel_advisory"] is not None
+        assert state["panel_advisory"]["level"] == "warning"
+        assert "gpt-4o" in state["panel_advisory"]["message"]

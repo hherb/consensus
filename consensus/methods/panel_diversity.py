@@ -14,10 +14,11 @@ Documented simplifications:
     vs ``gpt-4o-mini``, or one model served under different provider name
     strings) is not detected; near-duplicate names undercount the dominant
     group.  Family grouping is a deferred refinement.
-  * The moderator is always excluded from the estimator panel, even when it
-    participates — the correlation risk of interest is among the participant
-    estimators, and excluding the moderator keeps the setup-time and
-    conclusion-time computations identical.
+  * The moderator is excluded from the estimator panel *unless it
+    participates* — i.e. its id is in ``base_turn_order`` (#48).  Before
+    start, ``base_turn_order`` is empty, so the setup-time advisory and the
+    conclusion-time disclosure may legitimately differ: participation is
+    only known once the discussion starts.
 """
 
 from __future__ import annotations
@@ -92,14 +93,27 @@ def analyze_panel_diversity(
 def estimator_models(discussion: "Discussion") -> list[str]:
     """Return the model strings of a discussion's AI estimators.
 
-    Excludes the moderator, humans, experts, and AI entities with no
-    resolved ``ai_config``.
+    Excludes humans, experts, and AI entities with no resolved
+    ``ai_config``.  Excludes the moderator UNLESS it participates — i.e.
+    its id is present in ``discussion.base_turn_order`` (the estimator
+    rotation).  A participating same-model moderator is the strongest form
+    of estimator correlation, so it must count toward the panel (#48).
+    ``base_turn_order`` is empty before the discussion starts, so the
+    setup-time advisory is unchanged; it is populated once
+    ``moderator_participates`` is known at start.
     """
+    # base_turn_order is the full setup roster (not the phase-narrowed
+    # order), so moderator_id is present iff the moderator takes estimate
+    # turns. Delphi/Belief never narrow the moderator out of estimate phases,
+    # so a moderator in it is a genuine correlated estimator (a future
+    # independence-assuming method that did narrow it out would over-count —
+    # a harmless, non-blocking false positive).
+    mod_participates = discussion.moderator_id in discussion.base_turn_order
     models: list[str] = []
     for e in discussion.entities:
         if e.entity_type != EntityType.AI:
             continue
-        if e.id == discussion.moderator_id:
+        if e.id == discussion.moderator_id and not mod_participates:
             continue
         if e.ai_config is None:
             continue
