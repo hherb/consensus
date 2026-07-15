@@ -191,6 +191,17 @@ class TestCanonicalIndex:
         members = ["bbbb cost", "aaaa cost"]
         assert canonical_index(members, text_of=lambda s: s) == 1
 
+    def test_medoid_text_is_permutation_independent(self):
+        # Centrality is summed in exact rational arithmetic, so the
+        # chosen text must not vary with member order — including on
+        # genuine centrality ties, which float summation could break
+        # differently per order.
+        members = ["cost total ownership money", "cost total ownership",
+                   "cost total spend", "money spend budget quarterly"]
+        picks = {perm[canonical_index(list(perm), text_of=lambda s: s)]
+                 for perm in itertools.permutations(members)}
+        assert len(picks) == 1
+
 
 class TestClusterTextContributions:
     def test_view_labels_and_touched(self):

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from fractions import Fraction
 from typing import Any, Callable, Optional, Union
 
 logger = logging.getLogger(__name__)
@@ -56,19 +57,31 @@ def parse_numbered_list(content: str, min_length: int = 10) -> list[str]:
     return []
 
 
+def _overlap_fraction(a: str, b: str) -> Fraction:
+    """Word-overlap ratio of two strings as an exact rational.
+
+    Tokens are whitespace-split and lowercased; the ratio is the shared
+    token count over the larger token-set size, ``0`` when either string
+    has no tokens.  Exact ``Fraction`` arithmetic keeps sums of ratios
+    (``canonical_index`` centrality) independent of summation order,
+    which float rounding cannot guarantee.
+    """
+    w1 = set(a.lower().split())
+    w2 = set(b.lower().split())
+    if not w1 or not w2:
+        return Fraction(0)
+    return Fraction(len(w1 & w2), max(len(w1), len(w2)))
+
+
 def word_overlap_ratio(a: str, b: str) -> float:
     """Fraction of the larger token set shared by two strings (0.0-1.0).
 
     Tokens are whitespace-split and lowercased.  Returns 0.0 when either
     string has no tokens.  This is the continuous form behind
-    ``word_overlap_similar`` and the edge/centrality weight used by
-    ``cluster_by_similarity`` and ``canonical_index``.
+    ``word_overlap_similar``; ``canonical_index`` uses the exact
+    ``_overlap_fraction`` underneath it.
     """
-    w1 = set(a.lower().split())
-    w2 = set(b.lower().split())
-    if not w1 or not w2:
-        return 0.0
-    return len(w1 & w2) / max(len(w1), len(w2))
+    return float(_overlap_fraction(a, b))
 
 
 def word_overlap_similar(a: str, b: str, threshold: float = 0.7) -> bool:
@@ -126,15 +139,18 @@ def canonical_index(members: list,
                     text_of: Callable[[Any], str]) -> int:
     """Index of the medoid of *members* — the most representative one.
 
-    The medoid maximises total ``word_overlap_ratio`` to the other
-    members (the phrasing most central to the group).  Ties break toward
-    the longest text, then the lexicographically smallest, so the result
-    is fully deterministic.  *members* must be non-empty.
+    The medoid maximises total word-overlap ratio to the other members
+    (the phrasing most central to the group).  Centrality is summed in
+    exact rational arithmetic (``_overlap_fraction``), so genuine ties
+    stay ties regardless of member order and are broken toward the
+    longest text, then the lexicographically smallest — the chosen text
+    is fully deterministic and permutation-independent.  *members* must
+    be non-empty.
     """
     if not members:
         raise ValueError("canonical_index requires a non-empty members list")
     texts = [text_of(m) for m in members]
-    central = [sum(word_overlap_ratio(texts[i], texts[j])
+    central = [sum(_overlap_fraction(texts[i], texts[j])
                    for j in range(len(texts)) if j != i)
                for i in range(len(texts))]
     best = 0
