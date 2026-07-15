@@ -28,7 +28,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Same-model panel warning (Delphi/Belief) | #29 | #47 (merged) |
 | Participating moderator counted as estimator | #48 | #49 (open) |
 
-Main is at **2355 tests passing**; the #48 branch adds +8 → **2363 passing**
+Main is at **2355 tests passing**; the #48 branch adds +9 → **2364 passing**
 (PR #49).
 
 All method-catalog issues (#24–#27) are merged and their GitHub issues closed.

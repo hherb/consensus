@@ -396,3 +396,31 @@ class TestGetStatePanelAdvisory:
         result = app.start_discussion(moderator_participates=False)
         assert "error" not in result
         assert result["panel_advisory"] is None
+
+    def test_participating_moderator_advisory_survives_reload(self, tmp_path):
+        # base_turn_order is rebuilt from discussion_members.turn_position on
+        # DB load, so a participating same-model moderator must stay in the
+        # estimator panel after a restart (#48).
+        db_path = str(tmp_path / "adv.db")
+        app = ConsensusApp(db_path=db_path)
+        pid = app.db.add_provider("Local", "http://x/v1", "")
+        mod = app.db.add_entity("Mod", "ai", "#a", pid, "gpt-4o", 0.5, 512, "")
+        a = app.db.add_entity("A", "ai", "#b", pid, "gpt-4o", 0.7, 512, "")
+        b = app.db.add_entity("B", "ai", "#c", pid, "claude", 0.7, 512, "")
+        app.set_topic("Estimate X")
+        app.add_to_discussion(mod, is_moderator=True)
+        app.add_to_discussion(a)
+        app.add_to_discussion(b)
+        app.set_discussion_method("delphi")
+        result = app.start_discussion(moderator_participates=True)
+        assert "error" not in result
+        did = app.discussion.id
+
+        # Fresh app on the same DB -> pure reload path, no in-memory state.
+        reloaded = ConsensusApp(db_path=db_path)
+        state = reloaded.load_discussion(did)
+        assert (reloaded.discussion.moderator_id
+                in reloaded.discussion.base_turn_order)
+        assert state["panel_advisory"] is not None
+        assert state["panel_advisory"]["level"] == "warning"
+        assert "gpt-4o" in state["panel_advisory"]["message"]

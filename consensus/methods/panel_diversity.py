@@ -102,6 +102,12 @@ def estimator_models(discussion: "Discussion") -> list[str]:
     setup-time advisory is unchanged; it is populated once
     ``moderator_participates`` is known at start.
     """
+    # base_turn_order is the full setup roster (not the phase-narrowed
+    # order), so moderator_id is present iff the moderator takes estimate
+    # turns. Delphi/Belief never narrow the moderator out of estimate phases,
+    # so a moderator in it is a genuine correlated estimator (a future
+    # independence-assuming method that did narrow it out would over-count —
+    # a harmless, non-blocking false positive).
     mod_participates = discussion.moderator_id in discussion.base_turn_order
     models: list[str] = []
     for e in discussion.entities:
