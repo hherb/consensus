@@ -1,7 +1,8 @@
 # HANDOVER — Discussion Methods Review & Repair
 
 _Last updated: 2026-07-16 (after #29 same-model panel warning implemented on
-branch `claude/same-model-panel-warning-29` — PR pending)._
+branch `claude/same-model-panel-warning-29` — PR #47; review fixes applied,
+follow-up #48 filed)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -25,7 +26,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Tree of Thoughts (`tree_of_thoughts`) | #26 | #44 |
 | Evidence-tracked phases (soft grounding) | #28 | #45 |
 | Order-independent contribution merging | #42 | #46 |
-| Same-model panel warning (Delphi/Belief) | #29 | PR pending (this branch) |
+| Same-model panel warning (Delphi/Belief) | #29 | #47 (this branch) |
 
 Main is at **2324 tests passing**; the #29 branch adds +31 → **2355 passing**
 (pending PR).
@@ -63,7 +64,7 @@ crossing the ~500-line guideline (507).
 connected-components (transitive, order-independent) and labels are the
 cluster medoid. Suite after #42: **2324 passing**.
 
-**#29 same-model panel warning** (this branch, PR pending) — new pure module
+**#29 same-model panel warning** (this branch, PR #47) — new pure module
 `consensus/methods/panel_diversity.py` (analysis core, `estimator_models`
 roster adapter, `format_setup_warning` / `format_conclusion_disclosure`);
 declarative `DiscussionMethod.assumes_independent_panel` flag +
@@ -81,12 +82,16 @@ Suite after #29: **2355 passing**. Deferred: family-level model grouping
 
 ### Cross-cutting quality
 
-- _No open cross-cutting GitHub issues remain._ #29 (same-model-panel warning)
-  is implemented on this branch (PR pending). Its deferred follow-ups:
-  family-level model grouping (e.g. `gpt-4o` vs `gpt-4o-mini`, or one model
-  under different provider name strings — exact-model grouping only today);
-  moderator always excluded from the estimator panel even when it participates;
-  and the "diversify" auto-suggest helper (proposal item 3). Design spec:
+- **#48 moderator excluded from estimator panel** — filed follow-up to #29:
+  `estimator_models` always excludes the moderator, so a *participating*
+  same-model moderator can suppress a warranted panel warning. Design decision
+  deferred (setup-time vs conclusion-time computations differ once
+  `moderator_participates` is known).
+- #29 (same-model-panel warning) is implemented on this branch (PR #47). Other
+  deferred follow-ups (no issue): family-level model grouping (e.g. `gpt-4o` vs
+  `gpt-4o-mini`, or one model under different provider name strings — exact-model
+  grouping only today); and the "diversify" auto-suggest helper (proposal item
+  3). Design spec:
   `docs/superpowers/specs/2026-07-15-same-model-panel-warning-design.md`.
 
 ### Method-specific follow-ups (tech debt, no issue filed)

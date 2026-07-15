@@ -38,6 +38,11 @@ export function hide(el) {
 const TOAST_DEFAULT_DURATION_MS = 4000;
 const TOAST_FADE_DELAY_MS = 300;
 
+// Duration for advisory/warning toasts that carry more text than a
+// transient error and need longer to read (e.g. the same-model panel
+// warning, #29).
+export const TOAST_WARNING_DURATION_MS = 6000;
+
 /**
  * Show a temporary toast notification.
  * @param {string} msg - Message text

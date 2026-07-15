@@ -852,6 +852,7 @@ input[type="checkbox"] { width: auto; }
 .toast-error { background: var(--error); }
 .toast-success { background: var(--success); }
 .toast-info { background: var(--primary); }
+.toast-warning { background: var(--warning); color: #000; }
 .toast-fade-out { opacity: 0; }
 @keyframes fadeInUp {
     from { opacity: 0; transform: translateX(-50%) translateY(10px); }

@@ -3,7 +3,7 @@
  * Discussion lifecycle actions — start, send, conclude, pause, resume, reassign, mediate.
  */
 
-import { $, show, hide, showToast, escHtml, getInitials } from './utils.js';
+import { $, show, hide, showToast, escHtml, getInitials, TOAST_WARNING_DURATION_MS } from './utils.js';
 import { state, onStateUpdate, getEntity, resetRenderedMessageCount, resetRenderedStoryboardCount, processing, setProcessing } from './state.js';
 import { api } from './api.js';
 import { renderDiscussion, showTypingIndicator } from './discussion.js';
@@ -23,7 +23,7 @@ export async function onStartDiscussion() {
     if (result?.error) return showToast(result.error);
     onStateUpdate(result);
     if (result.panel_advisory?.message) {
-        showToast(result.panel_advisory.message, 6000, 'warning');
+        showToast(result.panel_advisory.message, TOAST_WARNING_DURATION_MS, 'warning');
     }
     hide('#setup-phase');
     show('#discussion-phase');
