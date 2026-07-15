@@ -100,3 +100,29 @@ async def test_ai_turn_tool_call_is_logged(tmp_db, monkeypatch,
     assert entry["entity_id"] == ai.id
     assert entry["turn"] == disc.turn_number
     assert entry["sources"][0]["document_id"] == 7
+
+
+class TestGetStateTrackEvidenceFlag:
+    """`get_state` exposes whether the active phase tracks evidence, so the
+    frontend can gate the "Attach evidence" button to tracked phases only."""
+
+    def _app(self, tmp_path):
+        from consensus.app import ConsensusApp
+        return ConsensusApp(db_path=str(tmp_path / "te_state.db"))
+
+    def test_true_in_double_crux_test_crux_phase(self, tmp_path):
+        app = self._app(tmp_path)
+        app.discussion.discussion_method = "double_crux"
+        app.discussion.method_state = {"current_phase": "test_crux"}
+        assert app.get_state()["track_evidence_phase"] is True
+
+    def test_false_in_untracked_phase(self, tmp_path):
+        app = self._app(tmp_path)
+        app.discussion.discussion_method = "double_crux"
+        app.discussion.method_state = {"current_phase": "positions"}
+        assert app.get_state()["track_evidence_phase"] is False
+
+    def test_false_for_open_discussion(self, tmp_path):
+        app = self._app(tmp_path)
+        app.discussion.discussion_method = "open_discussion"
+        assert app.get_state()["track_evidence_phase"] is False

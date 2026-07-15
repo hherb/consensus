@@ -7,6 +7,13 @@ display text, and summarise the evidentiary basis for the conclusion.
 
 Soft by design: an ungrounded turn is annotated and logged, never
 rejected.  Classification is computed in code, never by the model.
+
+Grounding means *a citation is present* (a successful evidence-tool call,
+a bare URL, or an ``[evidence: …]`` marker) — it does **not** mean the
+cited source was fetched, read, or actually supports the claim.  A turn
+that merely mentions a URL in prose is classified grounded.  The tracker
+distinguishes grounded from reasoning-based contributions and makes that
+visible; verifying that the evidence backs the claim is out of scope.
 """
 from __future__ import annotations
 
@@ -17,18 +24,23 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .tools import ToolCallRecord
 
-#: Participant tools whose successful use grounds a contribution in
-#: retrievable evidence.  Excludes management/navigation tools
-#: (``doc_add``, ``doc_list``, ``doc_get_length``).
-EVIDENCE_TOOL_NAMES: frozenset[str] = frozenset({
+#: Document RAG tools (see :mod:`consensus.tools_document`) whose
+#: successful use grounds a contribution in a retrievable source.  Single
+#: source of truth for the document-tool name set, reused by the classifier
+#: and the source/detail extractors below.
+DOCUMENT_TOOL_NAMES: frozenset[str] = frozenset({
     "doc_ask",
     "doc_get_text",
     "doc_summary",
     "doc_get_sections",
     "doc_get_chapter",
-    "web_search",
-    "fetch_webpage",
 })
+
+#: Participant tools whose successful use grounds a contribution in
+#: retrievable evidence.  Excludes management/navigation tools
+#: (``doc_add``, ``doc_list``, ``doc_get_length``).
+EVIDENCE_TOOL_NAMES: frozenset[str] = (
+    DOCUMENT_TOOL_NAMES | frozenset({"web_search", "fetch_webpage"}))
 
 #: Explicit inline citation marker, e.g. ``[evidence: doc:5]`` or
 #: ``[evidence: https://…]``.  Inserted by the frontend "Attach
@@ -111,8 +123,7 @@ def _source_from_tool_call(tc: "ToolCallRecord") -> dict | None:
     """
     name = tc.tool_name
     args = tc.arguments or {}
-    if name in {"doc_ask", "doc_get_text", "doc_summary",
-                "doc_get_sections", "doc_get_chapter"}:
+    if name in DOCUMENT_TOOL_NAMES:
         detail = _document_detail(name, args)
         return {"type": "document",
                 "document_id": args.get("document_id"),
@@ -184,6 +195,12 @@ def record_and_annotate_evidence(discussion: Any, entity: Any,
     Appends an entry to ``discussion.method_state["evidence_log"]`` and
     annotates ``content`` (grounded → sources footer; ungrounded →
     reasoning-based note).  Never rejects.
+
+    The annotation footer is persisted into the stored message, so it is
+    replayed to later participants as transcript context, included in
+    exports, and counts toward token usage.  This is a deliberate
+    tradeoff: making grounding visible in the transcript is the point of
+    the feature.
     """
     state = discussion.method_state
     result = classify_turn_grounding(content, tool_calls)

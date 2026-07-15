@@ -486,6 +486,14 @@ class ConsensusApp:
             }
         # Whether embedding service is configured (for semantic strategy availability)
         state["embedding_available"] = self._embedding_available
+        # Whether the active phase tracks evidence (#28) — lets the frontend
+        # gate the "Attach evidence" button to phases where a citation marker
+        # is actually classified, rather than showing it on every human turn.
+        from .methods import get_active_method
+        method = get_active_method(self.discussion)
+        phase = method.current_phase(self.discussion) if method else None
+        state["track_evidence_phase"] = bool(
+            phase is not None and phase.track_evidence)
         # Expose pending user-input request for reconnection scenarios
         if self._pending_user_inputs:
             _rid, (_fut, _data) = next(iter(self._pending_user_inputs.items()))

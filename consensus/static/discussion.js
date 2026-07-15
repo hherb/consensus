@@ -289,7 +289,9 @@ function updateInputArea() {
         turnInfo.textContent = `${speaker.name}'s turn to speak`;
         input.disabled = false; sendBtn.disabled = false;
         input.placeholder = `Type ${speaker.name}'s message...`;
-        if (evidenceBtn) show(evidenceBtn);
+        // Only offer the evidence-marker button in phases that actually
+        // track evidence (#28) — elsewhere the marker would be inert text.
+        if (evidenceBtn && state.track_evidence_phase) show(evidenceBtn);
         input.focus();
     }
 }

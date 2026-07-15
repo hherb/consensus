@@ -173,7 +173,19 @@ evidence"** control that inserts an `[evidence: …]` marker into the message
 text. It only produces the parseable marker the classifier already understands;
 no rich source-picker. Frontend lives in `consensus/static/` alongside the
 existing input handling. This gives humans a concrete evidence-provision path
-under the same standard as AI participants.
+under the same standard as AI participants. The button is shown only while a
+`track_evidence` phase is active — `get_state` exposes a `track_evidence_phase`
+boolean for the current phase, and the frontend gates visibility on it so the
+marker is never offered where it would be inert text.
+
+## Grounding vs. verification
+
+"Grounded" means a citation is *present* — a successful evidence-tool call, a
+bare URL, or an `[evidence: …]` marker — not that the cited source was fetched,
+read, or actually supports the claim. A turn that only mentions a URL in prose
+is classified grounded. The tracker distinguishes grounded from reasoning-based
+contributions and makes that visible; confirming the evidence backs the claim is
+deliberately out of scope (consistent with the soft-by-design decision).
 
 ## Testing
 

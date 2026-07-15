@@ -330,3 +330,26 @@ class TestBuildEvidenceSummary:
         assert out["counts"] == {"grounded": 2, "reasoning_based": 1}
         assert len(out["grounded"]) == 2
         assert out["reasoning_based"] == [{"entity_name": "Bob"}]
+
+
+from consensus.evidence import DOCUMENT_TOOL_NAMES
+
+
+class TestDocumentToolNames:
+    """The document-tool name set is a single shared constant (#28 cleanup)."""
+
+    def test_contains_document_tools(self):
+        assert DOCUMENT_TOOL_NAMES == frozenset({
+            "doc_ask", "doc_get_text", "doc_summary",
+            "doc_get_sections", "doc_get_chapter",
+        })
+
+    def test_excludes_web_and_management_tools(self):
+        assert "web_search" not in DOCUMENT_TOOL_NAMES
+        assert "fetch_webpage" not in DOCUMENT_TOOL_NAMES
+        assert "doc_list" not in DOCUMENT_TOOL_NAMES
+        assert "doc_add" not in DOCUMENT_TOOL_NAMES
+
+    def test_evidence_tool_names_is_documents_plus_web(self):
+        assert EVIDENCE_TOOL_NAMES == (
+            DOCUMENT_TOOL_NAMES | {"web_search", "fetch_webpage"})
