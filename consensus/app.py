@@ -497,15 +497,10 @@ class ConsensusApp:
         # Same-model panel advisory (#29): for methods that assume
         # independent estimators, warn when one model dominates the panel.
         state["panel_advisory"] = None
-        from .methods import get_method
-        from .methods.panel_diversity import (
-            analyze_panel_diversity, estimator_models, format_setup_warning,
-        )
-        try:
-            cur_method = get_method(self.discussion.discussion_method)
-        except KeyError:
-            cur_method = None
-        if cur_method is not None and cur_method.assumes_independent_panel:
+        if method is not None and method.assumes_independent_panel:
+            from .methods.panel_diversity import (
+                analyze_panel_diversity, estimator_models, format_setup_warning,
+            )
             report = analyze_panel_diversity(estimator_models(self.discussion))
             msg = format_setup_warning(report)
             if msg:

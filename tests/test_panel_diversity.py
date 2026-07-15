@@ -2,12 +2,20 @@
 
 import pytest
 
+from consensus.app import ConsensusApp
+from consensus.methods.base import DiscussionMethod
+from consensus.methods.belief_diffusion import BeliefDiffusion
+from consensus.methods.delphi import DelphiMethod
 from consensus.methods.panel_diversity import (
     DIVERSITY_WARN_FRACTION,
     PanelDiversityReport,
     analyze_panel_diversity,
-    format_setup_warning,
+    estimator_models,
     format_conclusion_disclosure,
+    format_setup_warning,
+)
+from consensus.models import (
+    AIConfig, Discussion, Entity, EntityType,
 )
 
 
@@ -71,12 +79,6 @@ class TestAnalyzePanelDiversity:
 
     def test_fraction_constant(self):
         assert DIVERSITY_WARN_FRACTION == 0.5
-
-
-from consensus.methods.panel_diversity import estimator_models
-from consensus.models import (
-    AIConfig, Discussion, Entity, EntityType,
-)
 
 
 def _ai(name, eid, model):
@@ -172,9 +174,6 @@ class TestFormatConclusionDisclosure:
         assert "caveat" in text.lower()
 
 
-from consensus.methods.base import DiscussionMethod
-
-
 class _IndepMethod(DiscussionMethod):
     name = "indep_test"
     display_name = "Independent Test"
@@ -210,10 +209,6 @@ class TestPanelCompositionDisclosure:
         text = _IndepMethod().panel_composition_disclosure(disc)
         assert "Panel composition" in text
         assert "caveat" in text.lower()
-
-
-from consensus.methods.delphi import DelphiMethod
-from consensus.methods.belief_diffusion import BeliefDiffusion
 
 
 def _delphi_disc(models):
@@ -259,10 +254,8 @@ class TestMethodOptIn:
         }
         prompt = BeliefDiffusion().get_conclusion_prompt(disc)
         assert "Panel composition" in prompt
+        assert "caveat" in prompt.lower()
         assert "Belief State Diffusion process is complete" in prompt
-
-
-from consensus.app import ConsensusApp
 
 
 class TestGetStatePanelAdvisory:
