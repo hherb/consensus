@@ -23,6 +23,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Weighted Decision Matrix / MCDA (`decision_matrix`) | #25 | #41 |
 | Double Crux (`double_crux`) | #27 | #43 |
 | Tree of Thoughts (`tree_of_thoughts`) | #26 | #44 |
+| Order-independent contribution merging | #42 | (this branch) |
 
 Suite total after #44: **2250 tests passing**.
 
@@ -53,6 +54,13 @@ in `.superpowers/sdd/progress.md`: a `DOCUMENT_TOOL_NAMES` constant to dedup
 the document-tool name set in `evidence.py`, and `tests/test_crux_helpers.py`
 crossing the ~500-line guideline (507).
 
+**#42 order-independent contribution merging** lives in
+`consensus/methods/parsing.py` (`word_overlap_ratio`, `cluster_by_similarity`,
+`canonical_index`, `cluster_text_contributions`), adopted by `record_ideas`,
+`record_thoughts`, `record_options`, `record_criteria`; grouping is
+connected-components (transitive, order-independent) and labels are the
+cluster medoid. Suite after #42: **2324 passing**.
+
 ## Open work
 
 ### Cross-cutting quality (open GitHub issues — these are the next slices)
@@ -60,10 +68,6 @@ crossing the ~500-line guideline (507).
 - **#29 same-model-panel warning** for Delphi / Belief Diffusion — warn (or
   actively diversify) when every panelist shares one model, which collapses
   the independence those methods assume.
-- **#42 order-dependent word-overlap merging** (first-name-wins) — the
-  contribution-merge helper is catalog-wide (NGT `record_ideas`, MCDA
-  `record_criteria`, ToT `record_thoughts`, Double Crux crux dedup all share
-  the pattern). Merge order changes which surface form survives.
 
 ### Method-specific follow-ups (tech debt, no issue filed)
 
@@ -101,10 +105,14 @@ crossing the ~500-line guideline (507).
   should delegate (minor deltas: they return `{}` not `None`, dict-only). The
   shared scanner still miscounts braces inside JSON strings — accepted,
   documented in one place.
-- **`record_thoughts`/`validate_thoughts_payload` duplicate NGT's
-  `record_ideas`/`validate_ideas_payload` near-verbatim** (only state key and
-  noun differ); the ToT propose give-up block also mirrors `generate_ideas.py`.
-  A shared parametrised helper would keep dedup/validation fixes in sync.
+- **`record_thoughts`/`record_ideas` now both delegate to
+  `parsing.cluster_text_contributions`** for the merge/cluster step, so only
+  their give-up/validation blocks remain near-duplicated
+  (`validate_thoughts_payload` vs `validate_ideas_payload`, and the ToT
+  propose give-up block still mirrors `generate_ideas.py`). `record_criteria`
+  inlines the same clustering skeleton rather than delegating, since it also
+  aggregates `weight_votes` per cluster. A shared parametrised helper for the
+  give-up/validation shape would keep those fixes in sync.
 - **Structured payload validators share a fragile string-coercion pattern.**
   `str(payload.get(x, "")).strip()` (23 call sites across
   `consensus/methods/phases/*.py`) turns a JSON `null` into the string

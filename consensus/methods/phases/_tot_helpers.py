@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..parsing import word_overlap_similar
+from ..parsing import cluster_text_contributions
 
 if TYPE_CHECKING:
     from ...models import Entity
@@ -186,35 +186,31 @@ def validate_thoughts_payload(payload: dict) -> str:
 
 def record_thoughts(state: dict, entity: Entity,
                     texts: list[str]) -> list[dict]:
-    """Dedup, id, and append thoughts; return the accepted thought dicts.
+    """Append this turn's thoughts as raw contributions, rebuild the
+    order-independent clustered view, and return the clusters this
+    turn's thoughts landed in.
 
-    A thought is dropped when it is word-overlap similar to any thought
-    already recorded — cross-entity near-duplicates carry no signal
-    here (unlike Double Crux cruxes), and scoring + pruning filters
-    whatever survives this coarse gate.  Shared by the free-text and
-    structured-output paths (issue #23).
+    Every submission is retained in ``state["thoughts_raw"]``; the merged
+    view ``state["thoughts"]`` is derived by clustering the whole raw set
+    and labelling each cluster with its medoid, so grouping and label are
+    independent of submission order (issue #42).  Scoring + pruning
+    filters whatever survives this coarse gate.  Shared by the free-text
+    and structured-output paths (issue #23).
     """
-    thoughts = state.setdefault("thoughts", [])
-    accepted: list[dict] = []
+    raw = state.setdefault("thoughts_raw", [])
+    since = len(raw)
     for text in texts:
         cleaned = str(text).strip()
         if cleaned.endswith(".") and not cleaned.endswith(".."):
             cleaned = cleaned[:-1]  # lone full stop, not an ellipsis
         if len(cleaned) < MIN_THOUGHT_LENGTH:
             continue
-        if any(word_overlap_similar(cleaned, existing["text"],
-                                    threshold=SIMILARITY_THRESHOLD)
-               for existing in thoughts):
-            continue
-        thought = {
-            "id": len(thoughts) + 1,
-            "entity_id": entity.id,
-            "entity_name": entity.name,
-            "text": cleaned,
-        }
-        thoughts.append(thought)
-        accepted.append(thought)
-    return accepted
+        raw.append({"entity_id": entity.id, "entity_name": entity.name,
+                    "text": cleaned})
+    view, touched = cluster_text_contributions(
+        raw, since=since, threshold=SIMILARITY_THRESHOLD)
+    state["thoughts"] = view
+    return touched
 
 
 # ----------------------------------------------------------------------

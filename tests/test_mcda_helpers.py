@@ -134,6 +134,19 @@ class TestRecordOptions:
         record_options(state, alice, ["ab"])
         assert state["options"] == []
 
+    def test_merging_is_order_independent_and_medoid_labelled(self, alice,
+                                                              bob):
+        forward: dict = {}
+        record_options(forward, alice, ["Buy a commercial solution now"])
+        record_options(forward, bob, ["Buy a commercial solution"])
+        reverse: dict = {}
+        record_options(reverse, bob, ["Buy a commercial solution"])
+        record_options(reverse, alice, ["Buy a commercial solution now"])
+        assert len(forward["options"]) == len(reverse["options"]) == 1
+        assert (forward["options"][0]["text"]
+                == reverse["options"][0]["text"]
+                == "Buy a commercial solution now")  # medoid = longer phrasing
+
 
 class TestCriteriaSchemaAndValidator:
     def test_schema_shape(self):
@@ -231,6 +244,26 @@ class TestRecordCriteria:
     def test_criterion_weight_defaults_without_votes(self):
         assert criterion_weight({"id": 1, "name": "x",
                                  "weight_votes": {}}) == float(DEFAULT_WEIGHT)
+
+    def test_weight_aggregation_is_order_independent(self, alice, bob):
+        forward: dict = {}
+        record_criteria(forward, alice,
+                        [{"name": "Total cost of ownership", "weight": 4}])
+        record_criteria(forward, bob,
+                        [{"name": "Total cost of ownership now", "weight": 2}])
+        reverse: dict = {}
+        record_criteria(reverse, bob,
+                        [{"name": "Total cost of ownership now", "weight": 2}])
+        record_criteria(reverse, alice,
+                        [{"name": "Total cost of ownership", "weight": 4}])
+        assert len(forward["criteria"]) == len(reverse["criteria"]) == 1
+        assert (forward["criteria"][0]["weight_votes"]
+                == reverse["criteria"][0]["weight_votes"]
+                == {"1": 4, "2": 2})
+        # medoid label is order-independent (longer phrasing wins the tie)
+        assert (forward["criteria"][0]["name"]
+                == reverse["criteria"][0]["name"]
+                == "Total cost of ownership now")
 
 
 class TestExtractWeightedCriteria:

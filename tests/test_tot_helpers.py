@@ -122,17 +122,32 @@ class TestRecordThoughts:
         assert accepted[0]["text"] == "Build a plugin marketplace for third parties"
         assert state["thoughts"] == accepted
 
-    def test_dedups_word_overlap_across_entities(self):
+    def test_merges_across_entities_and_returns_touched(self):
         state: dict = {}
         record_thoughts(state, _entity(1, "Alice"),
                         ["Build a plugin marketplace for third parties"])
-        accepted = record_thoughts(state, _entity(2, "Bob"), [
+        touched = record_thoughts(state, _entity(2, "Bob"), [
             "Build a plugin marketplace for the third parties",
             "Rewrite the core engine in Rust for performance",
         ])
-        assert len(accepted) == 1
-        assert accepted[0]["text"].startswith("Rewrite the core engine")
         assert [t["id"] for t in state["thoughts"]] == [1, 2]
+        assert len(touched) == 2
+        assert any(t["text"].startswith("Rewrite the core engine")
+                   for t in touched)
+
+    def test_grouping_is_order_independent(self):
+        forward: dict = {}
+        record_thoughts(forward, _entity(1, "Alice"),
+                        ["scale gradually through many partner networks"])
+        record_thoughts(forward, _entity(2, "Bob"),
+                        ["scale gradually through several partner networks"])
+        reverse: dict = {}
+        record_thoughts(reverse, _entity(2, "Bob"),
+                        ["scale gradually through several partner networks"])
+        record_thoughts(reverse, _entity(1, "Alice"),
+                        ["scale gradually through many partner networks"])
+        assert ([t["text"] for t in forward["thoughts"]]
+                == [t["text"] for t in reverse["thoughts"]])
 
     def test_rejects_short_thoughts(self):
         state: dict = {}

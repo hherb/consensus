@@ -12,7 +12,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from ..parsing import extract_json_block, word_overlap_similar
+from ..parsing import cluster_text_contributions, extract_json_block
 
 if TYPE_CHECKING:
     from ...models import Entity
@@ -131,32 +131,29 @@ def validate_ideas_payload(payload: dict) -> str:
 
 def record_ideas(state: dict, entity: Entity,
                  texts: list[str]) -> list[dict]:
-    """Dedup, id, and append raw ideas; return the accepted idea dicts.
+    """Append this turn's ideas as raw contributions, rebuild the
+    order-independent clustered view, and return the clusters this
+    turn's ideas landed in.
 
-    An idea is dropped when it is word-overlap similar to any idea
-    already recorded — the clustering phase merges near-misses that
-    survive this coarse filter.  Shared by the free-text and
-    structured-output paths (issue #23).
+    Every submission is retained in ``state["ideas_raw"]``; the merged
+    view ``state["ideas"]`` is derived by clustering the whole raw set
+    and labelling each cluster with its medoid, so grouping and label
+    are independent of submission order (issue #42).  The clustering
+    phase still merges whatever survives this coarse gate.  Shared by
+    the free-text and structured-output paths (issue #23).
     """
-    ideas = state.setdefault("ideas", [])
-    accepted: list[dict] = []
+    raw = state.setdefault("ideas_raw", [])
+    since = len(raw)
     for text in texts:
         cleaned = str(text).strip().rstrip('.')
         if len(cleaned) < MIN_IDEA_LENGTH:
             continue
-        if any(word_overlap_similar(cleaned, existing["text"],
-                                    threshold=SIMILARITY_THRESHOLD)
-               for existing in ideas):
-            continue
-        idea = {
-            "id": len(ideas) + 1,
-            "entity_id": entity.id,
-            "entity_name": entity.name,
-            "text": cleaned,
-        }
-        ideas.append(idea)
-        accepted.append(idea)
-    return accepted
+        raw.append({"entity_id": entity.id, "entity_name": entity.name,
+                    "text": cleaned})
+    view, touched = cluster_text_contributions(
+        raw, since=since, threshold=SIMILARITY_THRESHOLD)
+    state["ideas"] = view
+    return touched
 
 
 def validate_candidates_payload(payload: dict) -> str:
