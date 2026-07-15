@@ -1,7 +1,7 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-14 (after #28 evidence-tracked phases implemented on
-branch — PR #45)._
+_Last updated: 2026-07-16 (after #29 same-model panel warning implemented on
+branch `claude/same-model-panel-warning-29` — PR pending)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -23,14 +23,16 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Weighted Decision Matrix / MCDA (`decision_matrix`) | #25 | #41 |
 | Double Crux (`double_crux`) | #27 | #43 |
 | Tree of Thoughts (`tree_of_thoughts`) | #26 | #44 |
-| Order-independent contribution merging | #42 | (this branch) |
+| Evidence-tracked phases (soft grounding) | #28 | #45 |
+| Order-independent contribution merging | #42 | #46 |
+| Same-model panel warning (Delphi/Belief) | #29 | PR pending (this branch) |
 
-Suite total after #44: **2250 tests passing**.
+Main is at **2324 tests passing**; the #29 branch adds +31 → **2355 passing**
+(pending PR).
 
 All method-catalog issues (#24–#27) are merged and their GitHub issues closed.
 
-**#28 evidence-tracked phases** is implemented on branch
-`claude/handover-update-next-slice-8030ed` (this session), **PR #45** —
+**#28 evidence-tracked phases** merged (PR #45) —
 spec `docs/superpowers/specs/2026-07-14-evidence-gated-phases-design.md`, plan
 `docs/superpowers/plans/2026-07-14-evidence-tracked-phases.md`. New module
 `consensus/evidence.py` (turn-level grounding classifier — tool-call + inline
@@ -61,13 +63,31 @@ crossing the ~500-line guideline (507).
 connected-components (transitive, order-independent) and labels are the
 cluster medoid. Suite after #42: **2324 passing**.
 
+**#29 same-model panel warning** (this branch, PR pending) — new pure module
+`consensus/methods/panel_diversity.py` (analysis core, `estimator_models`
+roster adapter, `format_setup_warning` / `format_conclusion_disclosure`);
+declarative `DiscussionMethod.assumes_independent_panel` flag +
+`panel_composition_disclosure` helper (base.py), opted in by `DelphiMethod`
+and `BeliefDiffusion`. `get_state()` emits a non-blocking `panel_advisory`
+(inline setup banner + start toast); the two methods' conclusion prompts
+disclose panel composition so convergence claims can be caveated. Trigger:
+one model covers **> half** the AI estimator panel (`DIVERSITY_WARN_FRACTION`);
+moderator excluded from the panel. Spec/plan:
+`docs/superpowers/{specs,plans}/2026-07-15-same-model-panel-warning*.md`.
+Suite after #29: **2355 passing**. Deferred: family-level model grouping
+(exact-model only), and proposal item 3 (a "diversify" auto-suggest helper).
+
 ## Open work
 
-### Cross-cutting quality (open GitHub issues — these are the next slices)
+### Cross-cutting quality
 
-- **#29 same-model-panel warning** for Delphi / Belief Diffusion — warn (or
-  actively diversify) when every panelist shares one model, which collapses
-  the independence those methods assume.
+- _No open cross-cutting GitHub issues remain._ #29 (same-model-panel warning)
+  is implemented on this branch (PR pending). Its deferred follow-ups:
+  family-level model grouping (e.g. `gpt-4o` vs `gpt-4o-mini`, or one model
+  under different provider name strings — exact-model grouping only today);
+  moderator always excluded from the estimator panel even when it participates;
+  and the "diversify" auto-suggest helper (proposal item 3). Design spec:
+  `docs/superpowers/specs/2026-07-15-same-model-panel-warning-design.md`.
 
 ### Method-specific follow-ups (tech debt, no issue filed)
 
