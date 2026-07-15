@@ -1,8 +1,7 @@
 # HANDOVER — Discussion Methods Review & Repair
 
 _Last updated: 2026-07-16 (#29 same-model panel warning merged via PR #47; #48
-participating-moderator estimator fix implemented on branch
-`claude/panel-moderator-estimator-48`, PR pending)._
+participating-moderator estimator fix — PR #49, awaiting review/merge)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -27,10 +26,10 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Evidence-tracked phases (soft grounding) | #28 | #45 |
 | Order-independent contribution merging | #42 | #46 |
 | Same-model panel warning (Delphi/Belief) | #29 | #47 (merged) |
-| Participating moderator counted as estimator | #48 | (PR pending) |
+| Participating moderator counted as estimator | #48 | #49 (open) |
 
 Main is at **2355 tests passing**; the #48 branch adds +8 → **2363 passing**
-(pending PR).
+(PR #49).
 
 All method-catalog issues (#24–#27) are merged and their GitHub issues closed.
 
