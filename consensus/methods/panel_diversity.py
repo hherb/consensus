@@ -105,3 +105,52 @@ def estimator_models(discussion: "Discussion") -> list[str]:
             continue
         models.append(e.ai_config.model)
     return models
+
+
+def format_setup_warning(report: PanelDiversityReport) -> str | None:
+    """Return a one-line setup warning, or ``None`` if not concerning.
+
+    Phrased method-agnostically ("this method") because the method name is
+    not available to this pure formatter.
+    """
+    if not report.is_concerning:
+        return None
+    n = report.panel_size
+    model = report.dominant_model
+    if report.is_unanimous:
+        return (
+            f"All {n} AI participants use the same model ('{model}'). "
+            "This method assumes independent estimators — with one shared "
+            "model, apparent convergence largely reflects the model agreeing "
+            "with itself. Consider assigning different models or providers."
+        )
+    return (
+        f"{report.dominant_count} of {n} AI participants share the model "
+        f"'{model}'. This method assumes independent estimators; shared "
+        "models correlate their errors and inflate apparent convergence. "
+        "Consider diversifying models or providers."
+    )
+
+
+def format_conclusion_disclosure(report: PanelDiversityReport) -> str:
+    """Return the panel-composition disclosure for a conclusion prompt.
+
+    Empty when there are fewer than 2 estimators.  Always states the
+    composition otherwise; appends a "discount the convergence" caveat only
+    when the panel is concerning.
+    """
+    if report.panel_size < 2:
+        return ""
+    composition = ", ".join(
+        f"{count}× {model}" for model, count in report.model_counts
+    )
+    base = f"Panel composition: {composition}."
+    if not report.is_concerning:
+        return base
+    caveat = (
+        f" Note: {report.dominant_count} of {report.panel_size} AI "
+        "participants shared a model, so treat the convergence below as "
+        "partly the model agreeing with itself and caveat the confidence "
+        "accordingly."
+    )
+    return base + caveat

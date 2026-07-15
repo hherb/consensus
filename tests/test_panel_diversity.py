@@ -6,6 +6,8 @@ from consensus.methods.panel_diversity import (
     DIVERSITY_WARN_FRACTION,
     PanelDiversityReport,
     analyze_panel_diversity,
+    format_setup_warning,
+    format_conclusion_disclosure,
 )
 
 
@@ -128,3 +130,43 @@ class TestEstimatorModels:
             moderator_id=None,
         )
         assert estimator_models(disc) == []
+
+
+class TestFormatSetupWarning:
+    def test_none_when_not_concerning(self):
+        r = analyze_panel_diversity(["a", "b", "c"])
+        assert format_setup_warning(r) is None
+
+    def test_unanimous_wording(self):
+        r = analyze_panel_diversity(["gpt-4o", "gpt-4o"])
+        msg = format_setup_warning(r)
+        assert msg is not None
+        assert "All 2" in msg
+        assert "gpt-4o" in msg
+        assert "independent estimators" in msg
+
+    def test_majority_wording(self):
+        r = analyze_panel_diversity(["gpt-4o", "gpt-4o", "claude"])
+        msg = format_setup_warning(r)
+        assert msg is not None
+        assert "2 of 3" in msg
+        assert "gpt-4o" in msg
+
+
+class TestFormatConclusionDisclosure:
+    def test_empty_below_two(self):
+        assert format_conclusion_disclosure(analyze_panel_diversity(["a"])) == ""
+        assert format_conclusion_disclosure(analyze_panel_diversity([])) == ""
+
+    def test_diverse_composition_no_caveat(self):
+        r = analyze_panel_diversity(["a", "b", "c"])
+        text = format_conclusion_disclosure(r)
+        assert "Panel composition" in text
+        assert "caveat" not in text.lower()
+
+    def test_concerning_includes_caveat(self):
+        r = analyze_panel_diversity(["gpt-4o", "gpt-4o", "claude"])
+        text = format_conclusion_disclosure(r)
+        assert "Panel composition" in text
+        assert "2 of 3" in text
+        assert "caveat" in text.lower()
