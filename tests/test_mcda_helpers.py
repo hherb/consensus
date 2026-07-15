@@ -245,6 +245,26 @@ class TestRecordCriteria:
         assert criterion_weight({"id": 1, "name": "x",
                                  "weight_votes": {}}) == float(DEFAULT_WEIGHT)
 
+    def test_weight_aggregation_is_order_independent(self, alice, bob):
+        forward: dict = {}
+        record_criteria(forward, alice,
+                        [{"name": "Total cost of ownership", "weight": 4}])
+        record_criteria(forward, bob,
+                        [{"name": "Total cost of ownership now", "weight": 2}])
+        reverse: dict = {}
+        record_criteria(reverse, bob,
+                        [{"name": "Total cost of ownership now", "weight": 2}])
+        record_criteria(reverse, alice,
+                        [{"name": "Total cost of ownership", "weight": 4}])
+        assert len(forward["criteria"]) == len(reverse["criteria"]) == 1
+        assert (forward["criteria"][0]["weight_votes"]
+                == reverse["criteria"][0]["weight_votes"]
+                == {"1": 4, "2": 2})
+        # medoid label is order-independent (longer phrasing wins the tie)
+        assert (forward["criteria"][0]["name"]
+                == reverse["criteria"][0]["name"]
+                == "Total cost of ownership now")
+
 
 class TestExtractWeightedCriteria:
     def test_parses_numbered_list_with_weights(self):

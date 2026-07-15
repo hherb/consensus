@@ -19,7 +19,6 @@ from ..parsing import (
     cluster_text_contributions,
     extract_json_block,
     parse_numbered_list,
-    word_overlap_similar,
 )
 
 if TYPE_CHECKING:
@@ -260,16 +259,21 @@ def validate_criteria_payload(payload: dict) -> str:
 
 def record_criteria(state: dict, entity: Entity,
                     items: list[dict]) -> list[dict]:
-    """Merge criteria by name similarity and record weight votes.
+    """Append this turn's weighted criteria as raw contributions, rebuild
+    the order-independent clustered view, and return the criteria this
+    turn touched.
 
-    A criterion similar to an existing one adds (or replaces — the
-    refinement round) this entity's weight vote on it; otherwise a new
-    criterion is appended.  Weights are clamped into
-    ``[WEIGHT_MIN, WEIGHT_MAX]`` (the free-text path may carry
-    arbitrary numbers).  Returns the criterion dicts touched.
+    Every submission is retained in ``state["criteria_raw"]``; the merged
+    view ``state["criteria"]`` is derived by clustering the whole raw set
+    and labelling each cluster with its medoid name, so grouping and
+    label are independent of submission order (issue #42).  Each entity's
+    weight vote is its latest raw weight within the cluster (last-write-
+    wins refinement).  Weights are clamped into
+    ``[WEIGHT_MIN, WEIGHT_MAX]`` (the free-text path may carry arbitrary
+    numbers).  Returns the criterion dicts this turn touched.
     """
-    criteria = state.setdefault("criteria", [])
-    touched: list[dict] = []
+    raw = state.setdefault("criteria_raw", [])
+    since = len(raw)
     for item in items:
         name = str(item.get("name") or "").strip().rstrip('.')
         if len(name) < MIN_CRITERION_LENGTH:
@@ -279,19 +283,26 @@ def record_criteria(state: dict, entity: Entity,
         except (TypeError, ValueError):
             weight = DEFAULT_WEIGHT
         weight = min(max(weight, WEIGHT_MIN), WEIGHT_MAX)
-        existing = next(
-            (c for c in criteria
-             if word_overlap_similar(name, c["name"],
-                                     threshold=SIMILARITY_THRESHOLD)),
-            None,
-        )
-        if existing is None:
-            existing = {"id": len(criteria) + 1, "name": name,
-                        "weight_votes": {}}
-            criteria.append(existing)
-        existing["weight_votes"][str(entity.id)] = weight
-        if not any(t is existing for t in touched):
-            touched.append(existing)
+        raw.append({"entity_id": entity.id, "entity_name": entity.name,
+                    "name": name, "weight": weight})
+    groups = cluster_by_similarity(
+        list(range(len(raw))),
+        text_of=lambda i: raw[i]["name"],
+        threshold=SIMILARITY_THRESHOLD)
+    view: list[dict] = []
+    touched: list[dict] = []
+    for cid, group in enumerate(groups, 1):
+        canon = group[canonical_index(
+            group, text_of=lambda i: raw[i]["name"])]
+        votes: dict[str, int] = {}
+        for i in group:  # ascending raw index -> last write wins per entity
+            votes[str(raw[i]["entity_id"])] = raw[i]["weight"]
+        item = {"id": cid, "name": raw[canon]["name"],
+                "weight_votes": votes}
+        view.append(item)
+        if any(i >= since for i in group):
+            touched.append(item)
+    state["criteria"] = view
     return touched
 
 
