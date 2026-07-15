@@ -260,3 +260,48 @@ class TestMethodOptIn:
         prompt = BeliefDiffusion().get_conclusion_prompt(disc)
         assert "Panel composition" in prompt
         assert "Belief State Diffusion process is complete" in prompt
+
+
+from consensus.app import ConsensusApp
+
+
+class TestGetStatePanelAdvisory:
+    def _app(self, tmp_path):
+        return ConsensusApp(db_path=str(tmp_path / "adv.db"))
+
+    def test_delphi_same_model_sets_advisory(self, tmp_path):
+        app = self._app(tmp_path)
+        pid = app.db.add_provider("Local", "http://x/v1", "")
+        mod = app.db.add_entity("Mod", "ai", "#a", pid, "llama3", 0.5, 512, "")
+        a = app.db.add_entity("A", "ai", "#b", pid, "gpt-4o", 0.7, 512, "")
+        b = app.db.add_entity("B", "ai", "#c", pid, "gpt-4o", 0.7, 512, "")
+        app.add_to_discussion(mod, is_moderator=True)
+        app.add_to_discussion(a)
+        app.add_to_discussion(b)
+        app.set_discussion_method("delphi")
+        adv = app.get_state()["panel_advisory"]
+        assert adv is not None
+        assert adv["level"] == "warning"
+        assert "gpt-4o" in adv["message"]
+
+    def test_delphi_diverse_no_advisory(self, tmp_path):
+        app = self._app(tmp_path)
+        pid = app.db.add_provider("Local", "http://x/v1", "")
+        mod = app.db.add_entity("Mod", "ai", "#a", pid, "llama3", 0.5, 512, "")
+        a = app.db.add_entity("A", "ai", "#b", pid, "gpt-4o", 0.7, 512, "")
+        b = app.db.add_entity("B", "ai", "#c", pid, "claude", 0.7, 512, "")
+        app.add_to_discussion(mod, is_moderator=True)
+        app.add_to_discussion(a)
+        app.add_to_discussion(b)
+        app.set_discussion_method("delphi")
+        assert app.get_state()["panel_advisory"] is None
+
+    def test_open_discussion_no_advisory(self, tmp_path):
+        app = self._app(tmp_path)
+        pid = app.db.add_provider("Local", "http://x/v1", "")
+        a = app.db.add_entity("A", "ai", "#b", pid, "gpt-4o", 0.7, 512, "")
+        b = app.db.add_entity("B", "ai", "#c", pid, "gpt-4o", 0.7, 512, "")
+        app.add_to_discussion(a, is_moderator=True)
+        app.add_to_discussion(b)
+        # discussion_method defaults to open_discussion
+        assert app.get_state()["panel_advisory"] is None

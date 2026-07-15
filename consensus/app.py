@@ -494,6 +494,22 @@ class ConsensusApp:
         phase = method.current_phase(self.discussion) if method else None
         state["track_evidence_phase"] = bool(
             phase is not None and phase.track_evidence)
+        # Same-model panel advisory (#29): for methods that assume
+        # independent estimators, warn when one model dominates the panel.
+        state["panel_advisory"] = None
+        from .methods import get_method
+        from .methods.panel_diversity import (
+            analyze_panel_diversity, estimator_models, format_setup_warning,
+        )
+        try:
+            cur_method = get_method(self.discussion.discussion_method)
+        except KeyError:
+            cur_method = None
+        if cur_method is not None and cur_method.assumes_independent_panel:
+            report = analyze_panel_diversity(estimator_models(self.discussion))
+            msg = format_setup_warning(report)
+            if msg:
+                state["panel_advisory"] = {"level": "warning", "message": msg}
         # Expose pending user-input request for reconnection scenarios
         if self._pending_user_inputs:
             _rid, (_fut, _data) = next(iter(self._pending_user_inputs.items()))
