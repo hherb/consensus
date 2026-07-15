@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Optional, Union
+from typing import Any, Callable, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -56,17 +56,131 @@ def parse_numbered_list(content: str, min_length: int = 10) -> list[str]:
     return []
 
 
+def word_overlap_ratio(a: str, b: str) -> float:
+    """Fraction of the larger token set shared by two strings (0.0-1.0).
+
+    Tokens are whitespace-split and lowercased.  Returns 0.0 when either
+    string has no tokens.  This is the continuous form behind
+    ``word_overlap_similar`` and the edge/centrality weight used by
+    ``cluster_by_similarity`` and ``canonical_index``.
+    """
+    w1 = set(a.lower().split())
+    w2 = set(b.lower().split())
+    if not w1 or not w2:
+        return 0.0
+    return len(w1 & w2) / max(len(w1), len(w2))
+
+
 def word_overlap_similar(a: str, b: str, threshold: float = 0.7) -> bool:
     """Check if two strings are substantially similar by word overlap.
 
     Returns True if the Jaccard-like overlap ratio exceeds *threshold*.
     """
-    w1 = set(a.lower().split())
-    w2 = set(b.lower().split())
-    if not w1 or not w2:
-        return False
-    overlap = len(w1 & w2) / max(len(w1), len(w2))
-    return overlap > threshold
+    return word_overlap_ratio(a, b) > threshold
+
+
+def cluster_by_similarity(members: list,
+                          text_of: Callable[[Any], str],
+                          threshold: float = 0.7) -> list[list]:
+    """Group *members* into clusters by word-overlap similarity.
+
+    Two members share a cluster when their texts (via *text_of*) are
+    ``word_overlap_similar`` at *threshold*; clusters are the connected
+    components of that graph.  Grouping is **order-independent** — it
+    depends only on the set of members and the symmetric similarity
+    relation, not their order — and **transitive**: ``A~B`` and ``B~C``
+    place A, B and C together even when A and C are not directly similar
+    (this is the deterministic price of order-independence).  Clusters
+    are returned ordered by the smallest original index they contain;
+    members keep their original order within a cluster.
+    """
+    n = len(members)
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri != rj:  # attach larger root to smaller -> root is the min index
+            parent[max(ri, rj)] = min(ri, rj)
+
+    texts = [text_of(m) for m in members]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if word_overlap_similar(texts[i], texts[j], threshold):
+                union(i, j)
+
+    groups: dict[int, list] = {}
+    for idx, member in enumerate(members):
+        groups.setdefault(find(idx), []).append(member)
+    # dict insertion order == ascending component-min index (the min member
+    # is the first of its component reached), so this is deterministic.
+    return list(groups.values())
+
+
+def canonical_index(members: list,
+                    text_of: Callable[[Any], str]) -> int:
+    """Index of the medoid of *members* — the most representative one.
+
+    The medoid maximises total ``word_overlap_ratio`` to the other
+    members (the phrasing most central to the group).  Ties break toward
+    the longest text, then the lexicographically smallest, so the result
+    is fully deterministic.  *members* must be non-empty.
+    """
+    texts = [text_of(m) for m in members]
+    central = [sum(word_overlap_ratio(texts[i], texts[j])
+                   for j in range(len(texts)) if j != i)
+               for i in range(len(texts))]
+    best = 0
+    for i in range(1, len(texts)):
+        key_i = (central[i], len(texts[i]))
+        key_best = (central[best], len(texts[best]))
+        if key_i > key_best or (key_i == key_best
+                                and texts[i] < texts[best]):
+            best = i
+    return best
+
+
+def cluster_text_contributions(
+        raw: list[dict], since: int = 0,
+        text_key: str = "text",
+        threshold: float = 0.7) -> tuple[list[dict], list[dict]]:
+    """Cluster raw text contributions into an order-independent view.
+
+    *raw* is the full list of contribution dicts, each carrying
+    *text_key* plus ``entity_id`` / ``entity_name``.  Returns
+    ``(view, touched)``:
+
+    * *view* — one dict per cluster,
+      ``{"id", text_key, "entity_id", "entity_name"}`` — labelled with
+      the cluster medoid (``canonical_index``) and attributed to its
+      founder (the earliest, min-index member).  Ids are the cluster
+      rank in min-index order.
+    * *touched* — the subset of *view* whose cluster contains a
+      contribution at index >= *since* (i.e. the current turn's
+      additions), for the turn's response display.
+    """
+    groups = cluster_by_similarity(
+        list(range(len(raw))),
+        text_of=lambda i: raw[i][text_key],
+        threshold=threshold)
+    view: list[dict] = []
+    touched: list[dict] = []
+    for cid, group in enumerate(groups, 1):
+        canon = group[canonical_index(
+            group, text_of=lambda i: raw[i][text_key])]
+        founder = raw[min(group)]
+        item = {"id": cid, text_key: raw[canon][text_key],
+                "entity_id": founder["entity_id"],
+                "entity_name": founder["entity_name"]}
+        view.append(item)
+        if any(i >= since for i in group):
+            touched.append(item)
+    return view, touched
 
 
 def _balanced_object_end(content: str, start: int) -> Optional[int]:
