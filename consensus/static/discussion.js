@@ -257,6 +257,9 @@ function updateInputArea() {
         else hide(consultBtn);
     }
 
+    const evidenceBtn = $('#attach-evidence-btn');
+    if (evidenceBtn) hide(evidenceBtn);
+
     if (state.status === 'paused') {
         turnInfo.textContent = 'Discussion is paused. Manage participants, then click Resume.';
         input.disabled = false; sendBtn.disabled = false;
@@ -286,6 +289,9 @@ function updateInputArea() {
         turnInfo.textContent = `${speaker.name}'s turn to speak`;
         input.disabled = false; sendBtn.disabled = false;
         input.placeholder = `Type ${speaker.name}'s message...`;
+        // Only offer the evidence-marker button in phases that actually
+        // track evidence (#28) — elsewhere the marker would be inert text.
+        if (evidenceBtn && state.track_evidence_phase) show(evidenceBtn);
         input.focus();
     }
 }

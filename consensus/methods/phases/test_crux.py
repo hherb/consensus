@@ -2,10 +2,10 @@
 
 A free-text, evidence-focused discussion of the shared crux alone: the
 disagreement has been reduced to one checkable claim, so all evidence
-and reasoning is directed at that claim — not the broader topic.  This
-is the natural home for citation requirements once issue #28
-(evidence-gated phases) lands; until then the prompt directs
-participants to use whatever research/document tools they have.
+and reasoning is directed at that claim — not the broader topic.  Opts
+into evidence provenance tracking (``track_evidence=True``, issue #28):
+each turn is classified as grounded or reasoning-based and the summary
+feeds the conclusion and the ``crux_map`` artifact.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ class TestCruxHandler(PhaseHandler):
             "been reduced to."
         ),
         rounds=TEST_CRUX_ROUNDS,
+        track_evidence=True,
     )
 
     # ------------------------------------------------------------------

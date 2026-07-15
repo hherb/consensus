@@ -48,6 +48,7 @@ class Phase:
     description: str = ""  # shown to participants
     rounds: int = 1  # how many full rounds in this phase (0 = until condition)
     allow_tools: bool = True  # whether tool use is enabled
+    track_evidence: bool = False  # opt-in evidence provenance tracking (#28)
 
 
 @dataclass
