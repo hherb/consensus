@@ -1,0 +1,8 @@
+---
+name: fixall
+description: Use when a code review has produced issues that need to be addressed and the pull request finalized on the consensus project.
+disable-model-invocation: false
+allowed-tools: Bash(git *), Bash(gh *), Bash(uv run pytest *)
+---
+
+Address all issues identified in the code review one by one. If fixing them appears manageable within this session, fix them now. If not, lodge the issue on GitHub. Once all issues have been addressed, run the test suite with `uv run pytest` and review the code changes thoroughly against docs/llm/golden_rules.md. If satisfied no issues are left open, update HANDOVER.md and ROADMAP.md ONLY if necessary to reflect these changes. Then commit and push the changes into the PR.
