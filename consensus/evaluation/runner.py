@@ -1,7 +1,7 @@
 """Evaluation runner — executes case vignettes under each condition.
 
 Usage:
-    python -m evaluation.runner [OPTIONS]
+    python -m consensus.evaluation.runner [OPTIONS]
 
 Options:
     --cases CASE_IDS        Comma-separated case IDs (default: all)
@@ -664,7 +664,7 @@ def main():
     print(f"  Successful: {len(results) - len(errors)}")
     total_tokens = sum(r.total_tokens for r in results)
     print(f"  Total tokens: {total_tokens:,}")
-    print(f"\nRun scoring with: python -m evaluation.scorer --input <results_dir>")
+    print(f"\nRun scoring with: python -m consensus.evaluation.scorer --input <results_dir>")
 
 
 if __name__ == "__main__":

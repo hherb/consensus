@@ -6,8 +6,8 @@ Scores each run on:
 3. Reasoning quality (LLM-judged on a 1-5 rubric)
 
 Usage:
-    python -m evaluation.scorer --input evaluation/results [OPTIONS]
-    python -m evaluation.scorer --input evaluation/results --llm-judge
+    python -m consensus.evaluation.scorer --input consensus/evaluation/results [OPTIONS]
+    python -m consensus.evaluation.scorer --input consensus/evaluation/results --llm-judge
 """
 
 import argparse

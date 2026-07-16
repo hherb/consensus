@@ -1,10 +1,10 @@
-"""Entry point for: python -m evaluation
+"""Entry point for: python -m consensus.evaluation
 
 Dispatches to runner or scorer based on subcommand.
 Usage:
-    python -m evaluation run [OPTIONS]     # Run evaluation
-    python -m evaluation score [OPTIONS]   # Score results
-    python -m evaluation list              # List cases and conditions
+    python -m consensus.evaluation run [OPTIONS]     # Run evaluation
+    python -m consensus.evaluation score [OPTIONS]   # Score results
+    python -m consensus.evaluation list              # List cases and conditions
 """
 
 import sys
@@ -14,8 +14,8 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print(__doc__)
         print("Subcommands:")
-        print("  run    — Run evaluation (see: python -m evaluation run --help)")
-        print("  score  — Score results (see: python -m evaluation score --help)")
+        print("  run    — Run evaluation (see: python -m consensus.evaluation run --help)")
+        print("  score  — Score results (see: python -m consensus.evaluation score --help)")
         print("  list   — List available cases and conditions")
         sys.exit(0)
 

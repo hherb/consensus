@@ -49,4 +49,4 @@ include = ["consensus*"]
 
 [tool.setuptools.package-data]
 consensus = ["static/*", "migrations/*.sql"]
-"consensus.evaluation" = ["migrations/*.sql"]
+"consensus.evaluation" = ["static/*", "migrations/*.sql"]
