@@ -100,6 +100,18 @@ class TestVoteProcessing:
         handler.process_structured_response(PAYLOAD, _entity(), disc)
         assert len(disc.method_state["votes"]) == 2
 
+    def test_null_rationale_becomes_empty_not_none_string(self):
+        """A JSON ``null`` rationale must record as "" — never the literal
+        "None" (the coerce_str bug class)."""
+        handler = VoteHandler()
+        disc = _discussion()
+        payload = {"votes": [{"motion_id": 1, "vote": "for",
+                              "rationale": None}]}
+        processed = handler.process_structured_response(
+            payload, _entity(), disc)
+        assert disc.method_state["votes"][0]["rationale"] == ""
+        assert "None" not in processed.display_content
+
     def test_free_text_path_still_records(self):
         handler = VoteHandler()
         disc = _discussion()

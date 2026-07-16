@@ -3,7 +3,7 @@
 _Last updated: 2026-07-16 (#48 participating-moderator estimator fix merged via
 PR #49. All tracked issues closed. Latest slice: `coerce_str` payload-coercion
 hardening — no issue, tech-debt from this file. Main at 2364 tests; the
-`coerce_str` branch adds +7 → 2371.)._
+`coerce_str` branch adds +8 → 2372.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -140,7 +140,11 @@ Suite after #29: **2355 passing**. Deferred: family-level model grouping
   a JSON `null` into the literal string `"None"`; they now delegate to
   `parsing.coerce_str(payload, key)` (public, since it is imported across 15
   phase modules), which treats both `None` and an absent key as the default.
-  The safe `str(payload.get(x) or "")` sites were left untouched.
+  The safe `str(payload.get(x) or "")` sites were left untouched. Code review
+  caught one same-class site outside the `payload.get` pattern —
+  `str(v.get("rationale", ""))` on a nested vote item in `vote.py`, unguarded by
+  its validator — now also on `coerce_str` (a `null` rationale rendered as
+  `"None"` in the vote display).
 
 ### Testing gap (applies to NGT / MCDA / Double Crux / ToT)
 
