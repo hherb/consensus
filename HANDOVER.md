@@ -1,9 +1,8 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-16 (#48 participating-moderator estimator fix merged via
-PR #49. All tracked issues closed. Latest slice: `coerce_str` payload-coercion
-hardening — no issue, tech-debt from this file. Main at 2364 tests; the
-`coerce_str` branch adds +8 → 2372.)._
+_Last updated: 2026-07-16 (`coerce_str` payload-coercion hardening merged via
+PR #50 — no issue, tech-debt from this file. All tracked issues closed. Main
+at 2372 tests.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -29,8 +28,9 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Order-independent contribution merging | #42 | #46 |
 | Same-model panel warning (Delphi/Belief) | #29 | #47 |
 | Participating moderator counted as estimator | #48 | #49 |
+| `coerce_str` payload-coercion hardening | — (tech debt) | #50 |
 
-Main is at **2364 tests passing**. Every tracked issue is merged and closed;
+Main is at **2372 tests passing**. Every tracked issue is merged and closed;
 there are no open issues or PRs.
 
 **#28 evidence-tracked phases** merged (PR #45) —
