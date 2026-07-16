@@ -112,3 +112,111 @@ class TestNominalGroupFlow:
         persisted = db_method_state(tmp_db, disc.id)
         assert persisted["current_phase"] == state["current_phase"]
         assert persisted["candidates"] == state["candidates"]
+
+
+# ---------------------------------------------------------------------------
+# Weighted Decision Matrix — straight line through all five phases
+# ---------------------------------------------------------------------------
+
+#: Distinct options (pairwise overlap ~0) -> O1, O2 from P1; O3 from P2.
+MCDA_OPTIONS = {
+    "P1": "1. Adopt PostgreSQL as the primary datastore\n"
+          "2. Keep SQLite with a write-ahead log",
+    "P2": "1. Move everything to a managed cloud database",
+}
+
+#: The '(weight: N)' suffix is the only parsed free-text weight form.
+#: 'Operational cost' appears from both entities -> one criterion C1
+#: with weight votes {P1: 4, P2: 2}.  Criteria rounds=2: the same lines
+#: are resubmitted in round 2 (idempotent last-write-wins refinement).
+MCDA_CRITERIA = {
+    "P1": "1. Operational cost (weight: 4)\n"
+          "2. Query performance (weight: 3)",
+    "P2": "1. Operational cost (weight: 2)\n"
+          "2. Migration effort (weight: 5)",
+}
+
+MCDA_SCORES = {
+    "P1": ("My scores:\n```json\n"
+           '{"scores": {'
+           '"O1": {"C1": 5, "C2": 4, "C3": 4}, '
+           '"O2": {"C1": 3, "C2": 3, "C3": 2}, '
+           '"O3": {"C1": 2, "C2": 4, "C3": 1}}}'
+           "\n```"),
+    "P2": ("My scores:\n```json\n"
+           '{"scores": {'
+           '"O1": {"C1": 4, "C2": 4, "C3": 4}, '
+           '"O2": {"C1": 3, "C2": 2, "C3": 2}, '
+           '"O3": {"C1": 2, "C2": 3, "C3": 1}}}'
+           "\n```"),
+}
+
+
+def mcda_content(disc: Discussion, speaker: Entity) -> str:
+    """Scripted turn content for the MCDA run, keyed on the live phase."""
+    phase = disc.method_state["current_phase"]
+    if phase == "options":
+        return MCDA_OPTIONS[speaker.name]
+    if phase == "criteria":
+        return MCDA_CRITERIA[speaker.name]
+    if phase == "score":
+        return MCDA_SCORES[speaker.name]
+    if phase == "sensitivity":
+        return ("The weighted ranking is robust: the leader holds under "
+                "the tested weight variations.")
+    if phase == "decide":
+        return ("I recommend adopting PostgreSQL as the primary "
+                "datastore based on the weighted results.")
+    pytest.fail(f"unexpected MCDA phase {phase!r} for {speaker.name}")
+
+
+class TestDecisionMatrixFlow:
+    """MCDA full lifecycle: options -> criteria -> score -> sensitivity -> decide."""
+
+    @pytest.mark.asyncio
+    async def test_full_run(self, tmp_db):
+        disc, moderator, pricing, mod, parts = start_method_discussion(
+            tmp_db, "decision_matrix", n_participants=2,
+            topic="Which datastore should the project standardise on?",
+        )
+
+        trace, result = await run_method(
+            disc, moderator, tmp_db, pricing, mcda_content)
+
+        # --- Flow ---------------------------------------------------
+        assert result.get("method_complete") is True
+        assert [phase for phase, _ in trace] == (
+            ["options"] * 2 + ["criteria"] * 4 + ["score"] * 2
+            + ["sensitivity"] + ["decide"]
+        )
+        assert all(name == "Mod" for phase, name in trace
+                   if phase in ("sensitivity", "decide"))
+
+        # --- Artifacts (all numbers computed in code) -----------------
+        state = disc.method_state
+        assert [o["id"] for o in state["options"]] == [1, 2, 3]
+        weights = {c["id"]: sorted(c["weight_votes"].values())
+                   for c in state["criteria"]}
+        assert weights == {1: [2, 4], 2: [3], 3: [5]}
+
+        artifact = state["decision_artifact"]
+        assert artifact["recommended_option_id"] == 1
+        assert artifact["ranking"][0]["option_id"] == 1
+        assert artifact["ranking"][0]["weighted_total"] == 45.5
+        assert [r["weighted_total"] for r in artifact["ranking"]] == [
+            45.5, 26.5, 21.5]
+        assert artifact["scorers"] == 2
+        assert any("defaulted to the top-ranked option" in c
+                   for c in artifact["caveats"]), (
+            "free-text decide turn must record the default-caveat")
+
+        # --- Conclusion prompt renders the real data -----------------
+        prompt = get_method("decision_matrix").get_conclusion_prompt(disc)
+        assert "Adopt PostgreSQL as the primary datastore" in prompt
+        assert "45.5" in prompt
+
+        # --- Persistence sanity ---------------------------------------
+        persisted = db_method_state(tmp_db, disc.id)
+        assert persisted["current_phase"] == state["current_phase"]
+        assert (persisted["decision_artifact"]["recommended_option_id"]
+                == artifact["recommended_option_id"])
