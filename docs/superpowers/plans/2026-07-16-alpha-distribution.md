@@ -1098,8 +1098,11 @@ uv pip install --python .build-venv/bin/python . pyinstaller
 
 # --- 2. Codesign inside-out ---------------------------------------------------
 if [[ -z "${CODESIGN_IDENTITY:-}" ]]; then
-    CODESIGN_IDENTITY=$(security find-identity -v -p codesigning \
-        | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)
+    # Capture first, then scan without an early-exit consumer: piping the
+    # producer into `head -1` can SIGPIPE it under pipefail (same bug class
+    # as the release script's wheel check).
+    IDENTITIES=$(security find-identity -v -p codesigning)
+    CODESIGN_IDENTITY=$(awk -F'"' '/Developer ID Application/ && !found {print $2; found=1}' <<< "$IDENTITIES")
 fi
 [[ -n "$CODESIGN_IDENTITY" ]] || {
     echo "ERROR: no 'Developer ID Application' identity in keychain."
