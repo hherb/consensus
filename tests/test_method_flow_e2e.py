@@ -220,3 +220,172 @@ class TestDecisionMatrixFlow:
         assert persisted["current_phase"] == state["current_phase"]
         assert (persisted["decision_artifact"]["recommended_option_id"]
                 == artifact["recommended_option_id"])
+
+
+# ---------------------------------------------------------------------------
+# Double Crux — exercises the identify -> hunt loop-back (issue #22 path)
+# ---------------------------------------------------------------------------
+
+DC_POSITIONS = {
+    "P1": "Remote-first work makes our engineering team more productive "
+          "overall.",
+    "P2": "Our engineering team loses more than it gains when it is "
+          "fully remote.",
+}
+
+#: Round-1 cruxes deliberately do NOT overlap -> the moderator's first
+#: identify pass returns verdict 'none' and loops back to hunting.
+DC_HUNT_ROUND_1 = {
+    "P1": ("```json\n"
+           '{"cruxes": [{"claim": "Commute savings convert into extra '
+           'focused work hours", "belief": 0.8, "why_pivotal": '
+           '"Recovered time is the core of my case"}]}'
+           "\n```"),
+    "P2": ("```json\n"
+           '{"cruxes": [{"claim": "Junior engineers ramp up slower '
+           'without in-person mentoring", "belief": 0.9, "why_pivotal": '
+           '"Mentoring quality drives my concern"}]}'
+           "\n```"),
+}
+
+#: Round-2 cruxes share one pivotal claim (same polarity for both, so
+#: the snapshot initial_beliefs are directly comparable) and are NOT
+#: word-overlap similar to each author's own round-1 crux (same-entity
+#: near-duplicates would be dropped).
+DC_HUNT_ROUND_2 = {
+    "P1": ("```json\n"
+           '{"cruxes": [{"claim": "Distributed teams deliver features '
+           'as fast as colocated teams", "belief": 0.75, "why_pivotal": '
+           '"Delivery speed is what productivity means here"}]}'
+           "\n```"),
+    "P2": ("```json\n"
+           '{"cruxes": [{"claim": "Feature delivery speed of distributed '
+           'teams matches colocated teams", "belief": 0.25, '
+           '"why_pivotal": "If speed holds up my objection collapses"}]}'
+           "\n```"),
+}
+
+DC_IDENTIFY_NONE = (
+    "```json\n"
+    '{"verdict": "none", "reasoning": "The candidate cruxes address '
+    'different mechanisms; no shared pivotal claim yet."}'
+    "\n```"
+)
+
+DC_IDENTIFY_FACTUAL = (
+    "```json\n"
+    '{"verdict": "factual", "crux_ids": [3, 4], "claim": "Distributed '
+    'teams deliver features as fast as colocated teams", "reasoning": '
+    '"Both parties\' updated cruxes pivot on delivery speed."}'
+    "\n```"
+)
+
+DC_TEST_CRUX = {
+    "P1": "A 2024 multi-company study found delivery-speed parity for "
+          "distributed teams [evidence: https://example.org/remote-study].",
+    "P2": "In my direct experience, cross-team coordination overhead "
+          "grows once a team is fully distributed.",
+}
+
+DC_RESOLUTIONS = {
+    "P1": ("```json\n"
+           '{"stance": "unchanged", "position": "Remote-first still nets '
+           'out positive for our productivity", "crux_belief": 0.7, '
+           '"reasoning": "The study supports delivery-speed parity"}'
+           "\n```"),
+    "P2": ("```json\n"
+           '{"stance": "updated", "position": "I now think delivery '
+           'speed is roughly comparable when distributed", '
+           '"crux_belief": 0.6, "reasoning": "The cited study shifted '
+           'my estimate upward"}'
+           "\n```"),
+}
+
+
+def dc_content(disc: Discussion, speaker: Entity) -> str:
+    """Scripted turn content for the Double Crux run.
+
+    Reads the live ``crux_search_rounds`` to distinguish hunt round 1
+    from round 2 and identify pass 1 from pass 2 — the loop-back is
+    driven by real state, not a pre-scripted turn list.
+    """
+    state = disc.method_state
+    phase = state["current_phase"]
+    search_round = state.get("crux_search_rounds", 1)
+    if phase == "positions":
+        return DC_POSITIONS[speaker.name]
+    if phase == "hunt_cruxes":
+        return (DC_HUNT_ROUND_1 if search_round == 1
+                else DC_HUNT_ROUND_2)[speaker.name]
+    if phase == "identify_crux":
+        return DC_IDENTIFY_NONE if search_round == 1 else DC_IDENTIFY_FACTUAL
+    if phase == "test_crux":
+        return DC_TEST_CRUX[speaker.name]
+    if phase == "resolve":
+        return DC_RESOLUTIONS[speaker.name]
+    pytest.fail(f"unexpected Double Crux phase {phase!r} for {speaker.name}")
+
+
+class TestDoubleCruxFlow:
+    """Double Crux lifecycle incl. one identify->hunt loop iteration."""
+
+    @pytest.mark.asyncio
+    async def test_full_run_with_loop_back(self, tmp_db):
+        disc, moderator, pricing, mod, parts = start_method_discussion(
+            tmp_db, "double_crux", n_participants=2,
+            topic="Should our engineering team stay remote-first?",
+        )
+
+        trace, result = await run_method(
+            disc, moderator, tmp_db, pricing, dc_content)
+
+        # --- Flow: the hunt/identify pair runs twice ------------------
+        assert result.get("method_complete") is True
+        assert [phase for phase, _ in trace] == (
+            ["positions"] * 2
+            + ["hunt_cruxes"] * 2 + ["identify_crux"]
+            + ["hunt_cruxes"] * 2 + ["identify_crux"]
+            + ["test_crux"] * 4 + ["resolve"] * 2
+        )
+        assert all(name == "Mod" for phase, name in trace
+                   if phase == "identify_crux")
+
+        # --- Loop + verdict state -------------------------------------
+        state = disc.method_state
+        assert state["crux_search_rounds"] == 2
+        assert state["crux_verdict"] == "factual"
+        assert state["shared_crux"]["claim"] == (
+            "Distributed teams deliver features as fast as colocated teams")
+        assert state["shared_crux"]["source_crux_ids"] == [3, 4]
+        assert state["shared_crux"]["initial_beliefs"] == {
+            "P1": 0.75, "P2": 0.25}
+
+        # --- crux_map artifact (deterministic belief shifts) ----------
+        crux_map = state["crux_map"]
+        assert crux_map["verdict"] == "factual"
+        assert crux_map["belief_shifts"]["P1"] == {
+            "initial": 0.75, "final": 0.7, "shift": -0.05}
+        assert crux_map["belief_shifts"]["P2"] == {
+            "initial": 0.25, "final": 0.6, "shift": 0.35}
+        assert crux_map["caveats"] == []
+
+        # --- Evidence tracking on test_crux (issue #28) ---------------
+        log = state["evidence_log"]
+        assert len(log) == 4, "one entry per test_crux turn"
+        assert [e["grounded"] for e in log] == [True, False, True, False]
+        stored = [m.content for m in disc.messages]
+        assert any("— sources:" in c and "example.org/remote-study" in c
+                   for c in stored)
+        assert any("reasoning-based contribution" in c for c in stored)
+
+        # --- Conclusion prompt renders the real data ------------------
+        prompt = get_method("double_crux").get_conclusion_prompt(disc)
+        assert ("Distributed teams deliver features as fast as colocated "
+                "teams") in prompt
+        assert "Belief shifts on the crux (initial → final):" in prompt
+        assert "0.25 → 0.6" in prompt
+
+        # --- Persistence sanity ---------------------------------------
+        persisted = db_method_state(tmp_db, disc.id)
+        assert persisted["current_phase"] == state["current_phase"]
+        assert persisted["crux_map"]["verdict"] == "factual"
