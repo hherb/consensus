@@ -228,6 +228,9 @@ default. The old extras (`[all]`, `[desktop]`, …) still parse but are empty.
 > ```
 > On Ubuntu 22.04 or older, use `libgirepository1.0-dev` instead of `libgirepository-2.0-dev`.
 
+Alpha testers: see [docs/alpha_testing.md](docs/alpha_testing.md) for a
+step-by-step install and feedback guide.
+
 ## Usage
 
 ```bash
