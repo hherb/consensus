@@ -5,6 +5,10 @@ import tempfile
 
 import pytest
 
+# Helper modules don't get pytest's assertion rewriting by default;
+# register them so their asserts keep full failure introspection.
+pytest.register_assert_rewrite("tests.flow_e2e_helpers")
+
 from consensus.database import Database
 from consensus.models import (
     AIConfig, Discussion, Entity, EntityType, Message, MessageRole,
