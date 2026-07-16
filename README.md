@@ -191,32 +191,42 @@ This design means phases can be reused across methods (e.g. the same `SurfaceAss
 
 ## Installation
 
-Consensus uses [uv](https://docs.astral.sh/uv/) for fast Python package management. Requires Python 3.11+.
+Requires Python 3.11+. Recommended: [uv](https://docs.astral.sh/uv/)
+(`curl -LsSf https://astral.sh/uv/install.sh | sh`).
+
+```bash
+# Install from PyPI as a global command (recommended)
+uv tool install consensus-app
+
+# Or with pip into the current environment
+pip install consensus-app
+```
+
+macOS users can instead download the notarized `Consensus-<version>.dmg` from
+the [releases page](https://github.com/hherb/consensus/releases) and drag
+Consensus into Applications.
+
+> **Note:** The PyPI *distribution* is named `consensus-app` (the name
+> `consensus` was taken), but the command and the import package are plainly
+> `consensus`.
+
+### From source (development)
 
 ```bash
 git clone https://github.com/hherb/consensus.git
 cd consensus
-
-# Install as a global command (recommended)
-uv tool install -e ".[all]"        # desktop + web, editable
-
-# Or pick a mode:
-uv tool install -e ".[desktop]"    # desktop only
-uv tool install -e ".[web]"        # web server only
+uv tool install -e .          # editable global command
+# or: uv pip install -e .     # editable, into the active venv
 ```
 
-This installs the `consensus` command into `~/.local/bin/` so it works from anywhere. The `-e` flag keeps it editable — source changes take effect immediately.
+All features (desktop, web, documents, memory, images) are installed by
+default. The old extras (`[all]`, `[desktop]`, …) still parse but are empty.
 
 > **Linux desktop mode:** Install GTK dev libraries first so PyGObject can compile inside the uv venv:
 > ```bash
 > sudo apt install libgirepository-2.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0 gir1.2-webkit2-4.1
 > ```
 > On Ubuntu 22.04 or older, use `libgirepository1.0-dev` instead of `libgirepository-2.0-dev`.
-
-> **Alternative: pip**
-> ```bash
-> pip install ".[all]"    # installs into current venv
-> ```
 
 ## Usage
 
@@ -242,7 +252,7 @@ Consensus includes an MCP server that lets external AI agents (like Claude Code)
 
 ```bash
 # Install (if not already)
-uv pip install -e ".[all]"
+uv pip install -e .
 
 # Test the server
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | consensus-mcp
