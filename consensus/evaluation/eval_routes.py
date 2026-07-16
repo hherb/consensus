@@ -12,7 +12,7 @@ import time
 
 from aiohttp import web
 
-from evaluation.eval_db import EvalDatabase
+from consensus.evaluation.eval_db import EvalDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +220,7 @@ def register_eval_routes(webapp: web.Application,
         if run["status"] != "done":
             return _error("Run is not complete")
 
-        from evaluation.scorer import score_run_from_db
+        from consensus.evaluation.scorer import score_run_from_db
         score_run_from_db(eval_db, run_id)
         return _json(eval_db.get_scores(run_id))
 
@@ -287,14 +287,14 @@ async def _execute_batch(eval_db: EvalDatabase, batch_id: int,
         for run_data in pending:
             run_id = run_data["id"]
             try:
-                from evaluation.runner import run_case_condition_db
+                from consensus.evaluation.runner import run_case_condition_db
                 await run_case_condition_db(
                     eval_db=eval_db,
                     run_id=run_id,
                     api_key=api_key,
                 )
                 # Auto-score after completion
-                from evaluation.scorer import score_run_from_db
+                from consensus.evaluation.scorer import score_run_from_db
                 score_run_from_db(eval_db, run_id)
 
             except asyncio.CancelledError:

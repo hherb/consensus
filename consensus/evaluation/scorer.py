@@ -232,7 +232,7 @@ def score_run(run_data: dict, case_presentation: str = "") -> dict:
     messages = run_data.get("messages", [])
 
     # Load aliases from cases module
-    from evaluation.cases import get_case
+    from consensus.evaluation.cases import get_case
     case = get_case(run_data["case_id"])
     aliases = case.gold_aliases if case else []
 
@@ -489,7 +489,7 @@ def main():
     # Optionally run LLM judge
     if args.llm_judge:
         import asyncio
-        from evaluation.cases import get_case
+        from consensus.evaluation.cases import get_case
 
         judge_model = args.judge_model or os.environ.get("EVAL_MODEL", "llama3")
         api_key = os.environ.get(args.judge_api_key_env, "") if args.judge_api_key_env else ""

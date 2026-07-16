@@ -23,14 +23,14 @@ def main():
     sys.argv = [sys.argv[0]] + sys.argv[2:]  # strip subcommand
 
     if subcmd == "run":
-        from evaluation.runner import main as run_main
+        from consensus.evaluation.runner import main as run_main
         run_main()
     elif subcmd == "score":
-        from evaluation.scorer import main as score_main
+        from consensus.evaluation.scorer import main as score_main
         score_main()
     elif subcmd == "list":
-        from evaluation.cases import CASES
-        from evaluation.conditions import CONDITIONS
+        from consensus.evaluation.cases import CASES
+        from consensus.evaluation.conditions import CONDITIONS
 
         print("\nCases:")
         for c in CASES:

@@ -1187,8 +1187,8 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
     # Evaluation UI routes (before catch-all)
     try:
-        from evaluation.eval_db import EvalDatabase
-        from evaluation.eval_routes import register_eval_routes
+        from .evaluation.eval_db import EvalDatabase
+        from .evaluation.eval_routes import register_eval_routes
         eval_db = EvalDatabase()
         register_eval_routes(webapp, eval_db)
         logger.info("Evaluation UI available at /eval/")

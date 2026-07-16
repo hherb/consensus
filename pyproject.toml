@@ -45,8 +45,8 @@ consensus-mcp = "consensus.mcp_server:main"
 version = {attr = "consensus.__version__"}
 
 [tool.setuptools.packages.find]
-include = ["consensus*", "evaluation*"]
+include = ["consensus*"]
 
 [tool.setuptools.package-data]
 consensus = ["static/*", "migrations/*.sql"]
-evaluation = ["static/*", "migrations/*.sql"]
+"consensus.evaluation" = ["migrations/*.sql"]
