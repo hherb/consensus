@@ -10,7 +10,7 @@
 import pathlib
 import sys
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 SPEC_DIR = pathlib.Path(SPECPATH).resolve()
 REPO_ROOT = SPEC_DIR.parents[1]
@@ -46,10 +46,12 @@ app_a = Analysis(
 
 # The worker imports user-requested modules dynamically; bundle the
 # scientific stack that ships with the app so sandboxed code can use it.
+# PIL needs collect_submodules: its __init__ imports nothing eagerly, so
+# "PIL" alone would leave PIL.Image out of the worker's archive.
 worker_a = Analysis(
     [str(SPEC_DIR / "launch_worker.py")],
     pathex=[str(REPO_ROOT)],
-    hiddenimports=["numpy", "PIL"],
+    hiddenimports=["numpy"] + collect_submodules("PIL"),
 )
 
 app_pyz = PYZ(app_a.pure)

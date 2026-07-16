@@ -228,8 +228,8 @@ default. The old extras (`[all]`, `[desktop]`, …) still parse but are empty.
 > ```
 > On Ubuntu 22.04 or older, use `libgirepository1.0-dev` instead of `libgirepository-2.0-dev`.
 
-Alpha testers: see [docs/alpha_testing.md](docs/alpha_testing.md) for a
-step-by-step install and feedback guide.
+Alpha testers: see [docs/alpha_testing.md](https://github.com/hherb/consensus/blob/main/docs/alpha_testing.md)
+for a step-by-step install and feedback guide.
 
 ## Usage
 
@@ -357,8 +357,8 @@ Multi-user mode:
 - **sqlite-vec** + **numpy** — vector similarity search for institutional memory and document RAG (optional)
 - **pdfplumber** — PDF document parsing for document RAG (optional)
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for production deployment instructions (Oracle Cloud Free Tier).
+See [DEPLOYMENT.md](https://github.com/hherb/consensus/blob/main/DEPLOYMENT.md) for production deployment instructions (Oracle Cloud Free Tier).
 
 ## License
 
-AGPL-3.0 — see [LICENSE](LICENSE)
+AGPL-3.0 — see [LICENSE](https://github.com/hherb/consensus/blob/main/LICENSE)

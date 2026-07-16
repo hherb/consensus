@@ -3,7 +3,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-python3 make_icon.py
+# Ephemeral uv environment: the system python3 may not have Pillow, and
+# --no-project keeps uv from syncing the whole repo env just for the icon.
+uv run --no-project --with pillow python make_icon.py
 
 rm -rf Consensus.iconset
 mkdir Consensus.iconset

@@ -741,7 +741,9 @@ Create `packaging/macos/make_icns.sh`:
 set -euo pipefail
 cd "$(dirname "$0")"
 
-python3 make_icon.py
+# Ephemeral uv environment: the system python3 may not have Pillow, and
+# --no-project keeps uv from syncing the whole repo env just for the icon.
+uv run --no-project --with pillow python make_icon.py
 
 rm -rf Consensus.iconset
 mkdir Consensus.iconset
@@ -882,7 +884,7 @@ Create `packaging/macos/consensus.spec`:
 import pathlib
 import sys
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 SPEC_DIR = pathlib.Path(SPECPATH).resolve()
 REPO_ROOT = SPEC_DIR.parents[1]
@@ -918,10 +920,12 @@ app_a = Analysis(
 
 # The worker imports user-requested modules dynamically; bundle the
 # scientific stack that ships with the app so sandboxed code can use it.
+# PIL needs collect_submodules: its __init__ imports nothing eagerly, so
+# "PIL" alone would leave PIL.Image out of the worker's archive.
 worker_a = Analysis(
     [str(SPEC_DIR / "launch_worker.py")],
     pathex=[str(REPO_ROOT)],
-    hiddenimports=["numpy", "PIL"],
+    hiddenimports=["numpy"] + collect_submodules("PIL"),
 )
 
 app_pyz = PYZ(app_a.pure)
@@ -1000,9 +1004,12 @@ sandboxed scientific code):
 
 ```bash
 echo 'import numpy; print(numpy.__version__)' | "build/macos/dist/Consensus.app/Contents/MacOS/consensus-worker"
+echo 'from PIL import Image; print(Image.__name__)' | "build/macos/dist/Consensus.app/Contents/MacOS/consensus-worker"
 ```
 
-Expected: JSON with a numpy version string in stdout, no error field.
+Expected: JSON with a numpy version string (first) and `PIL.Image` (second)
+in stdout, no error field — the PIL check proves `collect_submodules("PIL")`
+captured the lazily-imported submodules.
 
 - [ ] **Step 6: Smoke-test the GUI app**
 
