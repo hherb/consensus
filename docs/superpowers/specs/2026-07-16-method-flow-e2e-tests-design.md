@@ -91,13 +91,13 @@ while not done and turns < MAX_E2E_TURNS:   # module constant
 ## Scenarios
 
 **NGT** (3 participants), straight line:
-generate (2 ideas each, JSON block) → cluster (moderator submits
-candidates JSON) → clarify (free text) → allocate (each sums to exactly
-`POINTS_PER_VOTER=10`) → rank (moderator, presentational) →
+generate (2 ideas each, numbered list) → cluster (moderator submits a
+numbered candidate list) → clarify (free text) → allocate (each sums to
+exactly `POINTS_PER_VOTER=10`) → rank (moderator, presentational) →
 `method_complete`.
 
 **MCDA** (2 participants), straight line:
-options (JSON) → criteria (rounds=2, `1. Cost (weight: 4)` format) →
+options (numbered list) → criteria (rounds=2, `1. Cost (weight: 4)` format) →
 score (full option × criterion 1–5 JSON) → sensitivity (moderator,
 presentational) → decide (moderator, decision JSON →
 `decision_artifact`) → `method_complete`.
