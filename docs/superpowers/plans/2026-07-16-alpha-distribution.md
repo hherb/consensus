@@ -132,11 +132,13 @@ include = ["consensus*"]
 
 [tool.setuptools.package-data]
 consensus = ["static/*", "migrations/*.sql"]
-"consensus.evaluation" = ["migrations/*.sql"]
+"consensus.evaluation" = ["static/*", "migrations/*.sql"]
 ```
 
 (`consensus/evaluation/migrations/` contains an `__init__.py`, so it is
-discovered as a package; the glob ships its `.sql` files.)
+discovered as a package; the glob ships its `.sql` files. The `static/*`
+glob ships the eval UI assets — eval.html, eval.js, eval_style.css — which
+the pre-move config also shipped.)
 
 - [ ] **Step 6: Reinstall editable and run the full test suite**
 
@@ -573,13 +575,18 @@ uv build
 
 [[ -f "$WHEEL" ]] || { echo "ERROR: expected wheel $WHEEL not found"; exit 1; }
 
+# Capture the listing once: piping unzip into `grep -q` under pipefail
+# dies with SIGPIPE (141) when grep exits on the first match.
+LISTING=$(unzip -l "$WHEEL")
+
 check_wheel_contains() {
-    unzip -l "$WHEEL" | grep -q "$1" \
+    grep -q "$1" <<< "$LISTING" \
         || { echo "ERROR: '$1' missing from wheel"; exit 1; }
 }
 check_wheel_contains "consensus/static/index.html"
 check_wheel_contains "consensus/migrations/001_baseline.sql"
 check_wheel_contains "consensus/evaluation/migrations/001_baseline.sql"
+check_wheel_contains "consensus/evaluation/static/eval.html"
 echo "Wheel contents OK: $WHEEL"
 
 case "$MODE" in
