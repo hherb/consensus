@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
+from ..parsing import coerce_str
 from ..phase_handler import PhaseHandler
 from ._delphi_helpers import (
     DEFAULT_CONVERGENCE_RATIO,
@@ -165,7 +166,7 @@ class EstimateHandler(PhaseHandler):
                                     discussion: Discussion) -> ProcessedResponse:
         value = float(payload["estimate"])
         confidence = str(payload["confidence"]).upper()
-        unit = str(payload.get("unit", ""))
+        unit = coerce_str(payload, "unit")
         record_estimate(discussion.method_state, entity, 0,
                         value, confidence, unit)
         display = (str(payload["reasoning"]).strip()

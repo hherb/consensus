@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
-from ..parsing import parse_numbered_list, word_overlap_similar
+from ..parsing import coerce_str, parse_numbered_list, word_overlap_similar
 from ..phase_handler import PhaseHandler
 
 if TYPE_CHECKING:
@@ -77,7 +77,7 @@ def validate_hypotheses_payload(payload: dict) -> str:
                 f"least {MIN_HYPOTHESIS_LENGTH} characters describing a "
                 f"specific, plausible explanation (got: {h!r})."
             )
-    if not str(payload.get("reasoning", "")).strip():
+    if not coerce_str(payload, "reasoning"):
         return "'reasoning' must contain your rationale for these hypotheses."
     return ""
 
@@ -219,7 +219,7 @@ class HypothesizeHandler(PhaseHandler):
                 accepted.append(h)
         state["hypotheses"] = existing
 
-        reasoning = str(payload.get("reasoning", "")).strip()
+        reasoning = coerce_str(payload, "reasoning")
         numbered = "\n".join(f"{i}. {h}" for i, h in enumerate(accepted, 1))
         display = f"{reasoning}\n\n{numbered}" if numbered else reasoning
         return ProcessedResponse(display_content=display)

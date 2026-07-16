@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import logging
 
 from ..base import LINEAR_NEXT, OutputToolSpec, Phase, ProcessedResponse
+from ..parsing import coerce_str
 from ..phase_handler import PhaseHandler
 from ._belief_helpers import (
     DEFAULT_CONVERGENCE_THRESHOLD,
@@ -157,7 +158,7 @@ class FrameHypothesesHandler(PhaseHandler):
                     len(hypotheses))
         numbered = "\n".join(f"{i}. {h}"
                              for i, h in enumerate(hypotheses, 1))
-        rationale = str(payload.get("rationale", "")).strip()
+        rationale = coerce_str(payload, "rationale")
         display = (f"{rationale}\n\n{numbered}" if rationale else numbered)
         return ProcessedResponse(display_content=display)
 

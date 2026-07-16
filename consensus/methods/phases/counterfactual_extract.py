@@ -11,7 +11,7 @@ import re
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
-from ..parsing import parse_numbered_list
+from ..parsing import coerce_str, parse_numbered_list
 from ..phase_handler import PhaseHandler
 
 if TYPE_CHECKING:
@@ -92,7 +92,7 @@ def validate_claims_payload(payload: dict) -> str:
             f"{CLAIM_MIN_LENGTH}+ characters describing a specific, "
             "falsifiable assertion."
         )
-    if not str(payload.get("preliminary_conclusion", "")).strip():
+    if not coerce_str(payload, "preliminary_conclusion"):
         return ("'preliminary_conclusion' must contain the discussion's "
                 "preliminary conclusion in one paragraph.")
     return ""
@@ -283,7 +283,7 @@ class ExtractClaimsHandler(PhaseHandler):
             for c in claims
         ]
 
-        conclusion = str(payload.get("preliminary_conclusion", "")).strip()
+        conclusion = coerce_str(payload, "preliminary_conclusion")
         if not (state.get("preliminary_conclusion")
                 or state.get("prior_conclusion")):
             state["preliminary_conclusion"] = conclusion

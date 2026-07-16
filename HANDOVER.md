@@ -1,7 +1,9 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-16 (#29 same-model panel warning merged via PR #47; #48
-participating-moderator estimator fix — PR #49, awaiting review/merge)._
+_Last updated: 2026-07-16 (#48 participating-moderator estimator fix merged via
+PR #49. All tracked issues closed. Latest slice: `coerce_str` payload-coercion
+hardening — no issue, tech-debt from this file. Main at 2364 tests; the
+`coerce_str` branch adds +7 → 2371.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -25,13 +27,11 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Tree of Thoughts (`tree_of_thoughts`) | #26 | #44 |
 | Evidence-tracked phases (soft grounding) | #28 | #45 |
 | Order-independent contribution merging | #42 | #46 |
-| Same-model panel warning (Delphi/Belief) | #29 | #47 (merged) |
-| Participating moderator counted as estimator | #48 | #49 (open) |
+| Same-model panel warning (Delphi/Belief) | #29 | #47 |
+| Participating moderator counted as estimator | #48 | #49 |
 
-Main is at **2355 tests passing**; the #48 branch adds +9 → **2364 passing**
-(PR #49).
-
-All method-catalog issues (#24–#27) are merged and their GitHub issues closed.
+Main is at **2364 tests passing**. Every tracked issue is merged and closed;
+there are no open issues or PRs.
 
 **#28 evidence-tracked phases** merged (PR #45) —
 spec `docs/superpowers/specs/2026-07-14-evidence-gated-phases-design.md`, plan
@@ -82,15 +82,14 @@ Suite after #29: **2355 passing**. Deferred: family-level model grouping
 
 ### Cross-cutting quality
 
-- #29 (same-model-panel warning) is merged (PR #47); #48 (participating
-  moderator counted as an estimator) is implemented on branch
-  `claude/panel-moderator-estimator-48` (spec/plan
-  `docs/superpowers/{specs,plans}/2026-07-16-panel-moderator-estimator*.md`).
-  Remaining deferred follow-ups (no issue): family-level model grouping (e.g.
-  `gpt-4o` vs `gpt-4o-mini`, or one model under different provider name strings
-  — exact-model grouping only today); and the "diversify" auto-suggest helper
-  (proposal item 3). Design spec:
-  `docs/superpowers/specs/2026-07-15-same-model-panel-warning-design.md`.
+- Same-model panel warning shipped in two slices — #29 (PR #47, the warning)
+  and #48 (PR #49, participating same-model moderator counted as an estimator).
+  Remaining deferred follow-ups (no issue filed): family-level model grouping
+  (e.g. `gpt-4o` vs `gpt-4o-mini`, or one model under different provider name
+  strings — exact-model grouping only today); and the "diversify" auto-suggest
+  helper (proposal item 3). Specs/plans:
+  `docs/superpowers/{specs,plans}/2026-07-15-same-model-panel-warning-design.md`
+  and `docs/superpowers/{specs,plans}/2026-07-16-panel-moderator-estimator*.md`.
 
 ### Method-specific follow-ups (tech debt, no issue filed)
 
@@ -136,12 +135,12 @@ Suite after #29: **2355 passing**. Deferred: family-level model grouping
   inlines the same clustering skeleton rather than delegating, since it also
   aggregates `weight_votes` per cluster. A shared parametrised helper for the
   give-up/validation shape would keep those fixes in sync.
-- **Structured payload validators share a fragile string-coercion pattern.**
-  `str(payload.get(x, "")).strip()` (23 call sites across
-  `consensus/methods/phases/*.py`) turns a JSON `null` into the string
-  `"None"` (`.get` only substitutes the default when the key is *absent*). One
-  shared `_coerce_str(payload, key)` treating both `None` and absence as `""`
-  would harden this in one place.
+- ~~Structured payload validators share a fragile string-coercion pattern~~
+  **(fixed 2026-07-16).** The 23 `str(payload.get(x, "")).strip()` sites turned
+  a JSON `null` into the literal string `"None"`; they now delegate to
+  `parsing.coerce_str(payload, key)` (public, since it is imported across 15
+  phase modules), which treats both `None` and an absent key as the default.
+  The safe `str(payload.get(x) or "")` sites were left untouched.
 
 ### Testing gap (applies to NGT / MCDA / Double Crux / ToT)
 

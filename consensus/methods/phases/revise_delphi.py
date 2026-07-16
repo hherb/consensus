@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
+from ..parsing import coerce_str
 from ..phase_handler import PhaseHandler
 from ._delphi_helpers import (
     ESTIMATE_TOOL_PARAMETERS,
@@ -162,7 +163,7 @@ class ReviseDelphiHandler(PhaseHandler):
         state = discussion.method_state
         value = float(payload["estimate"])
         confidence = str(payload["confidence"]).upper()
-        unit = str(payload.get("unit", ""))
+        unit = coerce_str(payload, "unit")
         record_estimate(state, entity, state.get("revise_round", 0) + 1,
                         value, confidence, unit)
         display = (str(payload["reasoning"]).strip()

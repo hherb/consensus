@@ -15,7 +15,7 @@ import re
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
-from ..parsing import extract_json_block
+from ..parsing import coerce_str, extract_json_block
 from ..phase_handler import PhaseHandler
 
 if TYPE_CHECKING:
@@ -104,7 +104,7 @@ def validate_matrix_payload(payload: dict, hypotheses: list[str],
                 return (f"The rating for '{hkey}'/'{ekey}' must be one of "
                         f"{list(RATING_SYMBOLS)} (got: {rating!r}).")
 
-    if not str(payload.get("reasoning", "")).strip():
+    if not coerce_str(payload, "reasoning"):
         return "'reasoning' must contain your rationale for these ratings."
 
     return ""
@@ -284,7 +284,7 @@ class EvaluateMatrixHandler(PhaseHandler):
         state.setdefault("matrix", {})[str(entity.id)] = ratings
 
         matrix_text = self._format_rating_matrix(ratings, discussion)
-        reasoning = str(payload.get("reasoning", "")).strip()
+        reasoning = coerce_str(payload, "reasoning")
         display = (f"{reasoning}\n\n---\n{matrix_text}" if reasoning
                   else matrix_text)
         return ProcessedResponse(display_content=display)

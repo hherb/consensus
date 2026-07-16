@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 
+from ..parsing import coerce_str
+
 
 def validate_skeleton(data: dict) -> bool:
     """Validate that parsed JSON has the expected skeleton structure.
@@ -183,7 +185,7 @@ def validate_skeleton_payload(payload: dict) -> str:
             "needs a 'from' array referencing valid premise/inference "
             "ids."
         )
-    if not str(payload.get("rich_summary", "")).strip():
+    if not coerce_str(payload, "rich_summary"):
         return ("'rich_summary' must contain a short paragraph on the "
                 "discussion's most persuasive arguments and rhetorical "
                 "moves.")
@@ -341,7 +343,7 @@ def validate_validity_scores_payload(payload: dict,
         return (f"'overall' must be between {VALIDITY_SCORE_MIN} and "
                 f"{VALIDITY_SCORE_MAX}.")
 
-    if not str(payload.get("reasoning", "")).strip():
+    if not coerce_str(payload, "reasoning"):
         return "'reasoning' must contain your assessment rationale."
 
     return ""

@@ -15,6 +15,21 @@ from typing import Any, Callable, Optional, Union
 logger = logging.getLogger(__name__)
 
 
+def coerce_str(payload: dict[str, Any], key: str, default: str = "") -> str:
+    """Return ``payload[key]`` as a stripped string, treating null and absence alike.
+
+    ``str(payload.get(key, default)).strip()`` has a latent bug: a JSON ``null``
+    value is returned verbatim by :meth:`dict.get` (the key *is* present), so it
+    becomes the literal string ``"None"`` instead of the intended *default*.
+    This helper coerces both a missing key and an explicit ``None`` value to
+    *default*, then returns the stripped string form.
+    """
+    value = payload.get(key)
+    if value is None:
+        value = default
+    return str(value).strip()
+
+
 def extract_json_block(content: str) -> Optional[Union[dict, list]]:
     """Extract the first JSON object or array from a fenced code block.
 
