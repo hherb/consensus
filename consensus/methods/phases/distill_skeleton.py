@@ -13,7 +13,7 @@ import re
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
-from ..parsing import extract_json_block
+from ..parsing import coerce_str, extract_json_block
 from ..phase_handler import PhaseHandler
 from ._distillation_helpers import (
     SKELETON_TOOL_PARAMETERS,
@@ -219,7 +219,7 @@ class DistillSkeletonHandler(PhaseHandler):
         state["skeleton_display"] = skeleton_display
         state["extraction_failed"] = False
 
-        rich_summary = str(payload.get("rich_summary", "")).strip()
+        rich_summary = coerce_str(payload, "rich_summary")
         if not state.get("rich_reasoning_summary"):
             state["rich_reasoning_summary"] = rich_summary
 

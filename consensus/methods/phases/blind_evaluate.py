@@ -12,6 +12,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
+from ..parsing import coerce_str
 from ..phase_handler import PhaseHandler
 from ._distillation_helpers import (
     VALIDITY_TOOL_PARAMETERS,
@@ -245,7 +246,7 @@ class BlindEvaluateHandler(PhaseHandler):
             )[entity.name] = score
         state.setdefault("overall_scores", {})[entity.name] = overall
 
-        reasoning = str(payload.get("reasoning", ""))
+        reasoning = coerce_str(payload, "reasoning")
         display = format_validity_scores_display(scores, overall, reasoning)
         return ProcessedResponse(display_content=display)
 

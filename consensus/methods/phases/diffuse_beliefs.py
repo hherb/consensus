@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
+from ..parsing import coerce_str
 from ..phase_handler import PhaseHandler
 from ._belief_helpers import (
     BELIEFS_TOOL_PARAMETERS,
@@ -151,7 +152,7 @@ class DiffuseBeliefsHandler(PhaseHandler):
         beliefs = {k: float(v) for k, v in payload["beliefs"].items()}
         record_beliefs(state, entity, round_num, beliefs)
         belief_bar = format_belief_bar(beliefs, discussion)
-        reasoning = str(payload.get("reasoning", "")).strip()
+        reasoning = coerce_str(payload, "reasoning")
         display = (f"{reasoning}\n\n---\n{belief_bar}" if reasoning
                    else belief_bar)
         return ProcessedResponse(display_content=display)

@@ -10,6 +10,7 @@ import re
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
+from ..parsing import coerce_str
 from ..phase_handler import PhaseHandler
 
 if TYPE_CHECKING:
@@ -66,7 +67,7 @@ def validate_criteria_payload(payload: dict) -> str:
                 f"{CRITERION_MIN_LENGTH} characters describing a specific, "
                 f"testable condition (got: {c!r})."
             )
-    if not str(payload.get("reasoning", "")).strip():
+    if not coerce_str(payload, "reasoning"):
         return "'reasoning' must contain your rationale for these criteria."
     return ""
 
@@ -224,7 +225,7 @@ class DefineCriteriaHandler(PhaseHandler):
                 existing.append(c)
         state["criteria"] = existing
 
-        reasoning = str(payload.get("reasoning", "")).strip()
+        reasoning = coerce_str(payload, "reasoning")
         numbered = "\n".join(f"{i}. {c}" for i, c in enumerate(submitted, 1))
         display = f"{reasoning}\n\n{numbered}" if reasoning else numbered
         return ProcessedResponse(display_content=display)

@@ -9,6 +9,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
+from ..parsing import coerce_str
 from ..phase_handler import PhaseHandler
 from ._voting_helpers import (
     VALID_VOTES,
@@ -177,7 +178,7 @@ class VoteHandler(PhaseHandler):
         state = discussion.method_state
         votes = [{"motion_id": int(v["motion_id"]),
                   "vote": str(v["vote"]).lower(),
-                  "rationale": str(v.get("rationale", ""))}
+                  "rationale": coerce_str(v, "rationale")}
                  for v in payload["votes"]]
         accepted = record_votes(state, entity, votes)
         lines = [f"**Motion {v['motion_id']} — {v['vote'].upper()}:** "

@@ -12,6 +12,8 @@ import math
 import re
 from typing import TYPE_CHECKING
 
+from ..parsing import coerce_str
+
 if TYPE_CHECKING:
     from ...models import Discussion, Entity
 
@@ -65,9 +67,9 @@ def validate_estimate_payload(payload: dict) -> str:
         # distribution statistics.
         return ("'estimate' must be a finite number (use a probability "
                 "0.0-1.0 for non-numeric questions).")
-    if str(payload.get("confidence", "")).upper() not in CONFIDENCE_LEVELS:
+    if coerce_str(payload, "confidence").upper() not in CONFIDENCE_LEVELS:
         return "'confidence' must be HIGH, MEDIUM, or LOW."
-    if not str(payload.get("reasoning", "")).strip():
+    if not coerce_str(payload, "reasoning"):
         return "'reasoning' must contain your detailed reasoning."
     return ""
 

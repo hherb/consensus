@@ -7,6 +7,7 @@ from consensus.methods.parsing import (
     canonical_index,
     cluster_by_similarity,
     cluster_text_contributions,
+    coerce_str,
     extract_json_block,
     parse_numbered_list,
     word_overlap_ratio,
@@ -221,3 +222,29 @@ class TestClusterTextContributions:
 
     def test_empty_raw_returns_empty_view_and_touched(self):
         assert cluster_text_contributions([]) == ([], [])
+
+
+class TestCoerceStr:
+    def test_absent_key_returns_default(self):
+        assert coerce_str({}, "reasoning") == ""
+
+    def test_null_value_returns_default_not_none_string(self):
+        # The bug this helper fixes: ``str(payload.get(k, "")).strip()``
+        # returns the literal "None" when the JSON value is null, because
+        # dict.get only substitutes the default when the key is *absent*.
+        assert coerce_str({"reasoning": None}, "reasoning") == ""
+
+    def test_strips_surrounding_whitespace(self):
+        assert coerce_str({"reasoning": "  hello  "}, "reasoning") == "hello"
+
+    def test_non_string_value_is_stringified(self):
+        assert coerce_str({"score": 5}, "score") == "5"
+
+    def test_custom_default_used_for_absent_key(self):
+        assert coerce_str({}, "unit", default="ea") == "ea"
+
+    def test_custom_default_used_for_null_value(self):
+        assert coerce_str({"unit": None}, "unit", default="ea") == "ea"
+
+    def test_present_value_ignores_default(self):
+        assert coerce_str({"unit": "kg"}, "unit", default="ea") == "kg"
