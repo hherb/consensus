@@ -44,6 +44,7 @@ Upgrade later with `uv tool upgrade consensus-app`.
 
 - macOS: `~/Library/Application Support/consensus/`
 - Linux: `~/.local/share/consensus/`
+- Windows: `%APPDATA%\consensus\`
 
 Delete that directory to reset the app completely.
 

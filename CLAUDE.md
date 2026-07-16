@@ -26,7 +26,7 @@ python -m consensus --web --port 8080 --debug
 consensus                      # via pyproject.toml [project.scripts]
 ```
 
-2250 tests in `tests/`. No linter or build system configured yet.
+2381 tests in `tests/`. No linter or build system configured yet.
 
 ## Architecture
 

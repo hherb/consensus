@@ -23,7 +23,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SKIP_NOTARIZE=0
-[[ "${1:-}" == "--skip-notarize" ]] && SKIP_NOTARIZE=1
+case "${1:-}" in
+    "") ;;
+    --skip-notarize) SKIP_NOTARIZE=1 ;;
+    *) echo "ERROR: unknown option '${1}'"; exit 1 ;;
+esac
 
 VERSION=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' consensus/__init__.py)
 [[ -n "$VERSION" ]] || { echo "ERROR: could not read version"; exit 1; }

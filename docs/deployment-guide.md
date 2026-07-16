@@ -212,17 +212,16 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-### 6.3 Install Consensus with Web Dependencies
+### 6.3 Install Consensus
 
 ```bash
-pip install -e ".[web,documents,memory,images]"
+pip install -e .
 ```
 
-This installs:
-- `aiohttp` — web server
-- `pdfplumber` — PDF document support
-- `sqlite-vec`, `numpy` — semantic memory & document embeddings
-- `Pillow` — image support
+All features (web server, PDF documents, semantic memory, images) are
+installed by default now — the old extras-style command
+(`pip install -e ".[web,documents,memory,images]"`) still works but is
+equivalent to plain `-e .`.
 
 ### 6.4 Verify Installation
 
@@ -588,7 +587,7 @@ git pull origin main
 
 # Update dependencies
 source venv/bin/activate
-pip install -e ".[web,documents,memory,images]"
+pip install -e .
 
 # Restart the service (migrations run automatically on startup)
 sudo systemctl restart consensus
