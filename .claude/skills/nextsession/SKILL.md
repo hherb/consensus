@@ -1,7 +1,8 @@
 ---
 name: nextsession
 description: Use when starting or resuming a work session on the consensus project, to load current project state and re-establish the coding rules and session workflow before doing any work.
-allowed-tools: Bash(git *), Bash(gh *), Bash(uv run pytest *), Bash(uv pip install *), Bash(python -m consensus *)
+disable-model-invocation: true
+allowed-tools: Read, Edit, Bash(git add *), Bash(git commit *), Bash(git push *), Bash(git status *), Bash(git diff *), Bash(gh issue *), Bash(gh pr *), Bash(uv run pytest *), Bash(uv pip install *), Bash(python -m consensus *)
 ---
 
 read HANDOVER.md and follow the instructions. Ask me if you have any questions.
