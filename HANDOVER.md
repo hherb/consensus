@@ -1,8 +1,8 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-16 (`coerce_str` payload-coercion hardening merged via
-PR #50 — no issue, tech-debt from this file. All tracked issues closed. Main
-at 2372 tests; this branch adds 4 real-pipeline method-flow E2E tests → 2376.)._
+_Last updated: 2026-07-16 (real-pipeline method-flow E2E tests for NGT /
+MCDA / Double Crux / ToT merged via PR #52 — closes this file's testing gap.
+All tracked issues closed. Main at 2376 tests.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -29,10 +29,10 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Same-model panel warning (Delphi/Belief) | #29 | #47 |
 | Participating moderator counted as estimator | #48 | #49 |
 | `coerce_str` payload-coercion hardening | — (tech debt) | #50 |
+| Method-flow E2E tests (NGT/MCDA/DC/ToT) | — (testing gap) | #52 |
 
-Main is at **2372 tests passing** (2376 on this branch, which adds 4
-real-pipeline method-flow E2E tests — not yet merged). Every tracked issue is
-merged and closed; there are no open issues or PRs.
+Main is at **2376 tests passing**. Every tracked issue is merged and closed;
+there are no open issues or PRs.
 
 **#28 evidence-tracked phases** merged (PR #45) —
 spec `docs/superpowers/specs/2026-07-14-evidence-gated-phases-design.md`, plan

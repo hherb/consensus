@@ -99,4 +99,5 @@ async def run_method(
 def db_method_state(db: Database, discussion_id: int) -> dict:
     """The persisted method_state, parsed from the discussion's DB row."""
     row = db.get_discussion(discussion_id)
+    assert row is not None, f"discussion {discussion_id} not found in DB"
     return json.loads(row.get("method_state") or "{}")

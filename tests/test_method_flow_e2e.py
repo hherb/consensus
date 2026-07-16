@@ -370,6 +370,9 @@ class TestDoubleCruxFlow:
         assert crux_map["caveats"] == []
 
         # --- Evidence tracking on test_crux (issue #28) ---------------
+        # The grounded-flag order below relies on this speaker order.
+        assert [name for phase, name in trace if phase == "test_crux"] == [
+            "P1", "P2", "P1", "P2"]
         log = state["evidence_log"]
         assert len(log) == 4, "one entry per test_crux turn"
         assert [e["grounded"] for e in log] == [True, False, True, False]
