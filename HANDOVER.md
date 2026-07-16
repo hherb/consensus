@@ -2,7 +2,7 @@
 
 _Last updated: 2026-07-16 (`coerce_str` payload-coercion hardening merged via
 PR #50 — no issue, tech-debt from this file. All tracked issues closed. Main
-at 2372 tests.)._
+at 2372 tests; this branch adds 4 real-pipeline method-flow E2E tests → 2376.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -30,8 +30,9 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Participating moderator counted as estimator | #48 | #49 |
 | `coerce_str` payload-coercion hardening | — (tech debt) | #50 |
 
-Main is at **2372 tests passing**. Every tracked issue is merged and closed;
-there are no open issues or PRs.
+Main is at **2372 tests passing** (2376 on this branch, which adds 4
+real-pipeline method-flow E2E tests — not yet merged). Every tracked issue is
+merged and closed; there are no open issues or PRs.
 
 **#28 evidence-tracked phases** merged (PR #45) —
 spec `docs/superpowers/specs/2026-07-14-evidence-gated-phases-design.md`, plan
@@ -146,15 +147,16 @@ Suite after #29: **2355 passing**. Deferred: family-level model grouping
   its validator — now also on `coerce_str` (a `null` rationale rendered as
   `"None"` in the vote display).
 
-### Testing gap (applies to NGT / MCDA / Double Crux / ToT)
+### Testing gap — closed 2026-07-16
 
-- **No real-pipeline (`complete_turn`) end-to-end flow test** for the four
-  newest methods. Handler-level and structured-conversion coverage matches
-  the NGT precedent, but none has a `tests/test_turn_order_flow.py`-style test
-  driving the moderator flow. Worth adding once, covering all four — Double
-  Crux and ToT would also exercise their loops through the real
-  `advance_phase` path (only `test_phase_machine_loops.py` covers loops
-  end-to-end today).
+- ~~No real-pipeline (`complete_turn`) end-to-end flow test for the four
+  newest methods.~~ **Done:** `tests/test_method_flow_e2e.py` +
+  `tests/flow_e2e_helpers.py` drive NGT, MCDA, Double Crux, and ToT
+  start→`method_complete` through `submit_human_message`/`complete_turn`
+  (all-human, free-text path, no stubs), including the Double Crux
+  identify→hunt loop-back and a full ToT score→prune→expand→score loop
+  ending in convergence — both through the real `advance_phase` path.
+  Spec: `docs/superpowers/specs/2026-07-16-method-flow-e2e-tests-design.md`.
 
 ### UX gap (older follow-up)
 
