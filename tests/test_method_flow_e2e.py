@@ -389,3 +389,131 @@ class TestDoubleCruxFlow:
         persisted = db_method_state(tmp_db, disc.id)
         assert persisted["current_phase"] == state["current_phase"]
         assert persisted["crux_map"]["verdict"] == "factual"
+
+
+# ---------------------------------------------------------------------------
+# Tree of Thoughts — exercises one full score->prune->expand->score loop
+# ---------------------------------------------------------------------------
+
+#: Two thoughts per participant, pairwise overlap far below 0.7.
+#: Raw order -> T1, T2 from P1; T3, T4 from P2.
+TOT_THOUGHTS = {
+    "P1": "1. Gamify the onboarding flow with progress rewards\n"
+          "2. Rebuild documentation as interactive tutorials",
+    "P2": "1. Assign every newcomer a dedicated peer mentor\n"
+          "2. Automate environment setup with one-click scripts",
+}
+
+#: Identical payloads serve both scoring passes: in pass 2 only the
+#: beam (T1, T3, T4) is eligible and the T2 entry is silently dropped,
+#: while the unchanged values keep the ordered beam identical — the
+#: convergence condition.  Mean composites: T3 14.5 > T1 12.0 > T4 11.0
+#: > T2 8.5 -> beam [3, 1, 4].
+TOT_SCORES = {
+    "P1": ("My scores:\n```json\n"
+           '{"scores": {'
+           '"T1": {"feasibility": 4, "impact": 4, "risk": 2}, '
+           '"T2": {"feasibility": 3, "impact": 3, "risk": 3}, '
+           '"T3": {"feasibility": 5, "impact": 4, "risk": 1}, '
+           '"T4": {"feasibility": 4, "impact": 3, "risk": 2}}}'
+           "\n```"),
+    "P2": ("My scores:\n```json\n"
+           '{"scores": {'
+           '"T1": {"feasibility": 4, "impact": 4, "risk": 2}, '
+           '"T2": {"feasibility": 3, "impact": 2, "risk": 3}, '
+           '"T3": {"feasibility": 5, "impact": 5, "risk": 1}, '
+           '"T4": {"feasibility": 4, "impact": 3, "risk": 2}}}'
+           "\n```"),
+}
+
+TOT_EXPANSIONS = {
+    "P1": ("```json\n"
+           '{"expansions": ['
+           '{"thought_id": 3, "refinement": "Cap each mentor at two '
+           'newcomers per quarter with weekly checkpoints", '
+           '"obstacles": ["Mentor time budget"]}, '
+           '{"thought_id": 1, "refinement": "Tie progress rewards to '
+           'real environment-setup milestones"}]}'
+           "\n```"),
+    "P2": ("```json\n"
+           '{"expansions": ['
+           '{"thought_id": 4, "refinement": "Ship a bootstrap script '
+           'exercised nightly in CI", '
+           '"obstacles": ["Operating-system matrix drift"]}]}'
+           "\n```"),
+}
+
+
+def tot_content(disc: Discussion, speaker: Entity) -> str:
+    """Scripted turn content for the ToT run, keyed on the live phase."""
+    phase = disc.method_state["current_phase"]
+    if phase == "propose":
+        return TOT_THOUGHTS[speaker.name]
+    if phase == "score":
+        return TOT_SCORES[speaker.name]
+    if phase == "prune":
+        return "The computed ranking and surviving beam are shown above."
+    if phase == "expand":
+        return TOT_EXPANSIONS[speaker.name]
+    if phase == "synthesise":
+        return "The exploration converged on the peer-mentoring approach."
+    pytest.fail(f"unexpected ToT phase {phase!r} for {speaker.name}")
+
+
+class TestTreeOfThoughtsFlow:
+    """ToT lifecycle incl. one full expansion loop ending in convergence."""
+
+    @pytest.mark.asyncio
+    async def test_full_run_with_expansion_loop(self, tmp_db):
+        disc, moderator, pricing, mod, parts = start_method_discussion(
+            tmp_db, "tree_of_thoughts", n_participants=2,
+            topic="How might we halve new-engineer onboarding time?",
+        )
+
+        trace, result = await run_method(
+            disc, moderator, tmp_db, pricing, tot_content)
+
+        # --- Flow: score/prune run twice, expand once ------------------
+        assert result.get("method_complete") is True
+        assert [phase for phase, _ in trace] == (
+            ["propose"] * 2 + ["score"] * 2 + ["prune"]
+            + ["expand"] * 2 + ["score"] * 2 + ["prune"]
+            + ["synthesise"]
+        )
+        assert all(name == "Mod" for phase, name in trace
+                   if phase in ("prune", "synthesise"))
+
+        # --- Beam history: two passes, identical ordered beams --------
+        state = disc.method_state
+        assert [h["beam_ids"] for h in state["beam_history"]] == [
+            [3, 1, 4], [3, 1, 4]]
+
+        # --- tot_artifact (all numbers computed in code) ---------------
+        artifact = state["tot_artifact"]
+        assert artifact["stop_reason"] == "converged"
+        assert artifact["converged"] is True
+        assert artifact["depth"] == 2
+        assert artifact["recommendation"] == {
+            "id": 3,
+            "text": "Assign every newcomer a dedicated peer mentor",
+            "composite": 14.5,
+        }
+        assert len(artifact["final_beam"]) == 3
+        assert artifact["caveats"] == []
+
+        # --- Expansions recorded at depth 1 -----------------------------
+        expansions = state["expansions"]
+        assert len(expansions) == 3
+        assert all(e["depth"] == 1 for e in expansions)
+        assert {e["thought_id"] for e in expansions} == {1, 3, 4}
+
+        # --- Conclusion prompt renders the real data --------------------
+        prompt = get_method("tree_of_thoughts").get_conclusion_prompt(disc)
+        assert "T3" in prompt
+        assert "14.5" in prompt
+        assert "beam stabilised" in prompt
+
+        # --- Persistence sanity -----------------------------------------
+        persisted = db_method_state(tmp_db, disc.id)
+        assert persisted["current_phase"] == state["current_phase"]
+        assert persisted["tot_artifact"]["stop_reason"] == "converged"
