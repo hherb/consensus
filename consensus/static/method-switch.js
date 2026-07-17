@@ -93,7 +93,10 @@ export async function showSwitchBlockedDialog(data) {
  */
 async function onRetrySwitch() {
     const retryBtn = $('#switch-blocked-retry-btn');
+    if (retryBtn.disabled) return;
+    const concludeBtn = $('#switch-blocked-conclude-btn');
     retryBtn.disabled = true;
+    concludeBtn.disabled = true;
     try {
         for (const b of currentBlocked) {
             const row = (state.saved_entities || []).find(e => e.id === b.entity_id);
@@ -135,5 +138,6 @@ async function onRetrySwitch() {
         showToast('Retry failed: ' + e.message);
     } finally {
         retryBtn.disabled = false;
+        concludeBtn.disabled = false;
     }
 }
