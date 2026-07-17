@@ -180,8 +180,8 @@ class TestIdentifyCruxBasics:
         system = handler.get_system_prompt(_entity(99, "Mod"), disc)
         assert CLAIM_A in system and CLAIM_B in system
         assert "Remote-first" in system
-        # Belief carry-over depends on the shared claim keeping the
-        # cited cruxes' polarity — the prompt must say so.
+        # The shared claim should keep the cited cruxes' polarity — each
+        # party is re-polled on this exact claim, so the prompt must say so.
         assert "polarity" in system.lower()
         assert "submit_crux_selection" in handler.get_turn_prompt(
             _entity(99, "Mod"), disc)
@@ -456,8 +456,8 @@ class TestDoubleCruxMethod:
         method = self._method()
         assert method.name == "double_crux"
         assert [p.name for p in method.default_phases] == [
-            "positions", "hunt_cruxes", "identify_crux", "test_crux",
-            "resolve"]
+            "positions", "hunt_cruxes", "identify_crux", "poll_belief",
+            "test_crux", "resolve"]
 
     def test_requires_structured_output(self):
         assert self._method().requires_structured_output() is True
@@ -466,7 +466,7 @@ class TestDoubleCruxMethod:
         state = self._discussion().method_state
         for key in ("positions", "cruxes", "crux_verdict", "shared_crux",
                     "identify_attempts", "crux_search_rounds",
-                    "resolutions", "crux_map"):
+                    "poll_beliefs", "resolutions", "crux_map"):
             assert key in state, key
 
     def test_positions_prompt_uses_double_crux_label(self):
@@ -493,8 +493,8 @@ class TestDoubleCruxMethod:
 
     def test_worst_case_looping_never_trips_loop_guard(self):
         from consensus.methods.base import MAX_PHASE_VISITS_PER_PHASE
-        # positions→hunt→(identify→hunt)×(MAX-1)→identify→resolve
-        transitions = 2 + 2 * (MAX_CRUX_SEARCH_ROUNDS - 1) + 1
+        # positions→hunt→(identify→hunt)×(MAX-1)→identify→poll→test→resolve
+        transitions = 2 + 2 * (MAX_CRUX_SEARCH_ROUNDS - 1) + 3
         method = self._method()
         cap = len(method.default_phases) * MAX_PHASE_VISITS_PER_PHASE
         assert transitions < cap

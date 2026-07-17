@@ -31,6 +31,7 @@ from .phases._crux_helpers import (
 )
 from .phases.hunt_cruxes import HuntCruxesHandler
 from .phases.identify_crux import IdentifyCruxHandler
+from .phases.poll_belief import PollBeliefHandler
 from .phases.resolve_crux import ResolveCruxHandler
 from .phases.state_positions import StatePositionsHandler
 from .phases.test_crux import TestCruxHandler
@@ -79,6 +80,7 @@ class DoubleCrux(DiscussionMethod):
         StatePositionsHandler(context_label="a Double Crux session"),
         HuntCruxesHandler(),
         IdentifyCruxHandler(),
+        PollBeliefHandler(),
         TestCruxHandler(),
         ResolveCruxHandler(),
     )
