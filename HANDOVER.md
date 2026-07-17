@@ -4,8 +4,10 @@ _Last updated: 2026-07-17 (alpha distribution merged via PR #53 — PyPI
 package `consensus-app` + signed macOS DMG build pipeline; shared-helper
 dedup batch via PR #54 closes this file's dedup list; blocked Triage
 switch recovery (pause + retry) merged via PR #55 closes the older
-"blocked Triage switch auto-concludes" UX gap. All tracked issues closed.
-Main at 2424 tests.)._
+"blocked Triage switch auto-concludes" UX gap; Double Crux pre-belief
+poll (branch `feat/double-crux-pre-belief-poll`, PR pending) closes the
+belief-shift metric tech-debt item below. All tracked issues closed.
+Main at 2454 tests.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -36,9 +38,39 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Alpha distribution (PyPI `consensus-app` + macOS DMG) | — | #53 |
 | Shared-helper dedup batch (scanner delegation, give-up mixin, test split) | — (tech debt) | #54 |
 | Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #55 |
+| Double Crux pre-belief poll (belief-shift metric fix) | — (tech debt) | (PR pending) |
 
-Main is at **2424 tests passing**. Every tracked issue is merged and closed;
-there are no open issues or PRs.
+Main is at **2454 tests passing**. Every tracked issue is merged and closed.
+The Double Crux pre-belief poll is on branch
+`feat/double-crux-pre-belief-poll` with a PR pending review; there are no
+other open issues or PRs.
+
+**Double Crux pre-belief poll** (branch `feat/double-crux-pre-belief-poll`)
+— spec `docs/superpowers/specs/2026-07-17-double-crux-pre-belief-poll-design.md`,
+plan `docs/superpowers/plans/2026-07-17-double-crux-pre-belief-poll.md`. A
+new structured micro-turn phase `poll_belief` (`consensus/methods/phases/
+poll_belief.py`) runs after `identify_crux` and before `test_crux`, on the
+**factual path only** (identify's routing already jumps `values`/`none`
+straight to `resolve`). Every disagreeing party states their probability on
+the moderator's *synthesized* shared claim; that poll becomes the
+authoritative `initial_beliefs` (the "before" end of the belief-shift
+metric), fixing the two defects the old hunt-snapshot had: non-crux-authors
+showed `? → final`, and the initial (author phrasing) vs final (moderator
+claim) compared different propositions. Poll helpers live in
+`_crux_helpers.py` (`MAX_POLL_ROUNDS`, `POLL_BELIEF_TOOL_PARAMETERS`,
+`validate_poll_belief_payload`, `record_poll_belief`, `entities_with_poll`,
+`extract_poll_belief`, `apply_poll_beliefs`). `record_crux_selection` no
+longer snapshots beliefs (poll owns `initial_beliefs`; per-crux `belief` is
+kept as provenance). **Always-on, factual-only** (owner decision); total
+poll failure degrades to an honest `?`, never a fabricated number. Whole-
+branch review (opus): ready to merge, no Critical/Important. Deferred
+follow-ups: (1) `_crux_helpers.py` reached 574 lines — split
+`build_crux_map`/`format_*` into a `_crux_artifact.py` sibling when next
+touched; (2) sequential poll turns leave earlier pollers' beliefs visible in
+later pollers' context (identical to hunt/resolve; spec only committed to
+prompt-level non-anchoring) — add a `filter_context_message` redaction only
+if true anchoring-immunity is wanted; (3) no `values`/`none` E2E asserting
+the poll is skipped (routing is deterministic + unit-covered).
 
 **#28 evidence-tracked phases** merged (PR #45) —
 spec `docs/superpowers/specs/2026-07-14-evidence-gated-phases-design.md`, plan
@@ -126,16 +158,10 @@ Suite after #29: **2355 passing**. Deferred: family-level model grouping
   thoughts (label stability is what makes re-scoring/convergence meaningful).
   If real transcripts show the beam starving, a child-generation expand
   variant (new thoughts with fresh ids) is the natural extension.
-- **Double Crux belief shift is only measured for crux authors, and
-  initial/final beliefs can refer to different phrasings.** `initial_beliefs`
-  is snapshotted from the moderator's *selected* cruxes, so a participant
-  whose crux wasn't selected shows `? → final`. The initial belief is on the
-  author's own phrasing while `crux_belief` is on the moderator's synthesized
-  claim — a polarity flip/reframe compares different propositions (a prompt
-  instructs the moderator to preserve polarity, but that is not a guarantee).
-  An optional pre-testing belief poll on the shared claim (one structured
-  micro-turn after identification) would fix both — decide if the extra turn
-  earns its cost.
+- **Double Crux belief shift** — ✅ fixed by the pre-belief poll (branch
+  `feat/double-crux-pre-belief-poll`, PR pending; see the feature note
+  above). Both ends of the metric are now measured on the moderator's
+  synthesized claim for every party.
 - **Double Crux identify loop re-runs positions' context, not the phase.**
   Loop-backs re-enter `hunt_cruxes` only; if hunting keeps failing because
   positions were vague, there is no path back to `positions`. Acceptable for
