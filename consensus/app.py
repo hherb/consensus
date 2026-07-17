@@ -494,6 +494,18 @@ class ConsensusApp:
         phase = method.current_phase(self.discussion) if method else None
         state["track_evidence_phase"] = bool(
             phase is not None and phase.track_evidence)
+        # Structured-phase input spec (#57): when the current speaker is a
+        # human participant (not the moderator) in a phase that declares an
+        # output tool, expose the tool schema so the frontend renders a form
+        # instead of forcing raw JSON into the plain textarea.
+        from .structured_input import build_input_spec
+        current = self.discussion.current_speaker
+        input_spec = None
+        if (current is not None
+                and current.entity_type == EntityType.HUMAN
+                and current.id != self.discussion.moderator_id):
+            input_spec = build_input_spec(method, current, self.discussion)
+        state["current_input_spec"] = input_spec
         # Same-model panel advisory (#29): for methods that assume
         # independent estimators, warn when one model dominates the panel.
         state["panel_advisory"] = None
