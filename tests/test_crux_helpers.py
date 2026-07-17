@@ -9,6 +9,7 @@ The crux_map artifact and display formatting are covered in
 """
 
 from consensus.methods.phases._crux_helpers import (
+    BELIEF_LINE_PREFIX,
     CRUX_SELECTION_TOOL_PARAMETERS,
     CRUXES_TOOL_PARAMETERS,
     MAX_CRUX_SEARCH_ROUNDS,
@@ -35,6 +36,7 @@ from consensus.methods.phases._crux_helpers import (
     record_cruxes,
     record_poll_belief,
     record_resolution,
+    redact_belief_lines,
     validate_crux_selection_payload,
     validate_cruxes_payload,
     validate_poll_belief_payload,
@@ -492,3 +494,27 @@ class TestApplyPollBeliefs:
         state: dict = {"shared_crux": {"claim": "c", "initial_beliefs": {}}}
         apply_poll_beliefs(state)
         assert state["shared_crux"]["initial_beliefs"] == {}
+
+
+class TestRedactBeliefLines:
+    def test_strips_belief_line_keeps_reasoning(self):
+        content = f"Prior studies lean this way.\n\n{BELIEF_LINE_PREFIX} 0.8"
+        redacted = redact_belief_lines(content)
+        assert "0.8" not in redacted
+        assert BELIEF_LINE_PREFIX not in redacted
+        assert "Prior studies lean this way." in redacted
+
+    def test_strips_belief_line_behind_speaker_prefix(self):
+        # filter_context_message content may include a speaker prefix; the
+        # belief line is still its own line and must be removed.
+        content = f"Alice: I am fairly sure.\n{BELIEF_LINE_PREFIX} 0.7"
+        redacted = redact_belief_lines(content)
+        assert "0.7" not in redacted
+        assert "Alice: I am fairly sure." in redacted
+
+    def test_leaves_non_poll_content_unchanged(self):
+        content = "My position is that colocated teams ship faster."
+        assert redact_belief_lines(content) == content
+
+    def test_empty_string(self):
+        assert redact_belief_lines("") == ""

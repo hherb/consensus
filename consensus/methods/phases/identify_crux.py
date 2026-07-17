@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 from ..base import LINEAR_NEXT, OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
+from ._crux_artifact import format_cruxes, format_positions, format_shared_crux
 from ._crux_helpers import (
     CRUX_SELECTION_TOOL_PARAMETERS,
     MAX_CRUX_SEARCH_ROUNDS,
@@ -32,9 +33,6 @@ from ._crux_helpers import (
     VERDICT_NONE,
     VERDICT_VALUES,
     extract_crux_selection,
-    format_cruxes,
-    format_positions,
-    format_shared_crux,
     record_crux_selection,
     validate_crux_selection_payload,
 )
@@ -229,7 +227,7 @@ class IdentifyCruxHandler(PhaseHandler):
         if verdict == VERDICT_VALUES:
             # Nothing factual to test — jump straight to resolution.
             return "resolve"
-        return LINEAR_NEXT  # factual → test_crux
+        return LINEAR_NEXT  # factual → poll_belief
 
     # ------------------------------------------------------------------
     # Transition message (when transitioning TO this phase)

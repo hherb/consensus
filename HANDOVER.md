@@ -40,10 +40,12 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #55 |
 | Double Crux pre-belief poll (belief-shift metric fix) | — (tech debt) | #56 |
 
-Main is at **2454 tests passing**. Every tracked issue is merged and closed.
-The Double Crux pre-belief poll is on branch
-`feat/double-crux-pre-belief-poll` with PR #56 open for review; there are no
-other open issues or PRs.
+Main is at **2454 tests passing**. Every previously tracked issue is merged
+and closed. The Double Crux pre-belief poll is on branch
+`feat/double-crux-pre-belief-poll` with PR #56 open for review (branch at
+2459 tests after post-review fixes). The one open issue is #57 (structured-
+phase human-input UX gap), a framework-wide follow-up filed during the PR
+review — no other open issues or PRs.
 
 **Double Crux pre-belief poll** (branch `feat/double-crux-pre-belief-poll`)
 — spec `docs/superpowers/specs/2026-07-17-double-crux-pre-belief-poll-design.md`,
@@ -63,14 +65,20 @@ claim) compared different propositions. Poll helpers live in
 longer snapshots beliefs (poll owns `initial_beliefs`; per-crux `belief` is
 kept as provenance). **Always-on, factual-only** (owner decision); total
 poll failure degrades to an honest `?`, never a fabricated number. Whole-
-branch review (opus): ready to merge, no Critical/Important. Deferred
-follow-ups: (1) `_crux_helpers.py` reached 574 lines — split
-`build_crux_map`/`format_*` into a `_crux_artifact.py` sibling when next
-touched; (2) sequential poll turns leave earlier pollers' beliefs visible in
-later pollers' context (identical to hunt/resolve; spec only committed to
-prompt-level non-anchoring) — add a `filter_context_message` redaction only
-if true anchoring-immunity is wanted; (3) no `values`/`none` E2E asserting
-the poll is skipped (routing is deterministic + unit-covered).
+branch review (opus): ready to merge, no Critical/Important. **Post-review
+fixes applied** (branch now at 2459 tests): (1) `build_crux_map`/`format_*`
+split out of `_crux_helpers.py` into a new `_crux_artifact.py` sibling
+(helpers module back to 484 lines); (2) the poll now redacts each poller's
+numeric belief line from later pollers' context via
+`PollBeliefHandler.filter_context_message` (`redact_belief_lines` +
+`BELIEF_LINE_PREFIX` in `_crux_helpers.py`), so the "before" baseline is no
+longer anchored by earlier numbers — full anchoring-immunity (also hiding
+reasoning prose / moderator paraphrase) remains optional; (3) the stale
+`# factual → test_crux` routing comment in `identify_crux.py` corrected to
+`poll_belief`. Remaining deferred: no `values`/`none` E2E asserting the poll
+is skipped (routing is deterministic + unit-covered). Separately, the
+framework-wide structured-phase human-input UX gap (humans must type a JSON
+block in structured phases; free prose is dropped) is tracked as issue #57.
 
 **#28 evidence-tracked phases** merged (PR #45) —
 spec `docs/superpowers/specs/2026-07-14-evidence-gated-phases-design.md`, plan

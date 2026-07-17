@@ -597,6 +597,20 @@ class TestPollBeliefProcessing:
         assert handler.validate_output(
             {"belief": 2}, _entity(), disc) != ""
 
+    def test_context_filter_redacts_earlier_pollers_number(self):
+        # A later poller must not anchor on an earlier poller's stated
+        # probability: the rendered belief line is stripped from context,
+        # while the reasoning stays visible.
+        handler = PollBeliefHandler()
+        disc = _factual_discussion(phase="poll_belief")
+        rendered = handler.process_structured_response(
+            {"belief": 0.8, "reasoning": "Delivery metrics favour parity."},
+            _entity(1, "Alice"), disc).display_content
+        filtered = handler.filter_context_message(
+            "Alice", rendered, "assistant", disc, current_entity_id=2)
+        assert "0.8" not in filtered
+        assert "Delivery metrics favour parity." in filtered
+
 
 class TestPollBeliefAdvancement:
     def test_waits_for_stragglers_when_roster_known(self):

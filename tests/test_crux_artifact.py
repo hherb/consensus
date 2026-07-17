@@ -6,15 +6,17 @@ extractor layer is covered in ``test_crux_helpers.py``; this file split
 off to keep both under the ~500-line guideline.
 """
 
-from consensus.methods.phases._crux_helpers import (
-    VERDICT_FACTUAL,
-    VERDICT_NONE,
+from consensus.methods.phases._crux_artifact import (
     build_crux_map,
     format_belief_shifts,
     format_cruxes,
     format_positions,
     format_resolutions,
     format_shared_crux,
+)
+from consensus.methods.phases._crux_helpers import (
+    VERDICT_FACTUAL,
+    VERDICT_NONE,
     record_crux_selection,
     record_cruxes,
     record_resolution,

@@ -22,14 +22,16 @@ from typing import TYPE_CHECKING
 
 from ..base import LINEAR_NEXT, OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
+from ._crux_artifact import format_shared_crux
 from ._crux_helpers import (
+    BELIEF_LINE_PREFIX,
     MAX_POLL_ROUNDS,
     POLL_BELIEF_TOOL_PARAMETERS,
     apply_poll_beliefs,
     entities_with_poll,
     extract_poll_belief,
-    format_shared_crux,
     record_poll_belief,
+    redact_belief_lines,
     validate_poll_belief_payload,
 )
 
@@ -100,6 +102,26 @@ class PollBeliefHandler(PhaseHandler):
         )
 
     # ------------------------------------------------------------------
+    # Context filtering — keep the poll a non-anchored baseline
+    # ------------------------------------------------------------------
+
+    def filter_context_message(self, entity_name: str, content: str,
+                               role: str, discussion: Discussion, *,
+                               current_entity_id: int | None = None) -> str:
+        """Hide other pollers' numeric beliefs so the poll doesn't anchor.
+
+        The poll is a clean "before" baseline (design 2026-07-17): a
+        later poller must not see an earlier poller's stated probability.
+        Poll turns render that number on its own ``Belief on the crux:``
+        line, so strip those lines from the AI context.  Only poll turns
+        carry the marker at poll time (resolution runs later), so earlier
+        phases are untouched, and the full turn still appears in the
+        visible transcript — only the context sent to the model is
+        redacted.
+        """
+        return redact_belief_lines(content)
+
+    # ------------------------------------------------------------------
     # Response processing (free-text / human fallback path)
     # ------------------------------------------------------------------
 
@@ -141,7 +163,7 @@ class PollBeliefHandler(PhaseHandler):
         state = discussion.method_state
         record_poll_belief(state, entity, payload)
         reasoning = str(payload.get("reasoning") or "").strip()
-        display = f"{reasoning}\n\nBelief on the crux: {payload['belief']}"
+        display = f"{reasoning}\n\n{BELIEF_LINE_PREFIX} {payload['belief']}"
         return ProcessedResponse(display_content=display)
 
     # ------------------------------------------------------------------

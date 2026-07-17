@@ -21,14 +21,13 @@ from typing import TYPE_CHECKING
 
 from ..evidence import build_evidence_summary, format_sources
 from .base import DiscussionMethod
-from .phases._crux_helpers import (
-    VERDICT_FACTUAL,
-    VERDICT_VALUES,
+from .phases._crux_artifact import (
     format_belief_shifts,
     format_positions,
     format_resolutions,
     format_shared_crux,
 )
+from .phases._crux_helpers import VERDICT_FACTUAL, VERDICT_VALUES
 from .phases.hunt_cruxes import HuntCruxesHandler
 from .phases.identify_crux import IdentifyCruxHandler
 from .phases.poll_belief import PollBeliefHandler
