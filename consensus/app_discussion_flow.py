@@ -12,6 +12,7 @@ from .methods import get_active_method, get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole, StoryboardEntry
 from .moderator import Moderator
 from .pricing import PricingCache
+from .app_discussion_state import pause_discussion, resume_discussion
 from .structured_output import (
     _validate_structured_output_support, find_tool_blocked_entities,
 )
@@ -644,10 +645,21 @@ async def complete_turn(
                     # blocked switch to a different method is new
                     # information.
                     switch_error = switch_result["error"]
+                    blocked_entities = switch_result.get(
+                        "blocked_entities", [])
                     logger.warning(
                         "Triage could not switch discussion %s to %r: %s",
                         discussion.id, chosen, switch_error,
                     )
+                    # Record the pending switch so the user can fix the
+                    # offending model and retry (spec 2026-07-17); the
+                    # record survives reload via method_state and is
+                    # wiped by init_state on a later successful switch.
+                    discussion.method_state["_pending_method_switch"] = {
+                        "target_method": chosen,
+                        "switch_error": switch_error,
+                        "blocked_entities": blocked_entities,
+                    }
                     # Scalar last-target key, deliberately: after an
                     # intervening blocked switch to a different method,
                     # re-notifying about an earlier target again is new
@@ -670,14 +682,21 @@ async def complete_turn(
                             discussion.id, mod.id, notice, "system",
                             turn_number=discussion.turn_number,
                         )
+                    if discussion.id:
                         db.update_discussion(
                             discussion.id,
                             method_state=serialize_method_state(
                                 discussion.method_state),
                         )
+                    # Pause instead of concluding: the frontend shows a
+                    # recovery dialog and retries via retry_method_switch.
+                    if discussion.status == "active":
+                        pause_discussion(discussion, db)
                     return {
-                        "method_complete": True,
+                        "method_switch_blocked": True,
                         "switch_error": switch_error,
+                        "target_method": chosen,
+                        "blocked_entities": blocked_entities,
                         "turn_number": discussion.turn_number,
                         "current_round": discussion.current_round,
                         "state": get_state_fn(),
