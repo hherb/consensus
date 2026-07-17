@@ -3,7 +3,7 @@
 _Last updated: 2026-07-17 (alpha distribution merged via PR #53 — PyPI
 package `consensus-app` + signed macOS DMG build pipeline; shared-helper
 dedup batch via PR #54 closes this file's dedup list; blocked Triage
-switch recovery (pause + retry) merged via PR #<PR> closes the older
+switch recovery (pause + retry) merged via PR #55 closes the older
 "blocked Triage switch auto-concludes" UX gap. All tracked issues closed.
 Main at 2422 tests.)._
 
@@ -35,7 +35,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Method-flow E2E tests (NGT/MCDA/DC/ToT) | — (testing gap) | #52 |
 | Alpha distribution (PyPI `consensus-app` + macOS DMG) | — | #53 |
 | Shared-helper dedup batch (scanner delegation, give-up mixin, test split) | — (tech debt) | #54 |
-| Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #<PR> |
+| Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #55 |
 
 Main is at **2422 tests passing**. Every tracked issue is merged and closed;
 there are no open issues or PRs.
