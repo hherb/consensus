@@ -27,13 +27,7 @@ def _prop_renderable(prop: dict) -> bool:
         return True
     if ptype == "array":
         items = prop.get("items", {})
-        itype = items.get("type")
-        if itype in _RENDERABLE_PRIMITIVES:
-            return True
-        if itype == "object":
-            sub = items.get("properties", {})
-            return bool(sub) and all(_prop_renderable(p) for p in sub.values())
-        return False
+        return bool(items) and _prop_renderable(items)
     if ptype == "object":
         sub = prop.get("properties", {})
         if not sub:

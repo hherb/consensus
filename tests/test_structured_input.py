@@ -43,3 +43,26 @@ class TestRenderable:
 class TestBuildInputSpec:
     def test_returns_none_without_method(self):
         assert build_input_spec(None, None, None) is None
+
+    def test_build_input_spec_happy_path(self, tmp_db):
+        from consensus.methods import get_method
+        from tests.flow_e2e_helpers import start_method_discussion
+
+        disc, moderator, pricing, mod, parts = start_method_discussion(
+            tmp_db, "belief_diffusion", n_participants=2,
+            topic="Is remote work more productive?")
+        disc.method_state["hypotheses"] = ["Yes", "No"]
+        disc.method_state["current_phase"] = "prior"
+        method = get_method("belief_diffusion")
+        spec = build_input_spec(method, parts[0], disc)
+        assert spec is not None
+        assert spec["tool_name"] == "submit_beliefs"
+        assert spec["renderable"] is True
+        assert set(spec["schema"]["properties"]["beliefs"]["properties"]) == {"H1", "H2"}
+
+    def test_build_input_spec_returns_none_when_no_output_tool(self):
+        class _NoToolMethod:
+            def get_output_tool(self, entity, discussion):
+                return None
+
+        assert build_input_spec(_NoToolMethod(), object(), object()) is None
