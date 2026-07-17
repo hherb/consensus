@@ -5,7 +5,7 @@ package `consensus-app` + signed macOS DMG build pipeline; shared-helper
 dedup batch via PR #54 closes this file's dedup list; blocked Triage
 switch recovery (pause + retry) merged via PR #55 closes the older
 "blocked Triage switch auto-concludes" UX gap. All tracked issues closed.
-Main at 2422 tests.)._
+Main at 2424 tests.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -37,7 +37,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Shared-helper dedup batch (scanner delegation, give-up mixin, test split) | — (tech debt) | #54 |
 | Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #55 |
 
-Main is at **2422 tests passing**. Every tracked issue is merged and closed;
+Main is at **2424 tests passing**. Every tracked issue is merged and closed;
 there are no open issues or PRs.
 
 **#28 evidence-tracked phases** merged (PR #45) —
