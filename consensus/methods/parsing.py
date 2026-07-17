@@ -178,6 +178,28 @@ def canonical_index(members: list,
     return best
 
 
+def cluster_groups(raw: list[dict], text_key: str = "text",
+                   threshold: float = 0.7) -> list[tuple[list[int], int]]:
+    """Cluster *raw* contribution dicts into index groups with a medoid.
+
+    Returns one ``(members, canon)`` tuple per cluster, ordered by the
+    smallest raw index each cluster contains: *members* are the raw
+    indices in ascending order and *canon* is the raw index of the
+    cluster medoid (``canonical_index``) — the phrasing to label the
+    cluster with.  The shared skeleton behind
+    ``cluster_text_contributions`` and the MCDA criteria recorder,
+    which aggregates per-cluster data beyond the text label.
+    """
+    groups = cluster_by_similarity(
+        list(range(len(raw))),
+        text_of=lambda i: raw[i][text_key],
+        threshold=threshold)
+    return [(group,
+             group[canonical_index(group,
+                                   text_of=lambda i: raw[i][text_key])])
+            for group in groups]
+
+
 def cluster_text_contributions(
         raw: list[dict], since: int = 0,
         text_key: str = "text",
@@ -197,15 +219,10 @@ def cluster_text_contributions(
       contribution at index >= *since* (i.e. the current turn's
       additions), for the turn's response display.
     """
-    groups = cluster_by_similarity(
-        list(range(len(raw))),
-        text_of=lambda i: raw[i][text_key],
-        threshold=threshold)
     view: list[dict] = []
     touched: list[dict] = []
-    for cid, group in enumerate(groups, 1):
-        canon = group[canonical_index(
-            group, text_of=lambda i: raw[i][text_key])]
+    for cid, (group, canon) in enumerate(
+            cluster_groups(raw, text_key=text_key, threshold=threshold), 1):
         founder = raw[min(group)]
         item = {"id": cid, text_key: raw[canon][text_key],
                 "entity_id": founder["entity_id"],
@@ -214,6 +231,29 @@ def cluster_text_contributions(
         if any(i >= since for i in group):
             touched.append(item)
     return view, touched
+
+
+def validate_string_list_payload(payload: dict, key: str, min_length: int,
+                                 empty_error: str, item_error: str,
+                                 reasoning_error: str) -> str:
+    """Shared validator for ``{<key>: [str, ...], "reasoning": str}`` payloads.
+
+    The structural checks are shared — a non-empty list of substantive
+    strings plus a non-blank ``reasoning`` — while the phase-specific
+    wording stays at the call site (``validate_ideas_payload`` /
+    ``validate_thoughts_payload``).  *item_error* may reference
+    ``{item!r}`` and ``{min_length}`` via :meth:`str.format`.  Returns
+    ``''`` when the payload is usable, else the matching error string.
+    """
+    items = payload.get(key)
+    if not isinstance(items, list) or not items:
+        return empty_error
+    for item in items:
+        if not isinstance(item, str) or len(item.strip()) < min_length:
+            return item_error.format(item=item, min_length=min_length)
+    if not str(payload.get("reasoning") or "").strip():
+        return reasoning_error
+    return ""
 
 
 def _balanced_object_end(content: str, start: int) -> Optional[int]:

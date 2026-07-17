@@ -12,7 +12,11 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from ..parsing import cluster_text_contributions, extract_json_block
+from ..parsing import (
+    cluster_text_contributions,
+    extract_json_block,
+    validate_string_list_payload,
+)
 
 if TYPE_CHECKING:
     from ...models import Entity
@@ -117,16 +121,13 @@ ALLOCATIONS_TOOL_PARAMETERS: dict = {
 
 def validate_ideas_payload(payload: dict) -> str:
     """Return '' if a submit_ideas payload is usable, else an error."""
-    ideas = payload.get("ideas")
-    if not isinstance(ideas, list) or not ideas:
-        return "'ideas' must be a non-empty array of idea strings."
-    for idea in ideas:
-        if not isinstance(idea, str) or len(idea.strip()) < MIN_IDEA_LENGTH:
-            return ("Each idea must be a complete, specific proposal of "
-                    f"at least {MIN_IDEA_LENGTH} characters (got: {idea!r}).")
-    if not str(payload.get("reasoning") or "").strip():
-        return "'reasoning' must contain your rationale for these ideas."
-    return ""
+    return validate_string_list_payload(
+        payload, key="ideas", min_length=MIN_IDEA_LENGTH,
+        empty_error="'ideas' must be a non-empty array of idea strings.",
+        item_error=("Each idea must be a complete, specific proposal of "
+                    "at least {min_length} characters (got: {item!r})."),
+        reasoning_error=("'reasoning' must contain your rationale for "
+                         "these ideas."))
 
 
 def record_ideas(state: dict, entity: Entity,

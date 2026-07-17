@@ -13,10 +13,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..base import LINEAR_NEXT, OutputToolSpec, Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..parsing import parse_numbered_list
 from ..phase_handler import PhaseHandler
 from ._delphi_helpers import anonymise_content
+from ._generation_giveup import GenerationGiveUpMixin
 from ._ngt_helpers import (
     IDEAS_TOOL_PARAMETERS,
     MAX_GENERATE_ROUNDS,
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class GenerateIdeasHandler(PhaseHandler):
+class GenerateIdeasHandler(GenerationGiveUpMixin, PhaseHandler):
     """Phase 1: Silent independent idea generation."""
 
     phase = Phase(
@@ -44,6 +45,17 @@ class GenerateIdeasHandler(PhaseHandler):
         ),
         rounds=1,
     )
+
+    # Give-up containment (shared GenerationGiveUpMixin shape).
+    giveup_state_key = "ideas"
+    giveup_max_rounds = MAX_GENERATE_ROUNDS
+    giveup_generation_label = "Idea generation"
+    giveup_collected_noun = "idea"
+    giveup_method_short = "NGT"
+    giveup_method_title = "Nominal Group Technique"
+    giveup_usable_noun = "ideas"
+    giveup_skipped_phases = ("the clustering, clarification, and voting "
+                             "phases")
 
     # ------------------------------------------------------------------
     # State
@@ -148,49 +160,5 @@ class GenerateIdeasHandler(PhaseHandler):
         display = f"{reasoning}\n\n{numbered}" if numbered else reasoning
         return ProcessedResponse(display_content=display)
 
-    # ------------------------------------------------------------------
-    # Phase advancement
-    # ------------------------------------------------------------------
-
-    def should_advance(self, discussion: Discussion) -> bool:
-        state = discussion.method_state
-        phase_round = state.get("phase_round", 1)
-        if phase_round > MAX_GENERATE_ROUNDS:
-            logger.warning(
-                "Idea generation reached round %d; advancing with %d "
-                "idea(s) collected.",
-                phase_round, len(state.get("ideas", [])),
-            )
-            return True
-        return bool(state.get("ideas")) and phase_round > 1
-
-    def _gave_up(self, discussion: Discussion) -> bool:
-        """True if generation exhausted its rounds without any ideas."""
-        state = discussion.method_state
-        return (not state.get("ideas")
-                and state.get("phase_round", 1) > MAX_GENERATE_ROUNDS)
-
-    def next_phase(self, discussion: Discussion) -> str | None:
-        """Abort the method when generation produced nothing.
-
-        Without ideas the remaining phases (cluster/clarify/allocate/
-        rank) are degenerate — they would consolidate and vote over an
-        empty list and burn API spend producing nothing usable.
-        """
-        if self._gave_up(discussion):
-            logger.warning(
-                "Idea generation produced no ideas — ending the NGT "
-                "method early")
-            return None
-        return LINEAR_NEXT
-
-    def get_method_complete_message(self, discussion: Discussion) -> str:
-        if not self._gave_up(discussion):
-            return ""
-        return (
-            "⚠️ **Nominal Group Technique ended early.** The generation "
-            f"phase collected no usable ideas after {MAX_GENERATE_ROUNDS} "
-            "rounds, so the clustering, clarification, and voting phases "
-            "were skipped.  Consider rephrasing the topic as an open "
-            "'How might we…' question and starting a new discussion."
-        )
+    # Phase advancement, give-up, and early-method-end messaging are
+    # inherited from GenerationGiveUpMixin (parametrised above).
