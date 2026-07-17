@@ -53,6 +53,90 @@ class StructuredOutputError(RuntimeError):
     """The provider/model cannot satisfy a phase's forced output tool."""
 
 
+def find_tool_blocked_entities(
+    discussion: "Discussion", db: "Database",
+    method_name: Optional[str] = None,
+) -> list[dict]:
+    """List AI members whose models are known to lack tool support.
+
+    Returns one ``{"entity_id", "name", "model"}`` dict per AI member
+    (moderator included) whose model capability is known-False for the
+    target method's forced output tools — the structured form the
+    blocked-switch recovery dialog needs (spec 2026-07-17).  Empty when
+    the target method has no structured phases, when the method name is
+    unknown, or when every model is tool-capable or of unknown
+    capability (None passes; the runtime path raises loudly instead —
+    see module docstring).
+
+    Args:
+        discussion: The discussion whose entities are checked.
+        db: Database handle providing the pricing cache.
+        method_name: Target method; defaults to the discussion's
+            current method (setup-time case).  Prospective switches
+            must pass the target explicitly.
+    """
+    target = (
+        method_name if method_name is not None
+        else discussion.discussion_method
+    )
+    try:
+        method = get_method(target)
+    except KeyError:
+        return []  # open_discussion — no structured phases
+    if not method.requires_structured_output():
+        return []
+    blocked: list[dict] = []
+    for e in discussion.entities:
+        if e.entity_type != EntityType.AI or not e.ai_config:
+            continue
+        supported = db.pricing.supports_tools(
+            e.ai_config.model, e.ai_config.base_url)
+        if supported is False:
+            blocked.append({
+                "entity_id": e.id,
+                "name": e.name,
+                "model": e.ai_config.model,
+            })
+    return blocked
+
+
+def _format_tool_block_error(
+    blocked: list[dict], method: "DiscussionMethod",
+) -> str:
+    """Format the tool-capability rejection message for ``blocked``.
+
+    Pure helper shared by the setup-time gate
+    (``_validate_structured_output_support``) and the runtime gate
+    (``switch_discussion_method``), so a single offender scan feeds both
+    the human-readable error and the structured ``blocked_entities``
+    list without recomputing (golden rule 1).
+
+    Args:
+        blocked: Non-empty offender list as produced by
+            ``find_tool_blocked_entities`` (each ``{"entity_id",
+            "name", "model"}``).
+        method: The target method whose display name is named.
+
+    Returns the error message naming every offender.
+    """
+    if len(blocked) == 1:
+        offender = blocked[0]
+        models_clause = (
+            f"{offender['name']}'s model '{offender['model']}' does "
+            "not support tool calls"
+        )
+    else:
+        listing = "; ".join(
+            f"{b['name']}'s model '{b['model']}'" for b in blocked
+        )
+        models_clause = f"these models do not support tool calls: {listing}"
+    return (
+        f"The {method.display_name} method requires structured "
+        f"outputs via native tool calling, but {models_clause}. "
+        "Assign tool-capable models or choose a different method."
+    )
+
+
 def _validate_structured_output_support(
     discussion: "Discussion", db: "Database",
     method_name: Optional[str] = None,
@@ -77,6 +161,10 @@ def _validate_structured_output_support(
     ``app_discussion_setup`` re-exports this name for backward
     compatibility.
 
+    This function delegates to ``find_tool_blocked_entities`` to get the
+    structured list of offending entities, then formats an error message
+    naming all of them.
+
     Args:
         discussion: The discussion whose entities are checked.
         db: Database handle providing the pricing cache.
@@ -89,29 +177,14 @@ def _validate_structured_output_support(
 
     Returns "" when the discussion may proceed, else the error message.
     """
-    target = (
-        method_name if method_name is not None else discussion.discussion_method
-    )
-    try:
-        method = get_method(target)
-    except KeyError:
-        return ""  # open_discussion — no structured phases
-    if not method.requires_structured_output():
+    blocked = find_tool_blocked_entities(discussion, db, method_name)
+    if not blocked:
         return ""
-    for e in discussion.entities:
-        if e.entity_type != EntityType.AI or not e.ai_config:
-            continue
-        supported = db.pricing.supports_tools(
-            e.ai_config.model, e.ai_config.base_url)
-        if supported is False:
-            return (
-                f"The {method.display_name} method requires structured "
-                f"outputs via native tool calling, but {e.name}'s model "
-                f"'{e.ai_config.model}' does not support tool calls. "
-                f"Assign a tool-capable model to {e.name} or choose a "
-                "different method."
-            )
-    return ""
+    target = (
+        method_name if method_name is not None
+        else discussion.discussion_method
+    )
+    return _format_tool_block_error(blocked, get_method(target))
 
 
 def _is_tool_support_error(body: str) -> bool:

@@ -8,6 +8,7 @@ import { state, onStateUpdate, getEntity, resetRenderedMessageCount, resetRender
 import { api } from './api.js';
 import { renderDiscussion, showTypingIndicator } from './discussion.js';
 import { renderSetupTab } from './setup.js';
+import { showSwitchBlockedDialog } from './method-switch.js';
 
 /**
  * Start a new discussion.
@@ -147,8 +148,9 @@ async function completeTurnFlow() {
 
 /**
  * Handle terminal flags returned by completeTurn (max rounds, cost limit,
- * or an exhausted discussion method). Without this, a completed method
- * would keep generating turns in its final phase indefinitely.
+ * an exhausted discussion method, or a blocked method switch that paused
+ * the discussion). Without this, a completed method would keep generating
+ * turns in its final phase indefinitely.
  * @returns {Promise<boolean>} True if a terminal flag was handled.
  */
 async function handleTurnLimitFlags(result) {
@@ -158,13 +160,16 @@ async function handleTurnLimitFlags(result) {
         await onConclude();
         return true;
     }
+    if (result?.method_switch_blocked) {
+        // Blocked triage handoff: the backend paused the discussion;
+        // the dialog lets the user fix the model and retry.
+        renderDiscussion();
+        showSwitchBlockedDialog(result);
+        return true;
+    }
     if (result?.method_complete) {
         renderDiscussion();
-        // A blocked method switch (e.g. a model without tool support)
-        // must surface its reason instead of the generic completion toast.
-        showToast(result.switch_error
-            ? 'Method switch failed: ' + result.switch_error
-            : 'All method phases complete — concluding discussion');
+        showToast('All method phases complete — concluding discussion');
         await onConclude();
         return true;
     }

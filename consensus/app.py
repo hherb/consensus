@@ -505,6 +505,15 @@ class ConsensusApp:
             msg = format_setup_warning(report)
             if msg:
                 state["panel_advisory"] = {"level": "warning", "message": msg}
+        # Pending blocked method switch (triage handoff, spec
+        # 2026-07-17) — exposed so the recovery dialog reappears after
+        # a reload/reconnect, like pending_user_input below.
+        pending_switch = None
+        if (self.discussion.discussion_method == "triage"
+                and self.discussion.status != "concluded"):
+            pending_switch = self.discussion.method_state.get(
+                "_pending_method_switch")
+        state["pending_method_switch"] = pending_switch
         # Expose pending user-input request for reconnection scenarios
         if self._pending_user_inputs:
             _rid, (_fut, _data) = next(iter(self._pending_user_inputs.items()))
@@ -882,6 +891,14 @@ class ConsensusApp:
         result = app_discussion_state.resume_discussion(self.discussion, self.db)
         if "error" not in result:
             self._notify()
+        return result
+
+    def retry_method_switch(self) -> dict:
+        """Retry a Triage method handoff blocked by the tool gate."""
+        result = app_discussion_flow.retry_method_switch(
+            self.discussion, self.db, self.get_state,
+        )
+        self._notify()
         return result
 
     def reopen_discussion(self) -> dict:

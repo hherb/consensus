@@ -47,6 +47,57 @@ class TestGetState:
         assert "prompts" in state
 
 
+class TestPendingMethodSwitchState:
+    """get_state exposes a pending blocked method switch so the
+    recovery dialog survives reload/reconnect (spec 2026-07-17)."""
+
+    _PENDING = {
+        "target_method": "delphi",
+        "switch_error": "model lacks tool support",
+        "blocked_entities": [
+            {"entity_id": 2, "name": "Alice", "model": "llama3"},
+        ],
+    }
+
+    def test_exposed_while_pending(self, app_with_entities):
+        app, mod_id, p1_id, p2_id = app_with_entities
+        app.discussion.discussion_method = "triage"
+        app.discussion.method_state["_pending_method_switch"] = dict(
+            self._PENDING)
+
+        pending = app.get_state()["pending_method_switch"]
+
+        assert pending["target_method"] == "delphi"
+        assert pending["blocked_entities"][0]["name"] == "Alice"
+
+    def test_none_when_absent(self, app_with_entities):
+        app, *_ = app_with_entities
+        app.discussion.discussion_method = "triage"
+
+        assert app.get_state()["pending_method_switch"] is None
+
+    def test_none_for_non_triage_method(self, app_with_entities):
+        """A stale record under a non-triage method is not exposed —
+        after a successful switch there is nothing to recover."""
+        app, *_ = app_with_entities
+        app.discussion.discussion_method = "delphi"
+        app.discussion.method_state["_pending_method_switch"] = dict(
+            self._PENDING)
+
+        assert app.get_state()["pending_method_switch"] is None
+
+    def test_none_when_concluded(self, app_with_entities):
+        """A concluded discussion must not resurface the recovery
+        dialog after reload (final-review finding #1)."""
+        app, *_ = app_with_entities
+        app.discussion.discussion_method = "triage"
+        app.discussion.status = "concluded"
+        app.discussion.method_state["_pending_method_switch"] = dict(
+            self._PENDING)
+
+        assert app.get_state()["pending_method_switch"] is None
+
+
 # --- Entity management ---
 
 class TestEntityManagement:
@@ -214,6 +265,15 @@ class TestPauseResume:
         app, mod_id, p1_id, p2_id = app_with_entities
         app.start_discussion()
         result = app.resume_discussion()
+        assert "error" in result
+
+
+class TestRetryMethodSwitchWrapper:
+    """ConsensusApp.retry_method_switch delegates and refreshes state."""
+
+    def test_error_without_pending(self, app_with_entities):
+        app, *_ = app_with_entities
+        result = app.retry_method_switch()
         assert "error" in result
 
 

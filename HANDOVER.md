@@ -2,8 +2,10 @@
 
 _Last updated: 2026-07-17 (alpha distribution merged via PR #53 — PyPI
 package `consensus-app` + signed macOS DMG build pipeline; shared-helper
-dedup batch via PR #54 closes this file's dedup list. All tracked issues
-closed. Main at 2406 tests.)._
+dedup batch via PR #54 closes this file's dedup list; blocked Triage
+switch recovery (pause + retry) merged via PR #55 closes the older
+"blocked Triage switch auto-concludes" UX gap. All tracked issues closed.
+Main at 2424 tests.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -33,8 +35,9 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Method-flow E2E tests (NGT/MCDA/DC/ToT) | — (testing gap) | #52 |
 | Alpha distribution (PyPI `consensus-app` + macOS DMG) | — | #53 |
 | Shared-helper dedup batch (scanner delegation, give-up mixin, test split) | — (tech debt) | #54 |
+| Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #55 |
 
-Main is at **2406 tests passing**. Every tracked issue is merged and closed;
+Main is at **2424 tests passing**. Every tracked issue is merged and closed;
 there are no open issues or PRs.
 
 **#28 evidence-tracked phases** merged (PR #45) —
@@ -174,15 +177,6 @@ All three items are done; the shared homes to keep using are:
   ending in convergence — both through the real `advance_phase` path.
   Spec: `docs/superpowers/specs/2026-07-16-method-flow-e2e-tests-design.md`.
 
-### UX gap (older follow-up)
-
-- **Blocked Triage switch still auto-concludes the discussion.** When
-  `switch_discussion_method` rejects a handoff (non-tool-capable model),
-  Triage falls through to `method_complete` and the discussion ends. A
-  "reassign model and retry" UX (pause, let the user swap the offending
-  participant's model, retry the switch) would beat ending outright. No
-  mechanism exists yet.
-
 ## Conventions and gotchas for the next session
 
 - **Structured-phase conversions must keep `process_response`.** Humans type
@@ -211,6 +205,9 @@ All three items are done; the shared homes to keep using are:
   `_original_max_rounds`, `_original_cost_limit`, `_phase_entries`). New
   bookkeeping that must survive a method switch has to be added to the
   preserved set in `app_discussion_flow.switch_discussion_method`.
+- **`_pending_method_switch` is internal `method_state` bookkeeping,
+  deliberately NOT in `switch_discussion_method`'s preserved set** — a
+  successful switch must wipe it.
 - **Moderator summaries never pass through `process_response`.** To capture
   something from the moderator, give that phase `get_turn_order ->
   [moderator_id]` so the moderator takes a real turn (see

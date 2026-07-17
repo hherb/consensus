@@ -406,6 +406,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             "conclude": lambda: app.conclude_discussion(),
             "pause_discussion": lambda: app.pause_discussion(),
             "resume_discussion": lambda: app.resume_discussion(),
+            "retry_method_switch": lambda: app.retry_method_switch(),
             "reopen_discussion": lambda: app.reopen_discussion(),
             "continue_discussion": lambda: app.continue_discussion(
                 data.get("content", "")),
