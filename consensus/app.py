@@ -505,6 +505,14 @@ class ConsensusApp:
             msg = format_setup_warning(report)
             if msg:
                 state["panel_advisory"] = {"level": "warning", "message": msg}
+        # Pending blocked method switch (triage handoff, spec
+        # 2026-07-17) — exposed so the recovery dialog reappears after
+        # a reload/reconnect, like pending_user_input below.
+        pending_switch = None
+        if self.discussion.discussion_method == "triage":
+            pending_switch = self.discussion.method_state.get(
+                "_pending_method_switch")
+        state["pending_method_switch"] = pending_switch
         # Expose pending user-input request for reconnection scenarios
         if self._pending_user_inputs:
             _rid, (_fut, _data) = next(iter(self._pending_user_inputs.items()))
