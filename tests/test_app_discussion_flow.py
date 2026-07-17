@@ -482,6 +482,23 @@ class TestSwitchDiscussionMethodToolCapability:
         assert "error" not in result
         assert disc.discussion_method == "open_discussion"
 
+    def test_blocked_switch_reports_blocked_entities(
+        self, tmp_db, discussion_with_entities, monkeypatch
+    ):
+        """The gate error carries the structured offender list the
+        recovery dialog needs (spec 2026-07-17)."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_model(tmp_db, "test/test-model", "temperature,top_p")
+        disc = self._prepare(discussion_with_entities, tmp_db)
+
+        result = switch_discussion_method(disc, tmp_db, "delphi")
+
+        assert result["blocked_entities"] == [{
+            "entity_id": disc.entities[0].id,
+            "name": "Alice",
+            "model": "test-model",
+        }]
+
 
 class TestCompleteTurnBlockedTriageSwitch:
     """A triage switch blocked by the tool-capability gate must be loud:

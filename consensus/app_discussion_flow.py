@@ -12,7 +12,9 @@ from .methods import get_active_method, get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole, StoryboardEntry
 from .moderator import Moderator
 from .pricing import PricingCache
-from .structured_output import _validate_structured_output_support
+from .structured_output import (
+    _validate_structured_output_support, find_tool_blocked_entities,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -367,8 +369,9 @@ def switch_discussion_method(
     Runs the same tool-capability gate as discussion setup (issue #23)
     before any mutation: a structured target method whose panel models
     are known to lack tool support is rejected, leaving the discussion's
-    method, method_state, and messages untouched. Triage falls through
-    to ``method_complete`` when this returns an error.
+    method, method_state, and messages untouched. Triage records a pending
+    switch and pauses when this returns an error (spec 2026-07-17); the error
+    dict carries ``blocked_entities`` so the recovery UI can name the offenders.
     """
     if method_name == "triage":
         return {"error": "Cannot switch to triage method"}
@@ -384,7 +387,11 @@ def switch_discussion_method(
     tool_error = _validate_structured_output_support(
         discussion, db, method_name)
     if tool_error:
-        return {"error": tool_error}
+        return {
+            "error": tool_error,
+            "blocked_entities": find_tool_blocked_entities(
+                discussion, db, method_name),
+        }
 
     # Budget bookkeeping written by _increase_budgets must survive the
     # method_state reset (issue #16).
