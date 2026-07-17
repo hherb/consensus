@@ -248,10 +248,10 @@ DC_HUNT_ROUND_1 = {
            "\n```"),
 }
 
-#: Round-2 cruxes share one pivotal claim (same polarity for both, so
-#: the snapshot initial_beliefs are directly comparable) and are NOT
-#: word-overlap similar to each author's own round-1 crux (same-entity
-#: near-duplicates would be dropped).
+#: Round-2 cruxes share one pivotal claim.  Their per-crux beliefs
+#: (0.75 / 0.25) are now provenance only — the poll_belief phase, not
+#: this snapshot, sets initial_beliefs.  They are NOT word-overlap
+#: similar to each author's own round-1 crux (near-duplicates are dropped).
 DC_HUNT_ROUND_2 = {
     "P1": ("```json\n"
            '{"cruxes": [{"claim": "Distributed teams deliver features '
@@ -279,6 +279,16 @@ DC_IDENTIFY_FACTUAL = (
     '"Both parties\' updated cruxes pivot on delivery speed."}'
     "\n```"
 )
+
+#: Belief poll on the moderator's synthesized claim.  Numbers differ
+#: from the round-2 crux beliefs (0.75 / 0.25) to prove initial_beliefs
+#: is poll-sourced.
+DC_POLL = {
+    "P1": ('```json\n{"belief": 0.8, "reasoning": "Delivery metrics I '
+           'have seen favour parity"}\n```'),
+    "P2": ('```json\n{"belief": 0.3, "reasoning": "My experience says '
+           'colocated teams still ship faster"}\n```'),
+}
 
 DC_TEST_CRUX = {
     "P1": "A 2024 multi-company study found delivery-speed parity for "
@@ -319,6 +329,8 @@ def dc_content(disc: Discussion, speaker: Entity) -> str:
                 else DC_HUNT_ROUND_2)[speaker.name]
     if phase == "identify_crux":
         return DC_IDENTIFY_NONE if search_round == 1 else DC_IDENTIFY_FACTUAL
+    if phase == "poll_belief":
+        return DC_POLL[speaker.name]
     if phase == "test_crux":
         return DC_TEST_CRUX[speaker.name]
     if phase == "resolve":
@@ -345,6 +357,7 @@ class TestDoubleCruxFlow:
             ["positions"] * 2
             + ["hunt_cruxes"] * 2 + ["identify_crux"]
             + ["hunt_cruxes"] * 2 + ["identify_crux"]
+            + ["poll_belief"] * 2
             + ["test_crux"] * 4 + ["resolve"] * 2
         )
         assert all(name == "Mod" for phase, name in trace
@@ -358,15 +371,15 @@ class TestDoubleCruxFlow:
             "Distributed teams deliver features as fast as colocated teams")
         assert state["shared_crux"]["source_crux_ids"] == [3, 4]
         assert state["shared_crux"]["initial_beliefs"] == {
-            "P1": 0.75, "P2": 0.25}
+            "P1": 0.8, "P2": 0.3}
 
         # --- crux_map artifact (deterministic belief shifts) ----------
         crux_map = state["crux_map"]
         assert crux_map["verdict"] == "factual"
         assert crux_map["belief_shifts"]["P1"] == {
-            "initial": 0.75, "final": 0.7, "shift": -0.05}
+            "initial": 0.8, "final": 0.7, "shift": -0.1}
         assert crux_map["belief_shifts"]["P2"] == {
-            "initial": 0.25, "final": 0.6, "shift": 0.35}
+            "initial": 0.3, "final": 0.6, "shift": 0.3}
         assert crux_map["caveats"] == []
 
         # --- Evidence tracking on test_crux (issue #28) ---------------
@@ -386,7 +399,7 @@ class TestDoubleCruxFlow:
         assert ("Distributed teams deliver features as fast as colocated "
                 "teams") in prompt
         assert "Belief shifts on the crux (initial → final):" in prompt
-        assert "0.25 → 0.6" in prompt
+        assert "0.3 → 0.6" in prompt
 
         # --- Persistence sanity ---------------------------------------
         persisted = db_method_state(tmp_db, disc.id)

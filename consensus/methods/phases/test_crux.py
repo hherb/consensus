@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING
 
 from ..base import Phase
 from ..phase_handler import PhaseHandler
-from ._crux_helpers import TEST_CRUX_ROUNDS, format_shared_crux
+from ._crux_artifact import format_shared_crux
+from ._crux_helpers import TEST_CRUX_ROUNDS
 
 if TYPE_CHECKING:
     from ...models import Discussion, Entity

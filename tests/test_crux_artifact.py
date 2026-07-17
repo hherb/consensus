@@ -6,15 +6,17 @@ extractor layer is covered in ``test_crux_helpers.py``; this file split
 off to keep both under the ~500-line guideline.
 """
 
-from consensus.methods.phases._crux_helpers import (
-    VERDICT_FACTUAL,
-    VERDICT_NONE,
+from consensus.methods.phases._crux_artifact import (
     build_crux_map,
     format_belief_shifts,
     format_cruxes,
     format_positions,
     format_resolutions,
     format_shared_crux,
+)
+from consensus.methods.phases._crux_helpers import (
+    VERDICT_FACTUAL,
+    VERDICT_NONE,
     record_crux_selection,
     record_cruxes,
     record_resolution,
@@ -44,6 +46,7 @@ class TestBuildCruxMap:
         record_crux_selection(state, {
             "verdict": "factual", "crux_ids": [1, 2], "claim": CLAIM_A,
             "reasoning": "shared"})
+        state["shared_crux"]["initial_beliefs"] = {"Alice": 0.9, "Bob": 0.2}
         record_resolution(state, _entity(1, "Alice"), {
             "stance": "updated", "position": "Hybrid works best",
             "crux_belief": 0.55, "reasoning": "trials"})
@@ -113,6 +116,7 @@ class TestFormatters:
         record_crux_selection(state, {
             "verdict": "factual", "crux_ids": [1], "claim": CLAIM_A,
             "reasoning": "r"})
+        state["shared_crux"]["initial_beliefs"] = {"Alice": 0.9}
         record_resolution(state, _entity(1, "Alice"), {
             "stance": "updated", "position": "Hybrid works best",
             "crux_belief": 0.55, "reasoning": "trials"})

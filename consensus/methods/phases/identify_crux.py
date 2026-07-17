@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 from ..base import LINEAR_NEXT, OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
+from ._crux_artifact import format_cruxes, format_positions, format_shared_crux
 from ._crux_helpers import (
     CRUX_SELECTION_TOOL_PARAMETERS,
     MAX_CRUX_SEARCH_ROUNDS,
@@ -32,9 +33,6 @@ from ._crux_helpers import (
     VERDICT_NONE,
     VERDICT_VALUES,
     extract_crux_selection,
-    format_cruxes,
-    format_positions,
-    format_shared_crux,
     record_crux_selection,
     validate_crux_selection_payload,
 )
@@ -96,9 +94,9 @@ class IdentifyCruxHandler(PhaseHandler):
             "what a crux is).  State it as ONE neutral claim and cite "
             "the crux ids it comes from.  Keep the claim in the same "
             "polarity as the cited cruxes wherever possible — each "
-            "participant's stated belief is carried over as their "
-            "initial belief on the shared claim, so a reversed or "
-            "reframed claim would make those numbers meaningless.\n"
+            "participant will next be polled for their probability on "
+            "this exact claim, so a reversed or reframed claim makes "
+            "those numbers hard to read.\n"
             "- verdict 'values': the positions rest on different values "
             "or priorities rather than a factual dispute.  State the "
             "value difference.\n"
@@ -229,7 +227,7 @@ class IdentifyCruxHandler(PhaseHandler):
         if verdict == VERDICT_VALUES:
             # Nothing factual to test — jump straight to resolution.
             return "resolve"
-        return LINEAR_NEXT  # factual → test_crux
+        return LINEAR_NEXT  # factual → poll_belief
 
     # ------------------------------------------------------------------
     # Transition message (when transitioning TO this phase)

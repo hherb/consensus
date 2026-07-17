@@ -16,15 +16,14 @@ from typing import TYPE_CHECKING
 
 from ..base import LINEAR_NEXT, OutputToolSpec, Phase, ProcessedResponse
 from ..phase_handler import PhaseHandler
+from ._crux_artifact import build_crux_map, format_shared_crux
 from ._crux_helpers import (
     MAX_RESOLVE_ROUNDS,
     RESOLUTION_TOOL_PARAMETERS,
     VERDICT_FACTUAL,
     VERDICT_VALUES,
-    build_crux_map,
     entities_with_resolutions,
     extract_resolution,
-    format_shared_crux,
     record_resolution,
     validate_resolution_payload,
 )

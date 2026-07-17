@@ -1,10 +1,12 @@
 """Shared helpers for Double Crux phase handlers (issue #27).
 
 Pure functions and constants for crux recording/deduplication,
-shared-crux selection (verdict + initial-belief snapshot), resolution
-recording, free-text extraction fallbacks, the machine-readable
-``crux_map`` outcome artifact, and display formatting — used by the
-hunt, identify, test, and resolve phase handlers.
+shared-crux selection (verdict + shared-claim capture), belief-poll
+recording (``record_poll_belief`` / ``apply_poll_beliefs``, the source
+of ``initial_beliefs``), poll-context redaction, resolution recording,
+and free-text extraction fallbacks — used by the hunt, identify, poll,
+test, and resolve phase handlers.  The ``crux_map`` outcome artifact and
+the display formatters live alongside in ``_crux_artifact.py``.
 """
 
 from __future__ import annotations
@@ -14,7 +16,6 @@ from typing import TYPE_CHECKING
 
 from ..parsing import extract_json_block, parse_numbered_list, \
     word_overlap_similar
-from ...evidence import build_evidence_summary
 
 if TYPE_CHECKING:
     from ...models import Entity
@@ -38,10 +39,17 @@ MAX_CRUX_SEARCH_ROUNDS = 3
 MAX_IDENTIFY_ATTEMPTS = 3
 #: Give up and conclude after this many resolution rounds.
 MAX_RESOLVE_ROUNDS = 3
+#: Give up and advance after this many belief-poll rounds.
+MAX_POLL_ROUNDS = 3
 #: Fixed number of evidence-focused crux-testing rounds.
 TEST_CRUX_ROUNDS = 2
 #: Decimal places used for belief-shift reporting.
 BELIEF_PRECISION = 2
+#: Prefix of the rendered line that carries a participant's numeric
+#: belief on the shared crux.  Rendered on the poll/resolution turn and
+#: matched to redact that number from other pollers' context, keeping the
+#: belief poll a clean, non-anchored baseline (design 2026-07-17).
+BELIEF_LINE_PREFIX = "Belief on the crux:"
 
 #: Crux-selection verdicts (the ``submit_crux_selection`` enum).
 VERDICT_FACTUAL = "factual"
@@ -142,6 +150,24 @@ RESOLUTION_TOOL_PARAMETERS: dict = {
         },
     },
     "required": ["stance", "position", "reasoning"],
+}
+
+#: JSON Schema for the submit_crux_belief output tool (belief poll).
+POLL_BELIEF_TOOL_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "belief": {
+            "type": "number", "minimum": 0, "maximum": 1,
+            "description": ("Your current probability (0-1) that the "
+                            "shared crux claim is true, before evidence "
+                            "is presented."),
+        },
+        "reasoning": {
+            "type": "string",
+            "description": ("Why you hold that probability right now."),
+        },
+    },
+    "required": ["belief", "reasoning"],
 }
 
 
@@ -275,25 +301,21 @@ def record_crux_selection(state: dict, payload: dict) -> None:
     """Record the moderator's crux verdict into method state.
 
     Sets ``crux_verdict`` and ``shared_crux``.  For a factual verdict,
-    snapshots each referenced participant's stated belief on their
-    source crux into ``initial_beliefs`` (the "before" end of the
-    belief-shift metric); ``None`` beliefs are skipped.
+    records the shared claim and source crux ids; ``initial_beliefs``
+    is left empty for the poll_belief phase to fill.
     """
     verdict = payload["verdict"]
     state["crux_verdict"] = verdict
     if verdict == VERDICT_FACTUAL:
         crux_ids = [int(cid) for cid in payload.get("crux_ids", [])]
-        by_id = {c["id"]: c for c in state.get("cruxes", [])}
-        initial_beliefs: dict[str, float] = {}
-        for cid in crux_ids:
-            crux = by_id.get(cid)
-            if crux is not None and crux["belief"] is not None:
-                initial_beliefs[crux["entity_name"]] = crux["belief"]
+        # initial_beliefs is owned by the poll_belief phase (design
+        # 2026-07-17): it is polled on this shared claim for every party,
+        # not snapshotted from the (differently-phrased) hunt cruxes.
         state["shared_crux"] = {
             "claim": str(payload.get("claim") or "").strip().rstrip('.'),
             "description": "",
             "source_crux_ids": crux_ids,
-            "initial_beliefs": initial_beliefs,
+            "initial_beliefs": {},
         }
     elif verdict == VERDICT_VALUES:
         state["shared_crux"] = {
@@ -385,110 +407,78 @@ def entities_with_resolutions(state: dict) -> set[int]:
     return {r["entity_id"] for r in state.get("resolutions", [])}
 
 
-def build_crux_map(state: dict) -> dict:
-    """Assemble the machine-readable Double Crux outcome artifact.
+def validate_poll_belief_payload(payload: dict) -> str:
+    """Return '' if a submit_crux_belief payload is usable, else an error."""
+    error = _belief_error(payload.get("belief"))
+    if error:
+        return error
+    if not str(payload.get("reasoning") or "").strip():
+        return "'reasoning' must explain your current probability."
+    return ""
 
-    Deterministic (never model-computed): verdict, shared crux,
-    positions, submitted cruxes, resolutions, and per-participant
-    belief shifts on the shared crux — initial from the hunt-phase
-    snapshot, final from resolutions, shift only when both ends are
-    known.  Caveats flag a missing shared crux, missing resolutions,
-    and a factual crux with no computable shift.
+
+def record_poll_belief(state: dict, entity: Entity, payload: dict) -> None:
+    """Record an entity's crux-belief poll; resubmission replaces their own.
+
+    Shared by the free-text and structured paths.  ``belief`` is
+    float-coerced; ``None`` (defensive — the validated paths never pass
+    it) is preserved so ``apply_poll_beliefs`` can skip it.
     """
-    verdict = state.get("crux_verdict", "")
-    shared_crux = state.get("shared_crux", {})
-    resolutions = state.get("resolutions", [])
-    initial = dict(shared_crux.get("initial_beliefs", {}))
-    finals = {r["entity_name"]: r["crux_belief"] for r in resolutions
-              if r["crux_belief"] is not None}
-    shifts: dict[str, dict] = {}
-    for name in sorted(set(initial) | set(finals)):
-        before = initial.get(name)
-        after = finals.get(name)
-        shift = (round(after - before, BELIEF_PRECISION)
-                 if before is not None and after is not None else None)
-        shifts[name] = {"initial": before, "final": after, "shift": shift}
-    caveats: list[str] = []
-    if verdict == VERDICT_NONE:
-        caveats.append(
-            "No shared crux was found — the map records the residual "
-            "disagreement, not a resolution.")
-    if not resolutions:
-        caveats.append(
-            "No participant resolutions were recorded — final positions "
-            "are unknown.")
-    if verdict == VERDICT_FACTUAL and not any(
-            s["shift"] is not None for s in shifts.values()):
-        caveats.append(
-            "No belief shift could be computed for the factual crux "
-            "(missing initial or final beliefs).")
-    return {
-        "verdict": verdict,
-        "shared_crux": shared_crux,
-        "positions": dict(state.get("positions", {})),
-        "cruxes": list(state.get("cruxes", [])),
-        "resolutions": list(resolutions),
-        "belief_shifts": shifts,
-        "caveats": caveats,
-        "evidence": build_evidence_summary(state),
+    belief = payload.get("belief")
+    entry = {
+        "entity_id": entity.id,
+        "entity_name": entity.name,
+        "belief": None if belief is None else float(belief),
+        "reasoning": str(payload.get("reasoning") or "").strip(),
     }
+    polls = state.setdefault("poll_beliefs", [])
+    for i, existing in enumerate(polls):
+        if existing["entity_id"] == entity.id:
+            polls[i] = entry
+            return
+    polls.append(entry)
 
 
-def format_positions(state: dict) -> str:
-    """Participant positions as an indented name → summary list."""
-    positions = state.get("positions", {})
-    if not positions:
-        return "  (No positions were recorded)"
-    return "\n".join(f"  {name}: {summary}"
-                     for name, summary in positions.items())
+def entities_with_poll(state: dict) -> set[int]:
+    """Entity ids that have a recorded crux-belief poll."""
+    return {e["entity_id"] for e in state.get("poll_beliefs", [])}
 
 
-def format_cruxes(state: dict) -> str:
-    """Numbered crux list with authors and beliefs (identify prompt)."""
-    cruxes = state.get("cruxes", [])
-    if not cruxes:
-        return "  (No cruxes were recorded)"
-    lines = []
-    for c in cruxes:
-        belief = ("unstated" if c["belief"] is None
-                  else f"{round(c['belief'], BELIEF_PRECISION)}")
-        line = (f"  Crux {c['id']} ({c['entity_name']}, belief {belief}): "
-                f"{c['claim']}")
-        if c.get("why_pivotal"):
-            line += f" — {c['why_pivotal']}"
-        lines.append(line)
-    return "\n".join(lines)
+def extract_poll_belief(content: str) -> dict | None:
+    """Parse a crux-belief poll from free text (fallback path).
+
+    Only a fenced JSON block with a ``belief`` key is accepted.
+    """
+    data = extract_json_block(content)
+    if isinstance(data, dict) and "belief" in data:
+        return data
+    return None
 
 
-def format_shared_crux(state: dict) -> str:
-    """The identified shared crux (or value difference) as display text."""
-    shared = state.get("shared_crux", {})
-    if shared.get("claim"):
-        return f"  Shared crux: {shared['claim']}"
-    if shared.get("description"):
-        return f"  Value difference: {shared['description']}"
-    return "  (No shared crux was identified)"
+def apply_poll_beliefs(state: dict) -> None:
+    """Replace ``shared_crux['initial_beliefs']`` with the polled values.
+
+    The poll is the authoritative source of the belief-shift metric's
+    "before" end (design 2026-07-17): a name->belief map built purely
+    from ``poll_beliefs``, dropping any ``None`` belief.  Called once
+    when the poll phase completes.
+    """
+    beliefs = {e["entity_name"]: e["belief"]
+               for e in state.get("poll_beliefs", [])
+               if e.get("belief") is not None}
+    state.setdefault("shared_crux", {})["initial_beliefs"] = beliefs
 
 
-def format_belief_shifts(state: dict) -> str:
-    """Per-participant initial → final beliefs on the shared crux."""
-    shifts = build_crux_map(state)["belief_shifts"]
-    if not shifts:
-        return "  (No beliefs were recorded)"
-    lines = []
-    for name, s in shifts.items():
-        before = "?" if s["initial"] is None else s["initial"]
-        after = "?" if s["final"] is None else s["final"]
-        delta = "" if s["shift"] is None else f" (shift {s['shift']:+})"
-        lines.append(f"  {name}: {before} → {after}{delta}")
-    return "\n".join(lines)
+def redact_belief_lines(content: str) -> str:
+    """Drop any ``BELIEF_LINE_PREFIX`` line from a context message.
 
-
-def format_resolutions(state: dict) -> str:
-    """Participant resolutions with stances and positions."""
-    resolutions = state.get("resolutions", [])
-    if not resolutions:
-        return "  (No resolutions were recorded)"
-    return "\n".join(
-        f"  {r['entity_name']} ({r['stance']}): {r['position']}"
-        for r in resolutions)
+    The belief poll must be a clean "before" baseline: a later poller
+    must not anchor on an earlier poller's stated probability.  Poll
+    turns render that probability on its own ``Belief on the crux: <n>``
+    line, so removing those lines strips the numeric anchor while leaving
+    the surrounding reasoning intact.  Pure — returns a new string; the
+    full turn is unaffected in the visible transcript.
+    """
+    kept = [line for line in content.splitlines()
+            if not line.lstrip().startswith(BELIEF_LINE_PREFIX)]
+    return "\n".join(kept)

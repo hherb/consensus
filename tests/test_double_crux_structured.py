@@ -9,12 +9,14 @@ from consensus.methods import get_method
 from consensus.methods.phases._crux_helpers import (
     CRUX_SELECTION_TOOL_PARAMETERS,
     CRUXES_TOOL_PARAMETERS,
+    POLL_BELIEF_TOOL_PARAMETERS,
     RESOLUTION_TOOL_PARAMETERS,
     VERDICT_FACTUAL,
     record_cruxes,
 )
 from consensus.methods.phases.hunt_cruxes import HuntCruxesHandler
 from consensus.methods.phases.identify_crux import IdentifyCruxHandler
+from consensus.methods.phases.poll_belief import PollBeliefHandler
 from consensus.methods.phases.resolve_crux import ResolveCruxHandler
 from consensus.methods.phases.state_positions import StatePositionsHandler
 from consensus.methods.phases.test_crux import TestCruxHandler
@@ -51,6 +53,9 @@ class TestStructuredFlags:
         assert (get_method("double_crux").requires_structured_output()
                 is True)
 
+    def test_poll_requires_structured(self):
+        assert PollBeliefHandler().requires_structured_output is True
+
 
 class TestOutputToolSpecs:
     def test_hunt_spec(self):
@@ -70,6 +75,14 @@ class TestOutputToolSpecs:
             _entity(), _discussion("resolve"))
         assert spec.name == "submit_resolution"
         assert spec.parameters is RESOLUTION_TOOL_PARAMETERS
+
+    def test_poll_spec(self):
+        spec = PollBeliefHandler().get_output_tool(
+            _entity(), _discussion("poll_belief",
+                                   shared_crux={"claim": CLAIM,
+                                                "initial_beliefs": {}}))
+        assert spec.name == "submit_crux_belief"
+        assert spec.parameters is POLL_BELIEF_TOOL_PARAMETERS
 
 
 class TestPromptsNameTheTool:
@@ -91,6 +104,15 @@ class TestPromptsNameTheTool:
         assert "submit_resolution" in handler.get_system_prompt(
             _entity(), disc)
         assert "submit_resolution" in handler.get_turn_prompt(
+            _entity(), disc)
+
+    def test_poll_prompts(self):
+        handler = PollBeliefHandler()
+        disc = _discussion("poll_belief",
+                           shared_crux={"claim": CLAIM, "initial_beliefs": {}})
+        assert "submit_crux_belief" in handler.get_system_prompt(
+            _entity(), disc)
+        assert "submit_crux_belief" in handler.get_turn_prompt(
             _entity(), disc)
 
 
@@ -152,3 +174,20 @@ class TestStructuredMatchesFreeTextPaths:
 
         assert (disc_a.method_state["resolutions"]
                 == disc_b.method_state["resolutions"])
+
+    def test_poll_structured_and_free_text_produce_same_state(self):
+        handler = PollBeliefHandler()
+        disc_a = _discussion("poll_belief",
+                             shared_crux={"claim": CLAIM,
+                                          "initial_beliefs": {}})
+        handler.process_structured_response(
+            {"belief": 0.4, "reasoning": "sceptical"}, _entity(), disc_a)
+
+        disc_b = _discussion("poll_belief",
+                             shared_crux={"claim": CLAIM,
+                                          "initial_beliefs": {}})
+        content = '```json\n{"belief": 0.4, "reasoning": "sceptical"}\n```'
+        handler.process_response(content, _entity(), disc_b)
+
+        assert (disc_a.method_state["poll_beliefs"]
+                == disc_b.method_state["poll_beliefs"])
