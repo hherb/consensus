@@ -5,7 +5,7 @@ package `consensus-app` + signed macOS DMG build pipeline; shared-helper
 dedup batch via PR #54 closes this file's dedup list; blocked Triage
 switch recovery (pause + retry) merged via PR #55 closes the older
 "blocked Triage switch auto-concludes" UX gap; Double Crux pre-belief
-poll (branch `feat/double-crux-pre-belief-poll`, PR pending) closes the
+poll (branch `feat/double-crux-pre-belief-poll`, PR #56) closes the
 belief-shift metric tech-debt item below. All tracked issues closed.
 Main at 2454 tests.)._
 
@@ -38,11 +38,11 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Alpha distribution (PyPI `consensus-app` + macOS DMG) | — | #53 |
 | Shared-helper dedup batch (scanner delegation, give-up mixin, test split) | — (tech debt) | #54 |
 | Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #55 |
-| Double Crux pre-belief poll (belief-shift metric fix) | — (tech debt) | (PR pending) |
+| Double Crux pre-belief poll (belief-shift metric fix) | — (tech debt) | #56 |
 
 Main is at **2454 tests passing**. Every tracked issue is merged and closed.
 The Double Crux pre-belief poll is on branch
-`feat/double-crux-pre-belief-poll` with a PR pending review; there are no
+`feat/double-crux-pre-belief-poll` with PR #56 open for review; there are no
 other open issues or PRs.
 
 **Double Crux pre-belief poll** (branch `feat/double-crux-pre-belief-poll`)
@@ -158,10 +158,9 @@ Suite after #29: **2355 passing**. Deferred: family-level model grouping
   thoughts (label stability is what makes re-scoring/convergence meaningful).
   If real transcripts show the beam starving, a child-generation expand
   variant (new thoughts with fresh ids) is the natural extension.
-- **Double Crux belief shift** — ✅ fixed by the pre-belief poll (branch
-  `feat/double-crux-pre-belief-poll`, PR pending; see the feature note
-  above). Both ends of the metric are now measured on the moderator's
-  synthesized claim for every party.
+- **Double Crux belief shift** — ✅ fixed by the pre-belief poll (PR #56;
+  see the feature note above). Both ends of the metric are now measured on
+  the moderator's synthesized claim for every party.
 - **Double Crux identify loop re-runs positions' context, not the phase.**
   Loop-backs re-enter `hunt_cruxes` only; if hunting keeps failing because
   positions were vague, there is no path back to `positions`. Acceptable for
