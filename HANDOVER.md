@@ -1,13 +1,9 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-17 (alpha distribution merged via PR #53 — PyPI
-package `consensus-app` + signed macOS DMG build pipeline; shared-helper
-dedup batch via PR #54 closes this file's dedup list; blocked Triage
-switch recovery (pause + retry) merged via PR #55 closes the older
-"blocked Triage switch auto-concludes" UX gap; Double Crux pre-belief
-poll (branch `feat/double-crux-pre-belief-poll`, PR #56) closes the
-belief-shift metric tech-debt item below. All tracked issues closed.
-Main at 2454 tests.)._
+_Last updated: 2026-07-17 (Double Crux pre-belief poll merged via PR #56 —
+closes the belief-shift metric tech-debt item below; branch history in git).
+Main at 2459 tests. One open issue: #57 (structured-phase human-input UX
+gap). No open PRs.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -40,45 +36,26 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #55 |
 | Double Crux pre-belief poll (belief-shift metric fix) | — (tech debt) | #56 |
 
-Main is at **2454 tests passing**. Every previously tracked issue is merged
-and closed. The Double Crux pre-belief poll is on branch
-`feat/double-crux-pre-belief-poll` with PR #56 open for review (branch at
-2459 tests after post-review fixes). The one open issue is #57 (structured-
-phase human-input UX gap), a framework-wide follow-up filed during the PR
-review — no other open issues or PRs.
+Main is at **2459 tests passing**. Every method-repair issue (#12–#48) is
+merged and closed. The one open issue is #57 (structured-phase human-input
+UX gap), a framework-wide follow-up filed during the PR #56 review — no
+other open issues or PRs.
 
-**Double Crux pre-belief poll** (branch `feat/double-crux-pre-belief-poll`)
-— spec `docs/superpowers/specs/2026-07-17-double-crux-pre-belief-poll-design.md`,
-plan `docs/superpowers/plans/2026-07-17-double-crux-pre-belief-poll.md`. A
-new structured micro-turn phase `poll_belief` (`consensus/methods/phases/
-poll_belief.py`) runs after `identify_crux` and before `test_crux`, on the
-**factual path only** (identify's routing already jumps `values`/`none`
-straight to `resolve`). Every disagreeing party states their probability on
-the moderator's *synthesized* shared claim; that poll becomes the
-authoritative `initial_beliefs` (the "before" end of the belief-shift
-metric), fixing the two defects the old hunt-snapshot had: non-crux-authors
-showed `? → final`, and the initial (author phrasing) vs final (moderator
-claim) compared different propositions. Poll helpers live in
-`_crux_helpers.py` (`MAX_POLL_ROUNDS`, `POLL_BELIEF_TOOL_PARAMETERS`,
-`validate_poll_belief_payload`, `record_poll_belief`, `entities_with_poll`,
-`extract_poll_belief`, `apply_poll_beliefs`). `record_crux_selection` no
-longer snapshots beliefs (poll owns `initial_beliefs`; per-crux `belief` is
-kept as provenance). **Always-on, factual-only** (owner decision); total
-poll failure degrades to an honest `?`, never a fabricated number. Whole-
-branch review (opus): ready to merge, no Critical/Important. **Post-review
-fixes applied** (branch now at 2459 tests): (1) `build_crux_map`/`format_*`
-split out of `_crux_helpers.py` into a new `_crux_artifact.py` sibling
-(helpers module back to 484 lines); (2) the poll now redacts each poller's
-numeric belief line from later pollers' context via
-`PollBeliefHandler.filter_context_message` (`redact_belief_lines` +
-`BELIEF_LINE_PREFIX` in `_crux_helpers.py`), so the "before" baseline is no
-longer anchored by earlier numbers — full anchoring-immunity (also hiding
-reasoning prose / moderator paraphrase) remains optional; (3) the stale
-`# factual → test_crux` routing comment in `identify_crux.py` corrected to
-`poll_belief`. Remaining deferred: no `values`/`none` E2E asserting the poll
-is skipped (routing is deterministic + unit-covered). Separately, the
-framework-wide structured-phase human-input UX gap (humans must type a JSON
-block in structured phases; free prose is dropped) is tracked as issue #57.
+**Double Crux pre-belief poll** (PR #56, merged) — spec/plan under
+`docs/superpowers/{specs,plans}/2026-07-17-double-crux-pre-belief-poll*.md`.
+A structured micro-turn phase `poll_belief` (`consensus/methods/phases/
+poll_belief.py`) runs after `identify_crux` and before `test_crux` on the
+**factual path only** (identify's routing jumps `values`/`none` straight to
+`resolve`). Every disagreeing party states its probability on the
+moderator's *synthesized* shared claim, and that poll is the authoritative
+`initial_beliefs` (the "before" end of the belief-shift metric). Poll
+helpers live in `_crux_helpers.py`; artifact/formatting helpers in the
+sibling `_crux_artifact.py`. **Always-on, factual-only** (owner decision);
+total poll failure degrades to an honest `?`, never a fabricated number.
+Each poller's numeric belief line is redacted from later pollers' context
+(`PollBeliefHandler.filter_context_message` / `redact_belief_lines`) so the
+baseline is not anchored by earlier numbers. The unparsed-human-input case
+(prose instead of JSON) is the framework-wide gap tracked as **issue #57**.
 
 **#28 evidence-tracked phases** merged (PR #45) —
 spec `docs/superpowers/specs/2026-07-14-evidence-gated-phases-design.md`, plan
@@ -127,6 +104,23 @@ Suite after #29: **2355 passing**. Deferred: family-level model grouping
 (exact-model only), and proposal item 3 (a "diversify" auto-suggest helper).
 
 ## Open work
+
+### Structured-phase human input (issue #57) — the only open tracked issue
+
+Phases with `requires_structured_output = True` route **AI** turns through a
+declared output tool (`generate_structured_turn`), but **human** turns still
+go through the handler's free-text `process_response`, which records a
+contribution only when it can parse a fenced JSON block. A human who types
+prose ("I'm about 70% sure") is silently dropped: nothing recorded, they
+become a straggler, the phase loops to its round cap, and they end up `?` in
+the outcome. The belief poll bites hardest. There is no frontend renderer for
+`OutputToolSpec.parameters`. Directions (from the issue): (a) render a
+lightweight input form from the phase's parameters, submitting a validated
+payload through `process_structured_response`; (b) a tolerant free-text
+parser for humans feeding the same `record_*` helpers; (c) at minimum,
+surface a visible "could not read your input" message + expected schema
+instead of dropping it (golden rule 6). Needs a design decision before
+build — brainstorm first.
 
 ### Alpha distribution — pending release gate (PR #53)
 
