@@ -178,6 +178,17 @@ class TestAchInlineRatingsFallback:
             "E2": {"H1": "0", "H2": "+"},
         }
 
+    def test_parses_pretty_printed_inline_ratings(self):
+        handler = EvaluateMatrixHandler()
+        content = ('My matrix:\n'
+                   '{\n  "ratings": {\n    "H1": {"E1": "+"}\n  }\n}\nDone.')
+        assert handler._parse_ratings(content) == {"H1": {"E1": "+"}}
+
+    def test_fenced_non_mapping_ratings_yield_nothing(self):
+        handler = EvaluateMatrixHandler()
+        content = '```json\n{"ratings": "H1 wins on E1"}\n```'
+        assert handler._parse_ratings(content) == {}
+
 
 class TestSubquestionAttribution:
     """Analyses must be attributed by header number, not position."""

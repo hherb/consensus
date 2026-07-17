@@ -390,6 +390,16 @@ class TestExtractScores:
         content = 'My scores: {"scores": {"O1": {"C1": 4, "C2": 2}}} done.'
         assert extract_scores(content) == {"O1": {"C1": 4, "C2": 2}}
 
+    def test_inline_pretty_printed_json(self):
+        content = ('My scores follow.\n'
+                   '{\n  "scores": {\n    "O1": {"C1": 4}\n  }\n}\nDone.')
+        assert extract_scores(content) == {"O1": {"C1": 4}}
+
+    def test_inline_reordered_keys(self):
+        content = ('{"reasoning": "cost dominates", '
+                   '"scores": {"O1": {"C1": 5}}}')
+        assert extract_scores(content) == {"O1": {"C1": 5}}
+
     def test_prose_yields_nothing(self):
         assert extract_scores("I prefer option one overall.") == {}
 

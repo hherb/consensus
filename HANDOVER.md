@@ -1,8 +1,9 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-16 (real-pipeline method-flow E2E tests for NGT /
-MCDA / Double Crux / ToT merged via PR #52 — closes this file's testing gap.
-All tracked issues closed. Main at 2376 tests.)._
+_Last updated: 2026-07-17 (alpha distribution merged via PR #53 — PyPI
+package `consensus-app` + signed macOS DMG build pipeline; shared-helper
+dedup batch via PR #54 closes this file's dedup list. All tracked issues
+closed. Main at 2406 tests.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -30,8 +31,10 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Participating moderator counted as estimator | #48 | #49 |
 | `coerce_str` payload-coercion hardening | — (tech debt) | #50 |
 | Method-flow E2E tests (NGT/MCDA/DC/ToT) | — (testing gap) | #52 |
+| Alpha distribution (PyPI `consensus-app` + macOS DMG) | — | #53 |
+| Shared-helper dedup batch (scanner delegation, give-up mixin, test split) | — (tech debt) | #54 |
 
-Main is at **2376 tests passing**. Every tracked issue is merged and closed;
+Main is at **2406 tests passing**. Every tracked issue is merged and closed;
 there are no open issues or PRs.
 
 **#28 evidence-tracked phases** merged (PR #45) —
@@ -53,10 +56,11 @@ opting in Adversarial Collab `gather_evidence` and ACH `present_evidence`
 rejected for now); a richer source-picker UI beyond the marker inserter;
 knowledge-graph grounding (no KG participant tool exists yet); and the
 **live browser click-through of the Attach-evidence button** (verified
-statically only — no JS test harness in this project). Minor cleanups logged
-in `.superpowers/sdd/progress.md`: a `DOCUMENT_TOOL_NAMES` constant to dedup
-the document-tool name set in `evidence.py`, and `tests/test_crux_helpers.py`
-crossing the ~500-line guideline (507).
+statically only — no JS test harness in this project). The two minor
+cleanups once logged in `.superpowers/sdd/progress.md` are done:
+`DOCUMENT_TOOL_NAMES` shipped with the PR #45 review follow-ups, and
+`test_crux_helpers.py` was split (artifact/formatting layer →
+`test_crux_artifact.py`) in PR #54.
 
 **#42 order-independent contribution merging** lives in
 `consensus/methods/parsing.py` (`word_overlap_ratio`, `cluster_by_similarity`,
@@ -80,6 +84,25 @@ Suite after #29: **2355 passing**. Deferred: family-level model grouping
 (exact-model only), and proposal item 3 (a "diversify" auto-suggest helper).
 
 ## Open work
+
+### Alpha distribution — pending release gate (PR #53)
+
+- **First DMG release is gated on notarization** (owner deferred 2026-07-17):
+  one-time `xcrun notarytool store-credentials consensus-notary --apple-id …
+  --team-id X5DWXB4283` (app-specific password from account.apple.com), then
+  a full `scripts/build_macos_dmg.sh` run (no `--skip-notarize`), then an
+  in-app `execute_python` acceptance test on the notarized app — the only
+  runtime path never exercised end-to-end.
+- Key facts: PyPI distribution name is **consensus-app** (import/CLI stay
+  `consensus`); release via `scripts/release_pypi.sh` (`--build-only`,
+  `--test` for TestPyPI, needs `UV_PUBLISH_TOKEN`); versioning is plain
+  PEP 440 (`1.99.x`) — never pre-release tags (they'd force
+  `--prerelease=allow` on testers). Spec/plan:
+  `docs/superpowers/{specs,plans}/2026-07-16-alpha-distribution*.md`.
+- Accepted follow-ups (no issue filed): `consensus/evaluation/runner.py`
+  default results dir lands in site-packages for wheel installs;
+  `packaging/macos/make_icns.sh` regeneration needs Pillow on system
+  python3; icon bubbles blur at 16–32 px.
 
 ### Cross-cutting quality
 
@@ -120,32 +143,25 @@ Suite after #29: **2355 passing**. Deferred: family-level model grouping
   the AI path (structured tool enforces weights); a UI hint for humans would
   close the gap.
 
-### Shared-helper dedup (low priority)
+### Shared-helper dedup — closed 2026-07-17 (PR #54)
 
-- **Balanced-brace inline-JSON scanner has one shared home
-  (`methods/parsing.extract_json_payload`) but two older copies remain:**
-  `_mcda_helpers.extract_scores` and `evaluate_matrix._parse_ratings`. Both
-  should delegate (minor deltas: they return `{}` not `None`, dict-only). The
-  shared scanner still miscounts braces inside JSON strings — accepted,
+All three items are done; the shared homes to keep using are:
+
+- **Inline-JSON scanning:** `methods/parsing.extract_json_payload` is the
+  only balanced-brace scanner. `_mcda_helpers.extract_scores` and
+  `evaluate_matrix._parse_ratings` delegate to it (dict-only, `{}` on
+  failure — a fenced non-mapping value no longer leaks through). The
+  scanner still miscounts braces inside JSON strings — accepted,
   documented in one place.
-- **`record_thoughts`/`record_ideas` now both delegate to
-  `parsing.cluster_text_contributions`** for the merge/cluster step, so only
-  their give-up/validation blocks remain near-duplicated
-  (`validate_thoughts_payload` vs `validate_ideas_payload`, and the ToT
-  propose give-up block still mirrors `generate_ideas.py`). `record_criteria`
-  inlines the same clustering skeleton rather than delegating, since it also
-  aggregates `weight_votes` per cluster. A shared parametrised helper for the
-  give-up/validation shape would keep those fixes in sync.
-- ~~Structured payload validators share a fragile string-coercion pattern~~
-  **(fixed 2026-07-16).** The 23 `str(payload.get(x, "")).strip()` sites turned
-  a JSON `null` into the literal string `"None"`; they now delegate to
-  `parsing.coerce_str(payload, key)` (public, since it is imported across 15
-  phase modules), which treats both `None` and an absent key as the default.
-  The safe `str(payload.get(x) or "")` sites were left untouched. Code review
-  caught one same-class site outside the `payload.get` pattern —
-  `str(v.get("rationale", ""))` on a nested vote item in `vote.py`, unguarded by
-  its validator — now also on `coerce_str` (a `null` rationale rendered as
-  `"None"` in the vote display).
+- **Give-up/validation shape:** `parsing.validate_string_list_payload`
+  backs `validate_ideas_payload` / `validate_thoughts_payload` (messages
+  stay at the call sites); the NGT/ToT generation give-up blocks live once
+  in `phases/_generation_giveup.GenerationGiveUpMixin` (declarative
+  `giveup_*` class attributes — use it for future bounded generation
+  phases); `parsing.cluster_groups` is the clustering skeleton shared by
+  `cluster_text_contributions` and MCDA's `record_criteria`.
+- **Null-safe payload coercion:** `parsing.coerce_str(payload, key)`
+  (fixed 2026-07-16; see PR #50).
 
 ### Testing gap — closed 2026-07-16
 

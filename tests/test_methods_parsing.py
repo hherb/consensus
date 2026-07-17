@@ -6,10 +6,12 @@ import pytest
 from consensus.methods.parsing import (
     canonical_index,
     cluster_by_similarity,
+    cluster_groups,
     cluster_text_contributions,
     coerce_str,
     extract_json_block,
     parse_numbered_list,
+    validate_string_list_payload,
     word_overlap_ratio,
     word_overlap_similar,
 )
@@ -248,3 +250,61 @@ class TestCoerceStr:
 
     def test_present_value_ignores_default(self):
         assert coerce_str({"unit": "kg"}, "unit", default="ea") == "kg"
+
+
+class TestClusterGroups:
+    def test_groups_indices_with_medoid(self):
+        raw = [
+            {"name": "total cost of ownership money"},
+            {"name": "time to market speed launch"},
+            {"name": "total cost of ownership"},
+        ]
+        groups = cluster_groups(raw, text_key="name")
+        assert [members for members, _ in groups] == [[0, 2], [1]]
+        # Medoid tie between 0 and 2 breaks toward the longest text.
+        assert [canon for _, canon in groups] == [0, 1]
+
+    def test_empty_raw_yields_no_groups(self):
+        assert cluster_groups([], text_key="name") == []
+
+
+class TestValidateStringListPayload:
+    ERRORS = dict(
+        empty_error="'items' must be a non-empty array of item strings.",
+        item_error=("Each item must be at least {min_length} characters "
+                    "(got: {item!r})."),
+        reasoning_error="'reasoning' must contain your rationale.",
+    )
+
+    def _validate(self, payload: dict) -> str:
+        return validate_string_list_payload(
+            payload, key="items", min_length=10, **self.ERRORS)
+
+    def test_valid_payload_passes(self):
+        assert self._validate({"items": ["a genuinely long item"],
+                               "reasoning": "because"}) == ""
+
+    def test_missing_list_fails(self):
+        assert self._validate({"reasoning": "r"}) == self.ERRORS["empty_error"]
+
+    def test_empty_list_fails(self):
+        assert self._validate({"items": [],
+                               "reasoning": "r"}) == self.ERRORS["empty_error"]
+
+    def test_non_string_item_reports_repr(self):
+        error = self._validate({"items": [123], "reasoning": "r"})
+        assert error == "Each item must be at least 10 characters (got: 123)."
+
+    def test_short_item_reports_repr(self):
+        error = self._validate({"items": ["too short"], "reasoning": "r"})
+        assert "(got: 'too short')" in error
+
+    def test_blank_reasoning_fails(self):
+        assert self._validate(
+            {"items": ["a genuinely long item"],
+             "reasoning": "  "}) == self.ERRORS["reasoning_error"]
+
+    def test_null_reasoning_fails(self):
+        assert self._validate(
+            {"items": ["a genuinely long item"],
+             "reasoning": None}) == self.ERRORS["reasoning_error"]

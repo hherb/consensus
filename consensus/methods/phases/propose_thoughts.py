@@ -14,10 +14,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from ..base import LINEAR_NEXT, OutputToolSpec, Phase, ProcessedResponse
+from ..base import OutputToolSpec, Phase, ProcessedResponse
 from ..parsing import parse_numbered_list
 from ..phase_handler import PhaseHandler
 from ._delphi_helpers import anonymise_content
+from ._generation_giveup import GenerationGiveUpMixin
 from ._tot_helpers import (
     MAX_PROPOSE_ROUNDS,
     MIN_THOUGHT_LENGTH,
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ProposeThoughtsHandler(PhaseHandler):
+class ProposeThoughtsHandler(GenerationGiveUpMixin, PhaseHandler):
     """Phase 1: Anonymised independent generation of solution approaches."""
 
     phase = Phase(
@@ -46,6 +47,16 @@ class ProposeThoughtsHandler(PhaseHandler):
         ),
         rounds=1,
     )
+
+    # Give-up containment (shared GenerationGiveUpMixin shape).
+    giveup_state_key = "thoughts"
+    giveup_max_rounds = MAX_PROPOSE_ROUNDS
+    giveup_generation_label = "Approach generation"
+    giveup_collected_noun = "thought"
+    giveup_method_short = "Tree of Thoughts"
+    giveup_method_title = "Tree of Thoughts"
+    giveup_usable_noun = "approaches"
+    giveup_skipped_phases = "the scoring, pruning, and expansion phases"
 
     # ------------------------------------------------------------------
     # State
@@ -157,49 +168,5 @@ class ProposeThoughtsHandler(PhaseHandler):
         display = f"{reasoning}\n\n{numbered}" if numbered else reasoning
         return ProcessedResponse(display_content=display)
 
-    # ------------------------------------------------------------------
-    # Phase advancement
-    # ------------------------------------------------------------------
-
-    def should_advance(self, discussion: Discussion) -> bool:
-        state = discussion.method_state
-        phase_round = state.get("phase_round", 1)
-        if phase_round > MAX_PROPOSE_ROUNDS:
-            logger.warning(
-                "Approach generation reached round %d; advancing with %d "
-                "thought(s) collected.",
-                phase_round, len(state.get("thoughts", [])),
-            )
-            return True
-        return bool(state.get("thoughts")) and phase_round > 1
-
-    def _gave_up(self, discussion: Discussion) -> bool:
-        """True if generation exhausted its rounds without any thoughts."""
-        state = discussion.method_state
-        return (not state.get("thoughts")
-                and state.get("phase_round", 1) > MAX_PROPOSE_ROUNDS)
-
-    def next_phase(self, discussion: Discussion) -> str | None:
-        """Abort the method when generation produced nothing.
-
-        Without candidate thoughts the remaining phases (score/prune/
-        expand/synthesise) are degenerate — they would rank and deepen
-        an empty list and burn API spend producing nothing usable.
-        """
-        if self._gave_up(discussion):
-            logger.warning(
-                "Approach generation produced no thoughts — ending the "
-                "Tree of Thoughts method early")
-            return None
-        return LINEAR_NEXT
-
-    def get_method_complete_message(self, discussion: Discussion) -> str:
-        if not self._gave_up(discussion):
-            return ""
-        return (
-            "⚠️ **Tree of Thoughts ended early.** The generation phase "
-            f"collected no usable approaches after {MAX_PROPOSE_ROUNDS} "
-            "rounds, so the scoring, pruning, and expansion phases were "
-            "skipped.  Consider rephrasing the topic as an open 'How "
-            "might we…' question and starting a new discussion."
-        )
+    # Phase advancement, give-up, and early-method-end messaging are
+    # inherited from GenerationGiveUpMixin (parametrised above).

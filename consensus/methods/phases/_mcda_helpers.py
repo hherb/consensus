@@ -8,16 +8,14 @@ analysis and formatting layer lives in ``_mcda_analysis.py``.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import TYPE_CHECKING
 
 from ..parsing import (
-    canonical_index,
-    cluster_by_similarity,
+    cluster_groups,
     cluster_text_contributions,
-    extract_json_block,
+    extract_json_payload,
     parse_numbered_list,
 )
 
@@ -285,15 +283,11 @@ def record_criteria(state: dict, entity: Entity,
         weight = min(max(weight, WEIGHT_MIN), WEIGHT_MAX)
         raw.append({"entity_id": entity.id, "entity_name": entity.name,
                     "name": name, "weight": weight})
-    groups = cluster_by_similarity(
-        list(range(len(raw))),
-        text_of=lambda i: raw[i]["name"],
-        threshold=SIMILARITY_THRESHOLD)
     view: list[dict] = []
     touched: list[dict] = []
-    for cid, group in enumerate(groups, 1):
-        canon = group[canonical_index(
-            group, text_of=lambda i: raw[i]["name"])]
+    for cid, (group, canon) in enumerate(
+            cluster_groups(raw, text_key="name",
+                           threshold=SIMILARITY_THRESHOLD), 1):
         votes: dict[str, int] = {}
         for i in group:  # ascending raw index -> last write wins per entity
             votes[str(raw[i]["entity_id"])] = raw[i]["weight"]
@@ -420,31 +414,13 @@ def record_scores(state: dict, entity: Entity, scores: dict) -> int:
 def extract_scores(content: str) -> dict:
     """Parse a scores mapping from free text (human/fallback path).
 
-    Tries a fenced JSON block with a ``scores`` object first, then an
-    inline (unfenced) JSON object — scanned to its balanced closing
-    brace, since a lazy regex would truncate at the first inner brace
-    (the ``evaluate_matrix._parse_ratings`` pattern).
+    Delegates to the shared fenced + inline balanced-brace scanner
+    (``parsing.extract_json_payload``); differs only in its return
+    contract — always a dict, ``{}`` when nothing usable was found
+    (a non-mapping ``scores`` value included).
     """
-    data = extract_json_block(content)
-    if isinstance(data, dict) and isinstance(data.get("scores"), dict):
-        return data["scores"]
-    start = content.find('{"scores"')
-    if start != -1:
-        depth = 0
-        for pos in range(start, len(content)):
-            if content[pos] == "{":
-                depth += 1
-            elif content[pos] == "}":
-                depth -= 1
-                if depth == 0:
-                    try:
-                        data = json.loads(content[start:pos + 1])
-                        scores = data.get("scores", {})
-                        return scores if isinstance(scores, dict) else {}
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-                    break
-    return {}
+    data = extract_json_payload(content, "scores")
+    return data if isinstance(data, dict) else {}
 
 
 def validate_decision_payload(payload: dict, valid_ids: set[int]) -> str:

@@ -9,13 +9,11 @@ the discussion's method state.
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import TYPE_CHECKING
 
 from ..base import OutputToolSpec, Phase, ProcessedResponse
-from ..parsing import coerce_str, extract_json_block
+from ..parsing import coerce_str, extract_json_payload
 from ..phase_handler import PhaseHandler
 
 if TYPE_CHECKING:
@@ -315,32 +313,15 @@ class EvaluateMatrixHandler(PhaseHandler):
     # ------------------------------------------------------------------
 
     def _parse_ratings(self, content: str) -> dict[str, dict[str, str]]:
-        """Extract the rating matrix JSON from content."""
-        # Try ```json block via shared utility
-        data = extract_json_block(content)
-        if isinstance(data, dict) and "ratings" in data:
-            return data["ratings"]
+        """Extract the rating matrix JSON from content.
 
-        # Fallback: inline (unfenced) JSON.  The ratings object nests one
-        # dict per evidence item, so a lazy regex would truncate at the
-        # first inner brace — scan for the balanced closing brace instead.
-        start = content.find('{"ratings"')
-        if start != -1:
-            depth = 0
-            for pos in range(start, len(content)):
-                if content[pos] == "{":
-                    depth += 1
-                elif content[pos] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        try:
-                            data = json.loads(content[start:pos + 1])
-                            return data.get("ratings", {})
-                        except (json.JSONDecodeError, ValueError):
-                            pass
-                        break
-
-        return {}
+        Delegates to the shared fenced + inline balanced-brace scanner
+        (``parsing.extract_json_payload``); differs only in its return
+        contract — always a dict, ``{}`` when nothing usable was found
+        (a non-mapping ``ratings`` value included).
+        """
+        data = extract_json_payload(content, "ratings")
+        return data if isinstance(data, dict) else {}
 
     def _format_rating_matrix(self, ratings: dict,
                               discussion: Discussion) -> str:

@@ -50,6 +50,10 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | **Public Service** | | |
 | ✅ Done | Security hardening | `server.py`: rate limiting, security headers, CORS, CSRF, path traversal protection, auth middleware; `session.py`: per-session isolated app + SQLite with TTL expiry (`--multi-user`) |
 | ⬜ Planned | Free hosted instance | Public deployment once hosting costs are resolved |
+| **Distribution** | | |
+| ✅ Done | PyPI package | Published as `consensus-app` (import/CLI stay `consensus`); full feature set installs by default, old extras are empty backward-compat aliases; `scripts/release_pypi.sh` (build → wheel-content verification → publish, `--test`/`--build-only` modes); `evaluation/` moved to `consensus/evaluation/` so the wheel doesn't squat a generic top-level name |
+| ✅ Done | macOS app + signed DMG pipeline | PyInstaller two-EXE bundle (`Consensus` GUI + `consensus-worker` so sandboxed `execute_python` works frozen; `consensus/frozen.py` routes worker launch); inside-out codesign with hardened runtime + entitlements; `scripts/build_macos_dmg.sh` (`--skip-notarize` for local builds); committed app icon; `docs/alpha_testing.md` tester guide |
+| ⬜ Planned | First notarized DMG release | One-time `notarytool store-credentials`, full notarized+stapled build, then in-app `execute_python` acceptance test on the notarized app (only runtime path never exercised end-to-end) |
 | **Evaluation & Benchmarking** | | |
 | ✅ Done | Evaluation framework | Ablation study platform with 10 medical cases, 5 conditions, batch runner, string-match + LLM-judge scoring, per-participant provider/model overrides, web UI at `/eval/` |
 | ✅ Done | Max rounds limit | Discussions auto-conclude after N rounds (configurable, 0 = unlimited) |
@@ -59,7 +63,7 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ✅ Done | Same-model panel warning | Delphi / Belief State Diffusion assume *independent* estimators; when one model covers more than half the AI estimator panel the app shows a non-blocking warning (inline at setup + toast at start) and discloses the panel's model composition in the conclusion prompt so convergence claims can be caveated. Pure `consensus/methods/panel_diversity.py` + declarative `DiscussionMethod.assumes_independent_panel` flag (#29). A participating same-model moderator is counted as an estimator, keyed on `base_turn_order` (#48). Exact-model grouping; family-level grouping and a "diversify" auto-suggest helper deferred |
 | **Code Quality & Maintainability** | | |
 | ✅ Done | Database migration system | File-based SQL migrations in `consensus/migrations/`, tracked in `migrations` table, run idempotently on startup (`migrator.py`) |
-| ✅ Done | Comprehensive test suite | 2376 tests across 25+ modules covering database, app, config, models, moderator, sessions, tools, documents, MCP client/server, pricing, methods, composable phase handlers, structured outputs, evidence tracking, panel diversity, and real-pipeline method-flow E2E runs |
+| ✅ Done | Comprehensive test suite | 2406 tests across 25+ modules covering database, app, config, models, moderator, sessions, tools, documents, MCP client/server, pricing, methods, composable phase handlers, structured outputs, evidence tracking, panel diversity, real-pipeline method-flow E2E runs, and frozen-app packaging |
 | ✅ Done | Refactor large modules | `ConsensusApp` split into `app_providers.py`, `app_entities.py`, `app_discussion_setup.py`, `app_discussion_flow.py`, `app_discussion_state.py`; `Database` split into `db/` subpackage with 9 domain-specific mixins; `app.js` refactored into ES modules |
 | **Specialist Plugins** | | |
 | ✅ Done | MCP client (stdio transport) | MCPToolProvider class connecting to external MCP servers via stdio; expert entities that get one turn when invoked then step back |
