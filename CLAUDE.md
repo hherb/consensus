@@ -11,11 +11,10 @@ Consensus is a moderated discussion platform enabling structured multi-party dia
 **This project uses `uv` for all Python package installation and environment management. Never use `pip` directly.**
 
 ```bash
-# Install
-uv pip install -e .              # base (httpx only)
-uv pip install -e ".[desktop]"   # + pywebview
-uv pip install -e ".[web]"       # + aiohttp
-uv pip install -e ".[all]"       # everything
+# Install (all features are default dependencies; old extras are empty aliases)
+uv pip install -e .
+# PyPI distribution name is `consensus-app` (import/CLI stay `consensus`):
+#   uv tool install consensus-app
 
 # Run
 python -m consensus            # desktop mode (default)
@@ -27,7 +26,7 @@ python -m consensus --web --port 8080 --debug
 consensus                      # via pyproject.toml [project.scripts]
 ```
 
-2250 tests in `tests/`. No linter or build system configured yet.
+2381 tests in `tests/`. No linter or build system configured yet.
 
 ## Architecture
 

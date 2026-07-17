@@ -31,7 +31,7 @@ This manual walks you through everything you need to get started and make the mo
 
 ```bash
 # Install as a CLI tool (makes the `consensus` command available)
-uv tool install ".[all]"
+uv tool install consensus-app
 
 # Launch in desktop mode
 consensus

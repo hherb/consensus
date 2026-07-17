@@ -25,6 +25,7 @@ import tempfile
 import uuid
 from typing import Optional
 
+from .frozen import is_frozen, worker_command
 from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -253,9 +254,8 @@ async def execute_python_handler(
             is_error=True,
         )
 
-    # Prepare subprocess command
-    python_exe = sys.executable
-    worker_args = ["-m", "consensus.sandbox_worker"]
+    # Prepare subprocess command (frozen app bundles a dedicated worker binary)
+    python_exe, worker_args = worker_command()
 
     # Compute wall-clock timeout that scales with the dynamic CPU limit
     wall_timeout = _compute_wall_timeout()
@@ -463,6 +463,17 @@ async def _install_package_handler(
     Returns:
         ToolResult indicating success or failure of installation.
     """
+    if is_frozen():
+        return ToolResult(
+            content=(
+                "Package installation is not available in the bundled "
+                "desktop app. Install Consensus from PyPI instead "
+                "(`uv tool install consensus-app`) to use this feature."
+            ),
+            is_error=True,
+            metadata={"status": "unavailable_frozen"},
+        )
+
     package_name = arguments.get("package_name", "").strip()
     reason = arguments.get("reason", "").strip()
 

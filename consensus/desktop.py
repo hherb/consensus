@@ -530,8 +530,8 @@ class DesktopBridge:
     async def _open_evaluation_async(self) -> dict:
         if not hasattr(self, '_eval_server_url'):
             try:
-                from evaluation.eval_db import EvalDatabase
-                from evaluation.eval_routes import register_eval_routes
+                from .evaluation.eval_db import EvalDatabase
+                from .evaluation.eval_routes import register_eval_routes
                 from aiohttp import web
 
                 eval_db = EvalDatabase()

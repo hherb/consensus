@@ -515,9 +515,9 @@ class EvalDatabase:
         if count > 0:
             return
         try:
-            from evaluation.cases import CASES
+            from consensus.evaluation.cases import CASES
         except ImportError:
-            logger.debug("Could not import evaluation.cases for seeding")
+            logger.debug("Could not import consensus.evaluation.cases for seeding")
             return
 
         now = time.time()
@@ -558,9 +558,9 @@ class EvalDatabase:
         if count > 0:
             return
         try:
-            from evaluation.conditions import CONDITIONS
+            from consensus.evaluation.conditions import CONDITIONS
         except ImportError:
-            logger.debug("Could not import evaluation.conditions for seeding")
+            logger.debug("Could not import consensus.evaluation.conditions for seeding")
             return
 
         now = time.time()

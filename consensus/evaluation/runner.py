@@ -1,7 +1,7 @@
 """Evaluation runner — executes case vignettes under each condition.
 
 Usage:
-    python -m evaluation.runner [OPTIONS]
+    python -m consensus.evaluation.runner [OPTIONS]
 
 Options:
     --cases CASE_IDS        Comma-separated case IDs (default: all)
@@ -26,13 +26,13 @@ from dataclasses import asdict
 from pathlib import Path
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from consensus.app import ConsensusApp
 from consensus.models import EntityType
 
-from evaluation.cases import CASES, CaseVignette
-from evaluation.conditions import CONDITIONS, Condition
+from consensus.evaluation.cases import CASES, CaseVignette
+from consensus.evaluation.conditions import CONDITIONS, Condition
 
 logger = logging.getLogger(__name__)
 
@@ -301,7 +301,7 @@ async def run_case_condition_db(
     ConsensusApp, runs the discussion, and writes messages/conclusion
     back to the eval DB.
     """
-    from evaluation.eval_db import EvalDatabase
+    from consensus.evaluation.eval_db import EvalDatabase
 
     run = eval_db.get_run(run_id)
     if not run:
@@ -664,7 +664,7 @@ def main():
     print(f"  Successful: {len(results) - len(errors)}")
     total_tokens = sum(r.total_tokens for r in results)
     print(f"  Total tokens: {total_tokens:,}")
-    print(f"\nRun scoring with: python -m evaluation.scorer --input <results_dir>")
+    print(f"\nRun scoring with: python -m consensus.evaluation.scorer --input <results_dir>")
 
 
 if __name__ == "__main__":

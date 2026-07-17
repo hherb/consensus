@@ -347,75 +347,35 @@ wheels = [
 ]
 
 [[package]]
-name = "consensus"
+name = "consensus-app"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "httpx" },
+    { name = "numpy" },
+    { name = "pdfplumber" },
+    { name = "pillow" },
+    { name = "pycairo", marker = "sys_platform == 'linux'" },
+    { name = "pygobject", marker = "sys_platform == 'linux'" },
     { name = "python-dotenv" },
-    { name = "trafilatura" },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "aiohttp" },
-    { name = "numpy" },
-    { name = "pdfplumber" },
-    { name = "pillow" },
-    { name = "pycairo", marker = "sys_platform == 'linux'" },
-    { name = "pygobject", marker = "sys_platform == 'linux'" },
     { name = "pywebview" },
     { name = "sqlite-vec" },
     { name = "trafilatura" },
-]
-desktop = [
-    { name = "pycairo", marker = "sys_platform == 'linux'" },
-    { name = "pygobject", marker = "sys_platform == 'linux'" },
-    { name = "pywebview" },
-]
-documents = [
-    { name = "numpy" },
-    { name = "pdfplumber" },
-    { name = "sqlite-vec" },
-]
-images = [
-    { name = "pillow" },
-]
-memory = [
-    { name = "numpy" },
-    { name = "sqlite-vec" },
-]
-tools = [
-    { name = "trafilatura" },
-]
-web = [
-    { name = "aiohttp" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", marker = "extra == 'all'", specifier = ">=3.14.1" },
-    { name = "aiohttp", marker = "extra == 'web'", specifier = ">=3.14.1" },
+    { name = "aiohttp", specifier = ">=3.14.1" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "numpy", marker = "extra == 'all'", specifier = ">=1.26" },
-    { name = "numpy", marker = "extra == 'documents'", specifier = ">=1.26" },
-    { name = "numpy", marker = "extra == 'memory'", specifier = ">=1.26" },
-    { name = "pdfplumber", marker = "extra == 'all'", specifier = ">=0.10" },
-    { name = "pdfplumber", marker = "extra == 'documents'", specifier = ">=0.10" },
-    { name = "pillow", marker = "extra == 'all'", specifier = ">=12.2.0" },
-    { name = "pillow", marker = "extra == 'images'", specifier = ">=12.2.0" },
-    { name = "pycairo", marker = "sys_platform == 'linux' and extra == 'all'", specifier = ">=1.24" },
-    { name = "pycairo", marker = "sys_platform == 'linux' and extra == 'desktop'", specifier = ">=1.24" },
-    { name = "pygobject", marker = "sys_platform == 'linux' and extra == 'all'", specifier = ">=3.42" },
-    { name = "pygobject", marker = "sys_platform == 'linux' and extra == 'desktop'", specifier = ">=3.42" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pdfplumber", specifier = ">=0.10" },
+    { name = "pillow", specifier = ">=12.2.0" },
+    { name = "pycairo", marker = "sys_platform == 'linux'", specifier = ">=1.24" },
+    { name = "pygobject", marker = "sys_platform == 'linux'", specifier = ">=3.42" },
     { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "pywebview", marker = "extra == 'all'", specifier = ">=5.0" },
-    { name = "pywebview", marker = "extra == 'desktop'", specifier = ">=5.0" },
-    { name = "sqlite-vec", marker = "extra == 'all'", specifier = ">=0.1.0" },
-    { name = "sqlite-vec", marker = "extra == 'documents'", specifier = ">=0.1.0" },
-    { name = "sqlite-vec", marker = "extra == 'memory'", specifier = ">=0.1.0" },
+    { name = "pywebview", specifier = ">=5.0" },
+    { name = "sqlite-vec", specifier = ">=0.1.0" },
     { name = "trafilatura", specifier = ">=2.0.0" },
-    { name = "trafilatura", marker = "extra == 'all'", specifier = ">=1.6" },
-    { name = "trafilatura", marker = "extra == 'tools'", specifier = ">=1.6" },
 ]
 provides-extras = ["desktop", "web", "tools", "memory", "documents", "images", "all"]
 

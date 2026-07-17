@@ -1,10 +1,10 @@
-"""Entry point for: python -m evaluation
+"""Entry point for: python -m consensus.evaluation
 
 Dispatches to runner or scorer based on subcommand.
 Usage:
-    python -m evaluation run [OPTIONS]     # Run evaluation
-    python -m evaluation score [OPTIONS]   # Score results
-    python -m evaluation list              # List cases and conditions
+    python -m consensus.evaluation run [OPTIONS]     # Run evaluation
+    python -m consensus.evaluation score [OPTIONS]   # Score results
+    python -m consensus.evaluation list              # List cases and conditions
 """
 
 import sys
@@ -14,8 +14,8 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print(__doc__)
         print("Subcommands:")
-        print("  run    — Run evaluation (see: python -m evaluation run --help)")
-        print("  score  — Score results (see: python -m evaluation score --help)")
+        print("  run    — Run evaluation (see: python -m consensus.evaluation run --help)")
+        print("  score  — Score results (see: python -m consensus.evaluation score --help)")
         print("  list   — List available cases and conditions")
         sys.exit(0)
 
@@ -23,14 +23,14 @@ def main():
     sys.argv = [sys.argv[0]] + sys.argv[2:]  # strip subcommand
 
     if subcmd == "run":
-        from evaluation.runner import main as run_main
+        from consensus.evaluation.runner import main as run_main
         run_main()
     elif subcmd == "score":
-        from evaluation.scorer import main as score_main
+        from consensus.evaluation.scorer import main as score_main
         score_main()
     elif subcmd == "list":
-        from evaluation.cases import CASES
-        from evaluation.conditions import CONDITIONS
+        from consensus.evaluation.cases import CASES
+        from consensus.evaluation.conditions import CONDITIONS
 
         print("\nCases:")
         for c in CASES:

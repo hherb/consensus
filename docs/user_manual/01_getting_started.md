@@ -2,36 +2,37 @@
 
 ## Requirements
 
-- Python 3.10 or later
+- Python 3.11 or later
 - [uv](https://docs.astral.sh/uv/) package manager (recommended over pip)
 - At least one AI provider API key (OpenAI, Anthropic, a local Ollama instance, or any OpenAI-compatible endpoint)
 
 ## Installation
 
-Consensus offers several installation extras depending on how you plan to use it.
+All features (desktop, web, documents, memory, images) are installed by
+default — there are no extras to choose between.
 
 ### As a CLI tool (recommended for users)
 
 ```bash
-# Install with all extras — makes the `consensus` command available globally
-uv tool install ".[all]"
-```
+# Install from PyPI — makes the `consensus` command available globally
+uv tool install consensus-app
 
-You can also install with only the extras you need:
-
-```bash
-uv tool install ".[desktop]"   # desktop mode only
-uv tool install ".[web]"       # web server mode only
+# Or with pip
+pip install consensus-app
 ```
 
 ### For development
 
 ```bash
-# Editable install into the current virtual environment
-uv pip install -e ".[all]"
+git clone https://github.com/hherb/consensus.git
+cd consensus
+uv tool install -e .          # editable global command
+# or: uv pip install -e .     # editable, into the active venv
 ```
 
-> **Note:** Always use `uv`, not plain `pip`. The project is configured for uv-based dependency management.
+> **Note:** Always prefer `uv` over plain `pip` for development installs.
+> The old extras (`[all]`, `[desktop]`, `[web]`, …) still parse but are now
+> empty aliases — plain installs already include everything.
 
 ## Launch Modes
 

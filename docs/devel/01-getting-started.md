@@ -38,18 +38,15 @@ through the same `ConsensusApp` orchestrator class.
 git clone https://github.com/hherb/consensus.git
 cd consensus
 
-# Editable install with all optional dependencies (recommended)
-uv pip install -e ".[all]"
-
-# Or pick just the mode you need:
-uv pip install -e ".[desktop]"   # pywebview only
-uv pip install -e ".[web]"       # aiohttp only
-uv pip install -e "."            # base (httpx only, no UI server)
+# Editable install — all features are included by default
+uv pip install -e .
+# or: uv tool install -e .     # editable global command
 ```
 
-The base install pulls in only `httpx` and `python-dotenv`. The `desktop`
-extra adds `pywebview>=5.0`; the `web` extra adds `aiohttp>=3.9`; `all`
-includes both.
+All features (desktop, web, documents, memory, images) are installed by
+default — `pywebview`, `aiohttp`, and the rest are all regular dependencies
+now. The old extras (`[all]`, `[desktop]`, `[web]`, …) still parse but are
+empty aliases kept only for backward compatibility.
 
 ### Running
 

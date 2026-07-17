@@ -224,3 +224,10 @@ docs/drafts/
 .codelibrarian/config.toml
 .codelibrarian/index.db-shm
 .codelibrarian/index.db-wal
+
+# macOS icon build intermediates
+packaging/macos/Consensus.iconset/
+packaging/macos/icon_1024.png
+
+# PyInstaller build venv
+.build-venv/
