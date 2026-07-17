@@ -100,6 +100,43 @@ def find_tool_blocked_entities(
     return blocked
 
 
+def _format_tool_block_error(
+    blocked: list[dict], method: "DiscussionMethod",
+) -> str:
+    """Format the tool-capability rejection message for ``blocked``.
+
+    Pure helper shared by the setup-time gate
+    (``_validate_structured_output_support``) and the runtime gate
+    (``switch_discussion_method``), so a single offender scan feeds both
+    the human-readable error and the structured ``blocked_entities``
+    list without recomputing (golden rule 1).
+
+    Args:
+        blocked: Non-empty offender list as produced by
+            ``find_tool_blocked_entities`` (each ``{"entity_id",
+            "name", "model"}``).
+        method: The target method whose display name is named.
+
+    Returns the error message naming every offender.
+    """
+    if len(blocked) == 1:
+        offender = blocked[0]
+        models_clause = (
+            f"{offender['name']}'s model '{offender['model']}' does "
+            "not support tool calls"
+        )
+    else:
+        listing = "; ".join(
+            f"{b['name']}'s model '{b['model']}'" for b in blocked
+        )
+        models_clause = f"these models do not support tool calls: {listing}"
+    return (
+        f"The {method.display_name} method requires structured "
+        f"outputs via native tool calling, but {models_clause}. "
+        "Assign tool-capable models or choose a different method."
+    )
+
+
 def _validate_structured_output_support(
     discussion: "Discussion", db: "Database",
     method_name: Optional[str] = None,
@@ -147,23 +184,7 @@ def _validate_structured_output_support(
         method_name if method_name is not None
         else discussion.discussion_method
     )
-    method = get_method(target)
-    if len(blocked) == 1:
-        offender = blocked[0]
-        models_clause = (
-            f"{offender['name']}'s model '{offender['model']}' does "
-            "not support tool calls"
-        )
-    else:
-        listing = "; ".join(
-            f"{b['name']}'s model '{b['model']}'" for b in blocked
-        )
-        models_clause = f"these models do not support tool calls: {listing}"
-    return (
-        f"The {method.display_name} method requires structured "
-        f"outputs via native tool calling, but {models_clause}. "
-        "Assign tool-capable models or choose a different method."
-    )
+    return _format_tool_block_error(blocked, get_method(target))
 
 
 def _is_tool_support_error(body: str) -> bool:

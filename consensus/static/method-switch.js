@@ -80,6 +80,10 @@ export async function showSwitchBlockedDialog(data) {
         </div>
     `).join('');
     show('#switch-blocked-dialog');
+    // Count the rows the user can actually fix here (an active profile
+    // exists to reassign). Deactivated profiles render an explanatory
+    // note but contribute nothing to retry.
+    let fixableCount = 0;
     for (const b of currentBlocked) {
         const row = (state.saved_entities || []).find(e => e.id === b.entity_id);
         if (!row) {
@@ -95,24 +99,27 @@ export async function showSwitchBlockedDialog(data) {
             }
             continue;
         }
+        fixableCount += 1;
         await loadModels(
             row,
             $(`#switch-model-select-${b.entity_id}`),
             $(`#switch-model-custom-${b.entity_id}`),
         );
     }
-    // No blocked entities (e.g. an "Unknown method" error) means there
-    // is nothing to assign and Retry would just repeat the same
-    // failure — hide the instructions and disable Retry. Runs after
-    // every render, since this is called again on each still-blocked
-    // retry and must re-enable Retry when entities are present.
-    const hasBlocked = currentBlocked.length > 0;
-    if (hasBlocked) {
+    // With no fixable row, Retry would just repeat the same failure —
+    // whether there are no blocked entities at all (e.g. an "Unknown
+    // method" error) or every offender's profile is deactivated. Hide
+    // the "assign a model" instructions and disable Retry; Conclude
+    // remains. Runs after every render, since this is called again on
+    // each still-blocked retry and must re-enable Retry once a fixable
+    // row is present.
+    const hasFixable = fixableCount > 0;
+    if (hasFixable) {
         show('#switch-blocked-instructions');
     } else {
         hide('#switch-blocked-instructions');
     }
-    $('#switch-blocked-retry-btn').disabled = !hasBlocked;
+    $('#switch-blocked-retry-btn').disabled = !hasFixable;
 }
 
 /**

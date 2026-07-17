@@ -14,7 +14,7 @@ from .moderator import Moderator
 from .pricing import PricingCache
 from .app_discussion_state import pause_discussion, resume_discussion
 from .structured_output import (
-    _validate_structured_output_support, find_tool_blocked_entities,
+    _format_tool_block_error, find_tool_blocked_entities,
 )
 
 logger = logging.getLogger(__name__)
@@ -382,16 +382,17 @@ def switch_discussion_method(
     except KeyError:
         return {"error": f"Unknown method: {method_name!r}"}
 
-    # The target method hasn't been assigned to discussion.discussion_method
-    # yet, so it must be passed explicitly (the default falls back to the
-    # discussion's *current* method, which is wrong here).
-    tool_error = _validate_structured_output_support(
+    # Tool-capability gate (issue #23), scanned once: the target method
+    # hasn't been assigned to discussion.discussion_method yet, so it must
+    # be passed explicitly (the default falls back to the discussion's
+    # *current* method, which is wrong here). One scan feeds both the
+    # error message and the structured offender list the recovery UI needs.
+    blocked_entities = find_tool_blocked_entities(
         discussion, db, method_name)
-    if tool_error:
+    if blocked_entities:
         return {
-            "error": tool_error,
-            "blocked_entities": find_tool_blocked_entities(
-                discussion, db, method_name),
+            "error": _format_tool_block_error(blocked_entities, method),
+            "blocked_entities": blocked_entities,
         }
 
     # Budget bookkeeping written by _increase_budgets must survive the
