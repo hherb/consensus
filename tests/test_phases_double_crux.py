@@ -10,6 +10,7 @@ from consensus.methods.phases._crux_helpers import (
     MAX_CRUX_SEARCH_ROUNDS,
     MAX_HUNT_ROUNDS,
     MAX_IDENTIFY_ATTEMPTS,
+    MAX_POLL_ROUNDS,
     VERDICT_FACTUAL,
     VERDICT_NONE,
     VERDICT_VALUES,
@@ -17,6 +18,7 @@ from consensus.methods.phases._crux_helpers import (
 )
 from consensus.methods.phases.hunt_cruxes import HuntCruxesHandler
 from consensus.methods.phases.identify_crux import IdentifyCruxHandler
+from consensus.methods.phases.poll_belief import PollBeliefHandler
 from consensus.methods.phases.resolve_crux import ResolveCruxHandler
 from consensus.methods.phases.test_crux import TestCruxHandler
 from consensus.methods.phases.state_positions import StatePositionsHandler
@@ -39,6 +41,7 @@ def _crux_discussion(phase: str = "hunt_cruxes", **state) -> Discussion:
         "positions": {}, "cruxes": [],
         "crux_verdict": "", "shared_crux": {},
         "identify_attempts": 0, "crux_search_rounds": 1,
+        "poll_beliefs": [],
         "resolutions": [], "crux_map": {},
     }
     disc.method_state.update(state)
@@ -541,3 +544,97 @@ def test_conclusion_prompt_lists_evidence_basis():
     assert "https://a.example" in prompt
     assert "Reasoning-based" in prompt
     assert "Bob" in prompt
+
+
+class TestPollBeliefPrompts:
+    def test_system_prompt_shows_the_claim_and_names_the_tool(self):
+        disc = _factual_discussion(phase="poll_belief")
+        system = PollBeliefHandler().get_system_prompt(_entity(), disc)
+        assert CLAIM_A in system
+        assert "submit_crux_belief" in system
+        assert "probability" in system.lower()
+
+    def test_turn_prompt_names_the_tool(self):
+        disc = _factual_discussion(phase="poll_belief")
+        assert "submit_crux_belief" in PollBeliefHandler().get_turn_prompt(
+            _entity(), disc)
+
+    def test_default_turn_order_is_not_overridden(self):
+        # The poll runs for the full non-moderator roster, like resolve.
+        disc = _factual_discussion(phase="poll_belief")
+        assert PollBeliefHandler().get_turn_order([1, 2], disc) == [1, 2]
+
+
+class TestPollBeliefProcessing:
+    def test_structured_records_and_renders_reasoning_first(self):
+        handler = PollBeliefHandler()
+        disc = _factual_discussion(phase="poll_belief")
+        result = handler.process_structured_response(
+            {"belief": 0.6, "reasoning": "Prior studies lean this way."},
+            _entity(1, "Alice"), disc)
+        assert disc.method_state["poll_beliefs"][0]["belief"] == 0.6
+        assert result.display_content.startswith("Prior studies lean")
+        assert "0.6" in result.display_content
+
+    def test_free_text_json_records_belief(self):
+        handler = PollBeliefHandler()
+        disc = _factual_discussion(phase="poll_belief")
+        content = '```json\n{"belief": 0.3, "reasoning": "sceptical"}\n```'
+        handler.process_response(content, _entity(1, "Alice"), disc)
+        assert disc.method_state["poll_beliefs"][0]["belief"] == 0.3
+
+    def test_free_text_unparseable_records_nothing(self):
+        handler = PollBeliefHandler()
+        disc = _factual_discussion(phase="poll_belief")
+        handler.process_response("Roughly even odds.", _entity(), disc)
+        assert disc.method_state["poll_beliefs"] == []
+
+    def test_validate_output_delegates(self):
+        handler = PollBeliefHandler()
+        disc = _factual_discussion(phase="poll_belief")
+        assert handler.validate_output(
+            {"belief": 0.5, "reasoning": "r"}, _entity(), disc) == ""
+        assert handler.validate_output(
+            {"belief": 2}, _entity(), disc) != ""
+
+
+class TestPollBeliefAdvancement:
+    def test_waits_for_stragglers_when_roster_known(self):
+        handler = PollBeliefHandler()
+        disc = _factual_discussion(phase="poll_belief", phase_round=1)
+        disc.turn_order = [1, 2]
+        handler.process_structured_response(
+            {"belief": 0.7, "reasoning": "r"}, _entity(1, "Alice"), disc)
+        assert handler.should_advance(disc) is False
+
+    def test_advances_once_all_polled(self):
+        handler = PollBeliefHandler()
+        disc = _factual_discussion(phase="poll_belief", phase_round=1)
+        disc.turn_order = [1, 2]
+        for eid, name in ((1, "Alice"), (2, "Bob")):
+            handler.process_structured_response(
+                {"belief": 0.5, "reasoning": "r"}, _entity(eid, name), disc)
+        assert handler.should_advance(disc) is True
+
+    def test_gives_up_after_cap(self):
+        handler = PollBeliefHandler()
+        disc = _factual_discussion(phase="poll_belief",
+                                   phase_round=MAX_POLL_ROUNDS + 1)
+        disc.turn_order = [1, 2]
+        assert handler.should_advance(disc) is True
+
+    def test_next_phase_folds_beliefs_and_continues(self):
+        from consensus.methods.base import LINEAR_NEXT
+        handler = PollBeliefHandler()
+        disc = _factual_discussion(phase="poll_belief")
+        handler.process_structured_response(
+            {"belief": 0.8, "reasoning": "r"}, _entity(1, "Alice"), disc)
+        handler.process_structured_response(
+            {"belief": 0.2, "reasoning": "r"}, _entity(2, "Bob"), disc)
+        assert handler.next_phase(disc) == LINEAR_NEXT
+        assert disc.method_state["shared_crux"]["initial_beliefs"] == {
+            "Alice": 0.8, "Bob": 0.2}
+
+    def test_init_state_seeds_poll_beliefs(self):
+        assert PollBeliefHandler().init_state(_factual_discussion()) == {
+            "poll_beliefs": []}
