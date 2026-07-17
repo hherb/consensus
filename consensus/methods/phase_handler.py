@@ -121,6 +121,17 @@ class PhaseHandler(ABC):
         return ProcessedResponse(
             display_content=json.dumps(payload, indent=2))
 
+    def resolve_input_schema(self, spec: OutputToolSpec, entity: Entity,
+                             discussion: Discussion) -> dict:
+        """Return the JSON schema to render a human input form / pre-check.
+
+        Default: the tool's declared ``parameters`` unchanged.  Handlers
+        whose schema uses runtime-derived keys (e.g. a belief map keyed by
+        hypothesis label) override this to expand ``additionalProperties``
+        into explicit properties so the frontend can enumerate fields.
+        """
+        return spec.parameters
+
     # ------------------------------------------------------------------
     # Phase lifecycle
     # ------------------------------------------------------------------

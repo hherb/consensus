@@ -445,6 +445,15 @@ class DiscussionMethod(ABC):
                 payload, entity, discussion)
         return ProcessedResponse(display_content=json.dumps(payload, indent=2))
 
+    def resolve_input_schema(self, spec: "OutputToolSpec", entity: "Entity",
+                             discussion: "Discussion") -> dict:
+        """Delegate schema resolution to the current phase's handler."""
+        handler = self._handler_for_phase(
+            discussion.method_state.get("current_phase", ""))
+        if handler is not None:
+            return handler.resolve_input_schema(spec, entity, discussion)
+        return spec.parameters
+
     # ------------------------------------------------------------------
     # Round lifecycle hooks
     # ------------------------------------------------------------------
