@@ -892,6 +892,14 @@ class ConsensusApp:
             self._notify()
         return result
 
+    def retry_method_switch(self) -> dict:
+        """Retry a Triage method handoff blocked by the tool gate."""
+        result = app_discussion_flow.retry_method_switch(
+            self.discussion, self.db, self.get_state,
+        )
+        self._notify()
+        return result
+
     def reopen_discussion(self) -> dict:
         """Reopen a concluded discussion."""
         result = app_discussion_state.reopen_discussion(self.discussion, self.db)

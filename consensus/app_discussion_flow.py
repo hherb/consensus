@@ -434,6 +434,100 @@ def switch_discussion_method(
     return method.to_dict()
 
 
+def refresh_ai_configs(discussion: Discussion, db: Database) -> None:
+    """Reload each AI member's profile from the DB onto the live objects.
+
+    Profile edits made while a discussion is loaded (e.g. fixing a
+    non-tool-capable model from the blocked-switch recovery dialog)
+    only touch the database row; the in-memory Entity keeps the
+    AIConfig snapshot taken when it joined.  Swap in a fresh snapshot,
+    preserving entity identity and roster order.  Rows that no longer
+    exist are skipped.
+    """
+    for entity in discussion.entities:
+        if entity.entity_type != EntityType.AI:
+            continue
+        row = db.get_entity(entity.id)
+        if not row:
+            continue
+        entity.ai_config = Entity.from_db_row(row).ai_config
+
+
+def retry_method_switch(
+    discussion: Discussion, db: Database,
+    get_state_fn: Callable[[], dict],
+) -> dict:
+    """Retry a Triage handoff blocked by the tool-capability gate.
+
+    Refreshes AI members' profiles from the DB (so a model fix made in
+    the UI takes effect), re-runs the switch, and resumes the paused
+    discussion on success (spec 2026-07-17).  Returns the same
+    ``method_switched`` shape ``complete_turn`` produces for an
+    unblocked handoff, the ``method_switch_blocked`` shape when still
+    blocked, or an error dict when there is nothing to retry.
+    """
+    if not discussion.id:
+        return {"error": "No active discussion"}
+    if discussion.status == "concluded":
+        return {"error": "Discussion is already concluded"}
+    if discussion.discussion_method != "triage":
+        return {"error": "No pending method switch to retry"}
+    pending = discussion.method_state.get("_pending_method_switch")
+    if not pending:
+        return {"error": "No pending method switch to retry"}
+
+    refresh_ai_configs(discussion, db)
+    chosen = pending["target_method"]
+    switch_result = switch_discussion_method(discussion, db, chosen)
+    if "error" in switch_result:
+        switch_error = switch_result["error"]
+        blocked_entities = switch_result.get("blocked_entities", [])
+        logger.warning(
+            "Retry of method switch for discussion %s to %r still "
+            "blocked: %s", discussion.id, chosen, switch_error,
+        )
+        # Keep the pending record fresh for the dialog; the transcript
+        # notice is NOT reposted (same target — _switch_error_posted).
+        discussion.method_state["_pending_method_switch"] = {
+            "target_method": chosen,
+            "switch_error": switch_error,
+            "blocked_entities": blocked_entities,
+        }
+        db.update_discussion(
+            discussion.id,
+            method_state=serialize_method_state(discussion.method_state),
+        )
+        return {
+            "method_switch_blocked": True,
+            "switch_error": switch_error,
+            "target_method": chosen,
+            "blocked_entities": blocked_entities,
+            "turn_number": discussion.turn_number,
+            "current_round": discussion.current_round,
+            "state": get_state_fn(),
+        }
+
+    # Success. _pending_method_switch was wiped by init_state — it is
+    # deliberately NOT in switch_discussion_method's preserved set.
+    if discussion.status == "paused":
+        resume_discussion(discussion, db)
+    # Mirror complete_turn's successful-handoff path: the new method's
+    # first phase reorders turns from the full roster.
+    apply_method_turn_order(discussion, reset_index=True)
+    stamp_turn_index(discussion)
+    db.update_discussion(
+        discussion.id,
+        method_state=serialize_method_state(discussion.method_state),
+    )
+    return {
+        "method_switched": True,
+        "new_method": switch_result,
+        "turn_number": discussion.turn_number,
+        "current_round": discussion.current_round,
+        "state": get_state_fn(),
+    }
+
+
 async def complete_turn(
     discussion: Discussion, moderator: Moderator, db: Database,
     pricing: PricingCache, get_state_fn: Callable[[], dict],

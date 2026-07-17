@@ -12,6 +12,7 @@ from consensus.app_discussion_flow import (
     complete_turn,
     generate_ai_turn,
     is_pass,
+    retry_method_switch,
     submit_human_message,
     submit_moderator_message,
     switch_discussion_method,
@@ -693,3 +694,106 @@ class TestCompleteTurnBlockedTriageSwitch:
         assert "switch_error" not in result
         assert disc.discussion_method == "delphi"
         assert _blocked_notices(disc) == []
+
+
+class TestRetryMethodSwitch:
+    """retry_method_switch — blocked-switch recovery (spec 2026-07-17)."""
+
+    async def _block(self, tmp_db, sample_provider, monkeypatch):
+        """Drive a triage discussion into the blocked-paused state."""
+        monkeypatch.setattr(tmp_db.pricing, "refresh", lambda: False)
+        _insert_model(tmp_db, "test/test-model", "temperature,top_p")
+        disc, mod, moderator, pricing = _make_triage_pipeline(
+            tmp_db, sample_provider)
+        result = await _drive_turn(disc, mod, moderator, tmp_db, pricing)
+        assert result.get("method_switch_blocked") is True
+        assert disc.status == "paused"
+        return disc
+
+    @pytest.mark.asyncio
+    async def test_retry_succeeds_after_model_fix(
+        self, tmp_db, sample_provider, monkeypatch,
+    ):
+        """Fixing the profile's model and retrying switches the method,
+        refreshes the in-memory config, and resumes the discussion."""
+        disc = await self._block(tmp_db, sample_provider, monkeypatch)
+        _insert_model(tmp_db, "test/good-model", "temperature,tools")
+        ai = next(e for e in disc.entities
+                  if e.entity_type == EntityType.AI)
+        tmp_db.update_entity(ai.id, model="good-model")
+
+        result = retry_method_switch(disc, tmp_db, get_state_fn=lambda: {})
+
+        assert result.get("method_switched") is True
+        assert result["new_method"]["name"] == "delphi"
+        assert disc.discussion_method == "delphi"
+        assert ai.ai_config.model == "good-model"
+        assert disc.status == "active"
+        assert disc.is_active is True
+        assert "_pending_method_switch" not in disc.method_state
+        # The discussion is positioned to run under the new method:
+        # delphi's first phase, rotation restarted (spec: "next turn
+        # runs under the new method").
+        assert disc.method_state["current_phase"] == "estimate"
+        assert disc.current_turn_index == 0
+        assert disc.turn_order == [ai.id]
+
+    @pytest.mark.asyncio
+    async def test_retry_still_blocked(
+        self, tmp_db, sample_provider, monkeypatch,
+    ):
+        """Retrying without fixing anything stays paused, keeps the
+        pending record fresh, and posts no duplicate notice."""
+        disc = await self._block(tmp_db, sample_provider, monkeypatch)
+
+        result = retry_method_switch(disc, tmp_db, get_state_fn=lambda: {})
+
+        assert result.get("method_switch_blocked") is True
+        assert "test-model" in result["switch_error"]
+        assert disc.status == "paused"
+        assert disc.discussion_method == "triage"
+        pending = disc.method_state["_pending_method_switch"]
+        assert pending["target_method"] == "delphi"
+        assert len(_blocked_notices(disc)) == 1
+
+    def test_no_pending_returns_error(
+        self, tmp_db, discussion_with_entities,
+    ):
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.discussion_method = "triage"
+
+        result = retry_method_switch(disc, tmp_db, get_state_fn=lambda: {})
+
+        assert "error" in result
+
+    def test_non_triage_returns_error(
+        self, tmp_db, discussion_with_entities,
+    ):
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.discussion_method = "delphi"
+        disc.method_state["_pending_method_switch"] = {
+            "target_method": "ach", "switch_error": "x",
+            "blocked_entities": [],
+        }
+
+        result = retry_method_switch(disc, tmp_db, get_state_fn=lambda: {})
+
+        assert "error" in result
+
+    def test_concluded_returns_error(
+        self, tmp_db, discussion_with_entities,
+    ):
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.discussion_method = "triage"
+        disc.status = "concluded"
+        disc.method_state["_pending_method_switch"] = {
+            "target_method": "delphi", "switch_error": "x",
+            "blocked_entities": [],
+        }
+
+        result = retry_method_switch(disc, tmp_db, get_state_fn=lambda: {})
+
+        assert "error" in result

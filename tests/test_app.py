@@ -257,6 +257,15 @@ class TestPauseResume:
         assert "error" in result
 
 
+class TestRetryMethodSwitchWrapper:
+    """ConsensusApp.retry_method_switch delegates and refreshes state."""
+
+    def test_error_without_pending(self, app_with_entities):
+        app, *_ = app_with_entities
+        result = app.retry_method_switch()
+        assert "error" in result
+
+
 class TestConcludeDiscussion:
     @pytest.mark.asyncio
     async def test_conclude_marks_discussion_done(self, app_with_entities):
