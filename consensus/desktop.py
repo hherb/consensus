@@ -497,6 +497,10 @@ class DesktopBridge:
         """Resume a paused discussion."""
         return self.app.resume_discussion()
 
+    def retry_method_switch(self) -> dict:
+        """Retry a Triage method handoff blocked by the tool gate."""
+        return self.app.retry_method_switch()
+
     def reopen_discussion(self) -> dict:
         """Reopen a concluded discussion for continuation."""
         return self.app.reopen_discussion()
