@@ -38,6 +38,8 @@ MAX_CRUX_SEARCH_ROUNDS = 3
 MAX_IDENTIFY_ATTEMPTS = 3
 #: Give up and conclude after this many resolution rounds.
 MAX_RESOLVE_ROUNDS = 3
+#: Give up and advance after this many belief-poll rounds.
+MAX_POLL_ROUNDS = 3
 #: Fixed number of evidence-focused crux-testing rounds.
 TEST_CRUX_ROUNDS = 2
 #: Decimal places used for belief-shift reporting.
@@ -142,6 +144,24 @@ RESOLUTION_TOOL_PARAMETERS: dict = {
         },
     },
     "required": ["stance", "position", "reasoning"],
+}
+
+#: JSON Schema for the submit_crux_belief output tool (belief poll).
+POLL_BELIEF_TOOL_PARAMETERS: dict = {
+    "type": "object",
+    "properties": {
+        "belief": {
+            "type": "number", "minimum": 0, "maximum": 1,
+            "description": ("Your current probability (0-1) that the "
+                            "shared crux claim is true, before evidence "
+                            "is presented."),
+        },
+        "reasoning": {
+            "type": "string",
+            "description": ("Why you hold that probability right now."),
+        },
+    },
+    "required": ["belief", "reasoning"],
 }
 
 
@@ -383,6 +403,68 @@ def extract_resolution(content: str) -> dict | None:
 def entities_with_resolutions(state: dict) -> set[int]:
     """Entity ids that have a recorded resolution."""
     return {r["entity_id"] for r in state.get("resolutions", [])}
+
+
+def validate_poll_belief_payload(payload: dict) -> str:
+    """Return '' if a submit_crux_belief payload is usable, else an error."""
+    error = _belief_error(payload.get("belief"))
+    if error:
+        return error
+    if not str(payload.get("reasoning") or "").strip():
+        return "'reasoning' must explain your current probability."
+    return ""
+
+
+def record_poll_belief(state: dict, entity: Entity, payload: dict) -> None:
+    """Record an entity's crux-belief poll; resubmission replaces their own.
+
+    Shared by the free-text and structured paths.  ``belief`` is
+    float-coerced; ``None`` (defensive — the validated paths never pass
+    it) is preserved so ``apply_poll_beliefs`` can skip it.
+    """
+    belief = payload.get("belief")
+    entry = {
+        "entity_id": entity.id,
+        "entity_name": entity.name,
+        "belief": None if belief is None else float(belief),
+        "reasoning": str(payload.get("reasoning") or "").strip(),
+    }
+    polls = state.setdefault("poll_beliefs", [])
+    for i, existing in enumerate(polls):
+        if existing["entity_id"] == entity.id:
+            polls[i] = entry
+            return
+    polls.append(entry)
+
+
+def entities_with_poll(state: dict) -> set[int]:
+    """Entity ids that have a recorded crux-belief poll."""
+    return {e["entity_id"] for e in state.get("poll_beliefs", [])}
+
+
+def extract_poll_belief(content: str) -> dict | None:
+    """Parse a crux-belief poll from free text (fallback path).
+
+    Only a fenced JSON block with a ``belief`` key is accepted.
+    """
+    data = extract_json_block(content)
+    if isinstance(data, dict) and "belief" in data:
+        return data
+    return None
+
+
+def apply_poll_beliefs(state: dict) -> None:
+    """Replace ``shared_crux['initial_beliefs']`` with the polled values.
+
+    The poll is the authoritative source of the belief-shift metric's
+    "before" end (design 2026-07-17): a name->belief map built purely
+    from ``poll_beliefs``, dropping any ``None`` belief.  Called once
+    when the poll phase completes.
+    """
+    beliefs = {e["entity_name"]: e["belief"]
+               for e in state.get("poll_beliefs", [])
+               if e.get("belief") is not None}
+    state.setdefault("shared_crux", {})["initial_beliefs"] = beliefs
 
 
 def build_crux_map(state: dict) -> dict:
