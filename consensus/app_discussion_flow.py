@@ -9,6 +9,7 @@ from typing import Callable, Optional
 from .database import Database
 from .evidence import record_and_annotate_evidence
 from .methods import get_active_method, get_method, serialize_method_state
+from .methods.parsing import check_payload_schema, extract_json_block
 from .models import Discussion, Entity, EntityType, Message, MessageRole, StoryboardEntry
 from .moderator import Moderator
 from .pricing import PricingCache
@@ -122,8 +123,42 @@ def submit_human_message(
     # method data too (votes, estimates, ...), exactly like AI turns.
     method = get_active_method(discussion)
     if method and not is_pass(content):
+        # Safety net for structured phases (#57): a phase that declares a
+        # forced output tool expects free-text extraction to actually
+        # write into method_state.  Snapshot before process_response and
+        # compare after — if nothing changed *and* the raw content carries
+        # no fenced JSON block at all, the extraction never had anything
+        # to work with and the turn must not be dropped without a trace
+        # (golden rule 6).  Non-structured phases are unaffected (spec
+        # is None, no snapshot taken).
+        #
+        # A bare state-equality check is too blunt on its own: a resubmitted
+        # (or re-scored-identically) fenced JSON payload can legitimately
+        # leave method_state byte-identical — e.g. Tree of Thoughts'
+        # re-score pass, where a participant's later scores happen to match
+        # their earlier ones for the same thoughts, so ``thought_scores``
+        # and ``scores_by_pass`` end up unchanged even though the payload
+        # WAS read and recorded.  Requiring the *absence* of any JSON block
+        # too keeps the guard specific to genuinely unparsed free text (the
+        # scenario the tests target) without flagging idempotent structured
+        # resubmissions as failures.
+        spec = method.get_output_tool(entity, discussion)
+        before = (serialize_method_state(discussion.method_state)
+                  if spec is not None else None)
+        raw_content = content
         processed = method.process_response(content, entity, discussion)
         content = processed.display_content
+        if (spec is not None
+                and serialize_method_state(discussion.method_state) == before
+                and extract_json_block(raw_content) is None):
+            # Structured phase, but free-text extraction recorded nothing —
+            # surface it (golden rule 6) instead of the old silent drop.
+            logger.warning(
+                "Structured phase: could not read %s's free-text turn as "
+                "'%s' data.", entity.name, spec.name)
+            return {"error": (
+                f"This phase needs structured input. Your message could not "
+                f"be read as '{spec.name}' data — please use the input form.")}
         phase = method.current_phase(discussion)
         if phase is not None and phase.track_evidence:
             content = record_and_annotate_evidence(
@@ -145,6 +180,69 @@ def submit_human_message(
         turn_number=discussion.turn_number,
     )
     return msg.to_dict()
+
+
+def _record_structured_human_turn(
+    discussion: Discussion, db: Database, entity: Entity,
+    method, spec, payload: dict,
+) -> dict:
+    """Validate and record a human structured-turn payload.
+
+    Mirrors the AI forced-tool branch (``generate_ai_turn``): a structural
+    pre-check then the handler's semantic ``validate_output``, then
+    ``process_structured_response`` writes into ``method_state``.  Returns
+    the message dict, or ``{"error": ...}`` (recording nothing) on failure.
+    """
+    schema = method.resolve_input_schema(spec, entity, discussion)
+    error = (check_payload_schema(payload, schema)
+             or method.validate_output(payload, entity, discussion))
+    if error:
+        logger.warning("Rejected structured turn from %s: %s",
+                       entity.name, error)
+        return {"error": error}
+
+    processed = method.process_structured_response(payload, entity, discussion)
+    content = processed.display_content
+    if discussion.id:
+        db.update_discussion(
+            discussion.id,
+            method_state=serialize_method_state(discussion.method_state),
+        )
+    msg = Message(
+        entity_id=entity.id, entity_name=entity.name,
+        content=content, role=MessageRole.PARTICIPANT,
+    )
+    discussion.messages.append(msg)
+    db.add_message(
+        discussion.id, entity.id, content, "participant",
+        turn_number=discussion.turn_number,
+    )
+    return msg.to_dict()
+
+
+def submit_human_structured_message(
+    discussion: Discussion, db: Database, entity_id: int, payload: dict,
+) -> dict:
+    """Submit a validated structured payload from a human participant (#57).
+
+    The frontend form (or guided-JSON fallback) posts a typed ``payload``;
+    it is validated and recorded on the same path an AI's forced tool call
+    uses.  Returns the message dict or an error dict.
+    """
+    entity = discussion.get_entity(entity_id)
+    if not entity:
+        return {"error": "Entity not found"}
+    current = discussion.current_speaker
+    if not current or current.id != entity_id:
+        return {"error": f"It's not {entity.name}'s turn"}
+    method = get_active_method(discussion)
+    if not method:
+        return {"error": "No active discussion method"}
+    spec = method.get_output_tool(entity, discussion)
+    if spec is None:
+        return {"error": "This phase does not take structured input."}
+    return _record_structured_human_turn(
+        discussion, db, entity, method, spec, payload)
 
 
 def submit_moderator_message(

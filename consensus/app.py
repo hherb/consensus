@@ -807,6 +807,15 @@ class ConsensusApp:
         self._notify()
         return result
 
+    def submit_human_structured_message(
+            self, entity_id: int, payload: dict) -> dict:
+        """Submit a validated structured payload from a human participant."""
+        result = app_discussion_flow.submit_human_structured_message(
+            self.discussion, self.db, entity_id, payload,
+        )
+        self._notify()
+        return result
+
     def submit_moderator_message(self, content: str) -> dict:
         """Submit a message from the human moderator."""
         result = app_discussion_flow.submit_moderator_message(
