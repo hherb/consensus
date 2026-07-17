@@ -756,6 +756,23 @@ class TestRetryMethodSwitch:
         assert pending["target_method"] == "delphi"
         assert len(_blocked_notices(disc)) == 1
 
+    @pytest.mark.asyncio
+    async def test_retry_from_resumed_discussion_repauses_on_failure(
+        self, tmp_db, sample_provider, monkeypatch,
+    ):
+        """A failed retry after a manual resume must re-pause so turns
+        cannot keep generating behind the recovery dialog."""
+        from consensus.app_discussion_state import resume_discussion
+
+        disc = await self._block(tmp_db, sample_provider, monkeypatch)
+        resume_discussion(disc, tmp_db)
+        assert disc.status == "active"
+
+        result = retry_method_switch(disc, tmp_db, get_state_fn=lambda: {})
+
+        assert result.get("method_switch_blocked") is True
+        assert disc.status == "paused"
+
     def test_no_pending_returns_error(
         self, tmp_db, discussion_with_entities,
     ):

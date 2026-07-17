@@ -86,6 +86,17 @@ class TestPendingMethodSwitchState:
 
         assert app.get_state()["pending_method_switch"] is None
 
+    def test_none_when_concluded(self, app_with_entities):
+        """A concluded discussion must not resurface the recovery
+        dialog after reload (final-review finding #1)."""
+        app, *_ = app_with_entities
+        app.discussion.discussion_method = "triage"
+        app.discussion.status = "concluded"
+        app.discussion.method_state["_pending_method_switch"] = dict(
+            self._PENDING)
+
+        assert app.get_state()["pending_method_switch"] is None
+
 
 # --- Entity management ---
 

@@ -44,7 +44,10 @@ async function loadModels(row, select, custom) {
     let models = [];
     try {
         models = await api.fetchModels(row.provider_id);
-    } catch (e) { /* provider offline — the custom input still works */ }
+    } catch (e) {
+        console.error('Failed to fetch models for provider', row.provider_id, e);
+        /* provider offline — the custom input still works */
+    }
     if (models && models.length > 0) {
         select.innerHTML =
             '<option value="">-- Select Model --</option>' +
@@ -79,13 +82,37 @@ export async function showSwitchBlockedDialog(data) {
     show('#switch-blocked-dialog');
     for (const b of currentBlocked) {
         const row = (state.saved_entities || []).find(e => e.id === b.entity_id);
-        if (!row) continue;
+        if (!row) {
+            // Deactivated profile — no select to populate and nothing
+            // for the user to fix here; say so instead of silently
+            // rendering an empty (and silently-skipped-on-retry) row.
+            const group = list.querySelector(`[data-entity-id="${b.entity_id}"]`);
+            if (group) {
+                $(`#switch-model-select-${b.entity_id}`)?.remove();
+                $(`#switch-model-custom-${b.entity_id}`)?.remove();
+                group.insertAdjacentHTML('beforeend',
+                    `<p class="text-muted">This participant's profile is inactive — reactivate it in the Profiles tab before retrying.</p>`);
+            }
+            continue;
+        }
         await loadModels(
             row,
             $(`#switch-model-select-${b.entity_id}`),
             $(`#switch-model-custom-${b.entity_id}`),
         );
     }
+    // No blocked entities (e.g. an "Unknown method" error) means there
+    // is nothing to assign and Retry would just repeat the same
+    // failure — hide the instructions and disable Retry. Runs after
+    // every render, since this is called again on each still-blocked
+    // retry and must re-enable Retry when entities are present.
+    const hasBlocked = currentBlocked.length > 0;
+    if (hasBlocked) {
+        show('#switch-blocked-instructions');
+    } else {
+        hide('#switch-blocked-instructions');
+    }
+    $('#switch-blocked-retry-btn').disabled = !hasBlocked;
 }
 
 /**
@@ -135,6 +162,7 @@ async function onRetrySwitch() {
             showToast(result.error);
         }
     } catch (e) {
+        console.error('Method-switch retry failed', e);
         showToast('Retry failed: ' + e.message);
     } finally {
         retryBtn.disabled = false;

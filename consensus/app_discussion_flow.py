@@ -497,6 +497,10 @@ def retry_method_switch(
             discussion.id,
             method_state=serialize_method_state(discussion.method_state),
         )
+        # A manually-resumed discussion must not keep running behind
+        # the recovery dialog — re-pause it (final-review finding #2).
+        if discussion.status == "active":
+            pause_discussion(discussion, db)
         return {
             "method_switch_blocked": True,
             "switch_error": switch_error,

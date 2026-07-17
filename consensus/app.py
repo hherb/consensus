@@ -509,7 +509,8 @@ class ConsensusApp:
         # 2026-07-17) — exposed so the recovery dialog reappears after
         # a reload/reconnect, like pending_user_input below.
         pending_switch = None
-        if self.discussion.discussion_method == "triage":
+        if (self.discussion.discussion_method == "triage"
+                and self.discussion.status != "concluded"):
             pending_switch = self.discussion.method_state.get(
                 "_pending_method_switch")
         state["pending_method_switch"] = pending_switch
