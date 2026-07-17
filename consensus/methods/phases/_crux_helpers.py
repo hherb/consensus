@@ -1,10 +1,12 @@
 """Shared helpers for Double Crux phase handlers (issue #27).
 
 Pure functions and constants for crux recording/deduplication,
-shared-crux selection (verdict + initial-belief snapshot), resolution
-recording, free-text extraction fallbacks, the machine-readable
-``crux_map`` outcome artifact, and display formatting — used by the
-hunt, identify, test, and resolve phase handlers.
+shared-crux selection (verdict + shared-claim capture), belief-poll
+recording (``record_poll_belief`` / ``apply_poll_beliefs``, the source
+of ``initial_beliefs``), resolution recording, free-text extraction
+fallbacks, the machine-readable ``crux_map`` outcome artifact, and
+display formatting — used by the hunt, identify, poll, test, and
+resolve phase handlers.
 """
 
 from __future__ import annotations
@@ -295,25 +297,21 @@ def record_crux_selection(state: dict, payload: dict) -> None:
     """Record the moderator's crux verdict into method state.
 
     Sets ``crux_verdict`` and ``shared_crux``.  For a factual verdict,
-    snapshots each referenced participant's stated belief on their
-    source crux into ``initial_beliefs`` (the "before" end of the
-    belief-shift metric); ``None`` beliefs are skipped.
+    records the shared claim and source crux ids; ``initial_beliefs``
+    is left empty for the poll_belief phase to fill.
     """
     verdict = payload["verdict"]
     state["crux_verdict"] = verdict
     if verdict == VERDICT_FACTUAL:
         crux_ids = [int(cid) for cid in payload.get("crux_ids", [])]
-        by_id = {c["id"]: c for c in state.get("cruxes", [])}
-        initial_beliefs: dict[str, float] = {}
-        for cid in crux_ids:
-            crux = by_id.get(cid)
-            if crux is not None and crux["belief"] is not None:
-                initial_beliefs[crux["entity_name"]] = crux["belief"]
+        # initial_beliefs is owned by the poll_belief phase (design
+        # 2026-07-17): it is polled on this shared claim for every party,
+        # not snapshotted from the (differently-phrased) hunt cruxes.
         state["shared_crux"] = {
             "claim": str(payload.get("claim") or "").strip().rstrip('.'),
             "description": "",
             "source_crux_ids": crux_ids,
-            "initial_beliefs": initial_beliefs,
+            "initial_beliefs": {},
         }
     elif verdict == VERDICT_VALUES:
         state["shared_crux"] = {
@@ -472,10 +470,10 @@ def build_crux_map(state: dict) -> dict:
 
     Deterministic (never model-computed): verdict, shared crux,
     positions, submitted cruxes, resolutions, and per-participant
-    belief shifts on the shared crux — initial from the hunt-phase
-    snapshot, final from resolutions, shift only when both ends are
-    known.  Caveats flag a missing shared crux, missing resolutions,
-    and a factual crux with no computable shift.
+    belief shifts on the shared crux — initial from the belief poll,
+    final from resolutions, shift only when both ends are known.
+    Caveats flag a missing shared crux, missing resolutions, and a
+    factual crux with no computable shift.
     """
     verdict = state.get("crux_verdict", "")
     shared_crux = state.get("shared_crux", {})

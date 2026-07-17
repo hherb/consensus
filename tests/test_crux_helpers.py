@@ -2,9 +2,10 @@
 
 Pure-function coverage: payload validators, crux recording with
 per-entity word-overlap dedupe, crux-selection recording (verdict +
-initial-belief snapshot), resolution recording/replacement, and
-free-text extraction fallbacks.  The crux_map artifact and display
-formatting are covered in ``test_crux_artifact.py``.
+shared-claim capture), resolution recording/replacement, belief-poll
+payload validation/recording, and free-text extraction fallbacks.
+The crux_map artifact and display formatting are covered in
+``test_crux_artifact.py``.
 """
 
 from consensus.methods.phases._crux_helpers import (
@@ -271,7 +272,9 @@ class TestRecordCruxSelection:
                                                        0.2)])
         return state
 
-    def test_factual_snapshots_initial_beliefs(self):
+    def test_factual_sets_claim_and_empty_initial_beliefs(self):
+        # initial_beliefs is now owned by the poll_belief phase; the
+        # selection records the shared claim/ids but no beliefs.
         state = self._hunted_state()
         record_crux_selection(state, {
             "verdict": "factual", "crux_ids": [1, 3], "claim": CLAIM_A,
@@ -280,16 +283,7 @@ class TestRecordCruxSelection:
         shared = state["shared_crux"]
         assert shared["claim"] == CLAIM_A
         assert shared["source_crux_ids"] == [1, 3]
-        assert shared["initial_beliefs"] == {"Alice": 0.9, "Bob": 0.2}
-
-    def test_factual_skips_none_beliefs(self):
-        state: dict = {}
-        record_cruxes(state, _entity(1, "Alice"),
-                      [{"claim": CLAIM_A, "belief": None, "why_pivotal": ""}])
-        record_crux_selection(state, {
-            "verdict": "factual", "crux_ids": [1], "claim": CLAIM_A,
-            "reasoning": "r"})
-        assert state["shared_crux"]["initial_beliefs"] == {}
+        assert shared["initial_beliefs"] == {}
 
     def test_values_stores_description(self):
         state = self._hunted_state()

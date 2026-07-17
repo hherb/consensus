@@ -44,6 +44,7 @@ class TestBuildCruxMap:
         record_crux_selection(state, {
             "verdict": "factual", "crux_ids": [1, 2], "claim": CLAIM_A,
             "reasoning": "shared"})
+        state["shared_crux"]["initial_beliefs"] = {"Alice": 0.9, "Bob": 0.2}
         record_resolution(state, _entity(1, "Alice"), {
             "stance": "updated", "position": "Hybrid works best",
             "crux_belief": 0.55, "reasoning": "trials"})
@@ -113,6 +114,7 @@ class TestFormatters:
         record_crux_selection(state, {
             "verdict": "factual", "crux_ids": [1], "claim": CLAIM_A,
             "reasoning": "r"})
+        state["shared_crux"]["initial_beliefs"] = {"Alice": 0.9}
         record_resolution(state, _entity(1, "Alice"), {
             "stance": "updated", "position": "Hybrid works best",
             "crux_belief": 0.55, "reasoning": "trials"})
