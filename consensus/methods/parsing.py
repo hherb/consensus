@@ -358,6 +358,8 @@ def _check_value(value: Any, prop: dict, key: str) -> str:
     if ptype in ("number", "integer"):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return f"'{key}' must be a number."
+        if ptype == "integer" and not float(value).is_integer():
+            return f"'{key}' must be a whole number."
         if "minimum" in prop and value < prop["minimum"]:
             return f"'{key}' must be >= {prop['minimum']}."
         if "maximum" in prop and value > prop["maximum"]:
@@ -373,8 +375,7 @@ def _check_value(value: Any, prop: dict, key: str) -> str:
             return f"'{key}' must be a list."
         items = prop.get("items", {})
         for item in value:
-            err = _check_value(item, items, key) if items.get("type") in (
-                *_JSON_PRIMITIVES, "array") else _check_object(item, items, key)
+            err = _check_value(item, items, key)
             if err:
                 return err
     elif ptype == "object":

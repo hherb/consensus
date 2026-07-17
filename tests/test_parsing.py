@@ -62,3 +62,16 @@ class TestCheckPayloadSchema:
 
     def test_non_dict_payload_rejected(self):
         assert check_payload_schema([], POLL_SCHEMA) != ""
+
+    def test_integer_rejects_fractional(self):
+        schema = {"type": "object",
+                  "properties": {"n": {"type": "integer"}},
+                  "required": ["n"]}
+        assert check_payload_schema({"n": 3}, schema) == ""
+        assert check_payload_schema({"n": 3.0}, schema) == ""   # integral float ok
+        assert check_payload_schema({"n": 2.5}, schema) != ""   # fractional rejected
+
+    def test_integer_still_range_checked(self):
+        schema = {"type": "object", "properties": {
+            "n": {"type": "integer", "minimum": 1, "maximum": 5}}}
+        assert check_payload_schema({"n": 6}, schema) != ""
