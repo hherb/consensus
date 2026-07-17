@@ -12,7 +12,7 @@ import { renderProfiles, openEntityDialog, confirmEntity, editProfile, removePro
 import { renderPrompts, openPromptDialog, confirmPrompt, editPrompt, removePrompt } from './prompts.js';
 import { renderHistory, deleteSelectedDiscussions, loadDiscussion } from './history.js';
 import { renderSetupTab, renderAvailableEntities, updateStartButton, addToDiscussion, removeFromDiscussion, setModerator, setDevilsAdvocate, onMethodChange, onDefaultContextChange } from './setup.js';
-import { onStartDiscussion, onSendMessage, onConfirmModeratorInput, onReassign, doReassign, onMediate, onConclude, onPause, onResume, onReopen, onBack, reopenFromHistory, onCostLimitContinue, onCostLimitConclude, insertEvidenceMarker } from './discussion-actions.js';
+import { onStartDiscussion, onSendMessage, onConfirmModeratorInput, onReassign, doReassign, onMediate, onConclude, onPause, onResume, onReopen, onBack, reopenFromHistory, onCostLimitContinue, onCostLimitConclude, insertEvidenceMarker, processCurrentTurn } from './discussion-actions.js';
 import { exportAsJson, exportAsHtml, exportAsPdf, toggleExportMenu, closeExportMenu, toggleHistoryExportMenu, closeAllHistoryMenus, exportHistoryDiscussion } from './export.js';
 import { openMcpServerDialog, confirmMcpServer, toggleMcpServer, deleteMcpServer, testMcpConnection, initMcpTransportToggle } from './mcp.js';
 import { showConsultExpertDialog, onToolProgress } from './experts.js';
@@ -20,6 +20,7 @@ import { onUserInputRequest, checkPendingUserInput } from './ask-user.js';
 import { loadMemoryConfig, saveMemoryConfig, testMemoryConnection } from './memory.js';
 import { renderDocumentPanel, uploadDocument, addDocumentByUrl } from './documents.js';
 import { renderImagePanel, uploadImage, addImageByUrl } from './images.js';
+import { initMethodSwitchDialog, showSwitchBlockedDialog } from './method-switch.js';
 
 // Register the setup-tab callback so state.js can trigger it without circular imports
 registerSetupCallback(renderSetupTab);
@@ -135,6 +136,7 @@ function init() {
     $('#conclude-btn').addEventListener('click', onConclude);
     $('#cost-limit-continue-btn').addEventListener('click', onCostLimitContinue);
     $('#cost-limit-conclude-btn').addEventListener('click', onCostLimitConclude);
+    initMethodSwitchDialog({ onConclude, processCurrentTurn });
     $('#export-btn').addEventListener('click', () => toggleExportMenu());
     document.addEventListener('click', (ev) => {
         if (!ev.target.closest('.export-dropdown')) {
@@ -243,6 +245,8 @@ function init() {
         renderSetupTab();
         // Re-show ask_user input bubble if there's a pending request
         if (s && s.pending_user_input) checkPendingUserInput(s.pending_user_input);
+        // Re-show the blocked-switch recovery dialog after a reload
+        if (s && s.pending_method_switch) showSwitchBlockedDialog(s.pending_method_switch);
     });
 }
 
