@@ -139,3 +139,4 @@ class TestFormatters:
     def test_format_resolutions(self):
         text = format_resolutions(self._state())
         assert "Alice" in text and "updated" in text
+        assert "no resolutions" in format_resolutions({}).lower()

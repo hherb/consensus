@@ -3,7 +3,7 @@
 _Last updated: 2026-07-17 (alpha distribution merged via PR #53 — PyPI
 package `consensus-app` + signed macOS DMG build pipeline; shared-helper
 dedup batch via PR #54 closes this file's dedup list. All tracked issues
-closed. Main at 2403 tests.)._
+closed. Main at 2406 tests.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -34,7 +34,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Alpha distribution (PyPI `consensus-app` + macOS DMG) | — | #53 |
 | Shared-helper dedup batch (scanner delegation, give-up mixin, test split) | — (tech debt) | #54 |
 
-Main is at **2403 tests passing**. Every tracked issue is merged and closed;
+Main is at **2406 tests passing**. Every tracked issue is merged and closed;
 there are no open issues or PRs.
 
 **#28 evidence-tracked phases** merged (PR #45) —

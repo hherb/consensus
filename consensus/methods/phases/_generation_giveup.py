@@ -52,6 +52,22 @@ class GenerationGiveUpMixin:
     giveup_usable_noun: ClassVar[str]
     giveup_skipped_phases: ClassVar[str]
 
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Reject subclasses missing a ``giveup_*`` declaration.
+
+        The annotations above are the required attribute set; checking
+        them at class definition turns a forgotten declaration into an
+        import-time ``TypeError`` instead of an ``AttributeError`` on
+        the rarest runtime path (give-up, after the round budget).
+        """
+        super().__init_subclass__(**kwargs)
+        missing = [name for name in GenerationGiveUpMixin.__annotations__
+                   if not hasattr(cls, name)]
+        if missing:
+            raise TypeError(
+                f"{cls.__name__} must declare the GenerationGiveUpMixin "
+                f"class attribute(s): {', '.join(missing)}")
+
     def should_advance(self, discussion: Discussion) -> bool:
         """Advance once anything was collected, or when out of rounds."""
         state = discussion.method_state

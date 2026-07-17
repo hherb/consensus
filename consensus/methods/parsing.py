@@ -242,8 +242,9 @@ def validate_string_list_payload(payload: dict, key: str, min_length: int,
     strings plus a non-blank ``reasoning`` — while the phase-specific
     wording stays at the call site (``validate_ideas_payload`` /
     ``validate_thoughts_payload``).  *item_error* may reference
-    ``{item!r}`` and ``{min_length}`` via :meth:`str.format`.  Returns
-    ``''`` when the payload is usable, else the matching error string.
+    ``{item!r}`` and ``{min_length}`` via :meth:`str.format`, so any
+    literal braces in it must be doubled (``{{``).  Returns ``''``
+    when the payload is usable, else the matching error string.
     """
     items = payload.get(key)
     if not isinstance(items, list) or not items:

@@ -7,6 +7,8 @@ abort the whole method (``next_phase -> None``) when generation
 produced nothing — every later phase would be degenerate.
 """
 
+import pytest
+
 from consensus.methods.base import LINEAR_NEXT
 from consensus.methods.phases._generation_giveup import GenerationGiveUpMixin
 
@@ -72,3 +74,27 @@ class TestCompleteMessage:
         assert "**Widget Method ended early.**" in message
         assert "no usable widgets after 2 rounds" in message
         assert "the polishing phases were skipped" in message
+
+
+class TestDeclarationEnforcement:
+    """An incomplete subclass must fail at class definition, not mid-run."""
+
+    def test_missing_attributes_raise_at_class_definition(self):
+        with pytest.raises(TypeError, match="giveup_max_rounds"):
+            class _Incomplete(GenerationGiveUpMixin):
+                giveup_state_key = "widgets"
+
+    def test_error_names_every_missing_attribute(self):
+        with pytest.raises(TypeError) as excinfo:
+            class _Bare(GenerationGiveUpMixin):
+                pass
+        message = str(excinfo.value)
+        assert "_Bare" in message
+        assert "giveup_state_key" in message
+        assert "giveup_skipped_phases" in message
+
+    def test_attributes_inherited_from_a_complete_parent_suffice(self):
+        class _Derived(_WidgetGeneration):
+            giveup_max_rounds = 5
+
+        assert _Derived.giveup_state_key == "widgets"
