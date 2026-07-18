@@ -89,6 +89,15 @@ class PhaseHandler(ABC):
     #: ``get_output_tool``.
     requires_structured_output: ClassVar[bool] = False
 
+    #: True when this phase's free-text fallback carries the participant's
+    #: reasoning as prose OUTSIDE the fenced JSON block (e.g. "My scores:\n
+    #: ```json\n{...}```"), so a block that omits a ``reasoning`` key is still
+    #: a readable contribution.  Default False: ``reasoning`` is treated as a
+    #: required field when the safety net decides whether an unchanged-state
+    #: structured turn was truly unreadable (#57).  Setting this wrongly to
+    #: True risks a silent drop; wrongly False only over-reports (safe).
+    reasoning_outside_block: ClassVar[bool] = False
+
     def get_output_tool(self, entity: Entity,
                         discussion: Discussion) -> OutputToolSpec | None:
         """Declare the forced output tool for this phase.

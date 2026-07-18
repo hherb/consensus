@@ -126,12 +126,17 @@ def _structured_freetext_unreadable(
     Two things a *forced-tool* payload must satisfy are deliberately not
     enforced here:
 
-    - ``reasoning`` — required by nearly every phase schema, but free-text
-      submissions routinely carry their rationale as prose *outside* the
-      fenced block (e.g. score_thoughts.py's ``"My scores:\\n```json\\n"``
-      — the reasoning is the prefix, not a key inside the fence).
-      Requiring it inside the block here would misclassify ordinary
-      free text as unreadable.
+    - ``reasoning`` — required by nearly every phase schema, and
+      required here too by default: a free-text block that omits it is
+      unreadable (#57 — a blanket exclusion let a valid-looking-but-
+      unrecorded ``poll_belief`` submission slip through as a silent
+      drop).  It is excluded from the check ONLY when the active
+      handler sets ``reasoning_outside_block = True``, for phases whose
+      free-text fallback routinely carries the rationale as prose
+      *outside* the fenced block (e.g. score_thoughts.py's
+      ``"My scores:\\n```json\\n"`` — the reasoning is the prefix, not a
+      key inside the fence).  Requiring it inside the block there would
+      misclassify an ordinary re-score as unreadable.
     - the handler's semantic ``validate_output`` — some handlers
       (``ScoreThoughtsHandler``) intentionally tolerate stale/pruned
       references in the free-text path (``record_thought_scores`` drops
@@ -150,7 +155,9 @@ def _structured_freetext_unreadable(
     if not isinstance(block, dict):
         return True
     schema = method.resolve_input_schema(spec, entity, discussion)
-    required = [key for key in schema.get("required", []) if key != "reasoning"]
+    required = schema.get("required", [])
+    if method.reasoning_outside_block(discussion):
+        required = [key for key in required if key != "reasoning"]
     return bool(check_payload_schema(block, {**schema, "required": required}))
 
 

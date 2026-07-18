@@ -102,3 +102,22 @@ class TestStructuredHumanTurn:
             disc, tmp_db, entity.id, '```json\n{"unrelated": true}\n```')
         assert "error" in res           # valid JSON, wrong shape -> visible error
         assert disc.method_state.get("poll_beliefs", []) == before  # nothing recorded
+
+    @pytest.mark.asyncio
+    async def test_missing_reasoning_in_structured_phase_errors_not_silent(
+            self, tmp_db):
+        """#57 final-review fix: the blanket reasoning exclusion in the
+        safety net let a free-text turn with the data key but no
+        ``reasoning`` (e.g. ``{"belief": 0.7}``) pass as "readable" while
+        the handler's ``validate_poll_belief_payload`` requires reasoning
+        and records nothing — a silent drop.  poll_belief does not set
+        ``reasoning_outside_block``, so reasoning is now required by the
+        safety net too, and this must surface a visible error instead.
+        """
+        disc, moderator, pricing, entity = await drive_double_crux_to_poll(
+            tmp_db)
+        before = list(disc.method_state.get("poll_beliefs", []))
+        res = submit_human_message(
+            disc, tmp_db, entity.id, '```json\n{"belief": 0.7}\n```')
+        assert "error" in res           # valid JSON, missing reasoning -> visible error
+        assert disc.method_state.get("poll_beliefs", []) == before  # nothing recorded
