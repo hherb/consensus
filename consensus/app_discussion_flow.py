@@ -161,25 +161,67 @@ def _structured_freetext_unreadable(
     return bool(check_payload_schema(block, {**schema, "required": required}))
 
 
+def _check_human_turn_preconditions(
+    discussion: Discussion, entity_id: int,
+) -> Entity | dict:
+    """Validate the shared preconditions for a human turn submission.
+
+    Both human submit paths (``submit_human_message`` and
+    ``submit_human_structured_message``) must reject the same conditions so
+    one path cannot be tightened in isolation (issue #59): an unknown
+    entity, a concluded discussion, or a turn that belongs to someone else.
+
+    A *paused* discussion is deliberately NOT rejected here. The UI keeps
+    the composer open while paused so a participant can interject before
+    Resume (``onSendMessage``'s paused branch in
+    ``static/discussion-actions.js``), and that path has always been
+    allowed. What a paused interjection must not do is count as a method
+    turn — see ``submit_human_message`` (skips method post-processing while
+    paused) and ``submit_human_structured_message`` (rejects outright).
+
+    A not-yet-started discussion needs no explicit check: ``turn_order`` is
+    empty until start, so ``current_speaker`` is ``None`` and the turn check
+    below rejects it.
+
+    Returns the resolved :class:`Entity` on success, or an
+    ``{"error": ...}`` dict for the caller to return verbatim.
+    """
+    entity = discussion.get_entity(entity_id)
+    if not entity:
+        return {"error": "Entity not found"}
+    if discussion.status == "concluded":
+        return {"error": "Discussion is not active"}
+    current = discussion.current_speaker
+    if not current or current.id != entity_id:
+        return {"error": f"It's not {entity.name}'s turn"}
+    return entity
+
+
 def submit_human_message(
     discussion: Discussion, db: Database, entity_id: int, content: str,
 ) -> dict:
     """Submit a message from a human participant.
 
     Returns a dict with the message data, or an error dict if the entity
-    is not found or it is not their turn.
-    """
-    entity = discussion.get_entity(entity_id)
-    if not entity:
-        return {"error": "Entity not found"}
+    is not found, the discussion has concluded, or it is not their turn.
 
-    current = discussion.current_speaker
-    if not current or current.id != entity_id:
-        return {"error": f"It's not {entity.name}'s turn"}
+    While the discussion is *paused* the message is recorded as a plain
+    interjection: the method post-processing below is skipped. The turn does
+    not advance while paused, so a participant can send more than once from
+    the still-open composer — and re-running ``process_response`` for each
+    send would let a handler record the same vote/estimate twice. Their
+    actual method contribution is processed on their real turn after Resume,
+    exactly once.
+    """
+    guard = _check_human_turn_preconditions(discussion, entity_id)
+    if isinstance(guard, dict):
+        return guard
+    entity = guard
 
     # Method-specific response post-processing — human responses carry
     # method data too (votes, estimates, ...), exactly like AI turns.
-    method = get_active_method(discussion)
+    # Skipped while paused (see docstring): a paused send is chat, not a turn.
+    method = get_active_method(discussion) if discussion.is_active else None
     if method and not is_pass(content):
         # Safety net for structured phases (#57): a phase that declares a
         # forced output tool expects free-text extraction to actually
@@ -296,13 +338,20 @@ def submit_human_structured_message(
     The frontend form (or guided-JSON fallback) posts a typed ``payload``;
     it is validated and recorded on the same path an AI's forced tool call
     uses.  Returns the message dict or an error dict.
+
+    Unlike the free-text path, this one also requires an *active*
+    discussion. A structured payload is unambiguously a method turn — it
+    writes into ``method_state`` — so it has no paused-interjection reading,
+    and the form is never mounted while paused anyway (``updateInputArea``
+    computes ``isActiveHumanTurn`` with ``status !== 'paused'``). The
+    asymmetry with ``submit_human_message`` is deliberate, not drift.
     """
-    entity = discussion.get_entity(entity_id)
-    if not entity:
-        return {"error": "Entity not found"}
-    current = discussion.current_speaker
-    if not current or current.id != entity_id:
-        return {"error": f"It's not {entity.name}'s turn"}
+    guard = _check_human_turn_preconditions(discussion, entity_id)
+    if isinstance(guard, dict):
+        return guard
+    entity = guard
+    if not discussion.is_active:
+        return {"error": "Discussion is not active"}
     method = get_active_method(discussion)
     if not method:
         return {"error": "No active discussion method"}
@@ -352,7 +401,7 @@ async def _run_triage_recommender(
 
     api_key = key_resolver(
         moderator_entity.ai_config.provider_id,
-        moderator_entity.ai_config.api_key_env,
+        "",  # env var looked up by resolver
     )
     ai_client = AIClient(
         base_url=moderator_entity.ai_config.base_url,

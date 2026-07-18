@@ -8,6 +8,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from consensus.app_discussion_flow import (
+    _run_triage_recommender,
     calculate_discussion_cost,
     complete_turn,
     generate_ai_turn,
@@ -17,6 +18,7 @@ from consensus.app_discussion_flow import (
     submit_moderator_message,
     switch_discussion_method,
 )
+from consensus.methods.base import ProcessedResponse
 from consensus.models import Discussion, Entity, EntityType, Message, MessageRole
 from consensus.pricing import PricingCache
 
@@ -100,6 +102,73 @@ class TestSubmitHumanMessage:
         result = submit_human_message(disc, tmp_db, 9999, "Hello")
         assert "error" in result
 
+    def test_paused_discussion_accepts_interjection(
+            self, tmp_db, discussion_with_entities):
+        """A paused discussion still records a free-text interjection (#60).
+
+        The UI keeps the composer open while paused, so this path must keep
+        working; only the method post-processing is skipped (below).
+        """
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.current_turn_index = 1  # human is the current speaker
+        speaker = disc.current_speaker
+        disc.is_active = False
+        disc.status = "paused"
+        result = submit_human_message(disc, tmp_db, speaker.id, "Hello world")
+        assert "error" not in result
+        assert result["content"] == "Hello world"
+
+    def test_paused_interjection_skips_method_processing(
+            self, tmp_db, discussion_with_entities):
+        """A paused send is chat, not a method turn: ``process_response`` is
+        never invoked, so repeated sends cannot double-record a vote (#60)."""
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.current_turn_index = 1
+        speaker = disc.current_speaker
+        disc.is_active = False
+        disc.status = "paused"
+        method = MagicMock()
+        with patch("consensus.app_discussion_flow.get_active_method",
+                   return_value=method) as get_method_mock:
+            submit_human_message(disc, tmp_db, speaker.id, "I vote for A")
+            submit_human_message(disc, tmp_db, speaker.id, "I vote for A")
+        get_method_mock.assert_not_called()
+        method.process_response.assert_not_called()
+
+    def test_active_discussion_runs_method_processing(
+            self, tmp_db, discussion_with_entities):
+        """The paused skip must not leak into the normal active path (#60)."""
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.current_turn_index = 1
+        speaker = disc.current_speaker
+        disc.is_active = True
+        disc.status = "active"
+        method = MagicMock()
+        method.get_output_tool.return_value = None
+        method.process_response.return_value = ProcessedResponse(
+            display_content="I vote for A")
+        method.current_phase.return_value = None
+        with patch("consensus.app_discussion_flow.get_active_method",
+                   return_value=method):
+            submit_human_message(disc, tmp_db, speaker.id, "I vote for A")
+        method.process_response.assert_called_once()
+
+    def test_concluded_discussion_returns_error(
+            self, tmp_db, discussion_with_entities):
+        """A concluded discussion rejects a human turn and records nothing (#59)."""
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.current_turn_index = 1  # human is the current speaker
+        speaker = disc.current_speaker
+        disc.is_active = False
+        disc.status = "concluded"
+        result = submit_human_message(disc, tmp_db, speaker.id, "Hello world")
+        assert "error" in result
+        assert disc.messages == []
+
 
 class TestSubmitModeratorMessage:
     """Tests for submit_moderator_message."""
@@ -117,6 +186,32 @@ class TestSubmitModeratorMessage:
         disc = Discussion()
         result = submit_moderator_message(disc, tmp_db, "Hello")
         assert "error" in result
+
+
+class TestRunTriageRecommender:
+    """_run_triage_recommender resolves the moderator's API key via the
+    resolver's DB lookup (env_var=""), not a non-existent
+    ``AIConfig.api_key_env`` attribute that raises AttributeError (#59)."""
+
+    @pytest.mark.asyncio
+    async def test_resolves_key_with_empty_env_var(
+            self, tmp_db, discussion_with_entities):
+        disc = discussion_with_entities
+        mod = disc.moderator
+        assert mod.ai_config is not None
+        calls = []
+
+        def key_resolver(provider_id, env_var):
+            calls.append((provider_id, env_var))
+            return "resolved-key"
+
+        with patch("consensus.methods.recommender.MethodRecommender") as MockRec, \
+             patch("consensus.ai_client.AIClient") as MockClient:
+            MockRec.return_value.recommend = AsyncMock(return_value=[])
+            MockClient.return_value.close = AsyncMock()
+            await _run_triage_recommender(disc, mod, key_resolver)
+
+        assert calls == [(mod.ai_config.provider_id, "")]
 
 
 class TestCalculateDiscussionCost:

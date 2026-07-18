@@ -1,10 +1,12 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-18 (structured-phase human input, issue #57, built on
-branch `feat/structured-phase-human-input` — humans now get a schema-driven
-input form in structured phases instead of having to type raw JSON; branch at
-2496 tests, PR #58). Main at 2459 tests; PR #58 (issue #57) is the only
-open PR.)._
+_Last updated: 2026-07-18 (issue #59 — the three Minor #57 follow-ups —
+resolved, plus three incidental latent bugs fixed while in those files: two
+`AIConfig.api_key_env` AttributeErrors and a `Database.save_message`
+AttributeError. Then a review pass on that work (#60) narrowed the new status
+guard to concluded-only after it was found to break the paused composer, and
+extended the enum sentinel to arrays. Branch at **2505 tests**, open as
+PR #60; issue #61 (files over the ~500-line rule) is the only open issue.)_
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -37,10 +39,46 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #55 |
 | Double Crux pre-belief poll (belief-shift metric fix) | — (tech debt) | #56 |
 | Structured-phase human input (form renderer) | #57 | #58 |
+| Structured human input follow-ups + 3 incidental latent-bug fixes | #59 | #60 |
 
-Main is at **2459 tests passing**; the `feat/structured-phase-human-input`
-branch (issue #57) is at **2496**, open as PR #58. Every earlier
-method-repair issue (#12–#48, #56) is merged and closed.
+The `fix/structured-input-followups-59` branch is at **2505 tests passing**,
+open as PR #60. Every method-repair issue (#12–#48, #56) and the
+structured-phase human input work (#57, PR #58) are merged/closed.
+
+**Issue #59 + incidental fixes** (this PR) — the three Minor #57 review
+follow-ups, plus three unrelated latent `AttributeError` bugs found via IDE
+diagnostics while editing the same files (golden rule 7 — fixed, not deferred):
+- **#59.1 status guard.** Both human submit paths now route through a shared
+  `_check_human_turn_preconditions` helper (`app_discussion_flow.py`) that
+  rejects an unknown entity, a **concluded** discussion, and a wrong-turn
+  submission. One helper keeps the two paths consistent and de-dups the old
+  entity/turn checks. A *paused* discussion is deliberately still accepted —
+  see the conventions section below for why, and for the asymmetry between
+  the free-text and structured paths that replaces the blunt `is_active`
+  gate the first cut of this PR used.
+- **#59.2 / #59.3 form polish** (`static/structured-form.js`): numeric widgets
+  now block out-of-range values before submit (`rangeError`, a round-trip
+  saver — the server still re-checks; the deliberate #58 fractional-integer
+  behavior is preserved), and optional enums render a blank "— select —"
+  sentinel so an untouched optional `<select>` submits nothing instead of its
+  first option. The sentinel covers **arrays of enums** too: the first array
+  row is added unconditionally, so without it an untouched optional `enum[]`
+  silently submitted `[firstOption]`. Verified via a DOM-shim Node harness
+  (no JS test harness in repo) — 13/13 for #59, plus 10/10 re-run for #60.
+- **Incidental bug A** — `AIConfig` has no `api_key_env` attribute (it's a
+  DB-row key; `api_key` is the resolved value). `app.recommend_method`
+  (`app.py`) and `_run_triage_recommender` (`app_discussion_flow.py`) both
+  passed `ai_config.api_key_env` to the key resolver, an uncaught
+  `AttributeError` (before the `try`) that broke the "Suggest Method" button
+  and triage recommendation. Fixed to pass `""` (resolver looks the env var up
+  from the DB), matching `Moderator._resolve_api_key`.
+- **Incidental bug B** — `Database` has no `save_message`; the method is
+  `add_message`. Expert-consultation persistence
+  (`ConsensusApp._handle_consult_expert`) called `save_message(discussion_id,
+  msg)` — an uncaught `AttributeError` whenever an expert was consulted in a
+  persisted, active discussion (the existing test never set `discussion.id`,
+  so the branch was untested). Fixed to call `add_message` with the mapped
+  fields; new regression test drives the persisted-discussion branch.
 
 **Double Crux pre-belief poll** (PR #56, merged) — spec/plan under
 `docs/superpowers/{specs,plans}/2026-07-17-double-crux-pre-belief-poll*.md`.
@@ -273,8 +311,34 @@ All three items are done; the shared homes to keep using are:
   moderator plus `moderator_summary` (no network), and `Moderator._format_messages`
   for context filtering. For structured turns, stub `complete_with_tools`
   (see `tests/test_structured_output.py`).
+- **Human turn submissions share one precondition gate.** Both
+  `submit_human_message` and `submit_human_structured_message` route through
+  `_check_human_turn_preconditions` (`app_discussion_flow.py`), which rejects
+  an unknown entity, a **concluded** discussion, and a wrong-turn submission.
+  Any new human submit entry point must go through it so the paths cannot
+  drift (issue #59). The moderator submit path (`submit_moderator_message`) is
+  intentionally separate — it has no turn/status gate today.
+- **A paused discussion still accepts free-text human input** (issue #60 —
+  do not "tighten" this back into an `is_active` rejection without changing
+  the UI in the same commit). `updateInputArea` keeps the composer open while
+  paused, and `onSendMessage`'s paused branch posts a non-moderator human
+  current speaker's text to `submit_human_message`. Gating the shared helper
+  on `not is_active` silently broke that path — the message was refused and
+  the already-cleared input was lost. What a paused send must *not* do is
+  count as a method turn, so the two paths diverge **deliberately**:
+  - `submit_human_message` records the message but skips the
+    `get_active_method` / `process_response` block while paused. The turn
+    does not advance while paused, so the composer accepts repeated sends,
+    and re-running `process_response` for each would let a non-idempotent
+    handler record the same vote/estimate twice. The real method
+    contribution is processed once, on the participant's turn after Resume.
+  - `submit_human_structured_message` keeps a full `is_active` check: a
+    structured payload writes into `method_state`, so it is unambiguously a
+    turn with no interjection reading — and the form is never mounted while
+    paused anyway (`isActiveHumanTurn` includes `status !== 'paused'`).
 - Project rules: `uv` only (never pip), TDD (failing test first), files under
-  ~500 lines, docstrings + type hints mandatory.
+  ~500 lines (16 modules currently exceed this — issue #61), docstrings +
+  type hints mandatory.
 
 ## Decisions from the repo owner
 

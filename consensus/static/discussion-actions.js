@@ -61,17 +61,19 @@ export async function onSendMessage() {
     }
 
     if (state.status === 'paused') {
+        // Clear the composer only once the send has succeeded — on the error
+        // path the text stays put so it isn't lost to a toast (golden rule 6).
         const speaker = getEntity(state.current_speaker_id);
         if (speaker && speaker.entity_type === 'human' && speaker.id !== state.moderator_id) {
-            input.value = '';
             const result = await api.submitMessage(speaker.id, content);
             if (result?.error) return showToast(result.error);
+            input.value = '';
             renderDiscussion();
             return;
         }
-        input.value = '';
         const result = await api.submitModeratorMessage(content);
         if (result?.error) return showToast(result.error);
+        input.value = '';
         renderDiscussion();
         return;
     }

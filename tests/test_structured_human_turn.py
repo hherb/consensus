@@ -62,6 +62,34 @@ class TestStructuredHumanTurn:
                    for p in polls)
 
     @pytest.mark.asyncio
+    async def test_paused_discussion_returns_error_and_records_nothing(
+            self, tmp_db):
+        """A paused discussion rejects a structured human turn (#59)."""
+        disc, moderator, pricing, entity = await drive_double_crux_to_poll(
+            tmp_db)
+        before = list(disc.method_state["poll_beliefs"])
+        disc.is_active = False
+        disc.status = "paused"
+        res = submit_human_structured_message(
+            disc, tmp_db, entity.id, {"belief": 0.7, "reasoning": "study"})
+        assert "error" in res
+        assert disc.method_state["poll_beliefs"] == before
+
+    @pytest.mark.asyncio
+    async def test_concluded_discussion_returns_error_and_records_nothing(
+            self, tmp_db):
+        """A concluded discussion rejects a structured human turn (#59)."""
+        disc, moderator, pricing, entity = await drive_double_crux_to_poll(
+            tmp_db)
+        before = list(disc.method_state["poll_beliefs"])
+        disc.is_active = False
+        disc.status = "concluded"
+        res = submit_human_structured_message(
+            disc, tmp_db, entity.id, {"belief": 0.7, "reasoning": "study"})
+        assert "error" in res
+        assert disc.method_state["poll_beliefs"] == before
+
+    @pytest.mark.asyncio
     async def test_invalid_payload_returns_error_and_records_nothing(
             self, tmp_db):
         disc, moderator, pricing, entity = await drive_double_crux_to_poll(
