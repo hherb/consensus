@@ -91,3 +91,14 @@ class TestStructuredHumanTurn:
         assert "error" not in res
         assert any(p["entity_id"] == entity.id
                    for p in disc.method_state["poll_beliefs"])
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_block_in_structured_phase_errors_not_silent(
+            self, tmp_db):
+        disc, moderator, pricing, entity = await drive_double_crux_to_poll(
+            tmp_db)
+        before = list(disc.method_state.get("poll_beliefs", []))
+        res = submit_human_message(
+            disc, tmp_db, entity.id, '```json\n{"unrelated": true}\n```')
+        assert "error" in res           # valid JSON, wrong shape -> visible error
+        assert disc.method_state.get("poll_beliefs", []) == before  # nothing recorded

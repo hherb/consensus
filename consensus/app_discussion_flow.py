@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import time
-from typing import Callable, Optional
+from typing import Callable, Optional, TYPE_CHECKING
 
 from .database import Database
 from .evidence import record_and_annotate_evidence
@@ -17,6 +17,9 @@ from .app_discussion_state import pause_discussion, resume_discussion
 from .structured_output import (
     _format_tool_block_error, find_tool_blocked_entities,
 )
+
+if TYPE_CHECKING:
+    from .methods.base import DiscussionMethod, OutputToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +106,54 @@ def stamp_turn_index(discussion: Discussion) -> None:
     discussion.method_state["_turn_index_turn"] = discussion.turn_number
 
 
+def _structured_freetext_unreadable(
+    method: "DiscussionMethod", spec: "OutputToolSpec", entity: Entity,
+    discussion: Discussion, raw_content: str,
+) -> bool:
+    """Decide whether an unchanged-state structured turn was truly unread.
+
+    Called only when a structured-phase free-text turn left method_state
+    byte-identical.  That can mean either (a) extraction found nothing (a
+    genuine silent drop to surface, golden rule 6) or (b) a valid payload
+    that recorded idempotently (e.g. Tree of Thoughts re-scoring the same
+    values — no net change though it WAS read).  Distinguish by the
+    payload's *structural* shape: a fenced JSON block whose data fields are
+    present with the right primitive types/ranges is treated as understood;
+    a missing block, a non-mapping, or one missing a required data key
+    (parses, but wrong shape — e.g. a ``poll_belief`` submission with no
+    ``belief`` key) is unreadable and must be surfaced, not dropped.
+
+    Two things a *forced-tool* payload must satisfy are deliberately not
+    enforced here:
+
+    - ``reasoning`` — required by nearly every phase schema, but free-text
+      submissions routinely carry their rationale as prose *outside* the
+      fenced block (e.g. score_thoughts.py's ``"My scores:\\n```json\\n"``
+      — the reasoning is the prefix, not a key inside the fence).
+      Requiring it inside the block here would misclassify ordinary
+      free text as unreadable.
+    - the handler's semantic ``validate_output`` — some handlers
+      (``ScoreThoughtsHandler``) intentionally tolerate stale/pruned
+      references in the free-text path (``record_thought_scores`` drops
+      unknown labels silently) while rejecting the same payload in the
+      strict forced-tool validator used to drive AI retries.  Consulting
+      that stricter validator here would flag the free-text path's
+      documented tolerance as a silent drop it is not.
+
+    Residual: a structured phase whose free-text fallback is a non-JSON
+    format (numbered lists, etc.) has no block to inspect here, so a valid
+    submission that legitimately dedupes to a no-op is reported unreadable
+    (a rare false positive on the legacy free-text path).  The primary
+    input path is the structured form, which never reaches this branch.
+    """
+    block = extract_json_block(raw_content)
+    if not isinstance(block, dict):
+        return True
+    schema = method.resolve_input_schema(spec, entity, discussion)
+    required = [key for key in schema.get("required", []) if key != "reasoning"]
+    return bool(check_payload_schema(block, {**schema, "required": required}))
+
+
 def submit_human_message(
     discussion: Discussion, db: Database, entity_id: int, content: str,
 ) -> dict:
@@ -126,11 +177,10 @@ def submit_human_message(
         # Safety net for structured phases (#57): a phase that declares a
         # forced output tool expects free-text extraction to actually
         # write into method_state.  Snapshot before process_response and
-        # compare after — if nothing changed *and* the raw content carries
-        # no fenced JSON block at all, the extraction never had anything
-        # to work with and the turn must not be dropped without a trace
-        # (golden rule 6).  Non-structured phases are unaffected (spec
-        # is None, no snapshot taken).
+        # compare after — if nothing changed, the turn *might* have been
+        # silently dropped and must not vanish without a trace (golden
+        # rule 6).  Non-structured phases are unaffected (spec is None,
+        # no snapshot taken).
         #
         # A bare state-equality check is too blunt on its own: a resubmitted
         # (or re-scored-identically) fenced JSON payload can legitimately
@@ -138,10 +188,19 @@ def submit_human_message(
         # re-score pass, where a participant's later scores happen to match
         # their earlier ones for the same thoughts, so ``thought_scores``
         # and ``scores_by_pass`` end up unchanged even though the payload
-        # WAS read and recorded.  Requiring the *absence* of any JSON block
-        # too keeps the guard specific to genuinely unparsed free text (the
-        # scenario the tests target) without flagging idempotent structured
-        # resubmissions as failures.
+        # WAS read and recorded.  So the unchanged-state check does not
+        # stop at *presence* of a JSON block either — a valid-but-wrong-
+        # shape block (parses, but missing required keys, e.g. a
+        # ``poll_belief`` submission with no ``belief`` key) would then
+        # slip through unreported.  ``_structured_freetext_unreadable``
+        # instead validates the extracted block's structural *shape*
+        # against the phase's schema (required data keys present,
+        # correct primitive types/ranges): a block that satisfies it is
+        # treated as understood (idempotent resubmission, not an error);
+        # an absent, non-mapping, or wrong-shape block is surfaced.  See
+        # the helper's docstring for why it deliberately stops at
+        # structural shape rather than the handler's full semantic
+        # ``validate_output``.
         spec = method.get_output_tool(entity, discussion)
         before = (serialize_method_state(discussion.method_state)
                   if spec is not None else None)
@@ -150,9 +209,11 @@ def submit_human_message(
         content = processed.display_content
         if (spec is not None
                 and serialize_method_state(discussion.method_state) == before
-                and extract_json_block(raw_content) is None):
-            # Structured phase, but free-text extraction recorded nothing —
-            # surface it (golden rule 6) instead of the old silent drop.
+                and _structured_freetext_unreadable(
+                    method, spec, entity, discussion, raw_content)):
+            # Structured phase, but free-text extraction recorded nothing
+            # readable — surface it (golden rule 6) instead of the old
+            # silent drop.
             logger.warning(
                 "Structured phase: could not read %s's free-text turn as "
                 "'%s' data.", entity.name, spec.name)
@@ -184,7 +245,7 @@ def submit_human_message(
 
 def _record_structured_human_turn(
     discussion: Discussion, db: Database, entity: Entity,
-    method, spec, payload: dict,
+    method: "DiscussionMethod", spec: "OutputToolSpec", payload: dict,
 ) -> dict:
     """Validate and record a human structured-turn payload.
 
