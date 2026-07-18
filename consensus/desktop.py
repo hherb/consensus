@@ -226,6 +226,11 @@ class DesktopBridge:
         """Submit a message from a human participant."""
         return self.app.submit_human_message(entity_id, content)
 
+    def submit_human_structured_message(
+            self, entity_id: int, payload: dict) -> dict:
+        """Submit a structured payload from a human participant (#57)."""
+        return self.app.submit_human_structured_message(entity_id, payload)
+
     def submit_moderator_message(self, content: str) -> dict:
         """Submit a message from the human moderator."""
         return self.app.submit_moderator_message(content)
