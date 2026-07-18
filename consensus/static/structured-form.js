@@ -24,11 +24,22 @@ function fieldRow(labelText, help, inputEl) {
     return row;
 }
 
-/** Create a single primitive/enum widget from a property subschema. */
-function widgetFor(key, prop) {
+/** Create a single primitive/enum widget from a property subschema.
+ *  ``required`` controls whether an enum gets a blank sentinel option (#59). */
+function widgetFor(key, prop, required = true) {
     if (Array.isArray(prop.enum)) {
         const sel = document.createElement('select');
         sel.dataset.key = key;
+        // An optional enum gets a blank sentinel selected by default, so an
+        // untouched optional <select> submits nothing instead of silently
+        // defaulting to its first option (#59). Required enums keep the
+        // first-option default — a value is mandatory there.
+        if (!required) {
+            const blank = document.createElement('option');
+            blank.value = '';
+            blank.textContent = '— select —';
+            sel.appendChild(blank);
+        }
         for (const opt of prop.enum) {
             const o = document.createElement('option');
             o.value = opt; o.textContent = opt;
@@ -140,7 +151,7 @@ function renderFields(body, schema) {
         } else if (prop.type === 'object' && prop.properties) {
             collectors.push(renderObject(body, key, prop));
         } else {
-            const w = widgetFor(key, prop);
+            const w = widgetFor(key, prop, required.includes(key));
             body.appendChild(fieldRow(labelFor(key, required), prop.description, w));
             collectors.push(() => readWidget(w));
         }
@@ -152,10 +163,30 @@ function labelFor(key, required) {
     return required.includes(key) ? `${key} *` : key;
 }
 
-/** Read a primitive widget into [key, value] or throw a message. */
+/** Client-side range backstop for a numeric widget (#59): returns an error
+ *  string when the value falls outside the schema's min/max, else ''. The
+ *  server re-checks anyway, so this only saves a round-trip. Integer
+ *  wholeness is deliberately NOT checked here — the server surfaces "must be
+ *  a whole number" so a fractional integer is never silently truncated (#58). */
+function rangeError(w, key, value) {
+    if (Number.isNaN(value)) return '';  // non-numeric -> let the server report
+    if (w.min !== '' && value < Number(w.min)) {
+        return `'${key}' must be at least ${w.min}.`;
+    }
+    if (w.max !== '' && value > Number(w.max)) {
+        return `'${key}' must be at most ${w.max}.`;
+    }
+    return '';
+}
+
+/** Read a primitive widget into [key, value] or [key, undefined, error]. */
 function readWidget(w) {
     const key = w.dataset.key;
-    if (w.tagName === 'SELECT') return [key, w.value];
+    if (w.tagName === 'SELECT') {
+        // A blank sentinel (optional enum left untouched) omits the key
+        // entirely rather than submitting an empty string (#59).
+        return [key, w.value === '' ? undefined : w.value];
+    }
     if (w.dataset.jsontype === 'boolean') return [key, w.checked];
     const raw = w.value.trim();
     if (raw === '') return [key, undefined];
@@ -164,7 +195,10 @@ function readWidget(w) {
     // user sees a visible "must be a whole number" error, NOT be silently
     // truncated by parseInt to 3 (golden rule 6 — never silently alter input).
     if (w.dataset.jsontype === 'number' || w.dataset.jsontype === 'integer') {
-        return [key, Number(raw)];
+        const value = Number(raw);
+        const err = rangeError(w, key, value);
+        if (err) return [key, undefined, err];
+        return [key, value];
     }
     return [key, raw];
 }
@@ -174,7 +208,8 @@ function assemble(collectors, required) {
     for (const c of collectors) {
         const entry = c();
         if (entry && entry.error) return { error: entry.error };
-        const [k, v] = entry;
+        const [k, v, err] = entry;
+        if (err) return { error: err };
         if (v !== undefined) payload[k] = v;
     }
     for (const r of required) {
@@ -198,7 +233,7 @@ function renderArray(body, key, prop) {
         const inputs = [];
         if (items.type === 'object' && items.properties) {
             for (const [ik, ip] of Object.entries(items.properties)) {
-                const w = widgetFor(ik, ip);
+                const w = widgetFor(ik, ip, itemRequired.includes(ik));
                 w.placeholder = itemRequired.includes(ik) ? `${ik} *` : ik;
                 row.appendChild(w);
                 inputs.push(w);
@@ -229,12 +264,14 @@ function renderArray(body, key, prop) {
         const arr = [];
         for (const e of rows) {
             if (e.single) {
-                const [, v] = readWidget(e.inputs[0]);
+                const [, v, err] = readWidget(e.inputs[0]);
+                if (err) return { error: err };
                 if (v !== undefined) arr.push(v);
             } else {
                 const obj = {};
                 for (const w of e.inputs) {
-                    const [k, v] = readWidget(w);
+                    const [k, v, err] = readWidget(w);
+                    if (err) return { error: err };
                     if (v !== undefined) obj[k] = v;
                 }
                 if (Object.keys(obj).length === 0) continue; // entirely-empty row: ignore
@@ -256,7 +293,7 @@ function renderObject(body, key, prop) {
     const widgets = [];
     const subRequired = prop.required || [];
     for (const [ik, ip] of Object.entries(prop.properties)) {
-        const w = widgetFor(ik, ip);
+        const w = widgetFor(ik, ip, subRequired.includes(ik));
         wrap.appendChild(fieldRow(labelFor(ik, subRequired), ip.description, w));
         widgets.push(w);
     }
@@ -264,7 +301,8 @@ function renderObject(body, key, prop) {
     return () => {
         const obj = {};
         for (const w of widgets) {
-            const [k, v] = readWidget(w);
+            const [k, v, err] = readWidget(w);
+            if (err) return { error: err };
             if (v !== undefined) obj[k] = v;
         }
         for (const r of subRequired) {

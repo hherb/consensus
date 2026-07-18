@@ -37,6 +37,23 @@ def app_with_entities(app):
 
 # --- State management ---
 
+class TestRecommendMethodKeyResolution:
+    """recommend_method resolves the moderator's API key via the resolver's
+    DB lookup, not a non-existent ``AIConfig.api_key_env`` attribute that
+    raises AttributeError at runtime (#59)."""
+
+    @pytest.mark.asyncio
+    async def test_resolves_key_without_api_key_env_attribute(
+            self, app_with_entities):
+        app, mod_id, p1_id, p2_id = app_with_entities
+        with patch("consensus.app_discussion_setup.recommend_method",
+                   new=AsyncMock(return_value=[])), \
+             patch("consensus.ai_client.AIClient") as MockClient:
+            MockClient.return_value.close = AsyncMock()
+            result = await app.recommend_method("topic", "")
+        assert result == {"recommendations": []}
+
+
 class TestGetState:
     def test_initial_state(self, app):
         state = app.get_state()
@@ -608,3 +625,27 @@ class TestConsultExpert:
         assert result["is_error"] is False
         assert "Expert analysis result" in result["content"]
         mock_provider.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_consult_expert_persists_message_in_active_discussion(self, app):
+        """A successful expert consultation in a persisted discussion records
+        the expert message via the real Database API (``add_message``), not a
+        non-existent ``save_message`` method that raises AttributeError (#59)."""
+        pid = app.db.add_provider("P", "http://x", "")
+        eid = app.db.add_entity("DrSmith", "expert", "#000", pid, "m")
+        srv = app.add_mcp_server("MCP1", "Desc", "cmd")
+        app.save_expert_definition(eid, srv["id"], "analyze")
+
+        from consensus.tools import ToolResult
+        mock_provider = AsyncMock()
+        mock_provider.execute = AsyncMock(
+            return_value=ToolResult(content="Expert analysis result"))
+        app._mcp_providers[srv["id"]] = mock_provider
+
+        # A persisted, id-bearing discussion so the save branch executes.
+        app.discussion.id = app.db.create_discussion("topic", eid)
+        result = await app.consult_expert("DrSmith", "Is the sky blue?")
+
+        assert result["is_error"] is False
+        msgs = app.db.get_messages(app.discussion.id)
+        assert any("Expert analysis result" in m["content"] for m in msgs)

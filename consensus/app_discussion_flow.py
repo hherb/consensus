@@ -161,21 +161,45 @@ def _structured_freetext_unreadable(
     return bool(check_payload_schema(block, {**schema, "required": required}))
 
 
+def _check_human_turn_preconditions(
+    discussion: Discussion, entity_id: int,
+) -> "Entity | dict":
+    """Validate the shared preconditions for a human turn submission.
+
+    Both human submit paths (``submit_human_message`` and
+    ``submit_human_structured_message``) must reject the same conditions so
+    one path cannot be tightened in isolation (issue #59): an unknown
+    entity, a discussion that is not accepting turns (paused, concluded, or
+    not yet started), or a turn that belongs to someone else. This mirrors
+    the status gate ``generate_ai_turn`` already applies to AI turns.
+
+    Returns the resolved :class:`Entity` on success, or an
+    ``{"error": ...}`` dict for the caller to return verbatim.
+    """
+    entity = discussion.get_entity(entity_id)
+    if not entity:
+        return {"error": "Entity not found"}
+    if not discussion.is_active or discussion.status == "concluded":
+        return {"error": "Discussion is not active"}
+    current = discussion.current_speaker
+    if not current or current.id != entity_id:
+        return {"error": f"It's not {entity.name}'s turn"}
+    return entity
+
+
 def submit_human_message(
     discussion: Discussion, db: Database, entity_id: int, content: str,
 ) -> dict:
     """Submit a message from a human participant.
 
     Returns a dict with the message data, or an error dict if the entity
-    is not found or it is not their turn.
+    is not found, the discussion is not accepting turns, or it is not
+    their turn.
     """
-    entity = discussion.get_entity(entity_id)
-    if not entity:
-        return {"error": "Entity not found"}
-
-    current = discussion.current_speaker
-    if not current or current.id != entity_id:
-        return {"error": f"It's not {entity.name}'s turn"}
+    guard = _check_human_turn_preconditions(discussion, entity_id)
+    if isinstance(guard, dict):
+        return guard
+    entity = guard
 
     # Method-specific response post-processing — human responses carry
     # method data too (votes, estimates, ...), exactly like AI turns.
@@ -297,12 +321,10 @@ def submit_human_structured_message(
     it is validated and recorded on the same path an AI's forced tool call
     uses.  Returns the message dict or an error dict.
     """
-    entity = discussion.get_entity(entity_id)
-    if not entity:
-        return {"error": "Entity not found"}
-    current = discussion.current_speaker
-    if not current or current.id != entity_id:
-        return {"error": f"It's not {entity.name}'s turn"}
+    guard = _check_human_turn_preconditions(discussion, entity_id)
+    if isinstance(guard, dict):
+        return guard
+    entity = guard
     method = get_active_method(discussion)
     if not method:
         return {"error": "No active discussion method"}
@@ -352,7 +374,7 @@ async def _run_triage_recommender(
 
     api_key = key_resolver(
         moderator_entity.ai_config.provider_id,
-        moderator_entity.ai_config.api_key_env,
+        "",  # env var looked up by resolver
     )
     ai_client = AIClient(
         base_url=moderator_entity.ai_config.base_url,

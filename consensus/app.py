@@ -436,7 +436,11 @@ class ConsensusApp:
                 timestamp=time.time(),
             )
             self.discussion.messages.append(msg)
-            self.db.save_message(self.discussion.id, msg)
+            self.db.add_message(
+                self.discussion.id, msg.entity_id, msg.content,
+                msg.role.value, turn_number=self.discussion.turn_number,
+                timestamp=msg.timestamp,
+            )
             self._notify()
 
         return result
@@ -705,7 +709,7 @@ class ConsensusApp:
         if not mod or not mod.ai_config:
             return {"error": "No AI moderator configured for recommendations"}
         api_key = self._resolve_key_for_moderator(
-            mod.ai_config.provider_id, mod.ai_config.api_key_env,
+            mod.ai_config.provider_id, "",  # env var looked up by resolver
         )
         from .ai_client import AIClient
         ai_client = AIClient(

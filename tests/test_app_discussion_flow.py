@@ -8,6 +8,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from consensus.app_discussion_flow import (
+    _run_triage_recommender,
     calculate_discussion_cost,
     complete_turn,
     generate_ai_turn,
@@ -100,6 +101,32 @@ class TestSubmitHumanMessage:
         result = submit_human_message(disc, tmp_db, 9999, "Hello")
         assert "error" in result
 
+    def test_paused_discussion_returns_error(
+            self, tmp_db, discussion_with_entities):
+        """A paused discussion rejects a human turn and records nothing (#59)."""
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.current_turn_index = 1  # human is the current speaker
+        speaker = disc.current_speaker
+        disc.is_active = False
+        disc.status = "paused"
+        result = submit_human_message(disc, tmp_db, speaker.id, "Hello world")
+        assert "error" in result
+        assert disc.messages == []
+
+    def test_concluded_discussion_returns_error(
+            self, tmp_db, discussion_with_entities):
+        """A concluded discussion rejects a human turn and records nothing (#59)."""
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        disc.current_turn_index = 1  # human is the current speaker
+        speaker = disc.current_speaker
+        disc.is_active = False
+        disc.status = "concluded"
+        result = submit_human_message(disc, tmp_db, speaker.id, "Hello world")
+        assert "error" in result
+        assert disc.messages == []
+
 
 class TestSubmitModeratorMessage:
     """Tests for submit_moderator_message."""
@@ -117,6 +144,32 @@ class TestSubmitModeratorMessage:
         disc = Discussion()
         result = submit_moderator_message(disc, tmp_db, "Hello")
         assert "error" in result
+
+
+class TestRunTriageRecommender:
+    """_run_triage_recommender resolves the moderator's API key via the
+    resolver's DB lookup (env_var=""), not a non-existent
+    ``AIConfig.api_key_env`` attribute that raises AttributeError (#59)."""
+
+    @pytest.mark.asyncio
+    async def test_resolves_key_with_empty_env_var(
+            self, tmp_db, discussion_with_entities):
+        disc = discussion_with_entities
+        mod = disc.moderator
+        assert mod.ai_config is not None
+        calls = []
+
+        def key_resolver(provider_id, env_var):
+            calls.append((provider_id, env_var))
+            return "resolved-key"
+
+        with patch("consensus.methods.recommender.MethodRecommender") as MockRec, \
+             patch("consensus.ai_client.AIClient") as MockClient:
+            MockRec.return_value.recommend = AsyncMock(return_value=[])
+            MockClient.return_value.close = AsyncMock()
+            await _run_triage_recommender(disc, mod, key_resolver)
+
+        assert calls == [(mod.ai_config.provider_id, "")]
 
 
 class TestCalculateDiscussionCost:
