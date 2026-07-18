@@ -82,3 +82,26 @@ class TestCurrentInputSpec:
         _drive_to_prior_phase(app, p2_id)
 
         assert app.get_state()["current_input_spec"] is None
+
+
+class TestPauseResumePreservesInputSpec:
+    """Regression test for #57: pause_discussion/resume_discussion used to
+    return discussion.to_dict(), which lacks get_state()-only fields such
+    as current_input_spec. The web frontend's onStateUpdate replaces state
+    wholesale, so resuming a paused structured-phase turn wiped the input
+    spec and the schema-driven form fell back to the plain textarea."""
+
+    def test_resume_returns_current_input_spec(self, app_with_entities):
+        app, mod_id, p1_id, p2_id = app_with_entities
+        app.start_discussion()
+        _drive_to_prior_phase(app, p2_id)  # Bob, human, not moderator
+
+        pause_result = app.pause_discussion()
+        assert "error" not in pause_result
+        assert pause_result.get("current_input_spec") is not None
+        assert pause_result["current_input_spec"]["tool_name"] == "submit_beliefs"
+
+        resumed = app.resume_discussion()
+        assert "error" not in resumed
+        assert resumed.get("current_input_spec") is not None
+        assert resumed["current_input_spec"]["tool_name"] == "submit_beliefs"

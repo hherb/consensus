@@ -903,16 +903,18 @@ class ConsensusApp:
         """Pause the current active discussion."""
         self._cancel_pending_user_inputs()
         result = app_discussion_state.pause_discussion(self.discussion, self.db)
-        if "error" not in result:
-            self._notify()
-        return result
+        if "error" in result:
+            return result
+        self._notify()
+        return self.get_state()
 
     def resume_discussion(self) -> dict:
         """Resume a paused discussion."""
         result = app_discussion_state.resume_discussion(self.discussion, self.db)
-        if "error" not in result:
-            self._notify()
-        return result
+        if "error" in result:
+            return result
+        self._notify()
+        return self.get_state()
 
     def retry_method_switch(self) -> dict:
         """Retry a Triage method handoff blocked by the tool gate."""
