@@ -134,8 +134,13 @@ A human taking a turn in a `requires_structured_output` phase now gets a
 - Verified live (Playwright, all-human Delphi): form renders, validates
   required fields inline, records + advances, fresh form per turn, survives
   pause→resume. No phase is both structured and evidence-tracked, so the form
-  needs no evidence affordance. Deferred (Minor, see git/ledger): client-side
-  numeric-range backstop; optional-enum first-option default.
+  needs no evidence affordance. Post-review fix (PR #58): the integer form
+  widget now parses with `Number()` not `parseInt()`, so a fractional integer
+  surfaces the server's "must be a whole number" error instead of being
+  silently truncated (golden rule 6). Remaining Minor follow-ups tracked in
+  **issue #59**: submit-path status guard (both human submit methods) and the
+  deferred form polish (client-side numeric-range backstop; optional-enum
+  first-option default).
 
 ## Open work
 

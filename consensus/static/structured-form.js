@@ -159,8 +159,13 @@ function readWidget(w) {
     if (w.dataset.jsontype === 'boolean') return [key, w.checked];
     const raw = w.value.trim();
     if (raw === '') return [key, undefined];
-    if (w.dataset.jsontype === 'number') return [key, Number(raw)];
-    if (w.dataset.jsontype === 'integer') return [key, parseInt(raw, 10)];
+    // Both number and integer parse with Number(): an integer field left
+    // fractional (e.g. "3.5") must reach the server's schema check so the
+    // user sees a visible "must be a whole number" error, NOT be silently
+    // truncated by parseInt to 3 (golden rule 6 — never silently alter input).
+    if (w.dataset.jsontype === 'number' || w.dataset.jsontype === 'integer') {
+        return [key, Number(raw)];
+    }
     return [key, raw];
 }
 
