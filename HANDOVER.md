@@ -3,8 +3,8 @@
 _Last updated: 2026-07-18 (structured-phase human input, issue #57, built on
 branch `feat/structured-phase-human-input` — humans now get a schema-driven
 input form in structured phases instead of having to type raw JSON; branch at
-2495 tests, PR pending). Main at 2459 tests; the #57 branch is the only open
-work.)._
+2496 tests, PR #58). Main at 2459 tests; PR #58 (issue #57) is the only
+open PR.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -36,10 +36,10 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Shared-helper dedup batch (scanner delegation, give-up mixin, test split) | — (tech debt) | #54 |
 | Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #55 |
 | Double Crux pre-belief poll (belief-shift metric fix) | — (tech debt) | #56 |
-| Structured-phase human input (form renderer) | #57 | pending |
+| Structured-phase human input (form renderer) | #57 | #58 |
 
 Main is at **2459 tests passing**; the `feat/structured-phase-human-input`
-branch (issue #57) is at **2495** and ready for PR. Every earlier
+branch (issue #57) is at **2496**, open as PR #58. Every earlier
 method-repair issue (#12–#48, #56) is merged and closed.
 
 **Double Crux pre-belief poll** (PR #56, merged) — spec/plan under
@@ -104,8 +104,7 @@ moderator excluded from the panel. Spec/plan:
 Suite after #29: **2355 passing**. Deferred: family-level model grouping
 (exact-model only), and proposal item 3 (a "diversify" auto-suggest helper).
 
-**Structured-phase human input** (issue #57, branch
-`feat/structured-phase-human-input`, PR pending) — spec/plan under
+**Structured-phase human input** (issue #57, PR #58) — spec/plan under
 `docs/superpowers/{specs,plans}/2026-07-17-structured-phase-human-input*.md`.
 A human taking a turn in a `requires_structured_output` phase now gets a
 **schema-driven input form** instead of having to type raw JSON.
