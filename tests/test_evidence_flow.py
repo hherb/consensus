@@ -28,6 +28,10 @@ class _FakePhaseMethod:
     def process_structured_response(self, payload, entity, discussion):
         return ProcessedResponse(display_content=str(payload))
 
+    def get_output_tool(self, entity, discussion):
+        """No forced output tool — these tests exercise free-text turns."""
+        return None
+
 
 def _human_turn_discussion(db, phase="test_crux"):
     """An active discussion whose current speaker is a human."""

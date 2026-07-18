@@ -1,13 +1,10 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-17 (alpha distribution merged via PR #53 — PyPI
-package `consensus-app` + signed macOS DMG build pipeline; shared-helper
-dedup batch via PR #54 closes this file's dedup list; blocked Triage
-switch recovery (pause + retry) merged via PR #55 closes the older
-"blocked Triage switch auto-concludes" UX gap; Double Crux pre-belief
-poll (branch `feat/double-crux-pre-belief-poll`, PR #56) closes the
-belief-shift metric tech-debt item below. All tracked issues closed.
-Main at 2454 tests.)._
+_Last updated: 2026-07-18 (structured-phase human input, issue #57, built on
+branch `feat/structured-phase-human-input` — humans now get a schema-driven
+input form in structured phases instead of having to type raw JSON; branch at
+2496 tests, PR #58). Main at 2459 tests; PR #58 (issue #57) is the only
+open PR.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -39,46 +36,27 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Shared-helper dedup batch (scanner delegation, give-up mixin, test split) | — (tech debt) | #54 |
 | Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #55 |
 | Double Crux pre-belief poll (belief-shift metric fix) | — (tech debt) | #56 |
+| Structured-phase human input (form renderer) | #57 | #58 |
 
-Main is at **2454 tests passing**. Every previously tracked issue is merged
-and closed. The Double Crux pre-belief poll is on branch
-`feat/double-crux-pre-belief-poll` with PR #56 open for review (branch at
-2459 tests after post-review fixes). The one open issue is #57 (structured-
-phase human-input UX gap), a framework-wide follow-up filed during the PR
-review — no other open issues or PRs.
+Main is at **2459 tests passing**; the `feat/structured-phase-human-input`
+branch (issue #57) is at **2496**, open as PR #58. Every earlier
+method-repair issue (#12–#48, #56) is merged and closed.
 
-**Double Crux pre-belief poll** (branch `feat/double-crux-pre-belief-poll`)
-— spec `docs/superpowers/specs/2026-07-17-double-crux-pre-belief-poll-design.md`,
-plan `docs/superpowers/plans/2026-07-17-double-crux-pre-belief-poll.md`. A
-new structured micro-turn phase `poll_belief` (`consensus/methods/phases/
-poll_belief.py`) runs after `identify_crux` and before `test_crux`, on the
-**factual path only** (identify's routing already jumps `values`/`none`
-straight to `resolve`). Every disagreeing party states their probability on
-the moderator's *synthesized* shared claim; that poll becomes the
-authoritative `initial_beliefs` (the "before" end of the belief-shift
-metric), fixing the two defects the old hunt-snapshot had: non-crux-authors
-showed `? → final`, and the initial (author phrasing) vs final (moderator
-claim) compared different propositions. Poll helpers live in
-`_crux_helpers.py` (`MAX_POLL_ROUNDS`, `POLL_BELIEF_TOOL_PARAMETERS`,
-`validate_poll_belief_payload`, `record_poll_belief`, `entities_with_poll`,
-`extract_poll_belief`, `apply_poll_beliefs`). `record_crux_selection` no
-longer snapshots beliefs (poll owns `initial_beliefs`; per-crux `belief` is
-kept as provenance). **Always-on, factual-only** (owner decision); total
-poll failure degrades to an honest `?`, never a fabricated number. Whole-
-branch review (opus): ready to merge, no Critical/Important. **Post-review
-fixes applied** (branch now at 2459 tests): (1) `build_crux_map`/`format_*`
-split out of `_crux_helpers.py` into a new `_crux_artifact.py` sibling
-(helpers module back to 484 lines); (2) the poll now redacts each poller's
-numeric belief line from later pollers' context via
-`PollBeliefHandler.filter_context_message` (`redact_belief_lines` +
-`BELIEF_LINE_PREFIX` in `_crux_helpers.py`), so the "before" baseline is no
-longer anchored by earlier numbers — full anchoring-immunity (also hiding
-reasoning prose / moderator paraphrase) remains optional; (3) the stale
-`# factual → test_crux` routing comment in `identify_crux.py` corrected to
-`poll_belief`. Remaining deferred: no `values`/`none` E2E asserting the poll
-is skipped (routing is deterministic + unit-covered). Separately, the
-framework-wide structured-phase human-input UX gap (humans must type a JSON
-block in structured phases; free prose is dropped) is tracked as issue #57.
+**Double Crux pre-belief poll** (PR #56, merged) — spec/plan under
+`docs/superpowers/{specs,plans}/2026-07-17-double-crux-pre-belief-poll*.md`.
+A structured micro-turn phase `poll_belief` (`consensus/methods/phases/
+poll_belief.py`) runs after `identify_crux` and before `test_crux` on the
+**factual path only** (identify's routing jumps `values`/`none` straight to
+`resolve`). Every disagreeing party states its probability on the
+moderator's *synthesized* shared claim, and that poll is the authoritative
+`initial_beliefs` (the "before" end of the belief-shift metric). Poll
+helpers live in `_crux_helpers.py`; artifact/formatting helpers in the
+sibling `_crux_artifact.py`. **Always-on, factual-only** (owner decision);
+total poll failure degrades to an honest `?`, never a fabricated number.
+Each poller's numeric belief line is redacted from later pollers' context
+(`PollBeliefHandler.filter_context_message` / `redact_belief_lines`) so the
+baseline is not anchored by earlier numbers. The unparsed-human-input case
+(prose instead of JSON) is the framework-wide gap tracked as **issue #57**.
 
 **#28 evidence-tracked phases** merged (PR #45) —
 spec `docs/superpowers/specs/2026-07-14-evidence-gated-phases-design.md`, plan
@@ -125,6 +103,44 @@ moderator excluded from the panel. Spec/plan:
 `docs/superpowers/{specs,plans}/2026-07-15-same-model-panel-warning*.md`.
 Suite after #29: **2355 passing**. Deferred: family-level model grouping
 (exact-model only), and proposal item 3 (a "diversify" auto-suggest helper).
+
+**Structured-phase human input** (issue #57, PR #58) — spec/plan under
+`docs/superpowers/{specs,plans}/2026-07-17-structured-phase-human-input*.md`.
+A human taking a turn in a `requires_structured_output` phase now gets a
+**schema-driven input form** instead of having to type raw JSON.
+- **Backend**: `submit_human_structured_message(entity_id, payload)`
+  (`app_discussion_flow.py`, exposed via desktop bridge + server route +
+  `api.submitStructuredMessage`) validates a payload (`check_payload_schema`
+  in `methods/parsing.py`, then the handler's `validate_output`) and records
+  via `process_structured_response`, mirroring the AI branch. A **safety net**
+  in `submit_human_message` converts the old silent drop into a visible error
+  (golden rule 6): a structured-phase free-text turn that records nothing and
+  carries no schema-valid JSON block returns `{"error": ...}`.
+- **State**: `get_state()` exposes `current_input_spec`
+  (`consensus/structured_input.py` — `build_input_spec`/`schema_is_renderable`)
+  for a human participant (not the moderator) in a structured phase.
+  Dynamic-key schemas (belief maps) are resolved to concrete fields by the new
+  `PhaseHandler.resolve_input_schema` hook (`expand_belief_schema`).
+- **Frontend**: `consensus/static/structured-form.js` renders one widget per
+  schema property (number/string/enum/boolean/array/array-of-objects) with a
+  guided-JSON fallback for un-renderable (nested `additionalProperties`, e.g.
+  the ACH matrix) schemas.
+- **Gotcha closed during verification**: any lifecycle app method that returns
+  `discussion.to_dict()` drops `current_input_spec` (a get_state-only field),
+  so the form vanishes after that transition. `pause`/`resume`/`reopen` were
+  fixed to return `get_state()`; `start`/`conclude`/`continue` already did.
+  **New rule: lifecycle methods the frontend feeds to `onStateUpdate(result)`
+  must return `get_state()`, never `to_dict()`.**
+- Verified live (Playwright, all-human Delphi): form renders, validates
+  required fields inline, records + advances, fresh form per turn, survives
+  pause→resume. No phase is both structured and evidence-tracked, so the form
+  needs no evidence affordance. Post-review fix (PR #58): the integer form
+  widget now parses with `Number()` not `parseInt()`, so a fractional integer
+  surfaces the server's "must be a whole number" error instead of being
+  silently truncated (golden rule 6). Remaining Minor follow-ups tracked in
+  **issue #59**: submit-path status guard (both human submit methods) and the
+  deferred form polish (client-side numeric-range backstop; optional-enum
+  first-option default).
 
 ## Open work
 

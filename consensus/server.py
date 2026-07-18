@@ -396,6 +396,9 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                 int(data.get("window_size", 20))),
             "submit_human_message": lambda: app.submit_human_message(
                 data["entity_id"], data["content"]),
+            "submit_human_structured_message":
+                lambda: app.submit_human_structured_message(
+                    data["entity_id"], data.get("payload", {})),
             "submit_moderator_message": lambda: app.submit_moderator_message(
                 data["content"]),
             "generate_ai_turn": lambda: app.generate_ai_turn(),

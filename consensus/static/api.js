@@ -60,6 +60,7 @@ class DesktopAPI {
     // --- Discussion lifecycle ---
     async setCostLimit(limit) { return await window.pywebview.api.set_cost_limit(limit); }
     async submitMessage(eid, content) { return await window.pywebview.api.submit_human_message(eid, content); }
+    async submitStructuredMessage(eid, payload) { return await window.pywebview.api.submit_human_structured_message(eid, payload); }
     async submitModeratorMessage(content) { return await window.pywebview.api.submit_moderator_message(content); }
     async submitUserInput(requestId, content) { return await window.pywebview.api.submit_user_input(requestId, content); }
     async generateAiTurn() { return await window.pywebview.api.generate_ai_turn(); }
@@ -199,6 +200,7 @@ class WebAPI {
     async setMemberContextStrategy(eid, strategy, windowSize) { return await this._post('set_member_context_strategy', { entity_id: eid, strategy, window_size: windowSize }); }
     async setCostLimit(limit) { return await this._post('set_cost_limit', { cost_limit: limit }); }
     async submitMessage(eid, content) { return await this._post('submit_human_message', { entity_id: eid, content }); }
+    async submitStructuredMessage(eid, payload) { return await this._post('submit_human_structured_message', { entity_id: eid, payload }); }
     async submitModeratorMessage(content) { return await this._post('submit_moderator_message', { content }); }
     async submitUserInput(requestId, content) { return await this._post('submit_user_input', { request_id: requestId, content }); }
     async generateAiTurn() { return await this._post('generate_ai_turn'); }

@@ -4,11 +4,12 @@ import json
 import logging
 import re
 import time
-from typing import Callable, Optional
+from typing import Callable, Optional, TYPE_CHECKING
 
 from .database import Database
 from .evidence import record_and_annotate_evidence
 from .methods import get_active_method, get_method, serialize_method_state
+from .methods.parsing import check_payload_schema, extract_json_block
 from .models import Discussion, Entity, EntityType, Message, MessageRole, StoryboardEntry
 from .moderator import Moderator
 from .pricing import PricingCache
@@ -16,6 +17,9 @@ from .app_discussion_state import pause_discussion, resume_discussion
 from .structured_output import (
     _format_tool_block_error, find_tool_blocked_entities,
 )
+
+if TYPE_CHECKING:
+    from .methods.base import DiscussionMethod, OutputToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +106,61 @@ def stamp_turn_index(discussion: Discussion) -> None:
     discussion.method_state["_turn_index_turn"] = discussion.turn_number
 
 
+def _structured_freetext_unreadable(
+    method: "DiscussionMethod", spec: "OutputToolSpec", entity: Entity,
+    discussion: Discussion, raw_content: str,
+) -> bool:
+    """Decide whether an unchanged-state structured turn was truly unread.
+
+    Called only when a structured-phase free-text turn left method_state
+    byte-identical.  That can mean either (a) extraction found nothing (a
+    genuine silent drop to surface, golden rule 6) or (b) a valid payload
+    that recorded idempotently (e.g. Tree of Thoughts re-scoring the same
+    values — no net change though it WAS read).  Distinguish by the
+    payload's *structural* shape: a fenced JSON block whose data fields are
+    present with the right primitive types/ranges is treated as understood;
+    a missing block, a non-mapping, or one missing a required data key
+    (parses, but wrong shape — e.g. a ``poll_belief`` submission with no
+    ``belief`` key) is unreadable and must be surfaced, not dropped.
+
+    Two things a *forced-tool* payload must satisfy are deliberately not
+    enforced here:
+
+    - ``reasoning`` — required by nearly every phase schema, and
+      required here too by default: a free-text block that omits it is
+      unreadable (#57 — a blanket exclusion let a valid-looking-but-
+      unrecorded ``poll_belief`` submission slip through as a silent
+      drop).  It is excluded from the check ONLY when the active
+      handler sets ``reasoning_outside_block = True``, for phases whose
+      free-text fallback routinely carries the rationale as prose
+      *outside* the fenced block (e.g. score_thoughts.py's
+      ``"My scores:\\n```json\\n"`` — the reasoning is the prefix, not a
+      key inside the fence).  Requiring it inside the block there would
+      misclassify an ordinary re-score as unreadable.
+    - the handler's semantic ``validate_output`` — some handlers
+      (``ScoreThoughtsHandler``) intentionally tolerate stale/pruned
+      references in the free-text path (``record_thought_scores`` drops
+      unknown labels silently) while rejecting the same payload in the
+      strict forced-tool validator used to drive AI retries.  Consulting
+      that stricter validator here would flag the free-text path's
+      documented tolerance as a silent drop it is not.
+
+    Residual: a structured phase whose free-text fallback is a non-JSON
+    format (numbered lists, etc.) has no block to inspect here, so a valid
+    submission that legitimately dedupes to a no-op is reported unreadable
+    (a rare false positive on the legacy free-text path).  The primary
+    input path is the structured form, which never reaches this branch.
+    """
+    block = extract_json_block(raw_content)
+    if not isinstance(block, dict):
+        return True
+    schema = method.resolve_input_schema(spec, entity, discussion)
+    required = schema.get("required", [])
+    if method.reasoning_outside_block(discussion):
+        required = [key for key in required if key != "reasoning"]
+    return bool(check_payload_schema(block, {**schema, "required": required}))
+
+
 def submit_human_message(
     discussion: Discussion, db: Database, entity_id: int, content: str,
 ) -> dict:
@@ -122,8 +181,52 @@ def submit_human_message(
     # method data too (votes, estimates, ...), exactly like AI turns.
     method = get_active_method(discussion)
     if method and not is_pass(content):
+        # Safety net for structured phases (#57): a phase that declares a
+        # forced output tool expects free-text extraction to actually
+        # write into method_state.  Snapshot before process_response and
+        # compare after — if nothing changed, the turn *might* have been
+        # silently dropped and must not vanish without a trace (golden
+        # rule 6).  Non-structured phases are unaffected (spec is None,
+        # no snapshot taken).
+        #
+        # A bare state-equality check is too blunt on its own: a resubmitted
+        # (or re-scored-identically) fenced JSON payload can legitimately
+        # leave method_state byte-identical — e.g. Tree of Thoughts'
+        # re-score pass, where a participant's later scores happen to match
+        # their earlier ones for the same thoughts, so ``thought_scores``
+        # and ``scores_by_pass`` end up unchanged even though the payload
+        # WAS read and recorded.  So the unchanged-state check does not
+        # stop at *presence* of a JSON block either — a valid-but-wrong-
+        # shape block (parses, but missing required keys, e.g. a
+        # ``poll_belief`` submission with no ``belief`` key) would then
+        # slip through unreported.  ``_structured_freetext_unreadable``
+        # instead validates the extracted block's structural *shape*
+        # against the phase's schema (required data keys present,
+        # correct primitive types/ranges): a block that satisfies it is
+        # treated as understood (idempotent resubmission, not an error);
+        # an absent, non-mapping, or wrong-shape block is surfaced.  See
+        # the helper's docstring for why it deliberately stops at
+        # structural shape rather than the handler's full semantic
+        # ``validate_output``.
+        spec = method.get_output_tool(entity, discussion)
+        before = (serialize_method_state(discussion.method_state)
+                  if spec is not None else None)
+        raw_content = content
         processed = method.process_response(content, entity, discussion)
         content = processed.display_content
+        if (spec is not None
+                and serialize_method_state(discussion.method_state) == before
+                and _structured_freetext_unreadable(
+                    method, spec, entity, discussion, raw_content)):
+            # Structured phase, but free-text extraction recorded nothing
+            # readable — surface it (golden rule 6) instead of the old
+            # silent drop.
+            logger.warning(
+                "Structured phase: could not read %s's free-text turn as "
+                "'%s' data.", entity.name, spec.name)
+            return {"error": (
+                f"This phase needs structured input. Your message could not "
+                f"be read as '{spec.name}' data — please use the input form.")}
         phase = method.current_phase(discussion)
         if phase is not None and phase.track_evidence:
             content = record_and_annotate_evidence(
@@ -145,6 +248,69 @@ def submit_human_message(
         turn_number=discussion.turn_number,
     )
     return msg.to_dict()
+
+
+def _record_structured_human_turn(
+    discussion: Discussion, db: Database, entity: Entity,
+    method: "DiscussionMethod", spec: "OutputToolSpec", payload: dict,
+) -> dict:
+    """Validate and record a human structured-turn payload.
+
+    Mirrors the AI forced-tool branch (``generate_ai_turn``): a structural
+    pre-check then the handler's semantic ``validate_output``, then
+    ``process_structured_response`` writes into ``method_state``.  Returns
+    the message dict, or ``{"error": ...}`` (recording nothing) on failure.
+    """
+    schema = method.resolve_input_schema(spec, entity, discussion)
+    error = (check_payload_schema(payload, schema)
+             or method.validate_output(payload, entity, discussion))
+    if error:
+        logger.warning("Rejected structured turn from %s: %s",
+                       entity.name, error)
+        return {"error": error}
+
+    processed = method.process_structured_response(payload, entity, discussion)
+    content = processed.display_content
+    if discussion.id:
+        db.update_discussion(
+            discussion.id,
+            method_state=serialize_method_state(discussion.method_state),
+        )
+    msg = Message(
+        entity_id=entity.id, entity_name=entity.name,
+        content=content, role=MessageRole.PARTICIPANT,
+    )
+    discussion.messages.append(msg)
+    db.add_message(
+        discussion.id, entity.id, content, "participant",
+        turn_number=discussion.turn_number,
+    )
+    return msg.to_dict()
+
+
+def submit_human_structured_message(
+    discussion: Discussion, db: Database, entity_id: int, payload: dict,
+) -> dict:
+    """Submit a validated structured payload from a human participant (#57).
+
+    The frontend form (or guided-JSON fallback) posts a typed ``payload``;
+    it is validated and recorded on the same path an AI's forced tool call
+    uses.  Returns the message dict or an error dict.
+    """
+    entity = discussion.get_entity(entity_id)
+    if not entity:
+        return {"error": "Entity not found"}
+    current = discussion.current_speaker
+    if not current or current.id != entity_id:
+        return {"error": f"It's not {entity.name}'s turn"}
+    method = get_active_method(discussion)
+    if not method:
+        return {"error": "No active discussion method"}
+    spec = method.get_output_tool(entity, discussion)
+    if spec is None:
+        return {"error": "This phase does not take structured input."}
+    return _record_structured_human_turn(
+        discussion, db, entity, method, spec, payload)
 
 
 def submit_moderator_message(

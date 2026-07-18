@@ -189,6 +189,12 @@ class ScoreThoughtsHandler(PhaseHandler):
 
     requires_structured_output = True
 
+    #: The free-text fallback's scripted/typical shape is "My scores:\n
+    #: ```json\n{"scores": {...}}```" — reasoning is the prose prefix, not
+    #: a key inside the fence, so the safety net must not require a
+    #: ``reasoning`` key in the extracted block (#57).
+    reasoning_outside_block = True
+
     def get_output_tool(self, entity: Entity,
                         discussion: Discussion) -> OutputToolSpec | None:
         """Declare the forced submit_thought_scores tool for this phase.

@@ -96,6 +96,45 @@ export async function onSendMessage() {
 }
 
 /**
+ * Submit a structured payload from the schema-driven form (issue #57).
+ * Shows server-side validation errors inline in the form's error element
+ * rather than clearing it, so the participant can fix and resubmit.
+ * @param {object} payload - Typed payload matching the turn's tool schema
+ * @param {HTMLElement} [errEl] - Form error element to receive `{error}` text
+ */
+export async function onSubmitStructured(payload, errEl) {
+    if (!state.current_speaker_id) return;
+    try {
+        const result = await api.submitStructuredMessage(
+            state.current_speaker_id, payload);
+        if (result?.error) { if (errEl) errEl.textContent = result.error; return; }
+        const s = await api.getState();
+        onStateUpdate(s);
+        const completed = await completeTurnFlow();
+        if (completed) processCurrentTurn();
+    } catch (e) {
+        if (errEl) errEl.textContent = 'Failed to submit: ' + e.message;
+    }
+}
+
+/**
+ * Skip a structured turn (submit a pass through the normal message path).
+ */
+export async function onSkipStructured() {
+    if (!state.current_speaker_id) return;
+    try {
+        const result = await api.submitMessage(state.current_speaker_id, '[PASS]');
+        if (result?.error) return showToast(result.error);
+        const s = await api.getState();
+        onStateUpdate(s);
+        const completed = await completeTurnFlow();
+        if (completed) processCurrentTurn();
+    } catch (e) {
+        showToast('Failed to skip: ' + e.message);
+    }
+}
+
+/**
  * Insert an `[evidence: ]` marker at the caret in the message input, so a
  * human participant can cite grounding evidence for a `track_evidence`
  * phase. Caret is placed just before the closing bracket so the user can

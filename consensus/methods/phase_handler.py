@@ -89,6 +89,15 @@ class PhaseHandler(ABC):
     #: ``get_output_tool``.
     requires_structured_output: ClassVar[bool] = False
 
+    #: True when this phase's free-text fallback carries the participant's
+    #: reasoning as prose OUTSIDE the fenced JSON block (e.g. "My scores:\n
+    #: ```json\n{...}```"), so a block that omits a ``reasoning`` key is still
+    #: a readable contribution.  Default False: ``reasoning`` is treated as a
+    #: required field when the safety net decides whether an unchanged-state
+    #: structured turn was truly unreadable (#57).  Setting this wrongly to
+    #: True risks a silent drop; wrongly False only over-reports (safe).
+    reasoning_outside_block: ClassVar[bool] = False
+
     def get_output_tool(self, entity: Entity,
                         discussion: Discussion) -> OutputToolSpec | None:
         """Declare the forced output tool for this phase.
@@ -120,6 +129,17 @@ class PhaseHandler(ABC):
         """
         return ProcessedResponse(
             display_content=json.dumps(payload, indent=2))
+
+    def resolve_input_schema(self, spec: OutputToolSpec, entity: Entity,
+                             discussion: Discussion) -> dict:
+        """Return the JSON schema to render a human input form / pre-check.
+
+        Default: the tool's declared ``parameters`` unchanged.  Handlers
+        whose schema uses runtime-derived keys (e.g. a belief map keyed by
+        hypothesis label) override this to expand ``additionalProperties``
+        into explicit properties so the frontend can enumerate fields.
+        """
+        return spec.parameters
 
     # ------------------------------------------------------------------
     # Phase lifecycle

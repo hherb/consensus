@@ -318,3 +318,90 @@ def extract_json_payload(content: str,
                                                  (dict, list)):
             return data[key]
     return None
+
+
+#: JSON-Schema primitive types this checker validates natively.
+_JSON_PRIMITIVES = ("string", "number", "integer", "boolean")
+
+
+def check_payload_schema(payload: dict, schema: dict) -> str:
+    """Structurally validate ``payload`` against a JSON-Schema ``parameters``.
+
+    A library-free gate run *before* a handler's semantic ``validate_output``
+    so handlers never ``KeyError`` on a missing field and the user gets a
+    precise message.  Checks required keys, primitive types, ``enum``,
+    numeric ``minimum``/``maximum``, and recurses one level into ``array``
+    items and nested ``object`` ``properties``/``additionalProperties``.
+
+    Returns ``""`` when acceptable, else a human-readable error.
+    """
+    if not isinstance(payload, dict):
+        return "Input must be a set of fields."
+    props = schema.get("properties", {})
+    for key in schema.get("required", []):
+        if key not in payload:
+            return f"Missing required field: '{key}'."
+    for key, value in payload.items():
+        if key in props:
+            err = _check_value(value, props[key], key)
+            if err:
+                return err
+    return ""
+
+
+def _check_value(value: Any, prop: dict, key: str) -> str:
+    """Validate one value against its property subschema (see caller)."""
+    enum = prop.get("enum")
+    if enum is not None and value not in enum:
+        return f"'{key}' must be one of {enum}."
+    ptype = prop.get("type")
+    if ptype in ("number", "integer"):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return f"'{key}' must be a number."
+        if ptype == "integer" and not float(value).is_integer():
+            return f"'{key}' must be a whole number."
+        if "minimum" in prop and value < prop["minimum"]:
+            return f"'{key}' must be >= {prop['minimum']}."
+        if "maximum" in prop and value > prop["maximum"]:
+            return f"'{key}' must be <= {prop['maximum']}."
+    elif ptype == "string":
+        if not isinstance(value, str):
+            return f"'{key}' must be text."
+    elif ptype == "boolean":
+        if not isinstance(value, bool):
+            return f"'{key}' must be true or false."
+    elif ptype == "array":
+        if not isinstance(value, list):
+            return f"'{key}' must be a list."
+        items = prop.get("items", {})
+        for item in value:
+            err = _check_value(item, items, key)
+            if err:
+                return err
+    elif ptype == "object":
+        return _check_object(value, prop, key)
+    return ""
+
+
+def _check_object(value: Any, prop: dict, key: str) -> str:
+    """Validate a nested object's properties / additionalProperties values."""
+    if not isinstance(value, dict):
+        return f"'{key}' must be a set of fields."
+    sub_props = prop.get("properties")
+    if isinstance(sub_props, dict) and sub_props:
+        for req in prop.get("required", []):
+            if req not in value:
+                return f"'{key}' is missing '{req}'."
+        for k, v in value.items():
+            if k in sub_props:
+                err = _check_value(v, sub_props[k], f"{key}.{k}")
+                if err:
+                    return err
+        return ""
+    add = prop.get("additionalProperties")
+    if isinstance(add, dict):
+        for k, v in value.items():
+            err = _check_value(v, add, f"{key}.{k}")
+            if err:
+                return err
+    return ""

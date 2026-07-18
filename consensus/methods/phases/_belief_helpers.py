@@ -6,6 +6,7 @@ trajectory summaries — used by multiple Belief Diffusion phases.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -97,6 +98,33 @@ BELIEFS_TOOL_PARAMETERS: dict = {
 def hypothesis_labels(hypotheses: list[str]) -> list[str]:
     """Return the label set ('H1'..'Hn') for the framed hypotheses."""
     return [f"H{i}" for i in range(1, len(hypotheses) + 1)]
+
+
+def expand_belief_schema(hypotheses: list[str]) -> dict:
+    """Return BELIEFS_TOOL_PARAMETERS with dynamic keys made concrete.
+
+    The ``beliefs`` map uses ``additionalProperties`` (keys derived at
+    runtime from the framed hypotheses), which a form renderer cannot
+    enumerate.  Replace it with explicit per-label number properties
+    (``H1``..``Hn``) so ``build_input_spec`` reports the schema as
+    renderable and the frontend can lay out one field per hypothesis.
+    The template itself is never mutated.
+    """
+    labels = hypothesis_labels(hypotheses)
+    schema = copy.deepcopy(BELIEFS_TOOL_PARAMETERS)
+    schema["properties"]["beliefs"] = {
+        "type": "object",
+        "description": BELIEFS_TOOL_PARAMETERS[
+            "properties"]["beliefs"]["description"],
+        "properties": {
+            label: {"type": "number", "minimum": BELIEF_MIN,
+                    "maximum": BELIEF_MAX,
+                    "description": f"Probability for {label}."}
+            for label in labels
+        },
+        "required": labels,
+    }
+    return schema
 
 
 def format_labelled_hypotheses(hypotheses: list[str]) -> str:

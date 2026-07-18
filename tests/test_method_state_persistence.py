@@ -174,8 +174,13 @@ class TestTurnIndexRestore:
         assert disc.current_speaker.id == p2.id
 
         # P2 speaks (e.g. a human message) but crashes before the turn
-        # is completed — the stamp is now one turn behind.
-        submit_human_message(disc, tmp_db, p2.id, "Second thoughts.")
+        # is completed — the stamp is now one turn behind.  'surface' is
+        # a structured phase (#57 safety net): the content must parse as
+        # a numbered list of assumptions or the turn is rejected outright
+        # and never recorded, which would defeat this test's setup.
+        submit_human_message(
+            disc, tmp_db, p2.id,
+            "1. Markets price in all publicly available information.")
 
         loaded = load_discussion(
             tmp_db, disc.id, key_resolver=lambda pid, env: "", tool_registry=None,

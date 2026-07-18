@@ -445,6 +445,26 @@ class DiscussionMethod(ABC):
                 payload, entity, discussion)
         return ProcessedResponse(display_content=json.dumps(payload, indent=2))
 
+    def resolve_input_schema(self, spec: "OutputToolSpec", entity: "Entity",
+                             discussion: "Discussion") -> dict:
+        """Delegate schema resolution to the current phase's handler."""
+        handler = self._handler_for_phase(
+            discussion.method_state.get("current_phase", ""))
+        if handler is not None:
+            return handler.resolve_input_schema(spec, entity, discussion)
+        return spec.parameters
+
+    def reasoning_outside_block(self, discussion: "Discussion") -> bool:
+        """Whether the current phase's free-text reasoning lives outside the JSON block.
+
+        Delegates to the active handler's ``reasoning_outside_block`` flag
+        (#57).  Default ``False`` when there is no active handler —
+        ``reasoning`` is required by the safety net unless a handler
+        explicitly opts out.
+        """
+        handler = self._active_handler(discussion)
+        return bool(handler.reasoning_outside_block) if handler is not None else False
+
     # ------------------------------------------------------------------
     # Round lifecycle hooks
     # ------------------------------------------------------------------

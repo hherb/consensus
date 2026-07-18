@@ -735,12 +735,114 @@ input[type="checkbox"] { width: auto; }
     gap: 0.5rem;
     align-items: flex-end;
 }
+/* When a structured form (#57) follows the row, #message-input/#send-btn
+   are hidden individually (not the row) so #consult-expert-btn stays
+   visible/usable; add a little breathing room so the row doesn't look
+   like it's touching the form below it. */
+.input-row:has(+ .structured-form) {
+    margin-bottom: 0.5rem;
+}
 .input-row textarea {
     flex: 1;
     min-height: 40px;
     max-height: 120px;
 }
 .input-row .btn { flex-shrink: 0; height: 40px; }
+
+/* Structured Input Form (issue #57) — schema-driven form rendered in
+   #input-area for human turns in structured discussion phases. Sizing is
+   relative (rem/%/vw) throughout so it scales across screen sizes/DPI. */
+.structured-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    width: 100%;
+}
+.sf-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+.sf-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.sf-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.sf-help {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+.sf-array, .sf-object {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+}
+.sf-object {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+}
+.sf-object .sf-row { flex: 1 1 8rem; }
+.sf-array-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+.sf-error {
+    color: var(--error);
+    font-size: 0.85rem;
+    min-height: 1.2rem;
+    user-select: text;
+}
+.structured-form input,
+.structured-form select,
+.structured-form textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 0.9rem;
+}
+.structured-form textarea { min-height: 3rem; resize: vertical; }
+.structured-form input:focus,
+.structured-form select:focus,
+.structured-form textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+.sf-actions { display: flex; gap: 0.5rem; }
+.sf-schema {
+    max-height: 30vh;
+    overflow: auto;
+    user-select: text;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.sf-json {
+    min-height: 8rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+}
 
 /* Storyboard Panel */
 #storyboard-panel {

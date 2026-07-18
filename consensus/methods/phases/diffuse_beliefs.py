@@ -17,6 +17,7 @@ from ._belief_helpers import (
     BELIEFS_TOOL_PARAMETERS,
     MAX_DIFFUSE_ROUNDS,
     check_convergence,
+    expand_belief_schema,
     extract_beliefs,
     format_belief_bar,
     format_labelled_hypotheses,
@@ -156,6 +157,14 @@ class DiffuseBeliefsHandler(PhaseHandler):
         display = (f"{reasoning}\n\n---\n{belief_bar}" if reasoning
                    else belief_bar)
         return ProcessedResponse(display_content=display)
+
+    def resolve_input_schema(self, spec: OutputToolSpec, entity: Entity,
+                             discussion: Discussion) -> dict:
+        """Expand the belief map to explicit per-hypothesis number fields."""
+        hypotheses = discussion.method_state.get("hypotheses", [])
+        if not hypotheses:
+            return spec.parameters
+        return expand_belief_schema(hypotheses)
 
     def should_advance(self, discussion: Discussion) -> bool:
         state = discussion.method_state

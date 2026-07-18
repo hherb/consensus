@@ -13,6 +13,10 @@ Spec: docs/superpowers/specs/2026-07-16-method-flow-e2e-tests-design.md
 
 import pytest
 
+from consensus.app_discussion_flow import (
+    complete_turn,
+    submit_human_structured_message,
+)
 from consensus.methods import get_method
 from consensus.methods.phases._ngt_helpers import tally_points
 from consensus.models import Discussion, Entity
@@ -405,6 +409,63 @@ class TestDoubleCruxFlow:
         persisted = db_method_state(tmp_db, disc.id)
         assert persisted["current_phase"] == state["current_phase"]
         assert persisted["crux_map"]["verdict"] == "factual"
+
+    @pytest.mark.asyncio
+    async def test_poll_belief_human_structured_payload(self, tmp_db):
+        """A human's STRUCTURED belief-poll submission lands a real number.
+
+        Drives Double Crux to ``poll_belief`` via the shared driver from
+        the #57 structured-human-turn suite (``drive_double_crux_to_poll``
+        in ``tests/test_structured_human_turn.py``), imported locally
+        below rather than at module scope: that module already imports
+        ``dc_content`` from *this* file at its own module top, so a
+        module-level import here would be a real import cycle, not just
+        an ordering inconvenience.  A local (call-time) import lets each
+        module fully load standalone regardless of collection order.
+
+        The poll is then completed for both participants through
+        ``submit_human_structured_message`` — the dedicated structured
+        entry point (task 6) — not free-text/JSON-block parsing.  Poll
+        values (0.65 / 0.15) are distinct from every other crux-belief
+        figure scripted anywhere in this file (round-1 cruxes 0.9/0.8,
+        round-2 cruxes 0.75/0.25, the free-text DC_POLL 0.8/0.3, and the
+        resolve-phase 0.7/0.6), so a pass can only mean the recorded
+        number came from THIS structured submission.
+        """
+        from tests.test_structured_human_turn import (
+            drive_double_crux_to_poll,
+        )
+
+        disc, moderator, pricing, _ = await drive_double_crux_to_poll(
+            tmp_db)
+        assert disc.method_state["current_phase"] == "poll_belief"
+
+        beliefs = {"P1": 0.65, "P2": 0.15}
+        turns = 0
+        while disc.method_state.get("current_phase") == "poll_belief":
+            turns += 1
+            assert turns <= 3, "poll_belief phase did not advance in time"
+            speaker = disc.current_speaker
+            assert speaker is not None, "no current speaker at poll_belief"
+            submitted = submit_human_structured_message(
+                disc, tmp_db, speaker.id,
+                {"belief": beliefs[speaker.name],
+                 "reasoning": f"{speaker.name}'s structured prior"})
+            assert "error" not in submitted, submitted
+            result = await complete_turn(
+                disc, moderator, tmp_db, pricing,
+                get_state_fn=lambda: {},
+                moderator_summary="Summary of the turn.")
+            assert "error" not in result, result
+
+        # --- Belief-shift baseline is poll-sourced, keyed by name ------
+        # apply_poll_beliefs() (methods/phases/_crux_helpers.py) builds
+        # initial_beliefs as {entity_name: belief} — confirmed by reading
+        # the source (not the entity-id string some callers might expect).
+        initial = disc.method_state["shared_crux"]["initial_beliefs"]
+        assert initial == {"P1": 0.65, "P2": 0.15}
+        assert "?" not in initial.values()
+        assert None not in initial.values()
 
 
 # ---------------------------------------------------------------------------
