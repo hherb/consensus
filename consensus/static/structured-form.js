@@ -167,7 +167,11 @@ function labelFor(key, required) {
  *  string when the value falls outside the schema's min/max, else ''. The
  *  server re-checks anyway, so this only saves a round-trip. Integer
  *  wholeness is deliberately NOT checked here — the server surfaces "must be
- *  a whole number" so a fractional integer is never silently truncated (#58). */
+ *  a whole number" so a fractional integer is never silently truncated (#58).
+ *  `exclusiveMinimum`/`exclusiveMaximum` are likewise left to the server:
+ *  `widgetFor` only maps `minimum`/`maximum` onto the input, so there is no
+ *  exclusive bound to read here. Being a backstop, missing one costs a
+ *  round-trip, never a wrong accept. */
 function rangeError(w, key, value) {
     if (Number.isNaN(value)) return '';  // non-numeric -> let the server report
     if (w.min !== '' && value < Number(w.min)) {
@@ -239,7 +243,13 @@ function renderArray(body, key, prop) {
                 inputs.push(w);
             }
         } else {
-            const w = widgetFor(key, items);
+            // Always sentinel-backed (required=false): the first row is added
+            // unconditionally below, so without a blank option an untouched
+            // array-of-enum would silently submit [firstOption] — the same
+            // bug the scalar optional <select> fix addresses (#59). An
+            // untouched row now reads as undefined and drops out, leaving a
+            // required array to fail its "Please fill in" check honestly.
+            const w = widgetFor(key, items, false);
             row.appendChild(w);
             inputs.push(w);
         }

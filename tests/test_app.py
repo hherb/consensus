@@ -46,12 +46,24 @@ class TestRecommendMethodKeyResolution:
     async def test_resolves_key_without_api_key_env_attribute(
             self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
+        calls = []
+        real_resolver = app._resolve_key_for_moderator
+
+        def spy(provider_id, env_var):
+            calls.append((provider_id, env_var))
+            return real_resolver(provider_id, env_var)
+
+        app._resolve_key_for_moderator = spy
         with patch("consensus.app_discussion_setup.recommend_method",
                    new=AsyncMock(return_value=[])), \
              patch("consensus.ai_client.AIClient") as MockClient:
             MockClient.return_value.close = AsyncMock()
             result = await app.recommend_method("topic", "")
         assert result == {"recommendations": []}
+        # Pin the contract, not just the absence of an AttributeError: the
+        # empty env var is what makes the resolver fall back to its DB lookup.
+        mod = app.discussion.moderator
+        assert calls == [(mod.ai_config.provider_id, "")]
 
 
 class TestGetState:
