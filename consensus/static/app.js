@@ -12,7 +12,8 @@ import { renderProfiles, openEntityDialog, confirmEntity, editProfile, removePro
 import { renderPrompts, openPromptDialog, confirmPrompt, editPrompt, removePrompt } from './prompts.js';
 import { renderHistory, deleteSelectedDiscussions, loadDiscussion } from './history.js';
 import { renderSetupTab, renderAvailableEntities, updateStartButton, addToDiscussion, removeFromDiscussion, setModerator, setDevilsAdvocate, onMethodChange, onDefaultContextChange } from './setup.js';
-import { onStartDiscussion, onSendMessage, onConfirmModeratorInput, onReassign, doReassign, onMediate, onConclude, onPause, onResume, onReopen, onBack, reopenFromHistory, onCostLimitContinue, onCostLimitConclude, insertEvidenceMarker, processCurrentTurn } from './discussion-actions.js';
+import { onStartDiscussion, onSendMessage, onConfirmModeratorInput, onReassign, doReassign, onMediate, onConclude, onPause, onResume, onReopen, onBack, reopenFromHistory, onCostLimitContinue, onCostLimitConclude, insertEvidenceMarker, processCurrentTurn, onSubmitStructured, onSkipStructured } from './discussion-actions.js';
+import { registerStructuredFormHandlers } from './discussion.js';
 import { exportAsJson, exportAsHtml, exportAsPdf, toggleExportMenu, closeExportMenu, toggleHistoryExportMenu, closeAllHistoryMenus, exportHistoryDiscussion } from './export.js';
 import { openMcpServerDialog, confirmMcpServer, toggleMcpServer, deleteMcpServer, testMcpConnection, initMcpTransportToggle } from './mcp.js';
 import { showConsultExpertDialog, onToolProgress } from './experts.js';
@@ -24,6 +25,11 @@ import { initMethodSwitchDialog, showSwitchBlockedDialog } from './method-switch
 
 // Register the setup-tab callback so state.js can trigger it without circular imports
 registerSetupCallback(renderSetupTab);
+
+// Register the structured-form (#57) submit/skip handlers so discussion.js
+// can invoke them without a circular import with discussion-actions.js
+// (which already imports renderDiscussion/showTypingIndicator from discussion.js).
+registerStructuredFormHandlers(onSubmitStructured, onSkipStructured);
 
 /**
  * Switch to a tab and render its content.
