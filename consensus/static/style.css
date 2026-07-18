@@ -735,6 +735,13 @@ input[type="checkbox"] { width: auto; }
     gap: 0.5rem;
     align-items: flex-end;
 }
+/* When a structured form (#57) follows the row, #message-input/#send-btn
+   are hidden individually (not the row) so #consult-expert-btn stays
+   visible/usable; add a little breathing room so the row doesn't look
+   like it's touching the form below it. */
+.input-row:has(+ .structured-form) {
+    margin-bottom: 0.5rem;
+}
 .input-row textarea {
     flex: 1;
     min-height: 40px;

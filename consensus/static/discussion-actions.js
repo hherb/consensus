@@ -122,12 +122,16 @@ export async function onSubmitStructured(payload, errEl) {
  */
 export async function onSkipStructured() {
     if (!state.current_speaker_id) return;
-    const result = await api.submitMessage(state.current_speaker_id, '[PASS]');
-    if (result?.error) return showToast(result.error);
-    const s = await api.getState();
-    onStateUpdate(s);
-    const completed = await completeTurnFlow();
-    if (completed) processCurrentTurn();
+    try {
+        const result = await api.submitMessage(state.current_speaker_id, '[PASS]');
+        if (result?.error) return showToast(result.error);
+        const s = await api.getState();
+        onStateUpdate(s);
+        const completed = await completeTurnFlow();
+        if (completed) processCurrentTurn();
+    } catch (e) {
+        showToast('Failed to skip: ' + e.message);
+    }
 }
 
 /**

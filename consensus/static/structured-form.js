@@ -184,6 +184,9 @@ function renderArray(body, key, prop) {
     wrap.className = 'sf-array';
     const rows = [];
     const items = prop.items || {};
+    // Required keys within each object item (e.g. a per-row sub-schema), used
+    // both to flag required inputs and to reject partially-filled rows below.
+    const itemRequired = (items.type === 'object' && items.properties) ? (items.required || []) : [];
     const addRow = () => {
         const row = document.createElement('div');
         row.className = 'sf-array-row';
@@ -191,7 +194,7 @@ function renderArray(body, key, prop) {
         if (items.type === 'object' && items.properties) {
             for (const [ik, ip] of Object.entries(items.properties)) {
                 const w = widgetFor(ik, ip);
-                w.placeholder = ik;
+                w.placeholder = itemRequired.includes(ik) ? `${ik} *` : ik;
                 row.appendChild(w);
                 inputs.push(w);
             }
@@ -229,7 +232,12 @@ function renderArray(body, key, prop) {
                     const [k, v] = readWidget(w);
                     if (v !== undefined) obj[k] = v;
                 }
-                if (Object.keys(obj).length) arr.push(obj);
+                if (Object.keys(obj).length === 0) continue; // entirely-empty row: ignore
+                const missing = itemRequired.filter(r => !(r in obj));
+                if (missing.length) {
+                    return { error: `Please fill in '${missing[0]}' for each ${key} entry.` };
+                }
+                arr.push(obj);
             }
         }
         return [key, arr.length ? arr : undefined];
@@ -241,9 +249,10 @@ function renderObject(body, key, prop) {
     const wrap = document.createElement('div');
     wrap.className = 'sf-object';
     const widgets = [];
+    const subRequired = prop.required || [];
     for (const [ik, ip] of Object.entries(prop.properties)) {
         const w = widgetFor(ik, ip);
-        wrap.appendChild(fieldRow(ik, ip.description, w));
+        wrap.appendChild(fieldRow(labelFor(ik, subRequired), ip.description, w));
         widgets.push(w);
     }
     body.appendChild(fieldRow(key, prop.description, wrap));
@@ -252,6 +261,9 @@ function renderObject(body, key, prop) {
         for (const w of widgets) {
             const [k, v] = readWidget(w);
             if (v !== undefined) obj[k] = v;
+        }
+        for (const r of subRequired) {
+            if (!(r in obj)) return { error: `Please fill in '${r}'.` };
         }
         return [key, obj];
     };

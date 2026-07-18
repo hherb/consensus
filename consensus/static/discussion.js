@@ -270,14 +270,6 @@ function updateInputArea() {
     const turnInfo = $('#turn-info');
     const speaker = getEntity(state.current_speaker_id);
     const inputArea = $('#input-area');
-    const inputRow = inputArea?.querySelector('.input-row');
-
-    // The structured-phase form (#57) is mounted/unmounted on every render.
-    // Always clear a stale one first and restore the plain composer row, so
-    // every branch below (including the early returns for paused/concluded/
-    // inactive/AI-turn) is left in a consistent, non-duplicated state.
-    inputArea?.querySelector('.structured-form')?.remove();
-    if (inputRow) inputRow.style.display = '';
 
     const consultBtn = $('#consult-expert-btn');
     if (consultBtn) {
@@ -288,6 +280,31 @@ function updateInputArea() {
 
     const evidenceBtn = $('#attach-evidence-btn');
     if (evidenceBtn) hide(evidenceBtn);
+
+    // The structured-phase form (#57) must survive re-renders triggered by
+    // header buttons (Pause/Reassign/Mediate/Conclude) while a human is
+    // mid-fill, so in-progress answers aren't silently discarded. It is only
+    // torn down/rebuilt when the turn or its spec actually changes; a
+    // signature identifies "same form": same speaker, same tool, same
+    // schema. Every branch below that isn't an active human turn with a
+    // spec computes sig === null, so the mismatch check removes any stale
+    // form on the paused/concluded/inactive/no-speaker/AI-turn paths too.
+    const spec = state.current_input_spec;
+    const isActiveHumanTurn = state.is_active && state.status !== 'paused'
+        && !!speaker && speaker.entity_type !== 'ai';
+    const sig = (spec && isActiveHumanTurn)
+        ? `${state.current_speaker_id}:${spec.tool_name}:${JSON.stringify(spec.schema)}`
+        : null;
+
+    let form = inputArea?.querySelector('.structured-form');
+    if (form && form.dataset.sig !== sig) {
+        form.remove();
+        form = null;
+    }
+    // Hide/show the plain composer controls individually (not the whole
+    // .input-row) so #consult-expert-btn stays visible/usable per its own
+    // logic above even while a structured form is mounted.
+    if (form) { hide(input); hide(sendBtn); } else { show(input); show(sendBtn); }
 
     if (state.status === 'paused') {
         turnInfo.textContent = 'Discussion is paused. Manage participants, then click Resume.';
@@ -316,17 +333,22 @@ function updateInputArea() {
         input.disabled = true; sendBtn.disabled = true;
     } else {
         turnInfo.textContent = `${speaker.name}'s turn to speak`;
-        const spec = state.current_input_spec;
         if (spec && structuredFormHandlers) {
             // Structured-phase turn (#57): render the schema-driven form in
-            // place of the plain textarea/send controls.
+            // place of the plain textarea/send controls. If a form already
+            // matches this turn+spec (sig check above), it was left mounted
+            // as-is above so in-progress field values survive; only build a
+            // fresh one when there isn't a matching form yet.
             input.disabled = true; sendBtn.disabled = true;
-            if (inputRow) inputRow.style.display = 'none';
-            const form = renderStructuredForm(spec, {
-                onSubmit: (payload, errEl) => structuredFormHandlers.onSubmit(payload, errEl),
-                onSkip: () => structuredFormHandlers.onSkip(),
-            });
-            inputArea.appendChild(form);
+            hide(input); hide(sendBtn);
+            if (!form) {
+                form = renderStructuredForm(spec, {
+                    onSubmit: (payload, errEl) => structuredFormHandlers.onSubmit(payload, errEl),
+                    onSkip: () => structuredFormHandlers.onSkip(),
+                });
+                form.dataset.sig = sig;
+                inputArea.appendChild(form);
+            }
         } else {
             input.disabled = false; sendBtn.disabled = false;
             input.placeholder = `Type ${speaker.name}'s message...`;
