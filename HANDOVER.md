@@ -1,9 +1,10 @@
 # HANDOVER — Discussion Methods Review & Repair
 
-_Last updated: 2026-07-17 (Double Crux pre-belief poll merged via PR #56 —
-closes the belief-shift metric tech-debt item below; branch history in git).
-Main at 2459 tests. One open issue: #57 (structured-phase human-input UX
-gap). No open PRs.)._
+_Last updated: 2026-07-18 (structured-phase human input, issue #57, built on
+branch `feat/structured-phase-human-input` — humans now get a schema-driven
+input form in structured phases instead of having to type raw JSON; branch at
+2495 tests, PR pending). Main at 2459 tests; the #57 branch is the only open
+work.)._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep. Update it whenever a session materially changes the
@@ -35,11 +36,11 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Shared-helper dedup batch (scanner delegation, give-up mixin, test split) | — (tech debt) | #54 |
 | Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #55 |
 | Double Crux pre-belief poll (belief-shift metric fix) | — (tech debt) | #56 |
+| Structured-phase human input (form renderer) | #57 | pending |
 
-Main is at **2459 tests passing**. Every method-repair issue (#12–#48) is
-merged and closed. The one open issue is #57 (structured-phase human-input
-UX gap), a framework-wide follow-up filed during the PR #56 review — no
-other open issues or PRs.
+Main is at **2459 tests passing**; the `feat/structured-phase-human-input`
+branch (issue #57) is at **2495** and ready for PR. Every earlier
+method-repair issue (#12–#48, #56) is merged and closed.
 
 **Double Crux pre-belief poll** (PR #56, merged) — spec/plan under
 `docs/superpowers/{specs,plans}/2026-07-17-double-crux-pre-belief-poll*.md`.
@@ -103,24 +104,41 @@ moderator excluded from the panel. Spec/plan:
 Suite after #29: **2355 passing**. Deferred: family-level model grouping
 (exact-model only), and proposal item 3 (a "diversify" auto-suggest helper).
 
+**Structured-phase human input** (issue #57, branch
+`feat/structured-phase-human-input`, PR pending) — spec/plan under
+`docs/superpowers/{specs,plans}/2026-07-17-structured-phase-human-input*.md`.
+A human taking a turn in a `requires_structured_output` phase now gets a
+**schema-driven input form** instead of having to type raw JSON.
+- **Backend**: `submit_human_structured_message(entity_id, payload)`
+  (`app_discussion_flow.py`, exposed via desktop bridge + server route +
+  `api.submitStructuredMessage`) validates a payload (`check_payload_schema`
+  in `methods/parsing.py`, then the handler's `validate_output`) and records
+  via `process_structured_response`, mirroring the AI branch. A **safety net**
+  in `submit_human_message` converts the old silent drop into a visible error
+  (golden rule 6): a structured-phase free-text turn that records nothing and
+  carries no schema-valid JSON block returns `{"error": ...}`.
+- **State**: `get_state()` exposes `current_input_spec`
+  (`consensus/structured_input.py` — `build_input_spec`/`schema_is_renderable`)
+  for a human participant (not the moderator) in a structured phase.
+  Dynamic-key schemas (belief maps) are resolved to concrete fields by the new
+  `PhaseHandler.resolve_input_schema` hook (`expand_belief_schema`).
+- **Frontend**: `consensus/static/structured-form.js` renders one widget per
+  schema property (number/string/enum/boolean/array/array-of-objects) with a
+  guided-JSON fallback for un-renderable (nested `additionalProperties`, e.g.
+  the ACH matrix) schemas.
+- **Gotcha closed during verification**: any lifecycle app method that returns
+  `discussion.to_dict()` drops `current_input_spec` (a get_state-only field),
+  so the form vanishes after that transition. `pause`/`resume`/`reopen` were
+  fixed to return `get_state()`; `start`/`conclude`/`continue` already did.
+  **New rule: lifecycle methods the frontend feeds to `onStateUpdate(result)`
+  must return `get_state()`, never `to_dict()`.**
+- Verified live (Playwright, all-human Delphi): form renders, validates
+  required fields inline, records + advances, fresh form per turn, survives
+  pause→resume. No phase is both structured and evidence-tracked, so the form
+  needs no evidence affordance. Deferred (Minor, see git/ledger): client-side
+  numeric-range backstop; optional-enum first-option default.
+
 ## Open work
-
-### Structured-phase human input (issue #57) — the only open tracked issue
-
-Phases with `requires_structured_output = True` route **AI** turns through a
-declared output tool (`generate_structured_turn`), but **human** turns still
-go through the handler's free-text `process_response`, which records a
-contribution only when it can parse a fenced JSON block. A human who types
-prose ("I'm about 70% sure") is silently dropped: nothing recorded, they
-become a straggler, the phase loops to its round cap, and they end up `?` in
-the outcome. The belief poll bites hardest. There is no frontend renderer for
-`OutputToolSpec.parameters`. Directions (from the issue): (a) render a
-lightweight input form from the phase's parameters, submitting a validated
-payload through `process_structured_response`; (b) a tolerant free-text
-parser for humans feeding the same `record_*` helpers; (c) at minimum,
-surface a visible "could not read your input" message + expected schema
-instead of dropping it (golden rule 6). Needs a design decision before
-build — brainstorm first.
 
 ### Alpha distribution — pending release gate (PR #53)
 
