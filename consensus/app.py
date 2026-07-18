@@ -927,9 +927,10 @@ class ConsensusApp:
     def reopen_discussion(self) -> dict:
         """Reopen a concluded discussion."""
         result = app_discussion_state.reopen_discussion(self.discussion, self.db)
-        if "error" not in result:
-            self._notify()
-        return result
+        if "error" in result:
+            return result
+        self._notify()
+        return self.get_state()
 
     def continue_discussion(self, content: str) -> dict:
         """Continue a concluded discussion with a new user contribution."""

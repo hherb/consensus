@@ -105,3 +105,16 @@ class TestPauseResumePreservesInputSpec:
         assert "error" not in resumed
         assert resumed.get("current_input_spec") is not None
         assert resumed["current_input_spec"]["tool_name"] == "submit_beliefs"
+
+    def test_reopen_returns_current_input_spec(self, app_with_entities):
+        app, mod_id, p1_id, p2_id = app_with_entities
+        app.start_discussion()
+        _drive_to_prior_phase(app, p2_id)  # Bob, human, not moderator
+
+        # Manually conclude the discussion to satisfy reopen's precondition
+        app.discussion.status = "concluded"
+
+        reopened = app.reopen_discussion()
+        assert "error" not in reopened
+        assert reopened.get("current_input_spec") is not None
+        assert reopened["current_input_spec"]["tool_name"] == "submit_beliefs"
