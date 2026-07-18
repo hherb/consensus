@@ -293,7 +293,7 @@ function updateInputArea() {
     const isActiveHumanTurn = state.is_active && state.status !== 'paused'
         && !!speaker && speaker.entity_type !== 'ai';
     const sig = (spec && isActiveHumanTurn)
-        ? `${state.current_speaker_id}:${spec.tool_name}:${JSON.stringify(spec.schema)}`
+        ? `${state.turn_number}:${state.current_speaker_id}:${spec.tool_name}:${JSON.stringify(spec.schema)}`
         : null;
 
     let form = inputArea?.querySelector('.structured-form');
