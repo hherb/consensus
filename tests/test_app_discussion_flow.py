@@ -11,6 +11,7 @@ from consensus.app_discussion_flow import (
     _run_triage_recommender,
     calculate_discussion_cost,
     complete_turn,
+    describe_turn_error,
     generate_ai_turn,
     is_pass,
     retry_method_switch,
@@ -518,6 +519,70 @@ class TestStructuredOutputFlowRouting:
 
         assert result["skipped"] is True
         assert "model-x rejected the forced tool call" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_http_error_detail_shown_in_skip_notice(
+        self, monkeypatch, tmp_db, discussion_with_entities
+    ):
+        """The provider's error body (e.g. an insufficient-balance
+        rejection) must appear in the visible skip notice, not just the
+        exception class name (golden rule 6)."""
+        disc = discussion_with_entities
+        self._install_method(monkeypatch, disc, "_test_flow_http_error")
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = self._moderator(disc, tmp_db, error=_http_status_error(
+            429, '{"error":{"code":"1113","message":"Insufficient balance"}}'))
+
+        result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
+
+        assert result["skipped"] is True
+        assert "HTTP 429: Insufficient balance" in result["content"]
+        assert "HTTP 429: Insufficient balance" in result["error"]
+
+
+def _http_status_error(status_code: int, body: str):
+    """Build a real httpx.HTTPStatusError carrying ``body``."""
+    import httpx
+
+    request = httpx.Request("POST", "https://api.example.com/chat")
+    response = httpx.Response(status_code, text=body, request=request)
+    return httpx.HTTPStatusError(
+        f"HTTP {status_code}", request=request, response=response)
+
+
+class TestDescribeTurnError:
+    """describe_turn_error must surface the provider's message, not just
+    the exception class name (golden rule 6)."""
+
+    def test_http_error_extracts_json_error_message(self):
+        exc = _http_status_error(
+            429, '{"error":{"code":"1113","message":"Insufficient balance"}}')
+        assert describe_turn_error(exc) == "HTTP 429: Insufficient balance"
+
+    def test_http_error_with_string_error_field(self):
+        exc = _http_status_error(401, '{"error":"Invalid API key"}')
+        assert describe_turn_error(exc) == "HTTP 401: Invalid API key"
+
+    def test_http_error_falls_back_to_raw_body(self):
+        exc = _http_status_error(502, "Bad Gateway")
+        assert describe_turn_error(exc) == "HTTP 502: Bad Gateway"
+
+    def test_http_error_with_empty_body_uses_str(self):
+        exc = _http_status_error(500, "")
+        assert describe_turn_error(exc) == "HTTP 500"
+
+    def test_http_error_truncates_long_body(self):
+        exc = _http_status_error(400, "x" * 1000)
+        detail = describe_turn_error(exc)
+        assert len(detail) <= 200 + len("HTTP 400: ")
+
+    def test_plain_exception_uses_message(self):
+        assert describe_turn_error(ValueError("boom")) == "boom"
+
+    def test_empty_message_falls_back_to_class_name(self):
+        assert describe_turn_error(RuntimeError()) == "RuntimeError"
 
 
 class TestSwitchDiscussionMethodToolCapability:
