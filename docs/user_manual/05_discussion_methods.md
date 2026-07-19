@@ -15,6 +15,7 @@ Consider what you want from the discussion:
 | Resolve a genuine disagreement | Double Crux, Adversarial Collaboration |
 | Forecast or estimate | Delphi Method, Belief State Diffusion |
 | Identify risks and blind spots | Premortem Analysis, Red Team / Blue Team |
+| Argue a specific charge or claim adversarially | Court of Law |
 | Test whether reasoning is sound | Counterfactual Stress Testing, Recursive Self-Distillation |
 | Evaluate competing explanations | Analysis of Competing Hypotheses |
 | Challenge hidden assumptions | Key Assumptions Check |
@@ -128,6 +129,24 @@ A rotating adversarial structure. The blue team constructs and refines a positio
 4. **Assess** — Final evaluation of the strengthened position
 
 **Best for:** Security analysis, testing robustness of plans, finding weaknesses
+
+---
+
+### Court of Law
+
+A structured adversarial trial. Participants are assigned to opposing legal teams and the moderator acts as judge, controlling proceedings and delivering a reasoned verdict at the end.
+
+The mode is inferred from the roles you assign in the roster: give a participant the **prosecutor** role for a criminal trial, or **plaintiff** for a civil proceeding. Remaining participants form the defence. When a team has more than one member, the team privately "huddles" before speaking and nominates a spokesperson — huddle messages are filtered so the opposing team never sees them.
+
+**Phases:**
+1. **Arraignment** — Charges or claims are formally stated; the defence responds
+2. **Opening Statements** — Each side presents its theory of the case
+3. **Prosecution/Plaintiff Case** — The accusing side presents evidence; the defence cross-examines
+4. **Defence Case** — The defence presents evidence; the accusing side cross-examines
+5. **Closing Arguments** — Each side summarises
+6. **Verdict** — The moderator delivers a reasoned judgment
+
+**Best for:** Weighing a case for and against a specific charge or claim, where you want each side argued as forcefully as possible before judgment
 
 ---
 

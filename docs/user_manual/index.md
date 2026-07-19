@@ -12,7 +12,7 @@ This manual walks you through everything you need to get started and make the mo
 2. [Providers and Models](02_providers_and_models.md) — Configuring AI backends and API keys
 3. [Profiles and Entities](03_profiles_and_entities.md) — Creating human, AI, and expert participants
 4. [Setting Up a Discussion](04_setting_up_a_discussion.md) — Topics, rosters, methods, and options
-5. [Discussion Methods](05_discussion_methods.md) — The 13 analytical frameworks available
+5. [Discussion Methods](05_discussion_methods.md) — The 18 analytical frameworks available
 6. [Running a Discussion](06_running_a_discussion.md) — The live discussion interface and moderator controls
 7. [Human Participation](07_human_participation.md) — How humans join, speak, and interact during discussions
 8. [Tools and Capabilities](08_tools_and_capabilities.md) — Web search, documents, code execution, memory, and more

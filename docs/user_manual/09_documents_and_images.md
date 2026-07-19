@@ -19,7 +19,7 @@ In the **New Discussion** tab, the **Reference Documents** card lets you add doc
 When you add a document, Consensus:
 
 1. **Extracts text** from the source format
-2. **Chunks** the text into ~1500-character segments with 200-character overlap, respecting paragraph boundaries
+2. **Chunks** the text into ~500-character segments with 100-character overlap, respecting paragraph boundaries
 3. **Generates embeddings** for each chunk (if an embedding service is configured)
 4. **Stores** everything in the database for retrieval
 

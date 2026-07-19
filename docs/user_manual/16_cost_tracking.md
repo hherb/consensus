@@ -32,8 +32,9 @@ Each AI message in the chat shows its individual cost alongside other metadata:
 ## Setting a Budget
 
 During discussion setup, enter a dollar amount in the **Budget** field:
-- **$0** (or empty) = no limit
-- Any positive number sets a hard budget
+- The field is **pre-filled with $1.00** — it is not empty by default, so an untouched discussion stops at one dollar
+- **$0** = no limit
+- Any positive number up to the **$100** maximum sets a hard budget
 
 ### When the Budget Is Reached
 

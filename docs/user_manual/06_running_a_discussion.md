@@ -11,7 +11,7 @@ The header shows:
 - **Topic title** — The discussion topic
 - **Turn badge** — Shows "Turn N: [Speaker Name] (round X/Y)" during active turns, "Paused", or "Concluded"
 - **Cost badge** — Running total of API costs (turns orange at 80% of budget)
-- **Action buttons** — Reassign, Mediate, Pause/Resume, Conclude, Export
+- **Action buttons** — Reassign, Mediate, Pause/Resume, Conclude, Export. Once a discussion is concluded, a separate **Resume Discussion** button appears, which reopens it for further turns (distinct from Pause/Resume, which only suspends a live discussion)
 
 ### Left Panel — Participants
 

@@ -51,7 +51,7 @@ Opens a native application window using pywebview. This is the simplest way to u
 ```bash
 consensus --web
 # or with options
-consensus --web --port 8080 --host 127.0.0.1 --debug
+consensus --web --port 8080 --host 127.0.0.1
 ```
 
 Starts an aiohttp web server. Open your browser to `http://127.0.0.1:8080`. All browser tabs share the same application instance.
@@ -80,7 +80,7 @@ Runs Consensus as an MCP (Model Context Protocol) server over stdio, allowing ex
 | `--multi-user` | Enable per-session isolation (requires `--web`) |
 | `--port PORT` | Server port (default: 8080) |
 | `--host HOST` | Bind address (default: 127.0.0.1) |
-| `--debug` | Enable debug logging and auto-reload |
+| `--debug` | Enable debug mode. **Desktop mode only** — the flag is accepted but has no effect with `--web`, and there is no auto-reload |
 
 ## Data Storage
 

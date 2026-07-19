@@ -34,7 +34,7 @@ def main() -> None:
         try:
             from .server import launch_web
         except ImportError:
-            print("Web mode requires aiohttp. Install with: pip install consensus[web]")
+            print("Web mode requires aiohttp. Install with: uv pip install consensus-app")
             sys.exit(1)
         import asyncio
         asyncio.run(launch_web(
@@ -44,7 +44,7 @@ def main() -> None:
         try:
             from .desktop import launch_desktop
         except ImportError:
-            print("Desktop mode requires pywebview. Install with: pip install consensus[desktop]")
+            print("Desktop mode requires pywebview. Install with: uv pip install consensus-app")
             sys.exit(1)
         launch_desktop(debug=args.debug)
 

@@ -14,7 +14,9 @@ An AI participant backed by a language model. You configure which provider and m
 
 ### Expert
 
-A specialised AI entity backed by an MCP (Model Context Protocol) server. Experts are not regular discussion participants — they are consulted on-demand for specific queries and then step back. See [Chapter 15](15_mcp_integration.md) for details.
+A specialised AI entity backed by an MCP (Model Context Protocol) server. Experts are not regular discussion participants — they are consulted on-demand for specific queries and then step back.
+
+**Experts cannot currently be created through the UI.** The Type dropdown on this tab offers only Human and AI, and no screen wires up expert creation yet. The backend, database, and API fully support experts — consulting an existing one works from the discussion view — but defining a new one means calling `save_expert_definition` through the API directly. See [Chapter 15](15_mcp_integration.md).
 
 ## Creating a Profile
 
@@ -40,14 +42,17 @@ Navigate to the **Profiles** tab and click **"+ Create New Profile"**.
 
 ### Tool Assignments
 
-Below the main fields, you'll see checkboxes for available tools. These control what capabilities the AI entity has during discussions:
+Below the main fields is a row of category buttons controlling what capabilities the AI entity has during discussions. Clicking a category toggles every tool in it on or off:
 
-- **Web Search** — search the web and fetch pages
-- **Ask User** — pause and ask the human user a question
-- **Document Tools** — read, search, and summarise attached documents
-- **Python Execution** — run sandboxed Python code
-- **Memory Tools** — store and recall persistent memories
-- **Image Tools** — describe and work with images
+- **🧠 Memory Tools** — store and recall persistent memories, search past discussions, build the knowledge graph
+- **🌐 Web Tools** — search the web and fetch pages
+- **🎓 Expert Tools** — consult expert entities backed by MCP servers
+- **📄 Document Tools** — read, search, and summarise attached documents
+- **🔧 Other** — everything not in the categories above, including `ask_user`, sandboxed Python execution, and the image tools
+
+**Select All** and **None** buttons set every tool at once. For finer control, expand **Advanced — individual tool permissions** to toggle single tools and set each one's access mode.
+
+Categories only appear when tools of that kind are actually available, so a fresh install without MCP servers configured will not show Expert Tools.
 
 Tool assignments are per-entity defaults. They can be overridden for specific discussions. See [Chapter 8](08_tools_and_capabilities.md) for details on each tool.
 
