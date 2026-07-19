@@ -166,3 +166,105 @@ class TestParticipantNames:
         assert human.name in names
         assert "AI" in names
         assert "Human" in names
+
+
+class TestToolLoopProgress:
+    """The tool execution loop must report each tool call through the
+    progress callback so the UI can show what a participant is doing
+    during long tool-using turns."""
+
+    def _tool_result(self, message: dict) -> dict:
+        return {
+            "message": message,
+            "finish_reason": "stop",
+            "model": "m",
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2,
+            "latency_ms": 5,
+        }
+
+    @pytest.mark.asyncio
+    async def test_progress_callback_fires_per_tool_call(
+        self, tmp_db, mod_setup,
+    ):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from consensus.tools import ToolDefinition, ToolResult
+
+        moderator, disc, ai, human = mod_setup
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+
+        registry = MagicMock()
+        registry.get_tools_for_entity = AsyncMock(return_value=[
+            ToolDefinition(name="web_search", description="", parameters={}),
+        ])
+        registry.execute = AsyncMock(
+            return_value=ToolResult(content="results"))
+        moderator._tool_registry = registry
+
+        events: list[dict] = []
+        moderator._progress_callback = events.append
+
+        client = MagicMock()
+        client.complete_with_tools = AsyncMock(side_effect=[
+            self._tool_result({
+                "content": "",
+                "tool_calls": [{
+                    "id": "tc1",
+                    "function": {"name": "web_search",
+                                 "arguments": '{"query": "x"}'},
+                }],
+            }),
+            self._tool_result({"content": "final answer"}),
+        ])
+        moderator._get_client = MagicMock(return_value=client)
+
+        resp = await moderator.generate_turn(ai)
+
+        assert resp.content == "final answer"
+        tool_events = [e for e in events if e.get("tool_name") == "web_search"]
+        assert tool_events, f"no web_search progress event in {events}"
+        assert tool_events[0]["entity_name"] == ai.name
+        assert tool_events[0]["message"]
+
+    @pytest.mark.asyncio
+    async def test_callback_error_does_not_break_turn(
+        self, tmp_db, mod_setup,
+    ):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from consensus.tools import ToolDefinition, ToolResult
+
+        moderator, disc, ai, human = mod_setup
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+
+        registry = MagicMock()
+        registry.get_tools_for_entity = AsyncMock(return_value=[
+            ToolDefinition(name="web_search", description="", parameters={}),
+        ])
+        registry.execute = AsyncMock(
+            return_value=ToolResult(content="results"))
+        moderator._tool_registry = registry
+
+        def broken_callback(data):
+            raise RuntimeError("UI push failed")
+
+        moderator._progress_callback = broken_callback
+
+        client = MagicMock()
+        client.complete_with_tools = AsyncMock(side_effect=[
+            self._tool_result({
+                "content": "",
+                "tool_calls": [{
+                    "id": "tc1",
+                    "function": {"name": "web_search",
+                                 "arguments": '{"query": "x"}'},
+                }],
+            }),
+            self._tool_result({"content": "final answer"}),
+        ])
+        moderator._get_client = MagicMock(return_value=client)
+
+        resp = await moderator.generate_turn(ai)
+        assert resp.content == "final answer"

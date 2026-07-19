@@ -36,7 +36,9 @@ class Moderator:
 
     def __init__(self, discussion: Discussion, db: Database,
                  key_resolver: Optional[Callable[[int, str], str]] = None,
-                 tool_registry: Optional[ToolRegistry] = None) -> None:
+                 tool_registry: Optional[ToolRegistry] = None,
+                 progress_callback: Optional[Callable[[dict], None]] = None,
+                 ) -> None:
         self.discussion = discussion
         self.db = db
         self._clients: dict[int, AIClient] = {}
@@ -44,6 +46,23 @@ class Moderator:
         # When set, overrides the entity's resolved api_key for AI calls.
         self._key_resolver = key_resolver
         self._tool_registry = tool_registry
+        # Optional callback receiving tool_progress event dicts so the
+        # UI can show what a participant is doing mid-turn.
+        self._progress_callback = progress_callback
+
+    def _emit_progress(self, data: dict) -> None:
+        """Report tool-loop progress to the UI, never breaking the turn.
+
+        A UI push failure (e.g. a torn-down webview) must not abort an
+        otherwise healthy generation, so callback errors are logged and
+        swallowed.
+        """
+        if self._progress_callback is None:
+            return
+        try:
+            self._progress_callback(data)
+        except Exception:
+            logger.warning("Tool progress callback failed", exc_info=True)
 
     def resolve_prompt(self, role: str, target: str, task: str,
                        **variables: object) -> str:
@@ -483,6 +502,12 @@ class Moderator:
                 except json.JSONDecodeError:
                     arguments = {}
 
+                self._emit_progress({
+                    "discussion_id": self.discussion.id,
+                    "entity_name": entity.name,
+                    "tool_name": tool_name,
+                    "message": f"Using {tool_name}...",
+                })
                 start = time.monotonic()
                 tool_result = await self._tool_registry.execute(
                     tool_name=tool_name,
@@ -492,6 +517,16 @@ class Moderator:
                     moderator_id=self.discussion.moderator_id,
                 )
                 tool_latency = int((time.monotonic() - start) * 1000)
+                self._emit_progress({
+                    "discussion_id": self.discussion.id,
+                    "entity_name": entity.name,
+                    "tool_name": tool_name,
+                    "message": (
+                        f"{tool_name} failed — continuing..."
+                        if tool_result.is_error
+                        else f"{tool_name} finished; thinking..."
+                    ),
+                })
 
                 # Record for persistence
                 all_tool_records.append(ToolCallRecord(

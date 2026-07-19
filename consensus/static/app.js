@@ -3,7 +3,7 @@
  * Application entrypoint — initialization, event wiring, and bootstrap.
  */
 
-import { $, $$, show, hide } from './utils.js';
+import { $, $$, show, hide, showToast } from './utils.js';
 import { state, onStateUpdate, registerSetupCallback } from './state.js';
 import { api, initApi } from './api.js';
 import { checkAuthStatus, showAuthPhase, showAppPhase, authUser, authRequired, setAuthUser } from './auth.js';
@@ -257,9 +257,30 @@ function init() {
 }
 
 /**
+ * Surface silent frontend failures as toasts.
+ * An uncaught exception or unhandled promise rejection in the turn cycle
+ * otherwise looks exactly like a hang — the 2026-07-20 "Kimi hanging"
+ * incident was invisible for this reason.
+ */
+function installGlobalErrorHandlers() {
+    // bootstrap() can run twice (pywebviewready + detection fallback);
+    // never register the listeners twice.
+    if (window.__globalErrorHandlersInstalled) return;
+    window.__globalErrorHandlersInstalled = true;
+    window.addEventListener('error', (e) => {
+        showToast(`Unexpected error: ${e.message}`, 8000, 'warning');
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+        const msg = e.reason?.message || String(e.reason);
+        showToast(`Unexpected error: ${msg}`, 8000, 'warning');
+    });
+}
+
+/**
  * Bootstrap the application — detect mode, check auth, initialize.
  */
 async function bootstrap() {
+    installGlobalErrorHandlers();
     initApi({
         showAuthPhase,
         getAuthRequired: () => authRequired,

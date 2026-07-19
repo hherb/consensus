@@ -40,6 +40,7 @@ class ConsensusApp:
             self.discussion, self.db,
             key_resolver=self._resolve_key_for_moderator,
             tool_registry=self.tool_registry,
+            progress_callback=self._emit_tool_progress,
         )
         self._on_update: Optional[Callable] = None
         self._event_listeners: dict[str, list[Callable]] = {}
@@ -250,6 +251,11 @@ class ConsensusApp:
                 cb(data)
             except Exception:
                 logger.exception("Event listener error for %s", event_type)
+
+    def _emit_tool_progress(self, data: dict) -> None:
+        """Forward a Moderator tool-loop progress dict as a tool_progress
+        event (the channel the desktop bridge and web SSE already relay)."""
+        self.emit("tool_progress", data)
 
     # ------------------------------------------------------------------
     # MCP Server Management
@@ -884,6 +890,7 @@ class ConsensusApp:
         result = app_discussion_state.load_discussion(
             self.db, discussion_id,
             self._resolve_key_for_moderator, self.tool_registry,
+            progress_callback=self._emit_tool_progress,
         )
         if isinstance(result, dict):
             return result  # error
@@ -982,6 +989,7 @@ class ConsensusApp:
         """Reset to a clean state."""
         self.discussion, self.moderator = app_discussion_state.reset_discussion(
             self.db, self._resolve_key_for_moderator, self.tool_registry,
+            progress_callback=self._emit_tool_progress,
         )
         self._notify()
         return True

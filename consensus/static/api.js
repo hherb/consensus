@@ -10,6 +10,64 @@ import { onStateUpdate } from './state.js';
 /** @type {DesktopAPI|WebAPI|null} The active API instance */
 export let api = null;
 
+// Watchdog timeouts: a lost pywebview promise or dropped HTTP response must
+// surface as a catchable error instead of hanging the turn cycle forever
+// (observed 2026-07-20: a completed AI turn whose bridge promise never
+// resolved froze the discussion indefinitely with zero feedback).
+// Generation-type calls get a generous budget — slow local models and long
+// tool loops are legitimate; everything else fails fast.
+const GENERATION_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_CALL_TIMEOUT_MS = 2 * 60 * 1000;
+const GENERATION_CALLS = new Set([
+    'generate_ai_turn', 'complete_turn', 'mediate', 'conclude',
+    'continue_discussion', 'recommend_method', 'retry_method_switch',
+    'upload_document', 'add_document_from_url', 'upload_image',
+    'add_image_from_url',
+]);
+
+/**
+ * Race a promise against a watchdog timeout.
+ * The timer is always cleared on settle so the loser never surfaces as a
+ * stray unhandled rejection.
+ * @param {Promise<*>} promise - The call to guard
+ * @param {number} ms - Timeout in milliseconds
+ * @param {string} label - Call name used in the error message
+ * @returns {Promise<*>}
+ */
+function raceWithTimeout(promise, ms, label) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(
+            `${label} timed out after ${Math.round(ms / 1000)}s — ` +
+            'the backend may be stuck; try again or restart the app'
+        )), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Wrap the pywebview bridge in a Proxy adding the watchdog to every call.
+ * Idempotent: marks the original bridge so repeat init is a no-op.
+ */
+function installBridgeWatchdog() {
+    const bridge = window.pywebview.api;
+    if (!bridge || bridge.__watchdogInstalled) return;
+    bridge.__watchdogInstalled = true;
+    window.pywebview.api = new Proxy(bridge, {
+        get(target, prop, receiver) {
+            const orig = Reflect.get(target, prop, receiver);
+            if (typeof orig !== 'function' || typeof prop !== 'string') {
+                return orig;
+            }
+            return (...args) => {
+                const ms = GENERATION_CALLS.has(prop)
+                    ? GENERATION_TIMEOUT_MS : DEFAULT_CALL_TIMEOUT_MS;
+                return raceWithTimeout(orig.apply(target, args), ms, prop);
+            };
+        },
+    });
+}
+
 /**
  * Initialize the API adapter based on runtime environment.
  * @param {object} authCallbacks - Auth callback functions
@@ -18,7 +76,12 @@ export let api = null;
  * @param {Function} authCallbacks.setAuthUser - Set auth user to null
  */
 export function initApi(authCallbacks) {
-    api = window.pywebview ? new DesktopAPI() : new WebAPI(authCallbacks);
+    if (window.pywebview) {
+        installBridgeWatchdog();
+        api = new DesktopAPI();
+    } else {
+        api = new WebAPI(authCallbacks);
+    }
 }
 
 /**
@@ -156,11 +219,30 @@ class WebAPI {
         if (Object.keys(byokKeys).length > 0) {
             headers['X-API-Keys'] = JSON.stringify(byokKeys);
         }
-        const resp = await fetch(`/api/${method}`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(data),
-        });
+        // Same watchdog as the desktop bridge: a response that never
+        // arrives must become an error, not an eternal await.
+        const timeoutMs = GENERATION_CALLS.has(method)
+            ? GENERATION_TIMEOUT_MS : DEFAULT_CALL_TIMEOUT_MS;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        let resp;
+        try {
+            resp = await fetch(`/api/${method}`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(data),
+                signal: controller.signal,
+            });
+        } catch (e) {
+            if (e.name === 'AbortError') {
+                throw new Error(
+                    `${method} timed out after `
+                    + `${Math.round(timeoutMs / 1000)}s`);
+            }
+            throw e;
+        } finally {
+            clearTimeout(timer);
+        }
         const json = await resp.json();
         if (!resp.ok) {
             if (resp.status === 401 && this._authCallbacks.getAuthRequired()) {

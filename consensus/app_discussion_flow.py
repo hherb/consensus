@@ -6,6 +6,8 @@ import re
 import time
 from typing import Callable, Optional, TYPE_CHECKING
 
+import httpx
+
 from .database import Database
 from .evidence import record_and_annotate_evidence
 from .methods import get_active_method, get_method, serialize_method_state
@@ -27,6 +29,37 @@ logger = logging.getLogger(__name__)
 # anchored so the phrase appearing inside a longer real contribution does not
 # count as a pass.
 _FORMATTED_PASS_RE = re.compile(r"^.+ passed this round\.$")
+
+#: Maximum length of the provider error body echoed into a skip notice.
+_ERROR_DETAIL_LENGTH = 200
+
+
+def describe_turn_error(e: Exception) -> str:
+    """Return a user-facing description of a failed AI turn's error.
+
+    ``str(httpx.HTTPStatusError)`` does not include the response body,
+    which is where providers put the actionable message ("Insufficient
+    balance", "tool_choice ... incompatible", ...) — so for HTTP errors
+    the body is parsed (OpenAI-style ``{"error": {"message": ...}}``,
+    with raw-snippet fallback) and prefixed with the status code.  Other
+    exceptions use their message, falling back to the class name when
+    empty (golden rule 6: caught errors must reach the UI).
+    """
+    if isinstance(e, httpx.HTTPStatusError):
+        body = (e.response.text or "").strip()
+        detail = body
+        try:
+            err = json.loads(body).get("error")
+            if isinstance(err, dict):
+                detail = err.get("message") or body
+            elif isinstance(err, str):
+                detail = err
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        prefix = f"HTTP {e.response.status_code}"
+        detail = detail[:_ERROR_DETAIL_LENGTH].strip()
+        return f"{prefix}: {detail}" if detail else prefix
+    return str(e).strip() or type(e).__name__
 
 
 def is_pass(content: str) -> bool:
@@ -554,9 +587,10 @@ async def generate_ai_turn(
         logger.exception("AI generation failed for %s", current.name)
         # Post a visible notification so the moderator/participants
         # know this participant was skipped due to an API error.
+        detail = describe_turn_error(e)
         error_notice = (
             f"*{current.name} could not respond due to an API error "
-            f"({type(e).__name__}). Skipping to the next participant.*"
+            f"({detail}). Skipping to the next participant.*"
         )
         msg = Message(
             entity_id=current.id, entity_name=current.name,
@@ -568,7 +602,7 @@ async def generate_ai_turn(
             turn_number=discussion.turn_number,
         )
         result = msg.to_dict()
-        result["error"] = str(e)
+        result["error"] = detail
         result["skipped"] = True
         return result
 
@@ -817,7 +851,10 @@ async def complete_turn(
                 )
         except Exception as e:
             logger.exception("AI summary generation failed")
-            return {"error": f"Summary generation failed: {e}"}
+            return {
+                "error":
+                    f"Summary generation failed: {describe_turn_error(e)}",
+            }
     elif mod and moderator_summary:
         summary_text = moderator_summary
         db.add_message(

@@ -21,6 +21,16 @@ MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0  # seconds — doubles each retry
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
+# Optional sampling parameters some models reject outright — e.g. Kimi
+# K2.5's "invalid temperature: only 1 is allowed" or Anthropic's
+# "`temperature` is deprecated for this model".  When a 400 names one
+# that the payload carries, it is dropped and the request retried with
+# the provider's default.  max_tokens is deliberately absent: it bounds
+# cost, and providers that require a different spelling get it from
+# _max_tokens_param instead.
+DROPPABLE_PARAMS = ("temperature", "top_p", "frequency_penalty",
+                    "presence_penalty")
+
 # Regex patterns for DeepSeek DSML tool-call markup that some models
 # (notably deepseek-reasoner) emit as plain text instead of structured
 # tool_calls in the JSON response.
@@ -173,19 +183,41 @@ class AIClient:
                     continue
                 raise
 
-            # Some models reject non-default temperature values (e.g.
-            # Kimi K2.5 only accepts temperature=1).  Drop temperature from
-            # the payload and retry immediately.  This is a one-shot fix (the
-            # payload no longer carries "temperature" afterwards) so it does
-            # not increment ``attempt`` and cannot exhaust the retry budget.
+            # Some models reject optional sampling parameters outright
+            # (see DROPPABLE_PARAMS).  Drop every parameter the error
+            # body names from the payload and retry with the provider's
+            # defaults.  This is a one-shot fix per parameter (the
+            # payload no longer carries it afterwards) so it does not
+            # increment ``attempt`` and cannot exhaust the retry budget.
+            if response.status_code == 400:
+                body = response.text.lower()
+                rejected = [p for p in DROPPABLE_PARAMS
+                            if p in payload and p in body]
+                if rejected:
+                    logger.info(
+                        "Model %s rejected parameter(s) %s; retrying "
+                        "with provider defaults",
+                        model, ", ".join(rejected),
+                    )
+                    for param in rejected:
+                        payload.pop(param, None)
+                    continue
+
+            # Some models reject a tool_choice naming a specific function
+            # while accepting the broader "required" mode (e.g. Moonshot
+            # thinking models: "tool_choice 'specified' is incompatible
+            # with thinking enabled").  Callers forcing a tool only ever
+            # offer that single tool, so "required" is an equivalent
+            # forcing.  One-shot for the same reason as the temperature
+            # drop above: tool_choice is no longer a dict afterwards.
             if (response.status_code == 400
-                    and "temperature" in payload
-                    and "invalid temperature" in response.text.lower()):
+                    and isinstance(payload.get("tool_choice"), dict)
+                    and "tool_choice" in response.text.lower()):
                 logger.info(
-                    "Model %s rejected temperature=%.2f; retrying without it",
-                    model, payload.get("temperature", 0),
+                    "Model %s rejected forced tool_choice; "
+                    "retrying with 'required'", model,
                 )
-                payload.pop("temperature", None)
+                payload["tool_choice"] = "required"
                 continue
 
             if (response.status_code in RETRYABLE_STATUS_CODES
