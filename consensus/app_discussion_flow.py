@@ -851,7 +851,10 @@ async def complete_turn(
                 )
         except Exception as e:
             logger.exception("AI summary generation failed")
-            return {"error": f"Summary generation failed: {e}"}
+            return {
+                "error":
+                    f"Summary generation failed: {describe_turn_error(e)}",
+            }
     elif mod and moderator_summary:
         summary_text = moderator_summary
         db.add_message(

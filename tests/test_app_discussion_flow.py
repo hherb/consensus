@@ -552,6 +552,30 @@ def _http_status_error(status_code: int, body: str):
         f"HTTP {status_code}", request=request, response=response)
 
 
+class TestCompleteTurnSummaryError:
+    """A failed moderator summary must return the provider's message so
+    the frontend can show it — not just str(HTTPStatusError), which
+    omits the response body (golden rule 6)."""
+
+    @pytest.mark.asyncio
+    async def test_summary_failure_error_carries_provider_detail(
+        self, tmp_db, discussion_with_entities
+    ):
+        from consensus.moderator import Moderator
+
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        moderator = Moderator(disc, tmp_db)
+        moderator.generate_summary = AsyncMock(side_effect=_http_status_error(
+            429, '{"error":{"code":"1113","message":"Insufficient balance"}}'))
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+
+        result = await complete_turn(
+            disc, moderator, tmp_db, pricing, get_state_fn=lambda: {})
+
+        assert "HTTP 429: Insufficient balance" in result["error"]
+
+
 class TestDescribeTurnError:
     """describe_turn_error must surface the provider's message, not just
     the exception class name (golden rule 6)."""

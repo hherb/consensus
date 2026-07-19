@@ -167,7 +167,13 @@ async function completeTurnFlow() {
         try {
             const result = await api.completeTurn();
             if (result?.error) {
-                // Discussion may have been concluded while we were waiting
+                // "Discussion is not active" just means it was concluded
+                // while we were waiting — not a failure to surface. Real
+                // failures (e.g. a summary API error) must be shown, or
+                // the turn cycle stops with no explanation at all.
+                if (result.error !== 'Discussion is not active') {
+                    showToast(result.error, 8000, 'warning');
+                }
                 onStateUpdate(await api.getState());
                 renderDiscussion();
                 return false;
