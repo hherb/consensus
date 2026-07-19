@@ -51,6 +51,44 @@ async def test_temperature_drop_on_final_attempt_still_retries(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_deprecated_temperature_dropped(monkeypatch):
+    # Anthropic's OpenAI-compat endpoint rejects temperature for newer
+    # models with "deprecated" wording rather than "invalid temperature";
+    # any 400 naming a droppable parameter must trigger the drop.
+    client = AIClient(base_url="https://api.example.com")
+    rejection = _FakeResponse(
+        400, '{"error":{"message":"`temperature` is deprecated for this '
+             'model.","type":"invalid_request_error"}}')
+    success = _FakeResponse(200, "ok")
+    fake = _FakeClient([rejection, success])
+    monkeypatch.setattr(client, "_get_client", lambda: fake)
+
+    payload = {"model": "m", "temperature": 0.7, "messages": []}
+    resp = await client._post_with_retry("/chat", payload, "m")
+
+    assert resp.status_code == 200
+    assert "temperature" not in fake.posts[1]
+
+
+@pytest.mark.asyncio
+async def test_unmentioned_param_not_dropped(monkeypatch):
+    # A 400 naming one parameter must not drop others the payload carries.
+    client = AIClient(base_url="https://api.example.com")
+    rejection = _FakeResponse(400, "top_p is not supported")
+    success = _FakeResponse(200, "ok")
+    fake = _FakeClient([rejection, success])
+    monkeypatch.setattr(client, "_get_client", lambda: fake)
+
+    payload = {"model": "m", "temperature": 0.7, "top_p": 0.9,
+               "messages": []}
+    resp = await client._post_with_retry("/chat", payload, "m")
+
+    assert resp.status_code == 200
+    assert "top_p" not in fake.posts[1]
+    assert fake.posts[1]["temperature"] == 0.7
+
+
+@pytest.mark.asyncio
 async def test_non_temperature_400_is_returned(monkeypatch):
     client = AIClient(base_url="https://api.example.com")
     fake = _FakeClient([_FakeResponse(400, "bad request")])
