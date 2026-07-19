@@ -3,7 +3,7 @@
 import argparse
 import sys
 
-from .config import load_env
+from .config import load_env, setup_logging
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8080
@@ -12,6 +12,8 @@ DEFAULT_PORT = 8080
 def main() -> None:
     """Parse command-line arguments and launch desktop or web mode."""
     load_env()
+    log_path = setup_logging()
+    print(f"Logging to {log_path}")
 
     parser = argparse.ArgumentParser(
         description="Consensus - Moderated Discussion Platform"

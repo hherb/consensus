@@ -89,3 +89,53 @@ class TestFilePermissions:
         assert not (mode & stat.S_IRGRP)  # no group read
         assert not (mode & stat.S_IROTH)  # no other read
         monkeypatch.delenv("PERM_KEY", raising=False)
+
+
+class TestSetupLogging:
+    """Rotating file logging so post-mortems don't depend on a live
+    terminal (the DeepSeek/Kimi hang investigations had no logs at all)."""
+
+    def _cleanup(self, before):
+        import logging
+        root = logging.getLogger()
+        for h in root.handlers[:]:
+            if h not in before:
+                root.removeHandler(h)
+                h.close()
+
+    def test_creates_log_file_and_writes_records(self, tmp_path):
+        import logging
+
+        from consensus.config import setup_logging
+
+        before = list(logging.getLogger().handlers)
+        try:
+            log_path = setup_logging(str(tmp_path))
+            logging.getLogger("consensus.test").info("hello file")
+            for h in logging.getLogger().handlers:
+                h.flush()
+            with open(log_path) as f:
+                content = f.read()
+            assert "hello file" in content
+        finally:
+            self._cleanup(before)
+
+    def test_setup_is_idempotent(self, tmp_path):
+        import logging
+        from logging.handlers import RotatingFileHandler
+
+        from consensus.config import setup_logging
+
+        before = list(logging.getLogger().handlers)
+        try:
+            path1 = setup_logging(str(tmp_path))
+            path2 = setup_logging(str(tmp_path))
+            assert path1 == path2
+            file_handlers = [
+                h for h in logging.getLogger().handlers
+                if isinstance(h, RotatingFileHandler)
+                and h.baseFilename == path1
+            ]
+            assert len(file_handlers) == 1
+        finally:
+            self._cleanup(before)

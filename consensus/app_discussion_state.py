@@ -56,6 +56,7 @@ def load_discussion(
     discussion_id: int,
     key_resolver: Callable,
     tool_registry: Optional[object],
+    progress_callback: Optional[Callable[[dict], None]] = None,
 ) -> "tuple[Discussion, Moderator] | dict":
     """Load a past discussion, restoring full state including turn position.
 
@@ -64,6 +65,8 @@ def load_discussion(
         discussion_id: ID of the discussion to load.
         key_resolver: Callable used by :class:`Moderator` to resolve API keys.
         tool_registry: Tool registry passed to the new Moderator.
+        progress_callback: Tool-progress callback passed to the new
+            Moderator (see :meth:`Moderator._emit_progress`).
 
     Returns:
         ``(Discussion, Moderator)`` on success, or ``{"error": ...}`` dict.
@@ -170,6 +173,7 @@ def load_discussion(
         discussion, db,
         key_resolver=key_resolver,
         tool_registry=tool_registry,
+        progress_callback=progress_callback,
     )
     return (discussion, moderator)
 
@@ -448,6 +452,7 @@ def reset_discussion(
     db: Database,
     key_resolver: Callable,
     tool_registry: Optional[object],
+    progress_callback: Optional[Callable[[dict], None]] = None,
 ) -> tuple[Discussion, Moderator]:
     """Reset to a clean state for a new discussion.
 
@@ -455,6 +460,8 @@ def reset_discussion(
         db: Database instance.
         key_resolver: Callable used by :class:`Moderator` to resolve API keys.
         tool_registry: Tool registry passed to the new Moderator.
+        progress_callback: Tool-progress callback passed to the new
+            Moderator (see :meth:`Moderator._emit_progress`).
 
     Returns:
         A ``(Discussion, Moderator)`` tuple with fresh instances.
@@ -464,5 +471,6 @@ def reset_discussion(
         discussion, db,
         key_resolver=key_resolver,
         tool_registry=tool_registry,
+        progress_callback=progress_callback,
     )
     return (discussion, moderator)

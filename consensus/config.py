@@ -1,8 +1,16 @@
 """Platform-aware configuration and paths."""
 
+import logging
 import os
 import stat
 import sys
+from logging.handlers import RotatingFileHandler
+
+#: Rotating log file written to <data dir>/logs (or an explicit dir).
+LOG_FILENAME = "consensus.log"
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 
 def get_data_dir() -> str:
@@ -16,6 +24,55 @@ def get_data_dir() -> str:
     path = os.path.join(base, "consensus")
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def setup_logging(log_dir: str = "", level: int = logging.INFO) -> str:
+    """Configure console plus rotating-file logging for the app.
+
+    Without this the app has no log persistence at all: INFO records are
+    invisible (Python's last-resort handler only prints WARNING+) and
+    everything dies with the terminal, leaving hang/error post-mortems
+    evidence-free (golden rule 6).
+
+    Idempotent — calling again with the same directory adds no duplicate
+    handlers, so tests and multi-entry launches are safe.
+
+    Args:
+        log_dir: Directory for the log file; defaults to
+            ``<data dir>/logs``.
+        level: Root logger level (default ``logging.INFO``).
+
+    Returns the log file path.
+    """
+    directory = log_dir or os.path.join(get_data_dir(), "logs")
+    os.makedirs(directory, exist_ok=True)
+    log_path = os.path.abspath(os.path.join(directory, LOG_FILENAME))
+
+    root = logging.getLogger()
+    root.setLevel(level)
+    for handler in root.handlers:
+        if (isinstance(handler, RotatingFileHandler)
+                and handler.baseFilename == log_path):
+            return log_path
+
+    formatter = logging.Formatter(LOG_FORMAT)
+    file_handler = RotatingFileHandler(
+        log_path, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(formatter)
+    root.addHandler(file_handler)
+
+    has_console = any(
+        isinstance(h, logging.StreamHandler)
+        and not isinstance(h, RotatingFileHandler)
+        for h in root.handlers
+    )
+    if not has_console:
+        console = logging.StreamHandler()
+        console.setFormatter(formatter)
+        root.addHandler(console)
+    return log_path
 
 
 def get_images_dir() -> str:
