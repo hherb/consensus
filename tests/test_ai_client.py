@@ -63,6 +63,68 @@ async def test_non_temperature_400_is_returned(monkeypatch):
     assert len(fake.posts) == 1
 
 
+@pytest.mark.asyncio
+async def test_forced_tool_choice_downgraded_to_required(monkeypatch):
+    # Moonshot thinking models (kimi-k3, kimi-k2.5) reject a tool_choice
+    # naming a specific function but accept "required"; the client must
+    # downgrade and retry instead of surfacing the 400.
+    client = AIClient(base_url="https://api.example.com")
+    rejection = _FakeResponse(
+        400, '{"error":{"message":"tool_choice \'specified\' is '
+             'incompatible with thinking enabled"}}')
+    success = _FakeResponse(200, "ok")
+    fake = _FakeClient([rejection, success])
+    monkeypatch.setattr(client, "_get_client", lambda: fake)
+
+    payload = {
+        "model": "m", "messages": [],
+        "tools": [{"type": "function", "function": {"name": "submit_x"}}],
+        "tool_choice": {"type": "function", "function": {"name": "submit_x"}},
+    }
+    resp = await client._post_with_retry("/chat", payload, "m")
+
+    assert resp.status_code == 200
+    assert fake.posts[0]["tool_choice"] == {
+        "type": "function", "function": {"name": "submit_x"}}
+    assert fake.posts[1]["tool_choice"] == "required"
+
+
+@pytest.mark.asyncio
+async def test_tool_choice_downgrade_is_one_shot(monkeypatch):
+    # If the provider rejects "required" as well, the 400 is returned
+    # rather than looping forever.
+    client = AIClient(base_url="https://api.example.com")
+    first = _FakeResponse(400, "tool_choice 'specified' not supported")
+    second = _FakeResponse(400, "tool_choice 'required' not supported")
+    fake = _FakeClient([first, second])
+    monkeypatch.setattr(client, "_get_client", lambda: fake)
+
+    payload = {
+        "model": "m", "messages": [],
+        "tool_choice": {"type": "function", "function": {"name": "submit_x"}},
+    }
+    resp = await client._post_with_retry("/chat", payload, "m")
+    assert resp.status_code == 400
+    assert len(fake.posts) == 2
+
+
+@pytest.mark.asyncio
+async def test_unrelated_400_keeps_forced_tool_choice(monkeypatch):
+    # A 400 that does not mention tool_choice must not trigger the
+    # downgrade — it is returned for the caller's error handling.
+    client = AIClient(base_url="https://api.example.com")
+    fake = _FakeClient([_FakeResponse(400, "context length exceeded")])
+    monkeypatch.setattr(client, "_get_client", lambda: fake)
+
+    payload = {
+        "model": "m", "messages": [],
+        "tool_choice": {"type": "function", "function": {"name": "submit_x"}},
+    }
+    resp = await client._post_with_retry("/chat", payload, "m")
+    assert resp.status_code == 400
+    assert len(fake.posts) == 1
+
+
 class _JSONResponse:
     """Fake httpx response carrying a JSON body."""
 

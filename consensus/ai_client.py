@@ -188,6 +188,23 @@ class AIClient:
                 payload.pop("temperature", None)
                 continue
 
+            # Some models reject a tool_choice naming a specific function
+            # while accepting the broader "required" mode (e.g. Moonshot
+            # thinking models: "tool_choice 'specified' is incompatible
+            # with thinking enabled").  Callers forcing a tool only ever
+            # offer that single tool, so "required" is an equivalent
+            # forcing.  One-shot for the same reason as the temperature
+            # drop above: tool_choice is no longer a dict afterwards.
+            if (response.status_code == 400
+                    and isinstance(payload.get("tool_choice"), dict)
+                    and "tool_choice" in response.text.lower()):
+                logger.info(
+                    "Model %s rejected forced tool_choice; "
+                    "retrying with 'required'", model,
+                )
+                payload["tool_choice"] = "required"
+                continue
+
             if (response.status_code in RETRYABLE_STATUS_CODES
                     and attempt < MAX_RETRIES - 1):
                 delay = RETRY_BASE_DELAY * (2 ** attempt)
