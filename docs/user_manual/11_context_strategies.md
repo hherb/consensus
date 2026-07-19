@@ -43,7 +43,7 @@ Sends moderator summaries (storyboard entries) for older turns, plus the last N 
 
 ### Semantic (RAG) (`semantic`)
 
-Uses embedding-based retrieval to select the most relevant messages from the entire discussion history. Combines a recency floor (25% of the window = most recent messages always included) with cosine-similarity search over older messages based on relevance to the current discussion state.
+Uses embedding-based retrieval to select the most relevant messages from the entire discussion history. Combines a recency floor (25% of the window, but never fewer than 3 messages, always included) with cosine-similarity search over older messages based on relevance to the current discussion state.
 
 **Pros:** Dynamically selects the most relevant context regardless of when it was said.
 **Cons:** Requires an embedding service. Slightly higher latency for the retrieval step. May miss context that's relevant but not semantically similar to current discussion.

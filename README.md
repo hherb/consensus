@@ -1,6 +1,6 @@
 # Consensus
 
-A collaborative intelligence platform that orchestrates structured reasoning between (optional) humans and AI models. Multiple participants — each with their own knowledge, tools, and analytical methods — work together under moderation to investigate questions, stress-test hypotheses, and synthesize conclusions. Supports thirteen analytical frameworks from Delphi estimation to adversarial red-teaming, with built-in web search, document RAG, vision, persistent memory, and extensible tooling via MCP.
+A collaborative intelligence platform that orchestrates structured reasoning between (optional) humans and AI models. Multiple participants — each with their own knowledge, tools, and analytical methods — work together under moderation to investigate questions, stress-test hypotheses, and synthesize conclusions. Supports eighteen analytical frameworks from Delphi estimation to adversarial trials, with built-in web search, document RAG, vision, persistent memory, sandboxed code execution, and extensible tooling via MCP.
 
 <p align="center">
   <img src="assets/screenshot.png" alt="Consensus screenshot">
@@ -36,9 +36,16 @@ Different problems demand different reasoning structures. Consensus provides a `
 - **Counterfactual Stress Testing** — systematically tests which beliefs are load-bearing vs. decorative in a developing consensus. For each key claim, participants argue from the premise that it is false and score the impact. Produces a ranked classification of claims by structural importance. Phases: Deliberate → Extract Claims → Stress Test → Synthesize
 - **Recursive Decomposition** — breaks complex multi-faceted questions into manageable sub-questions, analyses each independently, then recomposes findings into a coherent synthesis. Phases: Decompose → Analyze Sub-questions → Integrate → Recompose
 - **Recursive Self-Distillation** — an LLM-native method that separates persuasiveness from validity. Participants generate rich reasoning, then strip it to a pure logical skeleton (premises → inferences → conclusion). A blind evaluator assesses only the skeleton, preventing rhetorical flourishes from masking weak logic. Phases: Generate → Distill → Evaluate → Synthesize
+- **Court of Law** — a structured adversarial trial. Participants are assigned to opposing legal teams (prosecution/plaintiff vs defence) and the moderator acts as judge, delivering a reasoned verdict. Teams with multiple members privately huddle before speaking, with per-recipient context filtering. Criminal or civil mode is inferred from the assigned roles. Phases: Arraignment → Opening Statements → Prosecution Case → Defence Case → Closing Arguments → Verdict
+- **Nominal Group Technique** — the catalogue's first *generative* method: instead of critiquing an existing position, the group creates and prioritises options. Participants silently and independently propose ideas (anonymised), the moderator merges duplicates, one clarification round ensures shared understanding, then each participant distributes a fixed pool of points. Produces a ranked shortlist. Phases: Generate → Cluster → Clarify → Allocate → Rank
+- **Weighted Decision Matrix (MCDA)** — multi-criteria decision analysis for choosing between options. Participants enumerate alternatives, jointly define weighted criteria, and score every option against every criterion. Weighted totals produce a ranked result plus a deterministic sensitivity analysis (does the winner survive weight changes?) and a machine-readable decision artifact. Phases: Options → Criteria → Score → Sensitivity → Decide
+- **Double Crux** — rather than sharpening opposing positions, this searches for the underlying factual belief that actually drives a disagreement, then focuses evidence on that alone. Belief shift on the crux is the success metric; where no factual crux exists, a clean map ("this is a values difference") is itself the successful outcome. Phases: Positions → Hunt → Identify → Test → Resolve
+- **Tree of Thoughts** — LLM-native iterative parallel exploration. Participants independently propose distinct approaches (anonymised to avoid anchoring), everyone scores them on feasibility/impact/risk, and a deterministic beam prune keeps the strongest few. Survivors get a deep-dive round and are re-scored; the loop repeats until the ranking stabilises or a depth budget is spent. Phases: Propose → Score → Prune → Expand → Synthesise
 - **Guided Triage** — a meta-method for collaborative method selection. The moderator interviews human participants about the problem type, decision context, and uncertainty structure, then an LLM-based recommender suggests the most appropriate method. The group confirms or adjusts before the discussion switches to the chosen method automatically. Phases: Intake → Recommend → Confirm
 
 Methods are selected per-discussion at setup time, or recommended by the built-in **Method Recommender** — an LLM-based classifier that suggests the best method given a topic and answer type. The architecture is extensible — new methods implement the `DiscussionMethod` ABC and register in the method registry.
+
+**Panel-independence warning:** Delphi and Belief State Diffusion assume *independent* estimators. When a single model covers more than half the AI estimator panel, Consensus shows a non-blocking warning at setup and discloses the panel's model composition in the conclusion prompt, so convergence claims can be caveated rather than silently overstated.
 
 #### Composable Phase Library
 
@@ -53,7 +60,20 @@ class KeyAssumptionsCheck(DiscussionMethod):
     )
 ```
 
-This design means phases can be reused across methods (e.g. the same `SurfaceAssumptionsHandler` could serve as a first phase in another method), and new methods can be created by composing existing handlers without writing boilerplate. The library includes 43 handlers and 4 shared helper modules in `consensus/methods/phases/`.
+This design means phases can be reused across methods (e.g. Double Crux reuses Adversarial Collaboration's `StatePositionsHandler` as its opening phase), and new methods can be created by composing existing handlers without writing boilerplate. The library includes 68 handlers and 15 shared helper modules in `consensus/methods/phases/`.
+
+#### Structured Phase Outputs
+
+Phases whose results must be machine-readable (belief distributions, ACH matrices, MCDA scores, votes) don't parse prose — they declare an output tool schema and the model is *forced* to call it via `tool_choice`. Payloads are validated by the handler's `validate_output` hook, with validation errors fed back for a bounded number of retries. Models without tool-calling support are rejected at discussion setup rather than failing mid-discussion.
+
+- **Schema-driven human input** — when a human takes a turn in a structured phase, the frontend renders an input form generated from that phase's schema, so humans never have to hand-write JSON. Submissions go through the same validation and recording path as AI turns.
+- **Loud failure** — unparseable input surfaces a visible error instead of being silently dropped.
+
+#### Evidence Tracking
+
+Phases can opt into turn-level provenance tracking. Each contribution is classified in code (never by the model) as *grounded* — backed by a successful evidence-tool call, a bare URL, or an `[evidence: …]` marker — or *reasoning-based*, then annotated in the display text and recorded to an evidence log that the conclusion draws on.
+
+This is deliberately soft: an ungrounded turn is annotated and logged, never rejected. Grounding means a citation is *present*, not that the source was fetched or actually supports the claim. Currently enabled on Double Crux's Test phase.
 
 ### Multi-Provider AI Support
 - **OpenAI-compatible API** support — works with OpenAI, Anthropic, Ollama, DeepSeek, LMStudio, vLLM, and any compatible endpoint
@@ -63,6 +83,12 @@ This design means phases can be reused across methods (e.g. the same `SurfaceAss
 - **Secure API key handling** — keys referenced by environment variable name, never stored on disk
 - **Retry with exponential backoff** — transient API failures (429, 5xx, timeouts) retry up to 3 times with backoff; failed participants are skipped gracefully
 
+### Web Access
+- **`web_search` tool** — Brave Search API when `BRAVE_SEARCH_API_KEY` is set, with automatic DuckDuckGo fallback so search works with no key at all
+- **`fetch_webpage` tool** — retrieves and extracts the readable text of a page, so participants can read a source found via search rather than relying on the snippet
+- **Native function calling** — tools are invoked through the provider's own tool-call API, with a bounded execution loop per turn
+- **Opt-in per entity** — web tools are assigned via the Profiles tab, with optional per-discussion overrides
+
 ### Institutional Memory (Optional)
 - **Long-term personal memory** — AI entities store and recall observations, positions, and insights across discussions
 - **Semantic discussion search** — search past discussion messages by meaning, not just keywords
@@ -71,7 +97,7 @@ This design means phases can be reused across methods (e.g. the same `SurfaceAss
 - **Per-entity memory** — each AI entity maintains its own private memory, scoped by entity ID
 - **Graceful degradation** — if the embedding service (Ollama) is unavailable, discussions continue without memory; tools return informative errors
 - **Opt-in per entity** — memory tools are assigned via the Profiles tab, keeping them invisible to entities that don't need them
-- Requires: `uv pip install -e ".[memory]"` + [Ollama](https://ollama.com) running with an embedding model
+- Requires [Ollama](https://ollama.com) running with an embedding model. The embedding backend, model, and endpoint are configured in the UI (stored in the `memory_config` table), defaulting to `nomic-embed-text-v2-moe:latest` at `http://localhost:11434`
 
 ### Document RAG (Optional)
 - **Reference document ingestion** — add documents to a discussion by URL or inline text; supports PDF (via pdfplumber/PyPDF2), HTML (via trafilatura), and plain text/Markdown
@@ -82,7 +108,14 @@ This design means phases can be reused across methods (e.g. the same `SurfaceAss
 - **Cross-discussion document library** — `doc_list` with `full_library=true` searches all documents across all discussions by semantic similarity
 - **Per-discussion document binding** — documents are associated with specific discussions; participants see only relevant documents by default
 - **Opt-in per entity** — document tools are assigned via the Profiles tab, like memory tools
-- Requires: `uv pip install -e ".[memory]"` + [Ollama](https://ollama.com) running with an embedding model (shared infra with Institutional Memory)
+- Requires [Ollama](https://ollama.com) running with an embedding model (shared infrastructure with Institutional Memory)
+
+### Images & Vision
+- **Image attachments** — attach images to a discussion by upload or URL (PNG, JPEG, GIF, WebP, SVG; up to 20 MB)
+- **Automatic vision routing** — vision-capable participants receive images directly in their multimodal context. Capability is determined from authoritative OpenRouter modality data, falling back to model-name pattern matching
+- **`describe_image` tool** — non-vision models can still participate: a vision-capable model generates a description they can reason over
+- **`list_images` and `add_image_url` tools** — participants can browse discussion images and introduce new ones mid-discussion
+- **Automatic resizing** — images larger than 2048px are downscaled before being sent to models
 
 ### Prompt Template System
 - **Customizable prompt templates** for every AI task (turn generation, summarization, mediation, conclusion, opening)
@@ -103,7 +136,7 @@ This design means phases can be reused across methods (e.g. the same `SurfaceAss
 - **Message metadata** — model name, token counts, latency tracking per AI response
 
 ### User Interface
-- **Tabbed setup** — New Discussion, Providers, Profiles, Prompts, History
+- **Tabbed setup** — New Discussion, Providers, Profiles, Prompts, Memory, History
 - **Three-panel discussion view** — participants sidebar, chat center, storyboard sidebar
 - **Dark/light theme** with automatic system preference detection
 - **Markdown rendering** in messages (headers, bold, italic, code blocks, lists)
@@ -132,6 +165,7 @@ This design means phases can be reused across methods (e.g. the same `SurfaceAss
 - **Fuzzy model name matching** — handles naming variants (hyphens vs dots, date suffixes, provider prefixes)
 - **Model aliases** for known name mappings (e.g. `deepseek-reasoner` → `deepseek/deepseek-r1`)
 - **Per-message and per-discussion cost display** in the UI
+- **Per-discussion cost limit** — set a spend ceiling at setup; the discussion concludes gracefully when it is reached (0 = unlimited)
 
 ### Interactive User Input
 - **`ask_user` tool** — AI participants can pause mid-turn to request input from the human user
@@ -294,11 +328,10 @@ In **multi-user mode**, users provide their own API keys via the browser UI (sto
 | `OPENAI_API_KEY` | OpenAI API key |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `DEEPSEEK_API_KEY` | DeepSeek API key |
+| `BRAVE_SEARCH_API_KEY` | Brave Search API key for the `web_search` tool (falls back to DuckDuckGo if unset) |
 | `CONSENSUS_MCP_CONFIG` | Path to MCP server config file (JSON or TOML); overrides default search paths |
 | `CONSENSUS_ALLOWED_ORIGINS` | Comma-separated allowed CORS origins (multi-user mode) |
 | `CONSENSUS_SESSION_DIR` | Custom directory for per-session SQLite databases |
-| `CONSENSUS_EMBEDDING_ENDPOINT` | Ollama endpoint for embeddings (default: `http://localhost:11434`) |
-| `CONSENSUS_EMBEDDING_MODEL` | Embedding model name (default: `nomic-embed-text-v2-moe:latest`) |
 | `CONSENSUS_BASE_URL` | Public base URL for OAuth redirects (e.g. `https://yourdomain.com`) |
 | `CONSENSUS_GITHUB_CLIENT_ID` | GitHub OAuth app client ID |
 | `CONSENSUS_GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret |
@@ -308,6 +341,8 @@ In **multi-user mode**, users provide their own API keys via the browser UI (sto
 | `CONSENSUS_LINKEDIN_CLIENT_SECRET` | LinkedIn OAuth client secret |
 | `CONSENSUS_APPLE_CLIENT_ID` | Apple OAuth client ID |
 | `CONSENSUS_APPLE_CLIENT_SECRET` | Apple OAuth client secret |
+
+Embedding settings (backend, model, endpoint) are **not** environment variables — they are configured in the UI and stored in the database, defaulting to Ollama with `nomic-embed-text-v2-moe:latest` at `http://localhost:11434`.
 
 ## Architecture
 
@@ -323,17 +358,26 @@ ConsensusApp — orchestrator, state management, event emitter
     ├── Moderator — turn flow, AI generation, summaries
     ├── DiscussionMethod (methods/) — pluggable analytical frameworks
     │     ├── PhaseHandler (methods/phase_handler.py) — composable phase ABC
-    │     ├── 13 method classes assembled from 43 phase handlers
+    │     ├── 18 method classes assembled from 68 phase handlers
+    │     ├── MethodRecommender (methods/recommender.py) — LLM-based method classification
+    │     ├── panel_diversity.py — same-model estimator-panel warning
     │     └── methods/phases/ — reusable handler implementations + helpers
+    ├── structured_output.py — forced tool-call generation for structured phases
+    ├── structured_input.py — schema-driven input specs for human structured turns
+    ├── evidence.py — turn-level grounded/reasoning-based provenance tracking
     ├── ContextStrategies (context_strategies.py) — per-participant DB context loading (incl. semantic RAG)
     ├── AIClient — async OpenAI-compatible HTTP client (httpx)
     ├── Database (db/) — thread-safe SQLite persistence (domain-specific mixins)
-    ├── PricingCache — model cost lookup via OpenRouter
+    ├── PricingCache — model cost lookup + modality/capability data via OpenRouter
     ├── MCPToolProvider — MCP stdio transport (JSON-RPC 2.0 over subprocess)
     ├── MCPHTTPToolProvider — MCP Streamable HTTP transport (JSON-RPC 2.0 over HTTP+SSE)
+    ├── mcp_config.py — MCP server definitions loaded from JSON/TOML config files
+    ├── WebSearch (tools_builtin.py) — Brave Search + DuckDuckGo fallback, page fetching
     ├── DocumentRAG (tools_document.py) — document ingestion, chunking, RAG Q&A
+    ├── ImageTools (tools_image.py) — image storage, vision routing, description
     ├── AskUser (tools_ask_user.py) — interactive user input during AI turns
     ├── PythonExec (tools_python.py) — sandboxed Python code execution + package install
+    ├── AuthManager (auth.py) — password + OAuth authentication (multi-user mode)
     ├── Migrator — file-based SQL migration runner
     └── Evaluation — ablation study framework (cases, runner, scorer)
 
@@ -350,12 +394,24 @@ Multi-user mode:
         └── ...TTL-based expiry, max session cap
 ```
 
-**Key dependencies:**
+**Key dependencies** (all installed by default):
 - **httpx** — async HTTP client for OpenAI-compatible API calls
-- **pywebview** — lightweight cross-platform desktop webview (optional)
-- **aiohttp** — web server for browser/mobile access (optional)
-- **sqlite-vec** + **numpy** — vector similarity search for institutional memory and document RAG (optional)
-- **pdfplumber** — PDF document parsing for document RAG (optional)
+- **pywebview** — lightweight cross-platform desktop webview
+- **aiohttp** — web server for browser/mobile access
+- **sqlite-vec** + **numpy** — vector similarity search for institutional memory, document RAG, and semantic context
+- **pdfplumber** / **trafilatura** — PDF and HTML parsing for document RAG
+- **Pillow** — image dimension detection and resizing
+
+## Development
+
+```bash
+git clone https://github.com/hherb/consensus.git
+cd consensus
+uv pip install -e .
+python -m pytest          # 2505 tests
+```
+
+Developer documentation lives in [docs/devel/](https://github.com/hherb/consensus/blob/main/docs/devel/programmer-manual.md); the end-user manual is in [docs/user_manual/](https://github.com/hherb/consensus/blob/main/docs/user_manual/index.md). Planned and completed features are tracked in [ROADMAP.md](https://github.com/hherb/consensus/blob/main/ROADMAP.md).
 
 See [DEPLOYMENT.md](https://github.com/hherb/consensus/blob/main/DEPLOYMENT.md) for production deployment instructions (Oracle Cloud Free Tier).
 

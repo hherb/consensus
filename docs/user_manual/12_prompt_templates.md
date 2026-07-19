@@ -25,6 +25,8 @@ Navigate to the **Prompts** tab to see and manage templates. Each template has:
 | **Conclude** | Instructions for the moderator when generating the final discussion synthesis |
 | **Open** | Instructions for the moderator's opening message |
 | **Guidance** | Contextual guidance shown to human participants (displayed in the UI, not sent to AI) |
+| **System (Devil's Advocate)** | The system message for a participant assigned the Devil's Advocate role — this is what makes that role behave differently |
+| **Turn (Devil's Advocate)** | Turn instructions for the Devil's Advocate, directing them to challenge assumptions and probe for weaknesses |
 
 ## Template Variables
 
@@ -37,7 +39,10 @@ Prompt templates can include variables that are replaced with actual values at r
 | `{participants}` | A formatted list of all participants in the discussion |
 | `{speaker_name}` | The name of the current speaker |
 | `{turn_number}` | The current turn number |
+| `{next_speaker_name}` | The name of the participant due to speak next |
 | `{context}` | The conversation history (formatted according to context strategy) |
+
+Substitution is a simple text replacement. A variable that the calling code doesn't supply is **not** an error — it stays in the prompt as literal text and the model sees it verbatim. If a model starts referring to something like "{topic}", check for a typo in the variable name.
 
 ## Customising Templates
 

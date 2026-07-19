@@ -30,23 +30,25 @@ ollama pull llama3
 
 ## Install
 
-Clone the repository and install with uv:
+```bash
+uv tool install consensus-app
+```
+
+This places the `consensus` command in `~/.local/bin/` so it works from anywhere.
+
+> **Note:** The PyPI *distribution* is named `consensus-app` (the name `consensus` was taken), but the command and the import package are plainly `consensus`.
+
+macOS users can instead download the `Consensus-<version>.dmg` from the [releases page](https://github.com/hherb/consensus/releases) and drag Consensus into Applications.
+
+### From source
 
 ```bash
 git clone https://github.com/hherb/consensus.git
 cd consensus
-
-# Install as a global command (both desktop + web modes)
-uv tool install -e ".[all]"
+uv tool install -e .          # editable global command
 ```
 
-This places the `consensus` command in `~/.local/bin/` so it works from anywhere. The `-e` flag keeps it editable — source changes take effect immediately.
-
-> **Pick a single mode instead:**
-> ```bash
-> uv tool install -e ".[desktop]"   # desktop only
-> uv tool install -e ".[web]"       # web server only
-> ```
+**Every feature — desktop, web, documents, memory, images, code execution — installs by default.** The old extras (`[all]`, `[desktop]`, `[web]`, `[memory]`, …) still parse so existing commands don't break, but they are empty and install nothing extra.
 
 ## Run
 
@@ -84,7 +86,7 @@ Each browser session gets its own isolated app instance and database. Users prov
 | `--host`        | `127.0.0.1`  | Bind address for web mode                      |
 | `--port`        | `8080`        | Port for web mode                              |
 | `--multi-user`  | off           | Per-session isolation for public deployment    |
-| `--debug`       | off           | Enable debug logging                           |
+| `--debug`       | off           | Enable debug mode (desktop mode only)          |
 
 ## First-time setup
 
@@ -129,18 +131,26 @@ Go to **New Discussion** tab:
 
 ### 3b. Choose a discussion method (optional)
 
-The default is **Open Discussion** (freeform turn-taking). Other structured methods are available in the setup panel:
+The default is **Open Discussion** (freeform turn-taking). Seventeen structured methods are available in the setup panel — a representative selection:
 
 | Method | Purpose |
 |--------|---------|
 | **Delphi** | Anonymous multi-round estimation with convergence |
 | **Red Team / Blue Team** | Adversarial stress-testing of proposals |
+| **Court of Law** | Full adversarial trial with opposing teams and a judge's verdict |
 | **Premortem** | "Assume this failed — why?" risk analysis |
 | **ACH** | Analysis of Competing Hypotheses |
 | **Key Assumptions Check** | Surface and challenge hidden assumptions |
 | **Adversarial Collaboration** | Structured disagreement toward resolution |
+| **Double Crux** | Find the factual belief actually driving a disagreement |
 | **Belief Diffusion** | Track how opinions shift through discussion |
+| **Nominal Group Technique** | Generate and prioritise options rather than critique a position |
+| **Weighted Decision Matrix** | Score options against weighted criteria to reach a decision |
+| **Tree of Thoughts** | Propose, score, and prune solution approaches iteratively |
 | **Voting** | Formal vote to reach a decision |
+| **Guided Triage** | Not sure which to use? This interviews you and picks one |
+
+See [Chapter 5 of the user manual](docs/user_manual/05_discussion_methods.md) for all 18 in detail.
 
 ### 3c. Attach images or documents (optional)
 
@@ -165,13 +175,16 @@ AI participants can use tools during their turns. Assign tools per-entity in the
 
 | Tool | Requires | Description |
 |------|----------|-------------|
-| **web_search** | `BRAVE_API_KEY` env var (falls back to DuckDuckGo) | Search the web for current information |
+| **web_search** | `BRAVE_SEARCH_API_KEY` env var (falls back to DuckDuckGo) | Search the web for current information |
 | **fetch_webpage** | — | Extract content from a URL |
 | **describe_image** | A vision-capable model in the discussion | Get AI-generated description of an attached image |
 | **list_images** | — | List images attached to the discussion |
 | **add_image_url** | — | Add an image from a URL mid-discussion |
 | **ask_user** | A human user present | Pause and request input from the human user mid-turn |
-| **add_document** / **ask_document** | — | Ingest and query reference documents via RAG |
+| **doc_add** / **doc_ask** | — | Ingest and query reference documents via RAG |
+| **doc_list** / **doc_summary** / **doc_get_sections** / **doc_get_chapter** / **doc_get_text** / **doc_get_length** | — | Browse and summarise documents by section or character range |
+| **execute_python** | — | Run Python in a sandboxed subprocess (calculations, data analysis) |
+| **install_python_package** | Your approval at run time | Install a missing PyPI package |
 | **consult_expert** | An expert entity configured | Get specialist analysis from an expert entity |
 
 Memory and knowledge-graph tools are covered in the next section.
@@ -208,15 +221,7 @@ Message costs are calculated automatically using OpenRouter pricing data. Per-me
 
 AI participants can remember insights across discussions using persistent memory, semantic search, and a knowledge graph. This requires an embedding model.
 
-### 1. Install memory extras
-
-```bash
-uv tool install -e ".[all]"       # includes memory deps
-# or just the memory extras:
-uv pip install -e ".[memory]"
-```
-
-### 2. Set up an embedding model
+### 1. Set up an embedding model
 
 Memory uses [Ollama](https://ollama.com) for text embeddings. Install Ollama and pull an embedding model:
 
@@ -224,14 +229,14 @@ Memory uses [Ollama](https://ollama.com) for text embeddings. Install Ollama and
 ollama pull nomic-embed-text-v2-moe
 ```
 
-### 3. Assign memory tools to entities
+### 2. Assign memory tools to entities
 
 Go to the **Profiles** tab, select an AI entity, and enable the memory tools in the Tools section:
 - **memory_store** / **memory_recall** / **memory_forget** — personal long-term memory
 - **discussion_search** — semantic search across all past discussions
 - **kg_assert** / **kg_query** — knowledge graph (concept relationships)
 
-### 4. How models use memory
+### 3. How models use memory
 
 Models **choose autonomously** when to use memory tools — no manual prompting needed. The default prompt templates encourage proactive memory use:
 - Before responding, models check for relevant memories from past discussions
@@ -261,15 +266,12 @@ When running with `--multi-user`, users must register and log in:
 
 ## Troubleshooting
 
-**"Web mode requires aiohttp"** — You installed without the `web` extra:
+**"Web mode requires aiohttp"** or **"Desktop mode requires pywebview"** — the dependency is missing from your environment. Both ship by default, so this usually means a partial or interrupted install. Reinstall:
 ```bash
-uv tool install -e ".[web]"    # or ".[all]" for both modes
+uv tool install consensus-app --force
+# from source: uv tool install -e . --force
 ```
-
-**"Desktop mode requires pywebview"** — You installed without the `desktop` extra:
-```bash
-uv tool install -e ".[desktop]"    # or ".[all]" for both modes
-```
+Adding an extra like `.[web]` will not help — the extras are empty aliases kept only for backward compatibility.
 
 **AI responses fail** — Verify your provider is running and reachable. For Ollama:
 ```bash
@@ -279,7 +281,7 @@ curl http://localhost:11434/v1/models
 **"You must have either QT or GTK" / "No module named 'gi'"** — Desktop mode needs GTK dev libraries so PyGObject can be compiled inside the uv venv. Install them (see [Prerequisites](#linux-system-dependencies-desktop-mode-only)), then reinstall:
 ```bash
 sudo apt install libgirepository-2.0-dev libcairo2-dev pkg-config python3-dev gir1.2-gtk-3.0 gir1.2-webkit2-4.1
-uv tool install -e ".[desktop]" --force
+uv tool install -e . --force
 ```
 Or use web mode instead:
 ```bash

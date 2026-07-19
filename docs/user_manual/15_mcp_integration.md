@@ -46,10 +46,9 @@ MCP servers can also be loaded from configuration files. Consensus checks these 
 
 Expert entities are a special integration of MCP. An expert is an AI entity backed by an MCP server — it has access to the server's tools and can be consulted during discussions.
 
-To create an expert:
-1. Configure an MCP server (as above)
-2. Create an entity profile of type **Expert**
-3. Link the entity to the MCP server
+**Creating an expert is not yet possible through the UI.** The entity Type dropdown offers only Human and AI, and no screen currently calls the expert-definition API. The capability is fully implemented server-side — an expert is an entity linked to one tool on a registered MCP server via `save_expert_definition(entity_id, mcp_server_id, tool_name, …)`, exposed on both the desktop bridge and the REST API — but for now you must call it directly rather than clicking through the app.
+
+Once an expert exists, everything else works normally: it appears in discussion state, and both AI participants and humans can consult it.
 
 During discussions, experts can be consulted in two ways:
 - AI participants can invoke experts through tool calls

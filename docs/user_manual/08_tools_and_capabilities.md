@@ -67,8 +67,8 @@ Gives AI participants persistent memory across discussions. See [Chapter 10](10_
 - `memory_recall(query, limit)` — Semantic search over personal memories
 - `memory_forget(memory_id)` — Delete a specific memory
 - `discussion_search(query, limit, topic_filter)` — Search across all past discussion messages
-- `knowledge_assert(subject, relation, object, evidence)` — Add a knowledge graph triple
-- `knowledge_query(query, mode, limit)` — Search or traverse the knowledge graph
+- `kg_assert(subject, relation, object, evidence)` — Add a knowledge graph triple
+- `kg_query(query, mode, limit)` — Search or traverse the knowledge graph
 
 **Requires:** An embedding service (see [Chapter 10](10_institutional_memory.md) for configuration).
 
@@ -90,7 +90,8 @@ Enables AI participants to work with images attached to the discussion.
 AI participants can consult expert entities backed by MCP servers. This is handled through the standard tool-calling mechanism — the AI invokes the expert and receives a response.
 
 **Tools provided:**
-- `list_available_experts()` — Discover configured expert entities
+- `consult_expert(expert_name, question)` — Put a question to a configured expert entity and receive its answer. The `expert_name` argument is populated at runtime with the experts available in the discussion
+- `list_available_experts()` — Discover configured expert entities. Paired automatically whenever `consult_expert` is enabled
 
 See [Chapter 15](15_mcp_integration.md) for configuring expert entities and MCP servers.
 

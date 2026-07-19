@@ -53,13 +53,13 @@ The maximum number of complete rounds through all participants. Set to **0** for
 
 ### Budget
 
-A cost limit in dollars. When the total API cost reaches this limit, a dialog appears offering to set a new limit or conclude. Set to **0** for no limit. See [Chapter 16](16_cost_tracking.md) for details.
+A cost limit in dollars, **defaulting to $1.00** (maximum $100). When the total API cost reaches this limit, a dialog appears offering to set a new limit or conclude. Set to **0** for no limit. Because the field is pre-filled rather than empty, a discussion you never adjust will stop at $1.00 — raise it up front for long runs. See [Chapter 16](16_cost_tracking.md) for details.
 
 ### Discussion Method
 
 Select an analytical framework from the dropdown. Each method structures the discussion into phases with specific goals. The default is **Open Discussion** (free-form round-robin).
 
-When you select a method, a description appears below the dropdown explaining how it works. See [Chapter 5](05_discussion_methods.md) for details on all 13 methods.
+When you select a method, a description appears below the dropdown explaining how it works. See [Chapter 5](05_discussion_methods.md) for details on all 18 methods.
 
 ### Method Recommendation
 

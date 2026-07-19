@@ -20,6 +20,28 @@ When it's your turn to speak:
 
 Your message appears in the chat thread with your avatar and name. The discussion then proceeds to the next participant.
 
+## Speaking in a Structured Phase
+
+Most of the structured methods (see [Chapter 5](05_discussion_methods.md)) have phases whose result must be machine-readable — a probability distribution, a set of scores, a vote, a hypothesis-versus-evidence rating. In those phases AI participants are required to answer through a fixed schema rather than prose, and so are you.
+
+When your turn falls in such a phase, the free-text box is replaced by a **form generated from that phase's schema**. You get one labelled widget per field — number inputs for probabilities and scores, checkboxes for booleans, text fields for claims, and repeatable groups for lists — with required fields enforced before you can submit. You never have to hand-write JSON.
+
+For deeply nested schemas that can't be laid out as a simple form (the ACH hypothesis-by-evidence matrix, for instance), the form falls back to a **guided JSON textarea** pre-filled with the correct structure, so you only fill in values.
+
+A few things worth knowing:
+
+- **Your input is validated the same way an AI's is.** If a value is the wrong shape or a required field is missing, you get a visible error and the turn is not recorded. Nothing is silently discarded.
+- **Partially filled forms survive interruptions.** Pausing, resuming, reopening a concluded discussion, or reloading the page preserves what you have typed.
+- **The form reflects the current phase.** As the discussion advances, the fields change to match whatever the new phase asks for.
+
+## Attaching Evidence
+
+Some phases track where each contribution comes from. When you're speaking in one of them, an **Attach evidence** button appears next to the input box. It inserts an `[evidence: …]` marker into your message — fill in the source, such as a URL, citation, or document reference.
+
+Consensus then classifies your turn as **grounded** (a citation is present) or **reasoning-based** (none is), annotates it in the thread, and records it in an evidence log that the moderator draws on when writing the conclusion. Pasting a bare URL into your message counts as grounding too.
+
+This is deliberately soft: contributing without evidence is always allowed and is never rejected — it is simply labelled as reasoning rather than citation. Note also that the classification only checks that a citation is *present*. Consensus does not fetch the source or verify that it supports what you said.
+
 ## Responding to AI Questions (Ask User)
 
 AI participants with the "ask user" tool can pause mid-turn to ask you a question. When this happens:
