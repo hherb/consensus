@@ -127,6 +127,10 @@ class AIResponse:
     tool_calls: list = field(default_factory=list)  # list[ToolCallRecord]
     warning: str = ""
     structured_output: Optional[dict] = None  # forced-tool-call payload (issue #23)
+    #: Provider finish reason ("stop", "length", ...) — "length" means the
+    #: completion budget ran out, which for reasoning models can leave the
+    #: visible content empty.
+    finish_reason: str = ""
 
 
 class AIClient:
@@ -338,8 +342,8 @@ class AIClient:
         elapsed = int((time.monotonic() - start) * 1000)
 
         usage = data.get("usage", {})
-        raw_content = data["choices"][0]["message"]["content"]
-        content = _normalize_content(raw_content)
+        choice = data["choices"][0]
+        content = _normalize_content(choice["message"]["content"])
         return AIResponse(
             content=content,
             model=data.get("model", model),
@@ -347,6 +351,7 @@ class AIClient:
             completion_tokens=usage.get("completion_tokens", 0),
             total_tokens=usage.get("total_tokens", 0),
             latency_ms=elapsed,
+            finish_reason=choice.get("finish_reason", ""),
         )
 
     async def complete_with_tools(

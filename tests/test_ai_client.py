@@ -216,3 +216,15 @@ async def test_complete_with_tools_omits_tool_choice_by_default(monkeypatch):
 def test_airesponse_structured_output_defaults_to_none():
     from consensus.ai_client import AIResponse
     assert AIResponse(content="x").structured_output is None
+
+
+@pytest.mark.asyncio
+async def test_complete_captures_finish_reason(monkeypatch):
+    client = AIClient(base_url="https://api.example.com")
+    data = _chat_completion({"content": "hi"})
+    data["choices"][0]["finish_reason"] = "length"
+    fake = _FakeClient([_JSONResponse(data)])
+    monkeypatch.setattr(client, "_get_client", lambda: fake)
+
+    resp = await client.complete(messages=[], model="m")
+    assert resp.finish_reason == "length"

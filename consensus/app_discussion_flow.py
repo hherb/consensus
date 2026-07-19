@@ -535,6 +535,25 @@ async def generate_ai_turn(
 
         if passed:
             content = f"*{current.name} passed this round.*"
+        elif not (content or "").strip():
+            # A reasoning model can spend its entire completion budget on
+            # hidden thinking and return no visible text (observed:
+            # claude-sonnet-5 at max_tokens=1024 in a 43k-token context).
+            # Render an explanatory notice — never a silent empty bubble
+            # (golden rule 6).
+            capped = resp.finish_reason == "length"
+            detail = (
+                " — it hit its max_tokens limit before emitting any text; "
+                "reasoning models may need a larger completion budget"
+                if capped else ""
+            )
+            content = f"*{current.name} produced no visible output{detail}.*"
+            if not resp.warning:
+                resp.warning = (
+                    f"{current.name} produced no visible output"
+                    + (f" — consider raising max_tokens for {resp.model}"
+                       if capped else "")
+                )
 
         # Serialize tool call records if any
         tool_calls_json = ""

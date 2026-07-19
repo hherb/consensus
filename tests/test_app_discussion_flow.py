@@ -552,6 +552,56 @@ def _http_status_error(status_code: int, body: str):
         f"HTTP {status_code}", request=request, response=response)
 
 
+class TestEmptyTurnOutput:
+    """A model that spends its whole completion budget on hidden
+    reasoning returns no visible text (observed: claude-sonnet-5 at
+    max_tokens=1024 in a 43k-token premortem context) — the turn must
+    render an explanatory notice, never a silent empty bubble."""
+
+    @pytest.mark.asyncio
+    async def test_empty_model_output_gets_visible_notice(
+        self, tmp_db, discussion_with_entities
+    ):
+        from consensus.ai_client import AIResponse
+        from consensus.moderator import Moderator
+
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = Moderator(disc, tmp_db)
+        moderator.generate_turn = AsyncMock(return_value=AIResponse(
+            content="   ", model="claude-sonnet-5",
+            completion_tokens=1024, total_tokens=43433,
+            finish_reason="length"))
+        moderator.prompt_id = MagicMock(return_value=None)
+
+        result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
+
+        assert "produced no visible output" in result["content"]
+        assert "max_tokens" in result["content"]
+        assert "max_tokens" in result["warning"]
+
+    @pytest.mark.asyncio
+    async def test_empty_output_without_length_cap_still_noticed(
+        self, tmp_db, discussion_with_entities
+    ):
+        from consensus.ai_client import AIResponse
+        from consensus.moderator import Moderator
+
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = Moderator(disc, tmp_db)
+        moderator.generate_turn = AsyncMock(return_value=AIResponse(
+            content="", model="some-model", finish_reason="stop"))
+        moderator.prompt_id = MagicMock(return_value=None)
+
+        result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
+
+        assert "produced no visible output" in result["content"]
+        assert result["warning"]
+
+
 class TestCompleteTurnSummaryError:
     """A failed moderator summary must return the provider's message so
     the frontend can show it — not just str(HTTPStatusError), which
