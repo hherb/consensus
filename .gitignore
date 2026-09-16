@@ -213,6 +213,9 @@ docs/discussions/*
 # Local drafts — not tracked in remote
 docs/drafts/
 
+# Cloudflare Wrangler local state
+.wrangler/
+
 #automated testing related
 .playwright-mcp
 .playwright-mcp/*
