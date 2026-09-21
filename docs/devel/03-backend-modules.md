@@ -15,7 +15,13 @@ to keep file sizes manageable:
 - `app_providers.py` — provider management
 - `app_entities.py` — entity CRUD
 - `app_discussion_setup.py` — discussion creation & configuration
-- `app_discussion_flow.py` — turn flow operations
+- `app_discussion_flow/` — turn flow package: `submissions.py` (human and
+  moderator message submission), `turns.py` (AI generation, turn
+  completion, reassignment), `method_switch.py` (the Triage handoff and
+  its recovery path), `conclusion.py` (mediation, final synthesis) and
+  `helpers.py` (pass detection, error description, cost, turn order).
+  The package re-exports the public API, so `from consensus
+  .app_discussion_flow import complete_turn` works unchanged
 - `app_discussion_state.py` — discussion state management
 
 These modules contain standalone functions that `app.py` delegates to.

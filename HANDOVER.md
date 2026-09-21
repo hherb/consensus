@@ -1,11 +1,11 @@
 # HANDOVER
 
-_Last updated: 2026-09-21. `main` is at **v2.0.0** (released 2026-07-20) with
+_Last updated: 2026-09-22. `main` is at **v2.0.0** (released 2026-07-20) with
 the suite at **2526 passing**. The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
-(PyPI `consensus-app` + notarized macOS DMG) and the public website. The only
-open issue is **#61** (modules over the ~500-line golden rule), which this
-session is working on._
+(PyPI `consensus-app` + notarized macOS DMG) and the public website. The one
+open issue is **#61** (modules over the ~500-line golden rule); its first
+slice — `app_discussion_flow` — is done, fifteen modules remain._
 
 This file briefs the next session on what is done, what is still open, and the
 conventions to keep. Update it whenever a session materially changes the plan;
@@ -54,13 +54,20 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-Sixteen modules exceed golden rule 8, several at more than double. Current
-offenders (`find consensus -name '*.py' | xargs wc -l | sort -rn`):
+**Done:** `app_discussion_flow.py` (1254 lines) → the `app_discussion_flow/`
+package — `helpers.py` (133), `submissions.py` (304), `turns.py` (444),
+`method_switch.py` (342), `conclusion.py` (137), plus a re-exporting
+`__init__.py` (70) so `from consensus.app_discussion_flow import …` is
+unchanged for `app.py` and the tests. The only logic change was extracting
+`complete_turn`'s ~90-line Triage-handoff branch into
+`method_switch.handle_triage_handoff` (AST-verified identical to the original
+block); everything else moved verbatim.
+
+**Still over the limit** (`find consensus -name '*.py' | xargs wc -l | sort -rn`):
 
 | Lines | File |
 |------:|------|
 | 1277 | `consensus/tools_document.py` |
-| 1254 | `consensus/app_discussion_flow.py` ← this session |
 | 1227 | `consensus/server.py` |
 | 1187 | `consensus/app.py` |
 | 784 | `consensus/auth.py` |
@@ -77,9 +84,23 @@ offenders (`find consensus -name '*.py' | xargs wc -l | sort -rn`):
 | 509 | `consensus/app_discussion_setup.py` |
 
 Structural only — no behaviour change — one module per PR, suite green before
-and after. Next-best targets after `app_discussion_flow`: `server.py` (routes
-group by domain, could follow the `db/` mixin pattern) and `tools_document.py`
-(ingestion / chunking+embedding / RAG Q&A are three separable concerns).
+and after. Next-best targets: `server.py` (routes group by domain, could follow
+the `db/` mixin pattern) and `tools_document.py` (ingestion /
+chunking+embedding / RAG Q&A are three separable concerns).
+
+**Recipe that worked, for the next slice:**
+1. Move code by line range (`sed -n 'a,bp'`) so it transfers verbatim, then
+   diff each moved range back against `git show HEAD:<file>` — every range
+   should come out byte-identical.
+2. Fix relative-import depth for anything nested one level deeper
+   (`from .x` → `from ..x`), including imports inside function bodies.
+3. Re-export the public API from `__init__.py`; point test `patch()` targets
+   at the *defining* submodule (patching the facade has no effect), and import
+   private helpers from their submodule rather than widening the facade.
+   `assertLogs`/`caplog` on the old dotted name keeps working — child loggers
+   propagate to the package logger.
+4. `uvx ruff check --select F <pkg>` for unused/undefined names, then the
+   full suite.
 
 ### Dependabot
 
@@ -110,6 +131,10 @@ group by domain, could follow the `db/` mixin pattern) and `tools_document.py`
 - **Packaging** — `consensus/evaluation/runner.py`'s default results dir lands
   in site-packages for wheel installs; `packaging/macos/make_icns.sh`
   regeneration needs Pillow on system python3; icon bubbles blur at 16–32 px.
+  (Fixed here: `scripts/release_pypi.sh` cleaned `dist/` but not `build/`,
+  setuptools' staging tree, so a module deleted or moved since the last build
+  survived in `build/lib` and was packaged into the new wheel alongside its
+  replacement — reproduced with `app_discussion_flow.py` during this split.)
 
 ### Roadmap
 

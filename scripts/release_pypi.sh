@@ -17,7 +17,11 @@ VERSION=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' consensus/__init__.py)
 WHEEL="dist/consensus_app-${VERSION}-py3-none-any.whl"
 
 echo "Building consensus-app ${VERSION}"
-rm -rf dist
+# `build/` is setuptools' staging tree and is NOT cleaned between runs: a
+# module deleted or moved since the last build (e.g. app_discussion_flow.py,
+# replaced by the app_discussion_flow/ package) survives in build/lib and is
+# packaged into the new wheel alongside its replacement.  Clean both.
+rm -rf dist build
 uv build
 
 [[ -f "$WHEEL" ]] || { echo "ERROR: expected wheel $WHEEL not found"; exit 1; }

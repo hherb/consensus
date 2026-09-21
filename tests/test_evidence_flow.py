@@ -51,7 +51,7 @@ def _human_turn_discussion(db, phase="test_crux"):
 def test_human_turn_in_tracked_phase_is_logged(tmp_db, monkeypatch):
     disc, alice = _human_turn_discussion(tmp_db, phase="test_crux")
     monkeypatch.setattr(
-        "consensus.app_discussion_flow.get_active_method",
+        "consensus.app_discussion_flow.submissions.get_active_method",
         lambda d: _FakePhaseMethod(track=True))
     submit_human_message(disc, tmp_db, alice.id,
                          "It holds, see https://a.example/x")
@@ -63,7 +63,7 @@ def test_human_turn_in_tracked_phase_is_logged(tmp_db, monkeypatch):
 def test_human_turn_untracked_phase_no_log(tmp_db, monkeypatch):
     disc, alice = _human_turn_discussion(tmp_db, phase="positions")
     monkeypatch.setattr(
-        "consensus.app_discussion_flow.get_active_method",
+        "consensus.app_discussion_flow.submissions.get_active_method",
         lambda d: _FakePhaseMethod(track=False))
     submit_human_message(disc, tmp_db, alice.id, "Just my opinion.")
     assert "evidence_log" not in disc.method_state
@@ -84,7 +84,7 @@ async def test_ai_turn_tool_call_is_logged(tmp_db, monkeypatch,
     disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
 
     monkeypatch.setattr(
-        "consensus.app_discussion_flow.get_active_method",
+        "consensus.app_discussion_flow.turns.get_active_method",
         lambda d: _FakePhaseMethod(track=True))
 
     moderator = Moderator(disc, tmp_db)

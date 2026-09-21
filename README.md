@@ -353,7 +353,8 @@ ConsensusApp — orchestrator, state management, event emitter
     ├── app_providers.py — provider management
     ├── app_entities.py — entity CRUD
     ├── app_discussion_setup.py — discussion creation & configuration
-    ├── app_discussion_flow.py — turn flow operations
+    ├── app_discussion_flow/ — turn flow (submissions, turns,
+    │     method switching, conclusion + shared helpers)
     ├── app_discussion_state.py — discussion state management
     ├── Moderator — turn flow, AI generation, summaries
     ├── DiscussionMethod (methods/) — pluggable analytical frameworks

@@ -8,7 +8,6 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from consensus.app_discussion_flow import (
-    _run_triage_recommender,
     calculate_discussion_cost,
     complete_turn,
     describe_turn_error,
@@ -19,6 +18,9 @@ from consensus.app_discussion_flow import (
     submit_moderator_message,
     switch_discussion_method,
 )
+# Private helper: imported from its defining submodule, not the package
+# facade, which re-exports only the public flow API.
+from consensus.app_discussion_flow.method_switch import _run_triage_recommender
 from consensus.methods.base import ProcessedResponse
 from consensus.models import Discussion, Entity, EntityType, Message, MessageRole
 from consensus.pricing import PricingCache
@@ -131,7 +133,7 @@ class TestSubmitHumanMessage:
         disc.is_active = False
         disc.status = "paused"
         method = MagicMock()
-        with patch("consensus.app_discussion_flow.get_active_method",
+        with patch("consensus.app_discussion_flow.submissions.get_active_method",
                    return_value=method) as get_method_mock:
             submit_human_message(disc, tmp_db, speaker.id, "I vote for A")
             submit_human_message(disc, tmp_db, speaker.id, "I vote for A")
@@ -152,7 +154,7 @@ class TestSubmitHumanMessage:
         method.process_response.return_value = ProcessedResponse(
             display_content="I vote for A")
         method.current_phase.return_value = None
-        with patch("consensus.app_discussion_flow.get_active_method",
+        with patch("consensus.app_discussion_flow.submissions.get_active_method",
                    return_value=method):
             submit_human_message(disc, tmp_db, speaker.id, "I vote for A")
         method.process_response.assert_called_once()
