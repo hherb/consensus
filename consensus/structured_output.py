@@ -155,9 +155,10 @@ def _validate_structured_output_support(
     Lives here (rather than in ``app_discussion_setup``, its original
     home) because both the setup-time gate (``start_discussion``) and
     the runtime gate (``switch_discussion_method`` in
-    ``app_discussion_flow``, used by Triage's handoff) need it, and
-    ``app_discussion_setup`` already imports ``app_discussion_flow`` —
-    the reverse import this would have required would create a cycle.
+    ``app_discussion_flow.method_switch``, used by Triage's handoff) need
+    it, and ``app_discussion_setup`` already imports
+    ``app_discussion_flow`` — the reverse import this would have required
+    would create a cycle.
     ``app_discussion_setup`` re-exports this name for backward
     compatibility.
 

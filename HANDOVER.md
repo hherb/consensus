@@ -1,11 +1,17 @@
 # HANDOVER
 
 _Last updated: 2026-09-22. `main` is at **v2.0.0** (released 2026-07-20) with
-the suite at **2526 passing**. The discussion-method review & repair campaign
+the suite at **2548 passing**. The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
 (PyPI `consensus-app` + notarized macOS DMG) and the public website. The one
-open issue is **#61** (modules over the ~500-line golden rule); its first
-slice — `app_discussion_flow` — is done, fifteen modules remain._
+open structural issue is **#61** (modules over the ~500-line golden rule); its
+first slice — `app_discussion_flow` — is done, fifteen modules remain.
+Reviewing that slice surfaced four pre-existing defects, now filed as **#71**
+(Final Synthesis failure invisible to the user), **#72** (Triage recommender
+silently degrades to `open_discussion`), **#73** (coverage gaps — `mediate` has
+none at all) and **#74** (broad `except` mislabelling bugs as API errors).
+None were introduced by the split; all three code ones are golden-rule-6
+violations and #71/#72 are the user-visible pair._
 
 This file briefs the next session on what is done, what is still open, and the
 conventions to keep. Update it whenever a session materially changes the plan;
@@ -21,7 +27,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site deployed to Cloudflare Pages at https://consensus-ai.org/ |
-| Tests | 2526 passing (`uv run pytest`, ~50 s) |
+| Tests | 2548 passing (`uv run pytest`, ~50 s) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -56,12 +62,24 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 
 **Done:** `app_discussion_flow.py` (1254 lines) → the `app_discussion_flow/`
 package — `helpers.py` (133), `submissions.py` (304), `turns.py` (444),
-`method_switch.py` (342), `conclusion.py` (137), plus a re-exporting
-`__init__.py` (70) so `from consensus.app_discussion_flow import …` is
+`method_switch.py` (362), `conclusion.py` (137), plus a re-exporting
+`__init__.py` (92) so `from consensus.app_discussion_flow import …` is
 unchanged for `app.py` and the tests. The only logic change was extracting
 `complete_turn`'s ~90-line Triage-handoff branch into
 `method_switch.handle_triage_handoff` (AST-verified identical to the original
 block); everything else moved verbatim.
+
+**Guard added after review.** `ConsensusApp` reaches these functions by
+*attribute access at call time* (`app_discussion_flow.mediate(...)`), so a name
+dropped from `__init__.py` is an `AttributeError` on that route in production,
+never an `ImportError` at collection. Deleting five re-exports left the whole
+suite green, so nothing caught it. `tests/test_app_discussion_flow_facade.py`
+now pins `__all__` and AST-parses `app.py` to assert every
+`app_discussion_flow.X` call site resolves. Keep it in step when the public
+flow API changes — that is the point of the pin.
+
+`_run_triage_recommender` became `run_triage_recommender` when the split gave
+it a second consumer across a module boundary (`turns` → `method_switch`).
 
 **Still over the limit** (`find consensus -name '*.py' | xargs wc -l | sort -rn`):
 
@@ -134,7 +152,12 @@ chunking+embedding / RAG Q&A are three separable concerns).
   (Fixed here: `scripts/release_pypi.sh` cleaned `dist/` but not `build/`,
   setuptools' staging tree, so a module deleted or moved since the last build
   survived in `build/lib` and was packaged into the new wheel alongside its
-  replacement — reproduced with `app_discussion_flow.py` during this split.)
+  replacement — reproduced with `app_discussion_flow.py` during this split.
+  The clean now covers `build/` and `*.egg-info/` too, and because the wheel
+  checks were presence-only — a wheel shipping *both* `X.py` and `X/` passed
+  every one of them — `check_no_shadowed_packages` asserts no name ships as
+  both. Verified by injecting a stale `app_discussion_flow.py` into a built
+  wheel: the check fails as intended.)
 
 ### Roadmap
 

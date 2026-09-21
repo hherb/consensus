@@ -18,9 +18,9 @@ from consensus.app_discussion_flow import (
     submit_moderator_message,
     switch_discussion_method,
 )
-# Private helper: imported from its defining submodule, not the package
-# facade, which re-exports only the public flow API.
-from consensus.app_discussion_flow.method_switch import _run_triage_recommender
+# Package-internal: imported from its defining submodule, not the package
+# facade, which re-exports only the flow API `ConsensusApp` calls.
+from consensus.app_discussion_flow.method_switch import run_triage_recommender
 from consensus.methods.base import ProcessedResponse
 from consensus.models import Discussion, Entity, EntityType, Message, MessageRole
 from consensus.pricing import PricingCache
@@ -192,7 +192,7 @@ class TestSubmitModeratorMessage:
 
 
 class TestRunTriageRecommender:
-    """_run_triage_recommender resolves the moderator's API key via the
+    """run_triage_recommender resolves the moderator's API key via the
     resolver's DB lookup (env_var=""), not a non-existent
     ``AIConfig.api_key_env`` attribute that raises AttributeError (#59)."""
 
@@ -212,7 +212,7 @@ class TestRunTriageRecommender:
              patch("consensus.ai_client.AIClient") as MockClient:
             MockRec.return_value.recommend = AsyncMock(return_value=[])
             MockClient.return_value.close = AsyncMock()
-            await _run_triage_recommender(disc, mod, key_resolver)
+            await run_triage_recommender(disc, mod, key_resolver)
 
         assert calls == [(mod.ai_config.provider_id, "")]
 

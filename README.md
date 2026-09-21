@@ -409,7 +409,7 @@ Multi-user mode:
 git clone https://github.com/hherb/consensus.git
 cd consensus
 uv pip install -e .
-python -m pytest          # 2505 tests
+python -m pytest          # ~2,550 tests
 ```
 
 Developer documentation lives in [docs/devel/](https://github.com/hherb/consensus/blob/main/docs/devel/programmer-manual.md); the end-user manual is in [docs/user_manual/](https://github.com/hherb/consensus/blob/main/docs/user_manual/index.md). Planned and completed features are tracked in [ROADMAP.md](https://github.com/hherb/consensus/blob/main/ROADMAP.md).

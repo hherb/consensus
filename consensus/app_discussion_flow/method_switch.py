@@ -1,14 +1,25 @@
-"""Discussion-method switching — the Triage handoff and its recovery path.
+"""Discussion-method switching — the whole Triage lifecycle.
 
 Triage runs as an ordinary method whose final act is to hand the
-discussion over to the method it recommended.  Everything that handoff
+discussion over to the method it recommended.  Everything that lifecycle
 needs lives here: the recommender call that fills Triage's
 ``recommendations``, the switch itself (including the tool-capability
-gate), and the blocked-switch recovery path the UI retries through.
+gate), the blocked-switch recovery path the UI retries through, and
+:func:`refresh_ai_configs`, which that recovery path needs to pick up
+profile edits made while the discussion was paused.
 
-:func:`handle_triage_handoff` is the entry point ``complete_turn`` calls
-when a Triage run ends with a chosen method; it returns the result dict
-the caller passes straight back to the frontend.
+``turns`` enters this module at two points, at opposite ends of a Triage
+run:
+
+- :func:`run_triage_recommender`, called from ``generate_ai_turn`` while
+  the ``recommend`` phase is live — *not* part of the handoff itself.
+- :func:`handle_triage_handoff`, called from ``complete_turn`` once the
+  Triage run ends.  It returns the result dict the caller passes straight
+  back to the frontend, or ``None`` when this was not a handoff.
+
+:func:`refresh_ai_configs` is re-exported by the package but has no caller
+outside :func:`retry_method_switch`; it is public because the blocked-switch
+recovery dialog's contract depends on it.
 """
 
 import logging
@@ -26,7 +37,7 @@ from .helpers import apply_method_turn_order, stamp_turn_index
 logger = logging.getLogger(__name__)
 
 
-async def _run_triage_recommender(
+async def run_triage_recommender(
     discussion: Discussion, moderator_entity: Entity, key_resolver,
 ) -> None:
     """Call MethodRecommender after the triage moderator's synthesis turn."""
@@ -37,6 +48,15 @@ async def _run_triage_recommender(
     state = discussion.method_state
     characterization = state.get("moderator_characterization", "")
     if not moderator_entity.ai_config:
+        # Leaves ``recommendations`` unset, which the confirm phase cannot
+        # distinguish from "ran and found nothing" — log so the cause is
+        # recoverable.  Surfacing it in the transcript is issue #72.
+        logger.warning(
+            "Triage recommender skipped: moderator entity %s (%s) has no "
+            "ai_config; discussion %s will reach the confirm phase with no "
+            "recommendations",
+            moderator_entity.id, moderator_entity.name, discussion.id,
+        )
         return
 
     api_key = key_resolver(

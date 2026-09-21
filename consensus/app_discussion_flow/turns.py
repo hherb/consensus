@@ -23,7 +23,7 @@ from .helpers import (
     apply_method_turn_order, calculate_discussion_cost, describe_turn_error,
     is_pass, stamp_turn_index,
 )
-from .method_switch import handle_triage_handoff, _run_triage_recommender
+from .method_switch import handle_triage_handoff, run_triage_recommender
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ async def generate_ai_turn(
             if (discussion.discussion_method == "triage"
                     and discussion.method_state.get("current_phase") == "recommend"
                     and key_resolver):
-                await _run_triage_recommender(discussion, current, key_resolver)
+                await run_triage_recommender(discussion, current, key_resolver)
                 if discussion.id:
                     db.update_discussion(
                         discussion.id,

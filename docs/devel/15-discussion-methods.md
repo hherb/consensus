@@ -101,7 +101,7 @@ class DiscussionMethod(ABC):
 | `get_summary_prompt(discussion, speaker, next_speaker)` | `moderator.py` | Summary prompt override |
 | `get_conclusion_prompt(discussion)` | `moderator.py` | Final conclusion prompt |
 | `filter_context_message(name, content, role, discussion)` | `moderator.py` | Transform context messages (e.g. anonymise for Delphi) |
-| `process_response(content, entity, discussion)` | `app_discussion_flow/` | Extract structured data from responses |
+| `process_response(content, entity, discussion)` | `app_discussion_flow/turns.py` + `submissions.py` | Extract structured data from responses (AI turns and human turns respectively) |
 | `should_advance_phase(discussion)` | `app_discussion_flow/turns.py` | Check if current phase is complete |
 | `advance_phase(discussion)` | `app_discussion_flow/turns.py` | Move to next phase |
 | `on_round_complete(discussion)` | `app_discussion_flow/turns.py` | Update counters after all participants respond |
@@ -201,8 +201,7 @@ Methods register by being imported in `__init__.py`. The registry maps
    `discussion.method_state`. The `display_content` becomes the stored message.
 
 4. **Phase advancement:** After each turn, `app_discussion_flow/turns.py`
-   checks
-   `method.should_advance_phase()`. If true, `method.advance_phase()` moves to
+   checks `method.should_advance_phase()`. If true, `method.advance_phase()` moves to
    the next phase and posts a transition message. When all phases are
    exhausted, the discussion auto-concludes.
 
@@ -325,11 +324,13 @@ A three-phase meta-method for ambiguous cases where the best method isn't obviou
 | Recommend | `TriageRecommendHandler` | Moderator only | Synthesizes intake, triggers async `MethodRecommender` |
 | Confirm | `TriageConfirmHandler` | All participants | Reviews recommendations, moderator makes final selection |
 
-**Method transition:** When triage completes, `complete_turn()` detects
-`method_state["chosen_method"]` and hands off via
-`app_discussion_flow/method_switch.py`. This reinitializes method state for the chosen method,
-posts a system message, and returns `{"method_switched": True}` instead of
-`{"method_complete": True}`.
+**Method transition:** When the active method ends, `complete_turn()` calls
+`handle_triage_handoff()` (`app_discussion_flow/method_switch.py`), which
+detects `method_state["chosen_method"]`. When one is present it switches the
+method, reinitializes method state for the chosen method, posts a system
+message, and returns `{"method_switched": True}` instead of
+`{"method_complete": True}`; when there is none it returns `None` and
+`complete_turn()` carries on with the normal completion path.
 
 **Async recommender wiring:** The `TriageRecommendHandler.process_response()` is
 sync, so it stores `moderator_characterization` in method state. After

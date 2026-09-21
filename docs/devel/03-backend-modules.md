@@ -20,8 +20,8 @@ to keep file sizes manageable:
   completion, reassignment), `method_switch.py` (the Triage handoff and
   its recovery path), `conclusion.py` (mediation, final synthesis) and
   `helpers.py` (pass detection, error description, cost, turn order).
-  The package re-exports the public API, so `from consensus
-  .app_discussion_flow import complete_turn` works unchanged
+  The package re-exports the public API, so
+  `from consensus.app_discussion_flow import complete_turn` works unchanged
 - `app_discussion_state.py` — discussion state management
 
 These modules contain standalone functions that `app.py` delegates to.
