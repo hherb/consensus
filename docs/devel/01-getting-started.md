@@ -105,7 +105,8 @@ consensus/
   app_providers.py         Provider management (extracted from app.py)
   app_entities.py          Entity CRUD (extracted from app.py)
   app_discussion_setup.py  Discussion creation & configuration
-  app_discussion_flow.py   Turn flow operations
+  app_discussion_flow/     Turn flow package (submissions, turns,
+                           method_switch, conclusion, helpers)
   app_discussion_state.py  Discussion state management
   server.py                aiohttp web server (REST + resource routes, middleware)
   session.py               Multi-user session manager (per-session app + SQLite)

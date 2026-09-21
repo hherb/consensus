@@ -1,289 +1,184 @@
-# HANDOVER — Discussion Methods Review & Repair
+# HANDOVER
 
-_Last updated: 2026-07-18 (issue #59 — the three Minor #57 follow-ups —
-resolved, plus three incidental latent bugs fixed while in those files: two
-`AIConfig.api_key_env` AttributeErrors and a `Database.save_message`
-AttributeError. Then a review pass on that work (#60) narrowed the new status
-guard to concluded-only after it was found to break the paused composer, and
-extended the enum sentinel to arrays. Branch at **2505 tests**, open as
-PR #60; issue #61 (files over the ~500-line rule) is the only open issue.)_
+_Last updated: 2026-09-22. `main` is at **v2.0.0** (released 2026-07-20) with
+the suite at **2548 passing**. The discussion-method review & repair campaign
+(#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
+(PyPI `consensus-app` + notarized macOS DMG) and the public website. The one
+open structural issue is **#61** (modules over the ~500-line golden rule); its
+first slice — `app_discussion_flow` — is done, fifteen modules remain.
+Reviewing that slice surfaced four pre-existing defects, now filed as **#71**
+(Final Synthesis failure invisible to the user), **#72** (Triage recommender
+silently degrades to `open_discussion`), **#73** (coverage gaps — `mediate` has
+none at all) and **#74** (broad `except` mislabelling bugs as API errors).
+None were introduced by the split; all three code ones are golden-rule-6
+violations and #71/#72 are the user-visible pair._
 
-This file briefs the next session on what is done, what is still open, and
-the conventions to keep. Update it whenever a session materially changes the
-plan; delete sections that are finished and no longer instructive. Per-PR
+This file briefs the next session on what is done, what is still open, and the
+conventions to keep. Update it whenever a session materially changes the plan;
+delete sections that are finished and no longer instructive. Per-PR
 implementation detail lives in git history, `docs/superpowers/specs/`, and
 `docs/superpowers/plans/` — do not re-narrate it here.
 
-## What is done (all merged)
+## Where the project stands
 
-| Work | Issues | PR |
-|------|--------|----|
-| Six defect classes | #12–#17 | #18 |
-| Method fixes | #19/#20/#21 | #31 |
-| Phase-machine loop support (`next_phase`) | #22 | #35 |
-| Belief Diffusion abort | #30 | #36 |
-| Structured outputs — mechanism + first conversions | #23 | #38 |
-| Structured outputs — all remaining regex phases converted + hardening | #23 | #39 |
-| Nominal Group Technique (`nominal_group`) | #24 | #40 |
-| Weighted Decision Matrix / MCDA (`decision_matrix`) | #25 | #41 |
-| Double Crux (`double_crux`) | #27 | #43 |
-| Tree of Thoughts (`tree_of_thoughts`) | #26 | #44 |
-| Evidence-tracked phases (soft grounding) | #28 | #45 |
-| Order-independent contribution merging | #42 | #46 |
-| Same-model panel warning (Delphi/Belief) | #29 | #47 |
-| Participating moderator counted as estimator | #48 | #49 |
-| `coerce_str` payload-coercion hardening | — (tech debt) | #50 |
-| Method-flow E2E tests (NGT/MCDA/DC/ToT) | — (testing gap) | #52 |
-| Alpha distribution (PyPI `consensus-app` + macOS DMG) | — | #53 |
-| Shared-helper dedup batch (scanner delegation, give-up mixin, test split) | — (tech debt) | #54 |
-| Blocked Triage switch recovery (pause + retry) | — (HANDOVER UX gap) | #55 |
-| Double Crux pre-belief poll (belief-shift metric fix) | — (tech debt) | #56 |
-| Structured-phase human input (form renderer) | #57 | #58 |
-| Structured human input follow-ups + 3 incidental latent-bug fixes | #59 | #60 |
+| Area | State |
+|------|-------|
+| Discussion methods | 18 methods, all reviewed/repaired; composable `PhaseHandler` library (68 handlers) |
+| Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
+| Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
+| Website | `website/` — static site deployed to Cloudflare Pages at https://consensus-ai.org/ |
+| Tests | 2548 passing (`uv run pytest`, ~50 s) |
+| Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
-The `fix/structured-input-followups-59` branch is at **2505 tests passing**,
-open as PR #60. Every method-repair issue (#12–#48, #56) and the
-structured-phase human input work (#57, PR #58) are merged/closed.
+### Merged campaigns (detail in git history)
 
-**Issue #59 + incidental fixes** (this PR) — the three Minor #57 review
-follow-ups, plus three unrelated latent `AttributeError` bugs found via IDE
-diagnostics while editing the same files (golden rule 7 — fixed, not deferred):
-- **#59.1 status guard.** Both human submit paths now route through a shared
-  `_check_human_turn_preconditions` helper (`app_discussion_flow.py`) that
-  rejects an unknown entity, a **concluded** discussion, and a wrong-turn
-  submission. One helper keeps the two paths consistent and de-dups the old
-  entity/turn checks. A *paused* discussion is deliberately still accepted —
-  see the conventions section below for why, and for the asymmetry between
-  the free-text and structured paths that replaces the blunt `is_active`
-  gate the first cut of this PR used.
-- **#59.2 / #59.3 form polish** (`static/structured-form.js`): numeric widgets
-  now block out-of-range values before submit (`rangeError`, a round-trip
-  saver — the server still re-checks; the deliberate #58 fractional-integer
-  behavior is preserved), and optional enums render a blank "— select —"
-  sentinel so an untouched optional `<select>` submits nothing instead of its
-  first option. The sentinel covers **arrays of enums** too: the first array
-  row is added unconditionally, so without it an untouched optional `enum[]`
-  silently submitted `[firstOption]`. Verified via a DOM-shim Node harness
-  (no JS test harness in repo) — 13/13 for #59, plus 10/10 re-run for #60.
-- **Incidental bug A** — `AIConfig` has no `api_key_env` attribute (it's a
-  DB-row key; `api_key` is the resolved value). `app.recommend_method`
-  (`app.py`) and `_run_triage_recommender` (`app_discussion_flow.py`) both
-  passed `ai_config.api_key_env` to the key resolver, an uncaught
-  `AttributeError` (before the `try`) that broke the "Suggest Method" button
-  and triage recommendation. Fixed to pass `""` (resolver looks the env var up
-  from the DB), matching `Moderator._resolve_api_key`.
-- **Incidental bug B** — `Database` has no `save_message`; the method is
-  `add_message`. Expert-consultation persistence
-  (`ConsensusApp._handle_consult_expert`) called `save_message(discussion_id,
-  msg)` — an uncaught `AttributeError` whenever an expert was consulted in a
-  persisted, active discussion (the existing test never set `discussion.id`,
-  so the branch was untested). Fixed to call `add_message` with the mapped
-  fields; new regression test drives the persisted-discussion branch.
-
-**Double Crux pre-belief poll** (PR #56, merged) — spec/plan under
-`docs/superpowers/{specs,plans}/2026-07-17-double-crux-pre-belief-poll*.md`.
-A structured micro-turn phase `poll_belief` (`consensus/methods/phases/
-poll_belief.py`) runs after `identify_crux` and before `test_crux` on the
-**factual path only** (identify's routing jumps `values`/`none` straight to
-`resolve`). Every disagreeing party states its probability on the
-moderator's *synthesized* shared claim, and that poll is the authoritative
-`initial_beliefs` (the "before" end of the belief-shift metric). Poll
-helpers live in `_crux_helpers.py`; artifact/formatting helpers in the
-sibling `_crux_artifact.py`. **Always-on, factual-only** (owner decision);
-total poll failure degrades to an honest `?`, never a fabricated number.
-Each poller's numeric belief line is redacted from later pollers' context
-(`PollBeliefHandler.filter_context_message` / `redact_belief_lines`) so the
-baseline is not anchored by earlier numbers. The unparsed-human-input case
-(prose instead of JSON) is the framework-wide gap tracked as **issue #57**.
-
-**#28 evidence-tracked phases** merged (PR #45) —
-spec `docs/superpowers/specs/2026-07-14-evidence-gated-phases-design.md`, plan
-`docs/superpowers/plans/2026-07-14-evidence-tracked-phases.md`. New module
-`consensus/evidence.py` (turn-level grounding classifier — tool-call + inline
-paths, `record_and_annotate_evidence`, `build_evidence_summary`); opt-in
-`Phase.track_evidence` flag; flow wiring in `app_discussion_flow.py` (AI +
-human turns, gated on the active phase); `test_crux` is the sole opted-in
-phase, with the summary surfaced in Double Crux's `crux_map` artifact and
-factual conclusion prompt; minimal "Attach evidence" UI button inserting the
-`[evidence: …]` marker. **Soft by design** (owner decision): ungrounded turns
-are annotated + logged, never blocked — see
-`memory/evidence-gating-philosophy.md`. Suite after #28: **2295 passing**.
-
-Deferred #28 follow-ups (not built this slice): per-claim citation mapping;
-opting in Adversarial Collab `gather_evidence` and ACH `present_evidence`
-(prove on `test_crux` first); a hard-retry enforcement variant (deliberately
-rejected for now); a richer source-picker UI beyond the marker inserter;
-knowledge-graph grounding (no KG participant tool exists yet); and the
-**live browser click-through of the Attach-evidence button** (verified
-statically only — no JS test harness in this project). The two minor
-cleanups once logged in `.superpowers/sdd/progress.md` are done:
-`DOCUMENT_TOOL_NAMES` shipped with the PR #45 review follow-ups, and
-`test_crux_helpers.py` was split (artifact/formatting layer →
-`test_crux_artifact.py`) in PR #54.
-
-**#42 order-independent contribution merging** lives in
-`consensus/methods/parsing.py` (`word_overlap_ratio`, `cluster_by_similarity`,
-`canonical_index`, `cluster_text_contributions`), adopted by `record_ideas`,
-`record_thoughts`, `record_options`, `record_criteria`; grouping is
-connected-components (transitive, order-independent) and labels are the
-cluster medoid. Suite after #42: **2324 passing**.
-
-**#29 same-model panel warning** (this branch, PR #47) — new pure module
-`consensus/methods/panel_diversity.py` (analysis core, `estimator_models`
-roster adapter, `format_setup_warning` / `format_conclusion_disclosure`);
-declarative `DiscussionMethod.assumes_independent_panel` flag +
-`panel_composition_disclosure` helper (base.py), opted in by `DelphiMethod`
-and `BeliefDiffusion`. `get_state()` emits a non-blocking `panel_advisory`
-(inline setup banner + start toast); the two methods' conclusion prompts
-disclose panel composition so convergence claims can be caveated. Trigger:
-one model covers **> half** the AI estimator panel (`DIVERSITY_WARN_FRACTION`);
-moderator excluded from the panel. Spec/plan:
-`docs/superpowers/{specs,plans}/2026-07-15-same-model-panel-warning*.md`.
-Suite after #29: **2355 passing**. Deferred: family-level model grouping
-(exact-model only), and proposal item 3 (a "diversify" auto-suggest helper).
-
-**Structured-phase human input** (issue #57, PR #58) — spec/plan under
-`docs/superpowers/{specs,plans}/2026-07-17-structured-phase-human-input*.md`.
-A human taking a turn in a `requires_structured_output` phase now gets a
-**schema-driven input form** instead of having to type raw JSON.
-- **Backend**: `submit_human_structured_message(entity_id, payload)`
-  (`app_discussion_flow.py`, exposed via desktop bridge + server route +
-  `api.submitStructuredMessage`) validates a payload (`check_payload_schema`
-  in `methods/parsing.py`, then the handler's `validate_output`) and records
-  via `process_structured_response`, mirroring the AI branch. A **safety net**
-  in `submit_human_message` converts the old silent drop into a visible error
-  (golden rule 6): a structured-phase free-text turn that records nothing and
-  carries no schema-valid JSON block returns `{"error": ...}`.
-- **State**: `get_state()` exposes `current_input_spec`
-  (`consensus/structured_input.py` — `build_input_spec`/`schema_is_renderable`)
-  for a human participant (not the moderator) in a structured phase.
-  Dynamic-key schemas (belief maps) are resolved to concrete fields by the new
-  `PhaseHandler.resolve_input_schema` hook (`expand_belief_schema`).
-- **Frontend**: `consensus/static/structured-form.js` renders one widget per
-  schema property (number/string/enum/boolean/array/array-of-objects) with a
-  guided-JSON fallback for un-renderable (nested `additionalProperties`, e.g.
-  the ACH matrix) schemas.
-- **Gotcha closed during verification**: any lifecycle app method that returns
-  `discussion.to_dict()` drops `current_input_spec` (a get_state-only field),
-  so the form vanishes after that transition. `pause`/`resume`/`reopen` were
-  fixed to return `get_state()`; `start`/`conclude`/`continue` already did.
-  **New rule: lifecycle methods the frontend feeds to `onStateUpdate(result)`
-  must return `get_state()`, never `to_dict()`.**
-- Verified live (Playwright, all-human Delphi): form renders, validates
-  required fields inline, records + advances, fresh form per turn, survives
-  pause→resume. No phase is both structured and evidence-tracked, so the form
-  needs no evidence affordance. Post-review fix (PR #58): the integer form
-  widget now parses with `Number()` not `parseInt()`, so a fractional integer
-  surfaces the server's "must be a whole number" error instead of being
-  silently truncated (golden rule 6). Remaining Minor follow-ups tracked in
-  **issue #59**: submit-path status guard (both human submit methods) and the
-  deferred form polish (client-side numeric-range backstop; optional-enum
-  first-option default).
+- **Method review & repair** — six defect classes (#12–#17), per-method fixes
+  (#19/#20/#21), phase-machine loops (#22), Belief Diffusion abort (#30),
+  structured outputs (#23), order-independent contribution merging (#42),
+  same-model panel warning (#29/#48), Double Crux pre-belief poll (#56),
+  blocked-Triage switch recovery, shared-helper dedup, `coerce_str` hardening.
+- **New methods** — Nominal Group Technique (#24), Weighted Decision Matrix /
+  MCDA (#25), Double Crux (#27), Tree of Thoughts (#26).
+- **Evidence-tracked phases** (#28) — `consensus/evidence.py`, opt-in
+  `Phase.track_evidence`; soft by design (annotate + log, never block) — see
+  `memory/evidence-gating-philosophy.md`.
+- **Structured-phase human input** (#57, #59, #60) —
+  `submit_human_structured_message` + `consensus/static/structured-form.js`.
+- **Method-flow E2E tests** — `tests/test_method_flow_e2e.py` drives NGT, MCDA,
+  Double Crux and ToT start→`method_complete` through the real pipeline.
+- **Provider resilience** (PR #64, #65) — `tool_choice` downgrade to
+  `"required"` when a provider rejects a named function; any 400 naming an
+  optional sampling parameter drops it and retries; `describe_turn_error()`
+  surfaces the provider's response body in skip notices; moderator-summary
+  failures toast instead of stopping the turn cycle silently; an empty
+  completion renders an explanatory notice naming the `max_tokens` cap.
+- **Distribution** — PyPI + DMG pipeline; notarization gate cleared at v1.99.1;
+  v2.0.0 followed the full playbook. See
+  `memory/alpha-distribution-release-process.md` for the release runbook.
 
 ## Open work
 
-### Alpha distribution — pending release gate (PR #53)
+### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-- **First DMG release is gated on notarization** (owner deferred 2026-07-17):
-  one-time `xcrun notarytool store-credentials consensus-notary --apple-id …
-  --team-id X5DWXB4283` (app-specific password from account.apple.com), then
-  a full `scripts/build_macos_dmg.sh` run (no `--skip-notarize`), then an
-  in-app `execute_python` acceptance test on the notarized app — the only
-  runtime path never exercised end-to-end.
-- Key facts: PyPI distribution name is **consensus-app** (import/CLI stay
-  `consensus`); release via `scripts/release_pypi.sh` (`--build-only`,
-  `--test` for TestPyPI, needs `UV_PUBLISH_TOKEN`); versioning is plain
-  PEP 440 (`1.99.x`) — never pre-release tags (they'd force
-  `--prerelease=allow` on testers). Spec/plan:
-  `docs/superpowers/{specs,plans}/2026-07-16-alpha-distribution*.md`.
-- Accepted follow-ups (no issue filed): `consensus/evaluation/runner.py`
-  default results dir lands in site-packages for wheel installs;
-  `packaging/macos/make_icns.sh` regeneration needs Pillow on system
-  python3; icon bubbles blur at 16–32 px.
+**Done:** `app_discussion_flow.py` (1254 lines) → the `app_discussion_flow/`
+package — `helpers.py` (133), `submissions.py` (304), `turns.py` (444),
+`method_switch.py` (362), `conclusion.py` (137), plus a re-exporting
+`__init__.py` (92) so `from consensus.app_discussion_flow import …` is
+unchanged for `app.py` and the tests. The only logic change was extracting
+`complete_turn`'s ~90-line Triage-handoff branch into
+`method_switch.handle_triage_handoff` (AST-verified identical to the original
+block); everything else moved verbatim.
 
-### Cross-cutting quality
+**Guard added after review.** `ConsensusApp` reaches these functions by
+*attribute access at call time* (`app_discussion_flow.mediate(...)`), so a name
+dropped from `__init__.py` is an `AttributeError` on that route in production,
+never an `ImportError` at collection. Deleting five re-exports left the whole
+suite green, so nothing caught it. `tests/test_app_discussion_flow_facade.py`
+now pins `__all__` and AST-parses `app.py` to assert every
+`app_discussion_flow.X` call site resolves. Keep it in step when the public
+flow API changes — that is the point of the pin.
 
-- Same-model panel warning shipped in two slices — #29 (PR #47, the warning)
-  and #48 (PR #49, participating same-model moderator counted as an estimator).
-  Remaining deferred follow-ups (no issue filed): family-level model grouping
-  (e.g. `gpt-4o` vs `gpt-4o-mini`, or one model under different provider name
-  strings — exact-model grouping only today); and the "diversify" auto-suggest
-  helper (proposal item 3). Specs/plans:
-  `docs/superpowers/{specs,plans}/2026-07-15-same-model-panel-warning-design.md`
-  and `docs/superpowers/{specs,plans}/2026-07-16-panel-moderator-estimator*.md`.
+`_run_triage_recommender` became `run_triage_recommender` when the split gave
+it a second consumer across a module boundary (`turns` → `method_switch`).
 
-### Method-specific follow-ups (tech debt, no issue filed)
+**Still over the limit** (`find consensus -name '*.py' | xargs wc -l | sort -rn`):
 
-- **ToT expansion refines in place; it cannot spawn child thoughts.** True
-  Tree-of-Thoughts expands survivors into new candidate children; #26's
-  "deep-dive" was implemented as refinements + obstacles on immutable
-  thoughts (label stability is what makes re-scoring/convergence meaningful).
-  If real transcripts show the beam starving, a child-generation expand
-  variant (new thoughts with fresh ids) is the natural extension.
-- **Double Crux belief shift** — ✅ fixed by the pre-belief poll (PR #56;
-  see the feature note above). Both ends of the metric are now measured on
-  the moderator's synthesized claim for every party.
+| Lines | File |
+|------:|------|
+| 1277 | `consensus/tools_document.py` |
+| 1227 | `consensus/server.py` |
+| 1187 | `consensus/app.py` |
+| 784 | `consensus/auth.py` |
+| 772 | `consensus/moderator.py` |
+| 702 | `consensus/mcp_server.py` |
+| 671 | `consensus/evaluation/runner.py` |
+| 666 | `consensus/tools_memory.py` |
+| 628 | `consensus/desktop.py` |
+| 614 | `consensus/tools_python.py` |
+| 589 | `consensus/evaluation/eval_db.py` |
+| 580 | `consensus/tools_image.py` |
+| 530 | `consensus/evaluation/scorer.py` |
+| 517 | `consensus/methods/base.py` |
+| 509 | `consensus/app_discussion_setup.py` |
+
+Structural only — no behaviour change — one module per PR, suite green before
+and after. Next-best targets: `server.py` (routes group by domain, could follow
+the `db/` mixin pattern) and `tools_document.py` (ingestion /
+chunking+embedding / RAG Q&A are three separable concerns).
+
+**Recipe that worked, for the next slice:**
+1. Move code by line range (`sed -n 'a,bp'`) so it transfers verbatim, then
+   diff each moved range back against `git show HEAD:<file>` — every range
+   should come out byte-identical.
+2. Fix relative-import depth for anything nested one level deeper
+   (`from .x` → `from ..x`), including imports inside function bodies.
+3. Re-export the public API from `__init__.py`; point test `patch()` targets
+   at the *defining* submodule (patching the facade has no effect), and import
+   private helpers from their submodule rather than widening the facade.
+   `assertLogs`/`caplog` on the old dotted name keeps working — child loggers
+   propagate to the package logger.
+4. `uvx ruff check --select F <pkg>` for unused/undefined names, then the
+   full suite.
+
+### Dependabot
+
+- PR #68 — `cryptography` 48.0.1 → 50.0.0 (major bump; needs a compatibility
+  check plus a green suite before merge).
+
+### Deferred follow-ups (no issue filed)
+
+- **Panel diversity** — family-level model grouping (exact-model only today,
+  so `gpt-4o` vs `gpt-4o-mini` read as different estimators) and a "diversify"
+  auto-suggest helper.
+- **ToT expansion refines in place; it cannot spawn child thoughts.** Label
+  stability is what makes re-scoring/convergence meaningful. If real
+  transcripts show the beam starving, a child-generation expand variant is the
+  natural extension.
 - **Double Crux identify loop re-runs positions' context, not the phase.**
-  Loop-backs re-enter `hunt_cruxes` only; if hunting keeps failing because
-  positions were vague, there is no path back to `positions`. Acceptable for
-  now; revisit if transcripts show otherwise.
+  Loop-backs re-enter `hunt_cruxes` only; there is no path back to `positions`
+  if hunting keeps failing because positions were vague.
 - **MCDA free-text weights only parse the `(weight: N)` suffix.**
   `extract_weighted_criteria` recognises `1. Name (weight: 4)` / `[weight = 4]`;
-  weights written in prose fall back to `DEFAULT_WEIGHT` silently. Fine for
-  the AI path (structured tool enforces weights); a UI hint for humans would
-  close the gap.
+  weights written in prose fall back to `DEFAULT_WEIGHT` silently. The AI path
+  is safe (the structured tool enforces weights); a UI hint would close the gap
+  for humans.
+- **#28 follow-ups** — per-claim citation mapping; opting in Adversarial Collab
+  `gather_evidence` and ACH `present_evidence`; a richer source-picker UI; a
+  live browser click-through of the Attach-evidence button (verified statically
+  only — there is no JS test harness in this repo).
+- **Packaging** — `consensus/evaluation/runner.py`'s default results dir lands
+  in site-packages for wheel installs; `packaging/macos/make_icns.sh`
+  regeneration needs Pillow on system python3; icon bubbles blur at 16–32 px.
+  (Fixed here: `scripts/release_pypi.sh` cleaned `dist/` but not `build/`,
+  setuptools' staging tree, so a module deleted or moved since the last build
+  survived in `build/lib` and was packaged into the new wheel alongside its
+  replacement — reproduced with `app_discussion_flow.py` during this split.
+  The clean now covers `build/` and `*.egg-info/` too, and because the wheel
+  checks were presence-only — a wheel shipping *both* `X.py` and `X/` passed
+  every one of them — `check_no_shadowed_packages` asserts no name ships as
+  both. Verified by injecting a stale `app_discussion_flow.py` into a built
+  wheel: the check fails as intended.)
 
-### Shared-helper dedup — closed 2026-07-17 (PR #54)
+### Roadmap
 
-All three items are done; the shared homes to keep using are:
-
-- **Inline-JSON scanning:** `methods/parsing.extract_json_payload` is the
-  only balanced-brace scanner. `_mcda_helpers.extract_scores` and
-  `evaluate_matrix._parse_ratings` delegate to it (dict-only, `{}` on
-  failure — a fenced non-mapping value no longer leaks through). The
-  scanner still miscounts braces inside JSON strings — accepted,
-  documented in one place.
-- **Give-up/validation shape:** `parsing.validate_string_list_payload`
-  backs `validate_ideas_payload` / `validate_thoughts_payload` (messages
-  stay at the call sites); the NGT/ToT generation give-up blocks live once
-  in `phases/_generation_giveup.GenerationGiveUpMixin` (declarative
-  `giveup_*` class attributes — use it for future bounded generation
-  phases); `parsing.cluster_groups` is the clustering skeleton shared by
-  `cluster_text_contributions` and MCDA's `record_criteria`.
-- **Null-safe payload coercion:** `parsing.coerce_str(payload, key)`
-  (fixed 2026-07-16; see PR #50).
-
-### Testing gap — closed 2026-07-16
-
-- ~~No real-pipeline (`complete_turn`) end-to-end flow test for the four
-  newest methods.~~ **Done:** `tests/test_method_flow_e2e.py` +
-  `tests/flow_e2e_helpers.py` drive NGT, MCDA, Double Crux, and ToT
-  start→`method_complete` through `submit_human_message`/`complete_turn`
-  (all-human, free-text path, no stubs), including the Double Crux
-  identify→hunt loop-back and a full ToT score→prune→expand→score loop
-  ending in convergence — both through the real `advance_phase` path.
-  Spec: `docs/superpowers/specs/2026-07-16-method-flow-e2e-tests-design.md`.
+`ROADMAP.md` holds the planned feature list. The nearest ⬜ items by payoff are
+Argument Mapping and Tournament / Superforecasting (both Medium), plus
+token-aware context windowing and lazy discussion message loading.
 
 ## Conventions and gotchas for the next session
 
 - **Structured-phase conversions must keep `process_response`.** Humans type
-  free text, and the structured path falls back to it after exhausted
-  retries. The fallback rarely *extracts* anything (rewritten prompts no
-  longer describe the JSON-block format); the real containment is each
-  phase's give-up cap (`MAX_FRAMING_ATTEMPTS`, `MAX_VOTE_ROUNDS`,
-  `phase_round` advancement).
+  free text, and the structured path falls back to it after exhausted retries.
+  The real containment is each phase's give-up cap (`MAX_FRAMING_ATTEMPTS`,
+  `MAX_VOTE_ROUNDS`, `phase_round` advancement).
 - **Every condition-based phase (`rounds=0`) needs a give-up cap** so an
   unparseable group cannot loop forever (`MAX_*_ATTEMPTS` / `MAX_*_ROUNDS`
   constants — no magic numbers, per `docs/llm/golden_rules.md`).
 - **Structured conversions include a required `reasoning` field**, rendered
   before the data display so a validated payload reads as a real contribution.
-  Exceptions: `submit_beliefs` declares `reasoning` optional; `submit_claims`
-  has none (its `preliminary_conclusion`, like `submit_skeleton`'s
-  `rich_summary`, plays that role for moderator extraction phases).
-  Dynamic-key maps (belief distributions keyed by hypothesis label, matrix
-  ratings keyed by hypothesis × evidence) declare `additionalProperties` in
-  their schema rather than enumerating keys (see `MATRIX_TOOL_PARAMETERS` in
-  `evaluate_matrix.py`, `BELIEFS_TOOL_PARAMETERS` in `_belief_helpers.py`).
+  Exceptions: `submit_beliefs` declares it optional; `submit_claims` has none.
+  Dynamic-key maps (belief distributions, matrix ratings) declare
+  `additionalProperties` rather than enumerating keys.
 - **Never derive a phase turn order from the incoming `entity_ids` by
   filtering the current order.** Handlers receive the full roster; for
   "everyone except X", filter the roster.
@@ -291,61 +186,53 @@ All three items are done; the shared homes to keep using are:
   (`_turn_order`, `_panelist_map`, `_continuation_count`,
   `_original_max_rounds`, `_original_cost_limit`, `_phase_entries`). New
   bookkeeping that must survive a method switch has to be added to the
-  preserved set in `app_discussion_flow.switch_discussion_method`.
-- **`_pending_method_switch` is internal `method_state` bookkeeping,
-  deliberately NOT in `switch_discussion_method`'s preserved set** — a
-  successful switch must wipe it.
+  preserved set in `switch_discussion_method`. `_pending_method_switch` is
+  deliberately NOT preserved — a successful switch must wipe it.
 - **Moderator summaries never pass through `process_response`.** To capture
   something from the moderator, give that phase `get_turn_order ->
   [moderator_id]` so the moderator takes a real turn (see
-  `counterfactual_extract.py`, `distill_skeleton.py`, `frame_hypotheses.py`,
-  including bounded retries).
-- **All beam/composite/weight/sensitivity/shift numbers are computed in
-  code, never by the model.** Structured phases collect raw data; helper
-  modules aggregate. Keep it that way — it is the correctness contract for
-  every scored method.
-- **Test new flow behavior through the real pipeline.** The historical
-  failure mode was unit tests feeding handlers idealized inputs the moderator
-  never produces. Use `tests/test_turn_order_flow.py` /
+  `counterfactual_extract.py`, `distill_skeleton.py`, `frame_hypotheses.py`).
+- **All beam/composite/weight/sensitivity/shift numbers are computed in code,
+  never by the model.** Structured phases collect raw data; helper modules
+  aggregate. It is the correctness contract for every scored method.
+- **Test new flow behavior through the real pipeline.** The historical failure
+  mode was unit tests feeding handlers idealized inputs the moderator never
+  produces. Use `tests/test_turn_order_flow.py` /
   `tests/test_method_state_persistence.py`: drive `complete_turn` with a human
-  moderator plus `moderator_summary` (no network), and `Moderator._format_messages`
-  for context filtering. For structured turns, stub `complete_with_tools`
-  (see `tests/test_structured_output.py`).
+  moderator plus `moderator_summary` (no network). For structured turns, stub
+  `complete_with_tools` (see `tests/test_structured_output.py`).
+- **Lifecycle methods the frontend feeds to `onStateUpdate(result)` must
+  return `get_state()`, never `to_dict()`** — `to_dict()` drops get_state-only
+  fields such as `current_input_spec`, so the structured form vanishes after
+  the transition (bit `pause`/`resume`/`reopen` during #57).
 - **Human turn submissions share one precondition gate.** Both
   `submit_human_message` and `submit_human_structured_message` route through
-  `_check_human_turn_preconditions` (`app_discussion_flow.py`), which rejects
-  an unknown entity, a **concluded** discussion, and a wrong-turn submission.
-  Any new human submit entry point must go through it so the paths cannot
-  drift (issue #59). The moderator submit path (`submit_moderator_message`) is
-  intentionally separate — it has no turn/status gate today.
-- **A paused discussion still accepts free-text human input** (issue #60 —
-  do not "tighten" this back into an `is_active` rejection without changing
-  the UI in the same commit). `updateInputArea` keeps the composer open while
-  paused, and `onSendMessage`'s paused branch posts a non-moderator human
-  current speaker's text to `submit_human_message`. Gating the shared helper
-  on `not is_active` silently broke that path — the message was refused and
-  the already-cleared input was lost. What a paused send must *not* do is
-  count as a method turn, so the two paths diverge **deliberately**:
+  `_check_human_turn_preconditions`, which rejects an unknown entity, a
+  **concluded** discussion, and a wrong-turn submission. Any new human submit
+  entry point must go through it (issue #59). `submit_moderator_message` is
+  intentionally separate — it has no turn/status gate.
+- **A paused discussion still accepts free-text human input** (issue #60 — do
+  not "tighten" this into an `is_active` rejection without changing the UI in
+  the same commit). The composer stays open while paused, and the paused branch
+  posts to `submit_human_message`. The two paths diverge **deliberately**:
   - `submit_human_message` records the message but skips the
-    `get_active_method` / `process_response` block while paused. The turn
-    does not advance while paused, so the composer accepts repeated sends,
-    and re-running `process_response` for each would let a non-idempotent
-    handler record the same vote/estimate twice. The real method
-    contribution is processed once, on the participant's turn after Resume.
+    `get_active_method` / `process_response` block while paused. The turn does
+    not advance, so the composer accepts repeated sends, and re-running
+    `process_response` would let a non-idempotent handler double-record a
+    vote. The real contribution is processed once, on the turn after Resume.
   - `submit_human_structured_message` keeps a full `is_active` check: a
     structured payload writes into `method_state`, so it is unambiguously a
-    turn with no interjection reading — and the form is never mounted while
-    paused anyway (`isActiveHumanTurn` includes `status !== 'paused'`).
+    turn — and the form is never mounted while paused anyway.
 - Project rules: `uv` only (never pip), TDD (failing test first), files under
-  ~500 lines (16 modules currently exceed this — issue #61), docstrings +
-  type hints mandatory.
+  ~500 lines (issue #61), docstrings + type hints mandatory.
 
 ## Decisions from the repo owner
 
 - **#23 (2026-07-12): it is acceptable to require tool-capable models for
   methods with structured phases.** The regex fallback need not stay
   first-class — the design forces tool calls and surfaces a clear setup-time
-  error (not a silent degrade) when a participant's model/provider lacks tool
-  support.
-- **Open Discussion is recommendable** (2026-07-12, executed with #24):
-  `_EXCLUDED_METHODS = {"triage"}`.
+  error (not a silent degrade) when a participant's model lacks tool support.
+- **Open Discussion is recommendable** (2026-07-12): `_EXCLUDED_METHODS =
+  {"triage"}`.
+- **Evidence gating annotates, never blocks** — see
+  `memory/evidence-gating-philosophy.md`.

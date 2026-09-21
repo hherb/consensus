@@ -26,7 +26,7 @@ python -m consensus --web --port 8080 --debug
 consensus                      # via pyproject.toml [project.scripts]
 ```
 
-2505 tests in `tests/`. No linter or build system configured yet.
+~2,550 tests in `tests/` (see HANDOVER.md for the exact current count). No linter or build system configured yet.
 
 ## Architecture
 
@@ -39,7 +39,8 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
     ├── app_providers.py — provider management
     ├── app_entities.py — entity CRUD
     ├── app_discussion_setup.py — discussion creation & configuration
-    ├── app_discussion_flow.py — turn flow operations
+    ├── app_discussion_flow/ — turn flow package (submissions, turns,
+    │     method_switch, conclusion, helpers)
     ├── app_discussion_state.py — discussion state management
     ├── Moderator (moderator.py) — turn flow, AI generation, summaries
     ├── DiscussionMethod (methods/) — pluggable analytical frameworks
