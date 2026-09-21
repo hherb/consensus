@@ -16,8 +16,17 @@ from ..models import (
 )
 from ..moderator import Moderator
 from ..pricing import PricingCache
+from .helpers import describe_flow_error, post_notice
 
 logger = logging.getLogger(__name__)
+
+#: Transcript notice posted when the final synthesis could not be produced.
+#: The discussion still concludes — but never silently (issue #71).
+_CONCLUSION_FAILURE_NOTICE = (
+    "**The Final Synthesis could not be generated.** {detail}\n\n"
+    "The discussion has been marked as concluded; you can reopen it and "
+    "conclude again once the cause is resolved."
+)
 
 
 async def mediate(
@@ -69,7 +78,11 @@ async def mediate(
             return msg.to_dict()
         except Exception as e:
             logger.exception("Mediation failed")
-            return {"error": f"Mediation failed: {e}"}
+            # describe_flow_error, not str(e): for an HTTP error the
+            # provider's response body is where the actionable message
+            # lives, and a bug here must not read as a provider fault
+            # (issues #71, #74).
+            return {"error": f"Mediation failed: {describe_flow_error(e)}"}
     return {"awaiting_human_moderator": True}
 
 
@@ -80,8 +93,10 @@ async def conclude_discussion(
     """End the discussion, generating a final synthesis if the moderator is AI.
 
     Marks the discussion as concluded and persists the status change.
-    Returns a result dict (the caller is responsible for appending state).
+    Returns a result dict (the caller is responsible for appending state)
+    carrying ``conclusion_error`` when the synthesis could not be produced.
     """
+    conclusion_error = ""
     mod = discussion.moderator
     if mod and mod.entity_type == EntityType.AI:
         try:
@@ -125,7 +140,16 @@ async def conclude_discussion(
             )
         except Exception as e:
             logger.exception("Conclusion generation failed")
-            # Continue to mark discussion as concluded even if AI fails
+            # The discussion still concludes — an expensive session must
+            # not be left half-ended — but the user has to be told why
+            # the Final Synthesis is missing (golden rule 6, issue #71).
+            # A DB failure here loses a synthesis that was generated
+            # successfully, which is exactly the case worth reporting.
+            conclusion_error = describe_flow_error(e)
+            post_notice(
+                discussion, db, mod,
+                _CONCLUSION_FAILURE_NOTICE.format(detail=conclusion_error),
+            )
 
     discussion.is_active = False
     discussion.status = "concluded"
@@ -134,4 +158,7 @@ async def conclude_discussion(
             discussion.id,
             status="concluded", ended_at=time.time(),
         )
-    return {"concluded": True}
+    result: dict = {"concluded": True}
+    if conclusion_error:
+        result["conclusion_error"] = conclusion_error
+    return result

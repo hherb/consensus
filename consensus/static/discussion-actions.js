@@ -348,9 +348,13 @@ export async function onMediate() {
     if (mod.entity_type === 'ai') {
         showTypingIndicator(mod.name + ' (mediating)');
         try {
-            await api.mediate();
+            const result = await api.mediate();
             onStateUpdate(await api.getState());
             renderDiscussion();
+            // mediate() returns its failure in the result rather than
+            // throwing; discarding it left the user with a mediation
+            // button that silently did nothing (golden rule 6, #71).
+            if (result?.error) showToast(result.error);
         } catch (e) { showToast('Mediation failed: ' + e.message); }
     } else {
         promptModeratorInput('mediation');
@@ -367,6 +371,14 @@ export async function onConclude() {
         const result = await api.conclude();
         onStateUpdate(result);
         renderDiscussion();
+        // The discussion concludes either way, so without this the user
+        // just sees a missing Final Synthesis and no reason (issue #71).
+        // The transcript carries the same notice; the toast makes sure it
+        // is not missed at the bottom of a long discussion.
+        if (result?.conclusion_error) {
+            showToast('Final Synthesis failed: ' + result.conclusion_error,
+                      TOAST_WARNING_DURATION_MS, 'warning');
+        }
     } catch (e) { showToast('Conclusion failed: ' + e.message); }
 }
 

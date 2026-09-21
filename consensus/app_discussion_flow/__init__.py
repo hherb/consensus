@@ -7,9 +7,9 @@ golden rule 8) into four cohesive layers plus their shared leaf helpers:
 ``helpers``
     Pure/near-pure utilities — pass detection, provider-error description,
     discussion cost, and turn-order bookkeeping. The leaf of the package:
-    imported by ``submissions``, ``turns`` and ``method_switch``, and
-    importing none of them, so the internal graph stays acyclic.
-    (``conclusion`` needs nothing from it.)
+    imported by ``submissions``, ``turns``, ``method_switch`` and
+    ``conclusion``, and importing none of them, so the internal graph
+    stays acyclic.
 ``submissions``
     Everything a *person* submits: free-text human turns, structured human
     payloads (#57), and human-moderator messages.

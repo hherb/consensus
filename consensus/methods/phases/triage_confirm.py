@@ -18,6 +18,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Shown in place of the recommendation list when the classifier failed, so
+#: the fallback method is never presented as a considered choice (#72).
+_RECOMMENDER_FAILURE_LINE = (
+    "  (!) The automatic method recommendation FAILED: {detail}\n"
+    "  No method was actually recommended — the entry below is a fallback."
+)
+
+
+def _recommendation_block(state: dict, lines: str) -> str:
+    """Prefix a rendered recommendation list with any classifier failure."""
+    detail = state.get("recommender_error")
+    if not detail:
+        return lines
+    return _RECOMMENDER_FAILURE_LINE.format(detail=detail) + "\n" + lines
+
 
 class TriageConfirmHandler(PhaseHandler):
     """Phase 3: Group confirms method selection."""
@@ -42,6 +57,7 @@ class TriageConfirmHandler(PhaseHandler):
             f"confidence {r['confidence']:.0%}: {r['reasoning']}"
             for r in recs
         ) if recs else "(no recommendations available)"
+        rec_text = _recommendation_block(state, rec_text)
 
         recommended = state.get("recommended_method", "unknown")
 
@@ -64,10 +80,16 @@ class TriageConfirmHandler(PhaseHandler):
             f"{r['reasoning']}"
             for i, r in enumerate(recs)
         ) if recs else "  (no recommendations)"
+        rec_text = _recommendation_block(state, rec_text)
         recommended = state.get("recommended_method", "unknown")
 
         if entity.id == discussion.moderator_id:
+            # The moderator makes the final selection, so it must know the
+            # "recommendation" it is about to rubber-stamp is a fallback.
+            failure = (f"{rec_text}\n\n"
+                       if state.get("recommender_error") else "")
             return (
+                f"{failure}"
                 "Review the participants' feedback on the method "
                 "recommendation. Make the final selection.\n\n"
                 "If a human participant explicitly requested a "
@@ -96,6 +118,14 @@ class TriageConfirmHandler(PhaseHandler):
         # Try to extract a backtick-quoted method name
         recs = state.get("recommendations", [])
         valid_names = {r["method_name"] for r in recs}
+        if not valid_names:
+            # The recommender failed, so there is no shortlist to validate
+            # against — but the failure notice asks the group to name the
+            # method they want, and that has to be actionable (issue #72).
+            # Widen to the whole registry rather than accepting anything.
+            from .. import list_methods
+
+            valid_names = {m["name"] for m in list_methods()}
 
         chosen = None
         # Pattern: `method_name` in backticks

@@ -1,17 +1,13 @@
 # HANDOVER
 
 _Last updated: 2026-09-22. `main` is at **v2.0.0** (released 2026-07-20) with
-the suite at **2548 passing**. The discussion-method review & repair campaign
+the suite at **2594 passing**. The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
-(PyPI `consensus-app` + notarized macOS DMG) and the public website. The one
-open structural issue is **#61** (modules over the ~500-line golden rule); its
-first slice — `app_discussion_flow` — is done, fifteen modules remain.
-Reviewing that slice surfaced four pre-existing defects, now filed as **#71**
-(Final Synthesis failure invisible to the user), **#72** (Triage recommender
-silently degrades to `open_discussion`), **#73** (coverage gaps — `mediate` has
-none at all) and **#74** (broad `except` mislabelling bugs as API errors).
-None were introduced by the split; all three code ones are golden-rule-6
-violations and #71/#72 are the user-visible pair._
+(PyPI `consensus-app` + notarized macOS DMG) and the public website. The four
+defects that the #61 split surfaced — **#71**, **#72**, **#73**, **#74** —
+are fixed in this session (see "Flow error visibility" below). The one open
+structural issue is **#61** (modules over the ~500-line golden rule); its
+first slice — `app_discussion_flow` — is done, fifteen modules remain._
 
 This file briefs the next session on what is done, what is still open, and the
 conventions to keep. Update it whenever a session materially changes the plan;
@@ -27,7 +23,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site deployed to Cloudflare Pages at https://consensus-ai.org/ |
-| Tests | 2548 passing (`uv run pytest`, ~50 s) |
+| Tests | 2594 passing (`uv run pytest`, ~55 s) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -55,6 +51,61 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 - **Distribution** — PyPI + DMG pipeline; notarization gate cleared at v1.99.1;
   v2.0.0 followed the full playbook. See
   `memory/alpha-distribution-release-process.md` for the release runbook.
+- **Flow error visibility** (#71/#72/#73/#74) — the four pre-existing defects
+  the #61 split exposed. All fixed; see the next section for the contracts
+  they established.
+
+## Flow error visibility (#71–#74, done — keep these contracts)
+
+Three flow paths swallowed caught errors; the repairs added contracts worth
+knowing before touching `app_discussion_flow` again.
+
+- **Provider faults and internal bugs are now distinguished.**
+  `helpers.is_provider_error` is the single classifier (`httpx.HTTPError`,
+  `TimeoutError`, `ConnectionError`, `StructuredOutputError`); everything
+  else is a bug in Consensus. `describe_turn_error` keeps its existing
+  contract for provider faults, `describe_internal_error` always names the
+  exception type (a bare `KeyError` renders as `'positions'`, which told a
+  user nothing), and `describe_flow_error` dispatches between them. A skipped
+  turn carries `error_kind: "provider" | "internal"` and a notice that says
+  which it was — the old text blamed the provider for every failure, including
+  handler and DB bugs. **Add new failure modes to the classifier, not to the
+  notice wording.**
+- **`helpers.post_notice` is how a notice reaches the transcript.** It appends
+  the in-memory `Message` first and wraps the `db.add_message` in try/except.
+  That ordering is the point: when the DB is what failed, an unguarded write
+  raised a *second* exception out of the handler and the user saw nothing.
+- **`conclude_discussion` returns `conclusion_error`** and posts a system
+  notice; `ConsensusApp.conclude_discussion` merges the key into `get_state()`
+  and the frontend toasts it. The discussion still concludes — deliberately;
+  an expensive session must not be left half-ended.
+- **A failed Triage recommendation is never presented as a recommendation.**
+  Both failure paths in `run_triage_recommender` (exception, and a moderator
+  with no `ai_config`) go through `_record_recommender_failure`, which writes
+  `recommender_error` + empty `recommendations` + the
+  `RECOMMENDER_FALLBACK_METHOD` fallback together. The function returns the
+  detail string; `generate_ai_turn` appends it to the recommend-phase message,
+  and `TriageConfirmHandler` prefixes its prompts with it. A later success
+  pops `recommender_error`, so retries do not leave stale warnings.
+  `TriageConfirmHandler.process_response` validates a backticked choice
+  against the **whole registry** when the shortlist is empty, so the notice's
+  "name the method you want" is actually actionable.
+- **`tests/test_evidence_flow.py` now uses `open_discussion`** for its fake
+  phase method. It used `double_crux`, which really has a tracked `test_crux`
+  phase, so the stub was indistinguishable from the real method and the
+  monkeypatches proved nothing (verified: repointing them at a module that
+  intercepts nothing used to leave the file green, and now fails).
+- Golden rule 5 was confirmed satisfied for these paths: retries with
+  exponential backoff live one layer down in `ai_client._post_with_retry`
+  (`MAX_RETRIES`, `RETRY_BASE_DELAY`), so the flow layer sees only exhausted
+  failures.
+
+Flow-package coverage went 89% → 97%; `conclusion.py` 59% → 100%. `mediate`,
+the `reassign_turn` wrapper, moderator-summary cost attribution and the
+turn/complete-turn guard branches now have tests
+(`tests/test_flow_moderator_actions.py`); the error contracts are in
+`tests/test_flow_error_visibility.py` and
+`tests/test_flow_triage_recommender.py`.
 
 ## Open work
 
@@ -119,11 +170,6 @@ chunking+embedding / RAG Q&A are three separable concerns).
    propagate to the package logger.
 4. `uvx ruff check --select F <pkg>` for unused/undefined names, then the
    full suite.
-
-### Dependabot
-
-- PR #68 — `cryptography` 48.0.1 → 50.0.0 (major bump; needs a compatibility
-  check plus a green suite before merge).
 
 ### Deferred follow-ups (no issue filed)
 

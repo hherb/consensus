@@ -13,8 +13,9 @@ import re
 
 import httpx
 
+from ..database import Database
 from ..methods import get_active_method
-from ..models import Discussion
+from ..models import Discussion, Entity, Message, MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,81 @@ _FORMATTED_PASS_RE = re.compile(r"^.+ passed this round\.$")
 
 #: Maximum length of the provider error body echoed into a skip notice.
 _ERROR_DETAIL_LENGTH = 200
+
+
+def is_provider_error(e: Exception) -> bool:
+    """Report whether ``e`` came from the provider or the network.
+
+    ``generate_ai_turn`` and friends wrap large blocks that include method
+    handlers, serialisation and DB writes, so a bare ``except Exception``
+    cannot honestly call every failure an "API error" — a ``KeyError`` in a
+    phase handler is a bug in Consensus and telling the user their provider
+    failed sends debugging the wrong way (issue #74).  Everything listed
+    here is outside our control; everything else is internal.
+
+    ``StructuredOutputError`` counts as a provider fault: it is raised when
+    the model will not satisfy a forced tool call.
+    """
+    from ..structured_output import StructuredOutputError
+
+    return isinstance(
+        e, (httpx.HTTPError, TimeoutError, ConnectionError,
+            StructuredOutputError),
+    )
+
+
+def describe_internal_error(e: Exception) -> str:
+    """Return a user-facing description of a non-provider (internal) error.
+
+    The exception type is always named: ``str(KeyError("positions"))`` is
+    just ``'positions'``, which on its own tells a user nothing about what
+    went wrong (issue #74).
+    """
+    message = str(e).strip()
+    name = type(e).__name__
+    return f"{name}: {message}" if message else name
+
+
+def describe_flow_error(e: Exception) -> str:
+    """Describe any caught flow error, provider or internal.
+
+    Dispatches to :func:`describe_turn_error` for provider/network faults
+    (which know how to dig the actionable message out of an HTTP response
+    body) and to :func:`describe_internal_error` otherwise.
+    """
+    return (describe_turn_error(e) if is_provider_error(e)
+            else describe_internal_error(e))
+
+
+def post_notice(
+    discussion: Discussion, db: Database, entity: Entity, content: str,
+    role: MessageRole = MessageRole.SYSTEM,
+) -> Message:
+    """Append a notice to the transcript and persist it best-effort.
+
+    Notices exist to make a caught error visible (golden rule 6), so the
+    persistence step must never be able to suppress them: when the error
+    being reported *is* a database failure, ``db.add_message`` raises too
+    and would otherwise replace the user-facing notice with a second
+    exception escaping the handler (issue #74).  The in-memory message is
+    appended first and always returned; a failed write is logged only.
+    """
+    msg = Message(
+        entity_id=entity.id, entity_name=entity.name,
+        content=content, role=role,
+    )
+    discussion.messages.append(msg)
+    try:
+        db.add_message(
+            discussion.id, entity.id, content, role.value,
+            turn_number=discussion.turn_number,
+        )
+    except Exception:
+        logger.exception(
+            "Could not persist the %s notice for discussion %s",
+            role.value, discussion.id,
+        )
+    return msg
 
 
 def describe_turn_error(e: Exception) -> str:

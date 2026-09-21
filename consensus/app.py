@@ -871,11 +871,17 @@ class ConsensusApp:
     async def conclude_discussion(self) -> dict:
         """End the discussion, generating a final synthesis if the moderator is AI."""
         self._cancel_pending_user_inputs()
-        await app_discussion_flow.conclude_discussion(
+        result = await app_discussion_flow.conclude_discussion(
             self.discussion, self.moderator, self.db, self.db.pricing,
         )
         self._notify()
-        return self.get_state()
+        state = self.get_state()
+        # The frontend feeds this straight to onStateUpdate, so a failed
+        # synthesis has to ride along on the state dict or it is lost
+        # before it ever reaches the UI (golden rule 6, issue #71).
+        if result.get("conclusion_error"):
+            state["conclusion_error"] = result["conclusion_error"]
+        return state
 
     # ------------------------------------------------------------------
     # History
