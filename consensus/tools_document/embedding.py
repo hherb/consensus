@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from typing import Optional
 
 from ..background import spawn_background
-from .constants import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
+from ..dbkey import ScopedKey, scoped_key
+from .constants import (
+    DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, INDEXING_RETRY_INTERVAL,
+)
+from .errors import DocumentIndexError
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +31,10 @@ def _unpack_embedding(blob: bytes) -> list[float]:
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    # Differing dimensions mean the vectors came from different embedding
-    # models; zip() would silently truncate and yield a meaningless score, so
-    # treat them as unrelated instead.
+    # Defensive: _rank_by_similarity now filters mismatched rows out before
+    # scoring, so this branch should be unreachable from the ranking path.
+    # Kept because a bare zip() would silently truncate and yield a
+    # meaningless score for any future caller.
     if len(a) != len(b):
         return 0.0
     dot = sum(x * y for x, y in zip(a, b))
@@ -45,9 +50,10 @@ class RankingResult:
     """Ranked rows plus what was discarded reaching them.
 
     ``skipped_dim_mismatch`` is what makes an embedding-model change
-    diagnosable: differing dimensions score 0.0, so without the count a
-    re-index requirement is indistinguishable from a document that simply
-    does not address the question (issue #78 defects 4, 5).
+    diagnosable: differing dimensions used to score 0.0 and sink silently
+    to the bottom, leaving a re-index requirement indistinguishable from a
+    document that simply does not address the question. They are counted
+    here instead, and never scored (issue #78 defects 4, 5).
     """
 
     ranked: list[tuple[float, dict]]
@@ -115,7 +121,7 @@ def _rank_by_similarity(
 # Background embedding task
 # ---------------------------------------------------------------------------
 
-DocKey = tuple[str, int]
+DocKey = ScopedKey
 
 
 def doc_key(db, doc_id: int) -> DocKey:
@@ -135,9 +141,14 @@ def doc_key(db, doc_id: int) -> DocKey:
 
     Returns:
         A ``(db_path, doc_id)`` key that is unique across sessions.
+
+    Raises:
+        ValueError: If *db* carries no usable path. Defaulting to ``""``
+            would produce a valid-looking key that collides across every
+            session — reintroducing, silently, the very bug this function
+            exists to prevent (issue #78 whole-branch review).
     """
-    path = db if isinstance(db, str) else getattr(db, "db_path", "")
-    return (str(path), doc_id)
+    return scoped_key(db, doc_id)
 
 
 # Documents currently being embedded, keyed by (db_path, doc_id).
@@ -155,15 +166,30 @@ class IndexingFailure:
     Attributes:
         consecutive_failures: How many passes in a row have failed.
         last_error: The embedder's own message from the last failure.
-        last_attempt: ``time.time()`` of that failure, which
-            ``_doc_ask_handler`` compares against
-            ``INDEXING_RETRY_INTERVAL`` to decide whether re-kicking the
-            pass is worth it yet.
+        last_attempt: ``time.monotonic()`` of that failure. Monotonic, not
+            wall clock: an NTP step or a laptop sleep/wake moves
+            ``time.time()`` and would either stall the retry gate
+            indefinitely or open it immediately.
     """
 
     consecutive_failures: int
     last_error: str
     last_attempt: float
+
+    def should_retry(self, now: Optional[float] = None) -> bool:
+        """Whether enough time has passed to re-attempt the indexing pass.
+
+        The rule lives on the type that owns the timestamp, so a second
+        call site cannot forget the comparison or use the wrong clock.
+
+        Args:
+            now: Current ``time.monotonic()`` value; defaults to reading it.
+
+        Returns:
+            True once ``INDEXING_RETRY_INTERVAL`` has elapsed.
+        """
+        current = time.monotonic() if now is None else now
+        return current - self.last_attempt >= INDEXING_RETRY_INTERVAL
 
 
 # Documents whose last embedding pass did not fully succeed, keyed by
@@ -199,7 +225,7 @@ def _record_indexing_failure(db, doc_id: int, error: str) -> None:
         consecutive_failures=(
             previous.consecutive_failures + 1 if previous else 1),
         last_error=error,
-        last_attempt=time.time(),
+        last_attempt=time.monotonic(),
     )
 
 
@@ -216,15 +242,27 @@ def _clear_indexing_failure(db, doc_id: int) -> None:
 def _spawn_embedding_pass(doc_id: int, db, embed_client) -> None:
     """Schedule the background embedding pass for one document.
 
+    The in-flight marker is released from a done callback as well as from
+    the pass's own ``finally``. A task cancelled before its first step (loop
+    shutdown, multi-user session teardown) never enters the coroutine body,
+    so the ``finally`` never runs: the key stayed in ``_embedding_docs`` for
+    the process lifetime, no failure was recorded, and ``doc_ask`` reported
+    "still being indexed, please try again shortly" forever — issue #78
+    defect 3 through a narrower door (whole-branch review).
+
     Args:
         doc_id: Id of the document whose chunks should be embedded.
         db: Database handle passed through to the embedding pass.
         embed_client: Embedding client passed through to the embedding pass.
     """
-    spawn_background(
+    key = doc_key(db, doc_id)
+    task = spawn_background(
         _embed_document_chunks(doc_id, db, embed_client),
         f"embed document {doc_id}",
     )
+    # discard() is idempotent, so overlapping with the pass's own finally
+    # is harmless; this only has to cover the never-started case.
+    task.add_done_callback(lambda _t: _embedding_docs.discard(key))
 
 
 def _split_into_sub_chunks(text: str, size: int = DEFAULT_CHUNK_SIZE,
@@ -242,7 +280,9 @@ def _split_into_sub_chunks(text: str, size: int = DEFAULT_CHUNK_SIZE,
     return sub_chunks
 
 
-async def _embed_single_chunk(chunk, doc_id: int, db, embed_client) -> bool:
+async def _embed_single_chunk(
+    chunk, doc_id: int, db, embed_client,
+) -> tuple[bool, str]:
     """Embed a single chunk, re-chunking if it exceeds the model context.
 
     On context-length errors the chunk is split into smaller overlapping
@@ -253,7 +293,12 @@ async def _embed_single_chunk(chunk, doc_id: int, db, embed_client) -> bool:
     backoff (``EMBED_MAX_RETRIES``) before raising. A caller that supplies a
     plain embedding client therefore gets no retries at all.
 
-    Returns True on success, False once the embedding client gives up.
+    Returns:
+        ``(ok, error)``. The error message is returned rather than only
+        logged because it is the actionable half — "Cannot connect to
+        embedding service at http://localhost:11434" tells the user what to
+        fix, where "1/1 chunks could not be embedded" does not (issue #78
+        whole-branch review). It reaches the user via ``IndexingFailure``.
     """
     from ..tools_memory import EmbeddingContextLengthError
 
@@ -261,7 +306,7 @@ async def _embed_single_chunk(chunk, doc_id: int, db, embed_client) -> bool:
         vec = await embed_client.embed(chunk["content"])
         blob = _pack_embedding(vec)
         db.set_chunk_embedding(chunk["id"], blob)
-        return True
+        return True, ""
 
     except EmbeddingContextLengthError:
         # Re-chunk into smaller overlapping pieces
@@ -282,6 +327,7 @@ async def _embed_single_chunk(chunk, doc_id: int, db, embed_client) -> bool:
         ) + 1
 
         all_ok = True
+        last_error = ""
         step = DEFAULT_CHUNK_SIZE - DEFAULT_CHUNK_OVERLAP
         for i, sub_text in enumerate(sub_texts):
             # Store sub-chunk in DB with position relative to parent
@@ -301,17 +347,18 @@ async def _embed_single_chunk(chunk, doc_id: int, db, embed_client) -> bool:
                     "of doc %d: %s", sub_id, chunk["id"], doc_id, e,
                 )
                 all_ok = False
+                last_error = str(e)
 
         # Remove the original oversized chunk since it's been replaced
         db.delete_document_chunk(chunk["id"])
-        return all_ok
+        return all_ok, last_error
 
     except Exception as e:
         logger.error(
             "Embed chunk %d of doc %d failed: %s",
             chunk["id"], doc_id, e,
         )
-        return False
+        return False, str(e)
 
 
 async def _embed_document_chunks(doc_id: int, db, embed_client) -> None:
@@ -337,20 +384,36 @@ async def _embed_document_chunks(doc_id: int, db, embed_client) -> None:
         embedded_ids = {c["id"] for c in existing}
 
         failed_chunks = []
+        last_error = ""
         for chunk in chunks:
             if chunk["id"] in embedded_ids:
                 continue
-            ok = await _embed_single_chunk(chunk, doc_id, db, embed_client)
+            ok, error = await _embed_single_chunk(
+                chunk, doc_id, db, embed_client,
+            )
             if ok:
                 embedded_ids.add(chunk["id"])
             else:
                 failed_chunks.append(chunk)
+                last_error = error or last_error
 
         if failed_chunks:
+            # Name the embedder's own failure, not just a count: the cause
+            # is what the user can act on (issue #78 whole-branch review).
             detail = (
                 f"{len(failed_chunks)}/{len(chunks)} chunks could not be "
                 "embedded"
             )
+            if last_error:
+                detail = f"{detail}: {last_error}"
+            # Typed at the fault site like every other failure in this
+            # package; str() folds in the hint, which is the half the user
+            # can act on. The pass itself never raises (it runs detached),
+            # so the error is carried as the recorded detail.
+            detail = str(DocumentIndexError(
+                detail,
+                hint="check the embedding service is running and reachable",
+            ))
             logger.warning("Doc %d: %s", doc_id, detail)
             _record_indexing_failure(db, doc_id, detail)
         else:

@@ -70,7 +70,18 @@ def chapter_range(
 
     Returns:
         ``(from_char, to_char, subsection_headers)``.
+
+    Raises:
+        ValueError: If *index* is outside *sections*. The only caller
+            derives the index by enumerating the same list, so this cannot
+            fire today — but an undocumented caller-guarantees precondition
+            is the anti-pattern this module exists to remove, and a bare
+            ``IndexError`` here would escape the handler untyped.
     """
+    if not 0 <= index < len(sections):
+        raise ValueError(
+            f"section index {index} out of range (0..{len(sections) - 1})"
+        )
     head = sections[index]
     from_char = head["from_char"]
     subsections: list[str] = []

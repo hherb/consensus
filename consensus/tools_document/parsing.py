@@ -8,7 +8,7 @@ import asyncio
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 
@@ -41,7 +41,29 @@ class ParsedDocument:
 
     markdown: str
     fidelity: str = FIDELITY_FULL
-    notes: list[str] = field(default_factory=list)
+    notes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Reject the states the parser should have raised on instead.
+
+        ``frozen=True`` blocks rebinding, not mutation, so ``notes`` is a
+        tuple: a list would stay appendable and would make ``__hash__``
+        raise despite the dataclass being frozen.
+
+        Raises:
+            ValueError: If ``fidelity`` is not one of the two known values,
+                or a degraded extraction records no reason. A typo'd
+                fidelity compares unequal to *both* constants, so a
+                downstream ``== FIDELITY_DEGRADED`` check would silently
+                read it as full fidelity.
+        """
+        if self.fidelity not in (FIDELITY_FULL, FIDELITY_DEGRADED):
+            raise ValueError(
+                f"fidelity must be {FIDELITY_FULL!r} or "
+                f"{FIDELITY_DEGRADED!r}, got {self.fidelity!r}"
+            )
+        if self.fidelity == FIDELITY_DEGRADED and not self.notes:
+            raise ValueError("a degraded extraction must record why")
 
 
 def parse_document(
@@ -88,6 +110,29 @@ def _parse_text(
             an unrecognised binary format produces under
             ``errors="replace"`` (issue #78 defect 7).
     """
+    return ParsedDocument(markdown=_decode_text(content, filename, mime_type))
+
+
+def _decode_text(content: bytes, filename: str, mime_type: str) -> str:
+    """Decode bytes as UTF-8, rejecting what is really binary.
+
+    Shared by the plain-text and HTML parsers: an unrecognised binary blob
+    served as ``text/html`` used to bypass this check entirely and ingest as
+    tag-stripped mojibake (issue #78 whole-branch review).
+
+    Args:
+        content: The raw bytes.
+        filename: Used only for the error message.
+        mime_type: Used only for the error message.
+
+    Returns:
+        The decoded text.
+
+    Raises:
+        DocumentParseError: If the bytes contain a NUL byte (a strong binary
+            signal) or decode with more than ``MAX_REPLACEMENT_CHAR_RATIO``
+            of the result being U+FFFD replacement characters.
+    """
     if b"\x00" in content:
         raise DocumentParseError(
             f"{filename} is binary, not text ({mime_type})",
@@ -102,7 +147,7 @@ def _parse_text(
                 f"({ratio:.0%} unreadable characters) — it looks binary",
                 hint="only PDF, HTML, plain text and markdown can be ingested",
             )
-    return ParsedDocument(markdown=text)
+    return text
 
 
 def _pages_via_pdfplumber(content: bytes) -> list[str]:
@@ -231,10 +276,11 @@ def _parse_html(content: bytes) -> ParsedDocument:
     """Extract readable text from HTML, marking regex fallbacks degraded.
 
     Raises:
-        DocumentParseError: If neither trafilatura nor the regex fallback
-            can find any readable text — the page is effectively empty.
+        DocumentParseError: If the bytes are really binary, or if neither
+            trafilatura nor the regex fallback can find any readable text —
+            the page is effectively empty.
     """
-    html_text = content.decode("utf-8", errors="replace")
+    html_text = _decode_text(content, "the HTML document", "text/html")
     try:
         import trafilatura
         text = trafilatura.extract(
@@ -260,11 +306,11 @@ def _parse_html(content: bytes) -> ParsedDocument:
     return ParsedDocument(
         markdown=stripped,
         fidelity=FIDELITY_DEGRADED,
-        notes=[
+        notes=(
             "Readability extraction failed; this text was produced by "
             "stripping HTML tags and may contain navigation, cookie "
             "banners or script content.",
-        ],
+        ),
     )
 
 

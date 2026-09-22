@@ -339,7 +339,7 @@ def test_plain_text_parses_at_full_fidelity():
                                     "text/markdown")
     assert parsed.markdown == "# Title\n\nBody."
     assert parsed.fidelity == "full"
-    assert parsed.notes == []
+    assert parsed.notes == ()
 
 
 def test_html_regex_fallback_is_marked_degraded_and_logged(caplog, monkeypatch):
@@ -572,6 +572,10 @@ def _clear_indexing_state():
 async def test_pass_crash_is_logged_not_swallowed(tmp_db, caplog):
     """A crash inside the pass logs a traceback and records a failure."""
     class ExplodingDb:
+        # A locked database still has a path; doc_key requires one, because
+        # defaulting it to "" produces a key that collides across sessions.
+        db_path = "/tmp/exploding.db"
+
         def get_document_chunks(self, doc_id):
             raise RuntimeError("database is locked")
 
@@ -781,12 +785,21 @@ async def test_doc_ask_interpretation_failure_does_not_log_a_traceback(
     )
 
     context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
-    with caplog.at_level(logging.ERROR):
+    # At WARNING, not ERROR: the code logs at WARNING, so an ERROR-level
+    # capture left caplog.text empty and the assertion below vacuously true
+    # — it passed even against a handler that logged nothing at all.
+    with caplog.at_level(logging.WARNING):
         await handlers_rag._doc_ask_handler(
             {"document_id": doc_id, "question": "what?"},
             context, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
         )
 
+    records = [r for r in caplog.records if "interpretation failed" in r.message]
+    assert records, "the failure must be logged"
+    assert all(r.levelno == logging.WARNING for r in records)
+    # exc_info is what turns a warning into a traceback; assert its absence
+    # directly rather than grepping the rendered text.
+    assert all(r.exc_info is None for r in records)
     assert "Traceback" not in caplog.text
 
 
@@ -1271,11 +1284,17 @@ async def test_doc_summary_interpretation_failure_does_not_log_a_traceback(
     )
 
     context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
-    with caplog.at_level(logging.ERROR):
+    # WARNING, not ERROR — see the doc_ask twin: an ERROR capture made this
+    # assertion vacuous, since the code under test logs at WARNING.
+    with caplog.at_level(logging.WARNING):
         await handlers_rag._doc_summary_handler(
             {"document_id": doc_id}, context, tmp_db, None, FakeApp(tmp_db),
         )
 
+    records = [r for r in caplog.records if "summary" in r.message.lower()]
+    assert records, "the failure must be logged"
+    assert all(r.levelno == logging.WARNING for r in records)
+    assert all(r.exc_info is None for r in records)
     assert "Traceback" not in caplog.text
 
 
@@ -1389,3 +1408,347 @@ async def test_doc_get_chapter_returns_subsection_text(tmp_db):
     assert "Twelve adults." in result.content
     assert "Results body." not in result.content
     assert result.metadata["subsections_included"] == ["Participants"]
+
+
+# ---------------------------------------------------------------------------
+# Whole-branch review follow-ups: gaps the mutation pass found, plus the
+# defects the review itself turned up (see HANDOVER for the catalogue).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_doc_summary_rejects_an_inverted_range(tmp_db):
+    """doc_summary validated its range, but nothing pinned that it did.
+
+    Replacing ``resolve_range`` here with a lenient clamp left the whole
+    suite green while ``doc_summary(from_char=500, to_char=100)`` returned
+    "Selected range is empty." as a *non-error* — defect 5 verbatim, on the
+    one call site validation.py's own docstring calls historically guarded.
+    """
+    doc_id = tmp_db.add_document(
+        filename="inv.md", title="Inv", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None,
+        markdown="# Inv\n\n" + "y" * 1000, char_count=1007, sections_json="[]",
+    )
+    context = ToolContext(caller_entity_id=0, discussion_id=0)
+    result = await handlers_rag._doc_summary_handler(
+        {"document_id": doc_id, "from_char": 500, "to_char": 100},
+        context, tmp_db, None, None,
+    )
+    assert result.is_error
+    assert "empty" not in result.content.lower()
+
+
+def test_nul_free_binary_is_rejected_as_mojibake():
+    """The replacement-character guard was unreachable from the tests.
+
+    The only test claiming to cover it fed JPEG bytes containing a NUL, so
+    it short-circuited on the earlier binary check and ``if False:`` in
+    place of the ratio comparison broke nothing. UTF-16 text carries no NUL
+    in this sample but decodes to mostly U+FFFD.
+    """
+    payload = b"\xc3\x28" * 200  # invalid UTF-8, no NUL byte
+    assert b"\x00" not in payload
+    with pytest.raises(DocumentParseError, match="looks binary"):
+        parsing.parse_document(payload, "weird.txt", "text/plain")
+
+
+def test_binary_served_as_html_is_rejected_too():
+    """_parse_html used to skip the guard entirely and tag-strip mojibake."""
+    payload = b"\xc3\x28" * 200
+    with pytest.raises(DocumentParseError, match="looks binary"):
+        parsing.parse_document(payload, "weird.html", "text/html")
+
+
+def test_parsed_document_rejects_an_unknown_fidelity():
+    """A typo'd fidelity compares unequal to *both* constants."""
+    with pytest.raises(ValueError, match="fidelity"):
+        parsing.ParsedDocument(markdown="x", fidelity="ful")
+
+
+def test_parsed_document_rejects_degraded_without_a_reason():
+    """"Degraded" with no note is a warning nobody can act on."""
+    with pytest.raises(ValueError, match="why"):
+        parsing.ParsedDocument(markdown="x", fidelity="degraded")
+
+
+def test_parsed_document_notes_are_immutable():
+    """frozen=True blocks rebinding, not list mutation."""
+    parsed = parsing.ParsedDocument(markdown="x")
+    with pytest.raises(AttributeError):
+        parsed.notes.append("sneaky")
+
+
+def test_doc_key_requires_a_db_path():
+    """Defaulting the path to "" produced a cross-session collision."""
+    class Pathless:
+        pass
+
+    with pytest.raises(ValueError, match="db_path"):
+        embedding.doc_key(Pathless(), 1)
+
+
+def test_summary_snippet_distinguishes_pending_from_absent():
+    """'pending' means nobody tried; it read as 'had nothing to say'."""
+    assert "generated" in handlers._summary_snippet("", "pending")
+    assert handlers._summary_snippet("", "pending") != \
+        handlers._summary_snippet("", "ok")
+    assert handlers._summary_snippet("", "pending") != \
+        handlers._summary_snippet("", "failed")
+
+
+def test_add_document_rejects_an_unknown_summary_status(tmp_db):
+    """SQLite cannot CHECK an added column, so the INSERT path enforces it."""
+    with pytest.raises(ValueError, match="summary_status"):
+        tmp_db.add_document(
+            filename="bad.md", title="Bad", summary="", mime_type="text/md",
+            source_type="upload", source_url=None, markdown="x",
+            char_count=1, sections_json="[]",
+            summary_status="(LLM call failed: boom)",
+        )
+
+
+def test_update_document_summary_writes_the_status_too(tmp_db):
+    """Updating text without the status leaves a stale 'failed'/'ok'."""
+    doc_id = tmp_db.add_document(
+        filename="u.md", title="U", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="x", char_count=1,
+        sections_json="[]", summary_status="failed",
+    )
+    tmp_db.update_document_summary(doc_id, "A real summary.")
+    doc = tmp_db.get_document(doc_id)
+    assert doc["summary"] == "A real summary."
+    assert doc["summary_status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_empty_completion_raises_instead_of_summarising_nothing(
+    tmp_db, sample_ai_entity, monkeypatch,
+):
+    """An empty choice used to store summary_status='ok' with no summary."""
+    from tests.document_helpers import FakeApp
+
+    class EmptyClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def complete(self, **kwargs):
+            class R:
+                content = "   "
+            return R()
+
+        async def close(self):
+            pass
+
+    patch_where_defined(
+        monkeypatch, llm._call_interpretation_llm, "AIClient", EmptyClient,
+    )
+    context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
+    with pytest.raises(DocumentInterpretationError, match="empty response"):
+        await llm._call_interpretation_llm(
+            FakeApp(tmp_db), context, system_prompt="s", user_prompt="u",
+        )
+
+
+@pytest.mark.asyncio
+async def test_embedder_error_reaches_the_recorded_failure(tmp_db):
+    """The detail named a count, never the cause.
+
+    "12/12 chunks could not be embedded" tells the user nothing to act on;
+    the embedder's own message names the endpoint that is down.
+    """
+    from tests.document_helpers import FakeEmbedClient
+
+    doc_id = tmp_db.add_document(
+        filename="e.md", title="E", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# E\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+
+    client = FakeEmbedClient(error=RuntimeError(
+        "Cannot connect to embedding service at http://localhost:11434",
+    ))
+    await embedding._embed_document_chunks(doc_id, tmp_db, client)
+
+    failure = embedding.get_indexing_failure(tmp_db, doc_id)
+    assert failure is not None
+    assert "localhost:11434" in failure.last_error
+    # and the hint the typed error carries
+    assert "embedding service" in failure.last_error.lower()
+
+
+@pytest.mark.asyncio
+async def test_partial_dimension_mismatch_is_reported(
+    tmp_db, sample_ai_entity, monkeypatch,
+):
+    """A *partial* mismatch answered from the survivors and said nothing.
+
+    skipped_dim_mismatch was consulted only when nothing ranked at all, so
+    a document holding two embedding dimensions answered from whichever
+    chunks matched, with no hint that the rest were excluded.
+    """
+    from tests.document_helpers import FakeApp, FakeEmbedClient
+
+    doc_id = tmp_db.add_document(
+        filename="p.md", title="P", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# P\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    good = tmp_db.add_document_chunk(doc_id, 0, "Matching text.", 0, 14, None)
+    stale = tmp_db.add_document_chunk(doc_id, 1, "Stale text.", 14, 25, None)
+    tmp_db.set_chunk_embedding(good, _pack_embedding([1.0, 0.0]))
+    # Three dimensions: embedded before the model changed.
+    tmp_db.set_chunk_embedding(stale, _pack_embedding([1.0, 0.0, 0.0]))
+
+    async def answer(*args, **kwargs):
+        return "An answer from the surviving passage."
+
+    patch_where_defined(
+        monkeypatch, handlers_rag._doc_ask_handler,
+        "_call_interpretation_llm", answer,
+    )
+
+    context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
+    result = await handlers_rag._doc_ask_handler(
+        {"document_id": doc_id, "question": "what?"},
+        context, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
+    )
+    assert not result.is_error
+    assert "incomplete_retrieval" in result.content
+    assert "re-index" in result.content.lower()
+
+
+def test_migration_backfills_pre_78_error_summaries(tmp_db):
+    """015's DEFAULT 'ok' marked the defect-1 rows as having a good summary.
+
+    Those rows' summary column literally holds the old helper's error
+    string, so doc_list kept reprinting an LLM error to every participant.
+    Exercised through the real migrator, not by running the SQL by hand.
+    """
+    from consensus import migrator
+
+    # A row as the pre-#78 code would have written it.
+    tmp_db.conn.execute(
+        "INSERT INTO documents (filename, title, summary, mime_type, "
+        "source_type, source_url, markdown, char_count, sections_json, "
+        "created_at, summary_status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        ("old.md", "Old", "(LLM call failed: 401 Unauthorized)",
+         "text/markdown", "upload", None, "# Old", 5, "[]", 0.0, "ok"),
+    )
+    tmp_db.conn.execute(
+        "INSERT INTO documents (filename, title, summary, mime_type, "
+        "source_type, source_url, markdown, char_count, sections_json, "
+        "created_at, summary_status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        ("fine.md", "Fine", "A genuine summary.", "text/markdown",
+         "upload", None, "# Fine", 6, "[]", 0.0, "ok"),
+    )
+    # Rewind 016 so the real migrator re-applies it over those rows.
+    tmp_db.conn.execute("DELETE FROM migrations WHERE version=016")
+    tmp_db.conn.commit()
+    migrator._migrations_done.discard(tmp_db.db_path)
+    migrator.run_migrations(tmp_db.conn, tmp_db._lock, tmp_db.db_path)
+
+    rows = {
+        r[0]: (r[1], r[2]) for r in tmp_db.conn.execute(
+            "SELECT filename, summary, summary_status FROM documents"
+        ).fetchall()
+    }
+    assert rows["old.md"] == ("", "failed")
+    # A real summary is left alone.
+    assert rows["fine.md"] == ("A genuine summary.", "ok")
+
+
+@pytest.mark.asyncio
+async def test_fetch_retries_a_500(monkeypatch):
+    """The docstring advertises 5xx retries; only 4xx no-retry was pinned."""
+    request = httpx.Request("GET", "https://example.com/a.txt")
+    server_error = httpx.Response(500, request=request)
+
+    made = {}
+
+    def factory(**kwargs):
+        client = _FakeAsyncClient([server_error, _ok_response()])
+        made["client"] = client
+        return client
+
+    monkeypatch.setattr(parsing.httpx, "AsyncClient", factory)
+    monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
+
+    content, _filename, _mime = await parsing.fetch_url_content(
+        "https://example.com/a.txt")
+    assert content == b"hello"
+    assert made["client"].calls == 2
+
+
+@pytest.mark.asyncio
+async def test_fetch_backoff_is_exponential(monkeypatch):
+    """"Exponential backoff" (golden rule 5) was claimed but not asserted.
+
+    Every fetch test patches sleep to a no-op, so a change to a fixed 1s
+    delay — or to 2**attempt without the base — passed unnoticed.
+    """
+    from consensus.tools_document.constants import (
+        URL_FETCH_BASE_DELAY, URL_FETCH_MAX_RETRIES,
+    )
+
+    delays = []
+
+    async def record(seconds):
+        delays.append(seconds)
+
+    def factory(**kwargs):
+        return _FakeAsyncClient(
+            [httpx.TimeoutException("slow")] * URL_FETCH_MAX_RETRIES,
+        )
+
+    monkeypatch.setattr(parsing.httpx, "AsyncClient", factory)
+    monkeypatch.setattr(parsing.asyncio, "sleep", record)
+
+    with pytest.raises(DocumentParseError):
+        await parsing.fetch_url_content("https://example.com/a.txt")
+
+    assert delays == [
+        URL_FETCH_BASE_DELAY * 2 ** i for i in range(len(delays))
+    ]
+    assert delays == sorted(delays) and len(delays) >= 2
+
+
+@pytest.mark.asyncio
+async def test_a_raising_post_notice_does_not_break_the_tool_call(
+    tmp_db, notice_app, monkeypatch,
+):
+    """The reporter of last resort must not raise one of its own.
+
+    The guard's docstring promises this (the lesson of issue #74), but the
+    only test exercised ``discussion is None``, which returns *before* the
+    risky call — so ``except Exception: raise`` broke nothing.
+    """
+    from tests.document_helpers import FakeEmbedClient
+
+    doc_id = tmp_db.add_document(
+        filename="n.md", title="N", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# N\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+    embedding._record_indexing_failure(tmp_db, doc_id, "embedder is down")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("transcript is read-only")
+
+    # _post_indexing_notice imports post_notice inside the function body,
+    # so the binding to replace is the one in its defining module.
+    from consensus.app_discussion_flow import helpers as flow_helpers
+    monkeypatch.setattr(flow_helpers, "post_notice", boom)
+
+    context = ToolContext(
+        caller_entity_id=0, discussion_id=notice_app.discussion.id,
+    )
+    result = await handlers_rag._doc_ask_handler(
+        {"document_id": doc_id, "question": "q"},
+        context, tmp_db, FakeEmbedClient(), notice_app,
+    )
+    # The tool call still reports the indexing failure it was called about.
+    assert result.is_error
+    assert "embedder is down" in result.content

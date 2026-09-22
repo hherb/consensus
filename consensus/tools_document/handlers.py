@@ -1,4 +1,9 @@
-"""Handlers behind the eight ``doc_*`` tools."""
+"""The six non-RAG ``doc_*`` handlers.
+
+``doc_add``, ``doc_list``, ``doc_get_length``, ``doc_get_text``,
+``doc_get_sections`` and ``doc_get_chapter``. The two retrieval handlers,
+``doc_ask`` and ``doc_summary``, live in ``handlers_rag``.
+"""
 
 import json
 import logging
@@ -8,6 +13,7 @@ from ..tools import ToolContext, ToolResult
 from .constants import (
     AVAILABLE_HEADERS_HINT, LIBRARY_SEARCH_LIMIT, MIN_SIMILARITY_THRESHOLD,
     SUMMARY_SNIPPET_CHARS, SUMMARY_STATUS_FAILED, SUMMARY_STATUS_OK,
+    SUMMARY_STATUS_PENDING,
 )
 from .embedding import _rank_by_similarity
 from .errors import DocumentError
@@ -42,6 +48,9 @@ def _summary_snippet(summary: Optional[str], status: str) -> str:
         return text
     if status == SUMMARY_STATUS_FAILED:
         return "(summary unavailable — generation failed)"
+    if status == SUMMARY_STATUS_PENDING:
+        # Distinct from a failure and from an empty 'ok': nobody tried.
+        return "(no summary generated)"
     return "(no summary)"
 
 
@@ -116,6 +125,12 @@ async def _doc_list_handler(
         try:
             query_vec = await embed_client.embed(query)
         except Exception as e:
+            # Golden rule 6 wants it logged as well as shown; the traceback
+            # matters because this catch is broad enough to swallow a bug in
+            # the client as if it were a service outage.
+            logger.exception(
+                "Library search could not embed the query %r", query,
+            )
             return ToolResult(
                 content=f"Embedding service unavailable: {e}", is_error=True,
             )
@@ -167,6 +182,10 @@ async def _doc_list_handler(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars, "
                 f"score: {doc['best_score']:.2f})\n    {summary_snippet}"
             )
+        if ranking.skipped_dim_mismatch:
+            # Some documents were excluded from the search entirely. Silence
+            # here makes a partial library look like the whole one.
+            lines.append(f"\n{_reindex_message(ranking)}")
         return ToolResult(content="\n".join(lines), metadata={"count": len(docs_list)})
 
     elif full_library:
@@ -300,25 +319,25 @@ async def _doc_get_chapter_handler(
     if not sections:
         return ToolResult(content="No sections found in this document.", is_error=True)
 
-    # Find best matching section (case-insensitive substring match)
+    # Find best matching section (case-insensitive substring match). Only
+    # the index is tracked: carrying the matching dict alongside it made
+    # them two things that must agree, which is what left chapter_range
+    # taking an index the type checker could not prove was set.
     header_lower = header.lower()
-    best_match = None
-    best_index = None
+    best_index = -1
     best_score = 0.0
     for i, s in enumerate(sections):
         s_lower = s["header"].lower()
         if s_lower == header_lower:
-            best_match = s
             best_index = i
             break
         elif header_lower in s_lower or s_lower in header_lower:
             score = len(header_lower) / max(len(s_lower), 1)
             if score > best_score:
                 best_score = score
-                best_match = s
                 best_index = i
 
-    if not best_match:
+    if best_index < 0:
         available = ", ".join(s["header"] for s in sections[:AVAILABLE_HEADERS_HINT])
         return ToolResult(
             content=f"No section matching '{header}'. Available: {available}",
@@ -340,7 +359,7 @@ async def _doc_get_chapter_handler(
     return ToolResult(
         content=text,
         metadata={
-            "header": best_match["header"],
+            "header": sections[best_index]["header"],
             "from_char": from_char,
             "to_char": to_char,
             "subsections_included": subsections,

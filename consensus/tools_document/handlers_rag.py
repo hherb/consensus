@@ -15,11 +15,10 @@ maths and the background embedding pass.
 
 import json
 import logging
-import time
 
 from ..tools import ToolContext, ToolResult
 from .constants import (
-    INDEXING_RETRY_INTERVAL, MIN_SIMILARITY_THRESHOLD, PASSAGE_PREVIEW_CHARS,
+    MIN_SIMILARITY_THRESHOLD, PASSAGE_PREVIEW_CHARS,
     RAG_TOP_K, SUMMARY_CHUNK_LIMIT,
 )
 from .embedding import (
@@ -109,7 +108,7 @@ def _retry_indexing_if_due(
     Returns:
         True if a fresh pass was scheduled by this call.
     """
-    if time.time() - failure.last_attempt < INDEXING_RETRY_INTERVAL:
+    if not failure.should_retry():
         return False
     return _start_embedding_pass(db, doc_id, embed_client)
 
@@ -248,6 +247,11 @@ async def _doc_ask_handler(
     try:
         query_vec = await embed_client.embed(question)
     except Exception as e:
+        # Logged as well as shown (golden rule 6); the traceback matters
+        # because this catch would report a client-side bug as an outage.
+        logger.exception(
+            "doc_ask could not embed the question for document %d", doc_id,
+        )
         return ToolResult(
             content=f"Embedding service unavailable: {e}", is_error=True,
         )
@@ -336,6 +340,12 @@ async def _doc_ask_handler(
             for p in passages
         ],
     }
+    if ranking.skipped_dim_mismatch:
+        # A *partial* mismatch still answers, from whichever chunks carry
+        # the current dimension — but the answer is drawn from part of the
+        # document, and saying nothing would make that indistinguishable
+        # from a complete one (issue #78 whole-branch review).
+        result["incomplete_retrieval"] = _reindex_message(ranking)
     return ToolResult(
         content=json.dumps(result, indent=2),
         metadata=result,

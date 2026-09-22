@@ -148,5 +148,8 @@ async def ingest_document(
         "sections": len(sections),
         "chunks": len(chunks),
         "fidelity": parsed.fidelity,
-        "notes": parsed.notes,
+        # list(), not the tuple: this dict is both returned as metadata and
+        # JSON-encoded for the model, and a tuple round-trips through JSON
+        # as a list, leaving the two views unequal.
+        "notes": list(parsed.notes),
     }

@@ -8,8 +8,9 @@ the handler layer is the only place these become
 ``ToolResult(is_error=True)``.
 
 The pattern matches ``models.ConfigurationError`` and
-``ai_response.AIResponseFormatError`` in the discussion-flow layer
-(issues #71-#74).
+``ai_response.AIResponseFormatError``, established by the flow
+error-visibility work (issues #71-#74). Those two live in ``models`` and
+``ai_response``, not in ``app_discussion_flow/`` itself.
 """
 
 

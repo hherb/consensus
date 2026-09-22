@@ -251,13 +251,28 @@ Tools for ingesting, navigating, and querying reference documents during discuss
 
 Parameter names are defined in `consensus/tools_document/schemas.py` — check
 there before wiring a client, and `to_char` accepts `-1` for "end of document".
+Ranges are validated: a negative offset other than `-1`, a start past the end
+of the document, or a start at or after the end returns an error rather than
+an empty slice.
 
 `doc_ask` only answers from chunks that score above a relevance threshold; if
 none do, it says so rather than guessing. If chunks were indexed with a
-different embedding model (or indexing failed outright), it reports that a
-re-index is required instead of returning a stale or misleading answer.
+different embedding model, it reports that a re-index is required instead of
+returning a stale or misleading answer — and if only *some* chunks are
+affected it still answers, but flags the retrieval as incomplete. If indexing
+failed outright it instead reports the embedding service's own error message
+and retries in the background once the service recovers.
 
-Supports PDF (via pdfplumber), HTML (via trafilatura), and plain text/Markdown.
+Supports PDF (via pdfplumber), HTML (via trafilatura), and plain
+text/Markdown, with three deliberate rejections:
+
+- **Scanned or image-only PDFs are rejected** with a hint naming OCR. No text
+  is extracted from page images.
+- **Text files must be UTF-8.** Other encodings are rejected rather than
+  ingested as mojibake (charset detection is a recorded follow-up).
+- **HTML that readability extraction cannot handle** falls back to
+  tag-stripping, is marked `degraded`, and says so in the result — the text
+  may contain navigation or cookie banners rather than the article.
 
 ---
 

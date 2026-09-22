@@ -56,7 +56,21 @@ async def _call_interpretation_llm(
             temperature=INTERPRETATION_TEMPERATURE,
             max_tokens=ai_config.max_tokens,
         )
+        if not (response.content or "").strip():
+            # A content filter, an exhausted token budget or a local server
+            # under load returns an empty choice. Returned as-is it became a
+            # summary stored with status 'ok', and a doc_ask answer of ""
+            # that reads as "the document does not address this".
+            raise DocumentInterpretationError(
+                f"The interpretation model {ai_config.model} returned an "
+                "empty response",
+                hint="check the model's token budget and content filters",
+            )
         return response.content
+    except DocumentInterpretationError:
+        # Already typed and already specific — re-wrapping it below would
+        # bury the real hint under "the provider's API key, quota…".
+        raise
     except Exception as e:
         logger.warning("Interpretation LLM call failed: %s", e)
         raise DocumentInterpretationError(

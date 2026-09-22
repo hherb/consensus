@@ -4,6 +4,8 @@ Kept in their own module so that every other module in the package can import
 them without depending on the package ``__init__``.
 """
 
+from ..models import SummaryStatus
+
 # Chunking defaults
 DEFAULT_CHUNK_SIZE = 500  # characters
 DEFAULT_CHUNK_OVERLAP = 100  # characters
@@ -39,10 +41,12 @@ AVAILABLE_HEADERS_HINT = 10
 # Max chars of each retrieved passage returned by doc_ask
 PASSAGE_PREVIEW_CHARS = 500
 
-# Summary generation outcome recorded in documents.summary_status
-SUMMARY_STATUS_OK = "ok"
-SUMMARY_STATUS_FAILED = "failed"
-SUMMARY_STATUS_PENDING = "pending"
+# Summary generation outcome recorded in documents.summary_status. The
+# values live on models.SummaryStatus so the db layer can validate against
+# the same source; these aliases keep this package's call sites unchanged.
+SUMMARY_STATUS_OK = SummaryStatus.OK.value
+SUMMARY_STATUS_FAILED = SummaryStatus.FAILED.value
+SUMMARY_STATUS_PENDING = SummaryStatus.PENDING.value
 
 # Extraction fidelity reported by parse_document
 FIDELITY_FULL = "full"

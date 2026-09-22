@@ -112,6 +112,10 @@ consensus/
   session.py               Multi-user session manager (per-session app + SQLite)
   auth.py                  Authentication (email/password, OAuth)
   desktop.py               pywebview launcher and JS-Python bridge
+  background.py            spawn_background() — fire-and-forget asyncio tasks that
+                           keep a strong reference and log their exception
+  dbkey.py                 scoped_key() — scopes a row id to its database file so
+                           process-global state cannot collide across sessions
   tools.py                 Pluggable tool framework (ToolProvider, ToolRegistry)
   tools_builtin.py         Built-in web search tool (Brave + DuckDuckGo fallback)
   tools_document/          Document RAG tool provider package (constants, errors,

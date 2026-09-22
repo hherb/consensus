@@ -51,7 +51,9 @@ class TestEmbedSingleChunk:
         chunk = tmp_db.get_document_chunks(doc_id)[0]
         client = FakeEmbedClient([0.1, 0.2])
 
-        assert await embedding._embed_single_chunk(chunk, doc_id, tmp_db, client) is True
+        assert await embedding._embed_single_chunk(
+            chunk, doc_id, tmp_db, client,
+        ) == (True, "")
 
         stored = tmp_db.get_chunks_with_embeddings(doc_id)
         assert [c["id"] for c in stored] == [chunk_ids[0]]
@@ -65,7 +67,13 @@ class TestEmbedSingleChunk:
         chunk = tmp_db.get_document_chunks(doc_id)[0]
         client = FakeEmbedClient(error=RuntimeError("endpoint down"))
 
-        assert await embedding._embed_single_chunk(chunk, doc_id, tmp_db, client) is False
+        ok, error = await embedding._embed_single_chunk(
+            chunk, doc_id, tmp_db, client,
+        )
+        assert ok is False
+        # The embedder's own message is returned, not just a count: it is
+        # the half the user can act on (issue #78 whole-branch review).
+        assert "endpoint down" in error
         assert tmp_db.get_chunks_with_embeddings(doc_id) == []
 
     @pytest.mark.asyncio
@@ -83,7 +91,9 @@ class TestEmbedSingleChunk:
             [0.3], errors_by_text={long_text: EmbeddingContextLengthError("too long")},
         )
 
-        assert await embedding._embed_single_chunk(chunk, doc_id, tmp_db, client) is True
+        assert await embedding._embed_single_chunk(
+            chunk, doc_id, tmp_db, client,
+        ) == (True, "")
 
         remaining = tmp_db.get_document_chunks(doc_id)
         assert big_id not in [c["id"] for c in remaining]
@@ -130,7 +140,11 @@ class TestEmbedSingleChunk:
             first_sub: RuntimeError("sub failed"),
         })
 
-        assert await embedding._embed_single_chunk(chunk, doc_id, tmp_db, client) is False
+        ok, error = await embedding._embed_single_chunk(
+            chunk, doc_id, tmp_db, client,
+        )
+        assert ok is False
+        assert "sub failed" in error
         assert len(tmp_db.get_chunks_with_embeddings(doc_id)) == 2
         # The oversized parent is removed even when a sub-chunk fails.
         assert big_id not in [c["id"] for c in tmp_db.get_document_chunks(doc_id)]
@@ -153,7 +167,9 @@ class TestEmbedSingleChunk:
             chunk["content"]: EmbeddingContextLengthError("x"),
         })
 
-        assert await embedding._embed_single_chunk(chunk, doc_id, tmp_db, client) is True
+        assert await embedding._embed_single_chunk(
+            chunk, doc_id, tmp_db, client,
+        ) == (True, "")
         assert sorted(c["chunk_index"] for c in tmp_db.get_document_chunks(doc_id)) == [0, 1, 2]
 
 

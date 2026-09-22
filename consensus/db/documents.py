@@ -4,6 +4,25 @@ import json
 import time
 from typing import Optional
 
+from ..models import SummaryStatus
+
+
+def _validate_summary_status(status: str) -> None:
+    """Reject a ``summary_status`` outside the column's three known values.
+
+    Args:
+        status: The candidate value.
+
+    Raises:
+        ValueError: If ``status`` is not ``'ok'``, ``'failed'`` or
+            ``'pending'``.
+    """
+    valid = {s.value for s in SummaryStatus}
+    if status not in valid:
+        raise ValueError(
+            f"summary_status must be one of {sorted(valid)}, got {status!r}"
+        )
+
 
 class DocumentsMixin:
     """Mixin providing document storage and retrieval operations.
@@ -27,7 +46,7 @@ class DocumentsMixin:
         markdown: str,
         char_count: int,
         sections_json: str,
-        summary_status: str = "ok",
+        summary_status: str = SummaryStatus.OK.value,
     ) -> int:
         """Insert a new document and return its ID.
 
@@ -46,7 +65,16 @@ class DocumentsMixin:
 
         Returns:
             The new document's row ID.
+
+        Raises:
+            ValueError: If ``summary_status`` is not one of the three known
+                values. SQLite cannot add a CHECK constraint to an existing
+                column, so this single INSERT path is where the column's
+                domain is enforced — without it, a status column added to
+                stop failure looking like success would itself accept an
+                error message.
         """
+        _validate_summary_status(summary_status)
         cur = self._execute_write(
             "INSERT INTO documents "
             "(filename, title, summary, mime_type, source_type, source_url, "
@@ -84,10 +112,27 @@ class DocumentsMixin:
         ).fetchone()
         return row[0] if row else None
 
-    def update_document_summary(self, doc_id: int, summary: str) -> None:
-        """Update the summary for a document."""
+    def update_document_summary(
+        self, doc_id: int, summary: str,
+        summary_status: str = SummaryStatus.OK.value,
+    ) -> None:
+        """Replace a document's summary and the status explaining it.
+
+        Args:
+            doc_id: The document to update.
+            summary: The new summary text.
+            summary_status: Why ``summary`` holds what it holds. Written
+                together with the text because updating one without the
+                other leaves a regenerated summary labelled ``'failed'``,
+                or a failure still labelled ``'ok'`` (issue #78 defect 1).
+
+        Raises:
+            ValueError: If ``summary_status`` is not a known value.
+        """
+        _validate_summary_status(summary_status)
         self._execute_write(
-            "UPDATE documents SET summary=? WHERE id=?", (summary, doc_id),
+            "UPDATE documents SET summary=?, summary_status=? WHERE id=?",
+            (summary, summary_status, doc_id),
         )
 
     def delete_document(self, doc_id: int) -> bool:

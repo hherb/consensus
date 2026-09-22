@@ -1,7 +1,7 @@
 # HANDOVER
 
 _Last updated: 2026-09-23. `main` is at **v2.0.0** (released 2026-07-20) with
-the suite at **2882 passing**. The discussion-method review & repair campaign
+the suite at **2905 passing**. The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
 (PyPI `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
@@ -25,7 +25,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site deployed to Cloudflare Pages at https://consensus-ai.org/ |
-| Tests | 2882 passing (`uv run pytest`, ~60 s) |
+| Tests | 2905 passing (`uv run pytest`, ~70 s) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -149,8 +149,7 @@ contracts below are what to keep before touching this package again.
   `consensus/background.py` (new): `spawn_background(coro, description)`
   keeps a strong reference AND retrieves/logs the task's exception; adopted
   by both `tools_document/embedding.py` and `tools_memory.py` — the same
-  defect existed in both (golden rule 1). `tools_memory.py` dropped
-  666 → 659 lines with its duplicate spawn helper gone.
+  defect existed in both (golden rule 1).
 - **A permanent indexing failure is reported as a failure, not "still
   indexing."** Per-document `_indexing_failures` state; `doc_ask` returns
   `is_error=True` with the embedder's real message after a failed pass, and
@@ -217,18 +216,83 @@ earlier #61 split's 470); new `handlers_rag.py` (439, holds
 `embedding.py` 365; both grew in the final fix round, so the next addition
 to `handlers_rag.py` or `parsing.py` should be weighed against the limit.
 
+### Whole-branch review follow-up (PR #79 review round, keep these too)
+
+A five-agent review of the finished branch found the repair had stopped one
+step short in several places. What that round added:
+
+- **The upload path resolves a real entity.** `add_document` passed
+  `caller_entity_id=0`; SQLite rowids start at 1, so `get_entity(0)` never
+  resolved and *every* human upload's summary raised, was caught, and stored
+  `summary_status='failed'` while still reporting success. #78 had stopped
+  the error text being persisted but left the cause.
+  `ConsensusApp._interpretation_entity_id` picks the AI moderator, else an
+  AI participant, else returns 0 — and then no context is passed at all, so
+  the honest status is `'pending'` (nobody tried), not `'failed'`.
+- **The embedder's own message reaches the user.** `_embed_single_chunk`
+  returns `(ok, error)` rather than a bare bool; the recorded detail names
+  the endpoint that is down instead of only a chunk count. This is where
+  `DocumentIndexError` finally gets raised, so the hint rides along.
+- **A *partial* dimension mismatch is reported.** `skipped_dim_mismatch` was
+  consulted only when nothing ranked at all, so a document holding two
+  embedding dimensions answered from the survivors in silence. `doc_ask` now
+  carries `incomplete_retrieval`, and the library search appends the same
+  notice.
+- **Migration `016` retro-classifies the defect-1 rows.** `015`'s
+  `DEFAULT 'ok'` marked pre-#78 rows as having a good summary — including
+  the rows whose summary literally *is* an LLM error. The old helper emitted
+  exactly two strings, so they classify by prefix; "cannot be
+  retro-classified" was wrong. A new version rather than an edit to `015`,
+  which may already be recorded as applied.
+- **`summary_status` has one source and one enforcer.** `models.SummaryStatus`
+  (importable by `db/`, which cannot import a tool package), and
+  `db.add_document` / `update_document_summary` validate against it — SQLite
+  cannot add a CHECK to an existing column. `update_document_summary` now
+  writes the status with the text; it previously left it stale, which is the
+  trap the recorded regeneration follow-up would have walked into.
+- **The human uploader sees degraded parses and failed summaries.**
+  `static/documents.js` `_addedMessage()` appends the warnings to the toast.
+  Parse failures already arrived as `result.error`; these came back on a
+  *success* result and were dropped.
+- **`consensus/dbkey.py`** holds `scoped_key()` once. `tools_memory`'s
+  `_indexing_discussions` was still keyed by bare `discussion_id` — the same
+  cross-session collision `doc_key` was written to fix, in a file #78
+  touched. Both now raise rather than defaulting a missing path to `""`,
+  which silently produced a colliding key.
+- **A cancelled pass releases its in-flight marker** via a done callback:
+  cancelled before its first step, the coroutine body never ran, so the
+  `finally` never fired and `doc_ask` reported "still being indexed" for the
+  process lifetime — defect 3 through a narrower door.
+- Smaller: an empty completion raises instead of storing `''` at status
+  `'ok'`; `_parse_html` shares the plain-text binary guard; `pending` renders
+  distinctly from an empty `'ok'`; `ParsedDocument` validates its fidelity
+  and carries an immutable `notes` tuple; `chapter_range` guards its index;
+  both "Embedding service unavailable" returns and
+  `add_document_from_url` now log; `_index_messages` says why it stopped
+  instead of a bare `break`.
+
+**Testing lesson worth keeping.** Three of these were found by *mutating the
+fix back* and watching the suite stay green, not by reading. Mutation is
+what distinguishes a test that pins behaviour from one that merely executes
+it. Two `caplog.at_level(logging.ERROR)` assertions were vacuous because the
+code logs at WARNING — they asserted against an empty string and would have
+passed against a handler that logged nothing.
+
 **Known gaps, recorded as follow-ups, not fixed here:** no test covers the
 combined "some rows dimension-mismatched AND the rest below threshold" case
 in `doc_ask`; a summary regeneration path is still absent now that
-`summary_status='failed'` is recordable; OCR for scanned PDFs is named as a
-remedy but not provided; `INDEXING_RETRY_INTERVAL` is a hardcoded 60s rather
-than configurable, so a permanently dead embedder costs one wasted
-background pass per minute per document still being queried; the Documents
-panel (`static/documents.js`) still does not render `summary_status`,
-`fidelity` or `notes`, so on that one human-facing surface a failed summary
-still looks like a document with nothing to say; `DocumentIndexError` is
-defined but never raised; and the two "Embedding service unavailable"
-returns surface to the user without a log line (golden rule 6 half-met).
+`summary_status='failed'` is recordable and `update_document_summary` can
+write it; OCR for scanned PDFs is named as a remedy but not provided;
+**charset detection** for legitimately non-UTF-8 text documents (Latin-1,
+GBK, Shift-JIS), which are now rejected rather than ingested as mojibake —
+the better answer than rejection; `INDEXING_RETRY_INTERVAL` is a hardcoded
+60s rather than configurable, so a permanently dead embedder costs one
+wasted background pass per minute per document still being queried; the
+Documents *panel* still does not render `summary_status`/`fidelity` (only
+the upload toast does), and `fidelity`/`notes` are not persisted, so a
+degraded extraction is invisible on every later read — **issue #81**; and
+pre-#78 documents stored with the markdown `'(Empty PDF)'` remain chunked
+and answerable — **issue #80**.
 
 Contracts are covered by `tests/test_tools_document_failures.py`,
 `tests/test_background.py`, and the existing `tests/test_tools_document*.py`
@@ -301,13 +365,13 @@ out of `discussion-actions.js` (494).
 
 | Lines | File |
 |------:|------|
+| 1284 | `consensus/app.py` |
 | 1227 | `consensus/server.py` |
-| 1200 | `consensus/app.py` |
 | 784 | `consensus/auth.py` |
 | 775 | `consensus/moderator.py` |
 | 710 | `consensus/mcp_server.py` |
+| 684 | `consensus/tools_memory.py` |
 | 679 | `consensus/evaluation/runner.py` |
-| 659 | `consensus/tools_memory.py` |
 | 628 | `consensus/desktop.py` |
 | 614 | `consensus/tools_python.py` |
 | 589 | `consensus/evaluation/eval_db.py` |
@@ -319,12 +383,13 @@ out of `discussion-actions.js` (494).
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next-best target: `consensus/app.py`** (1200) — the orchestrator already has
-an established split pattern (`app_providers`, `app_entities`,
-`app_discussion_setup`, `app_discussion_flow/`, `app_discussion_state`), so the
-remaining groups follow it, and it is well covered by the existing suite.
-`tools_memory.py` (659) is the easy one after that: module-level functions
-under clear banners, like `tools_document` was.
+**Next-best target: `consensus/app.py`** (1284) — now the largest module in
+the codebase, having overtaken `server.py` during the #78 work. The
+orchestrator already has an established split pattern (`app_providers`,
+`app_entities`, `app_discussion_setup`, `app_discussion_flow/`,
+`app_discussion_state`), so the remaining groups follow it, and it is well
+covered by the existing suite. `tools_memory.py` (684) is the easy one after
+that: module-level functions under clear banners, like `tools_document` was.
 
 **`server.py` is the awkward one — read this before picking it.** It is a
 single 1170-line `launch_web()` whose middleware and ~35 handlers are all
