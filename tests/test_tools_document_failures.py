@@ -212,3 +212,44 @@ async def test_ingest_without_context_records_pending(tmp_db):
         mime_type="text/markdown",
     )
     assert result["summary_status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_library_search_reports_a_failed_summary(tmp_db, sample_ai_entity):
+    """Semantic search must not hide a failed summary behind 'ok'.
+
+    Regression test for the ``seen_docs`` dict built inside
+    ``_doc_list_handler``'s ``full_library and query`` (semantic search)
+    branch: that dict is assembled from selected fields of the raw document
+    row rather than the row itself, and it originally omitted
+    ``summary_status``, so ``doc.get("summary_status", SUMMARY_STATUS_OK)``
+    would silently fall back to ``'ok'`` for every document found by search
+    — the one ``doc_list`` mode where a failed summary could still read as
+    a plain empty one instead of "(summary unavailable — generation
+    failed)" (issue #78 defect 1).
+    """
+    from consensus.tools_document import chunking
+    from consensus.tools_document.constants import SUMMARY_STATUS_FAILED
+    from tests.document_helpers import FakeEmbedClient, embed_all
+
+    markdown = "# Broken\n\nBody text about widgets."
+    doc_id = tmp_db.add_document(
+        filename="broken.md", title="Broken", summary="",
+        mime_type="text/markdown", source_type="text", source_url=None,
+        markdown=markdown, char_count=len(markdown), sections_json="[]",
+        summary_status=SUMMARY_STATUS_FAILED,
+    )
+    for chunk in chunking.chunk_document(markdown, chunk_size=60, overlap=0):
+        tmp_db.add_document_chunk(
+            doc_id, chunk["chunk_index"], chunk["content"],
+            chunk["from_char"], chunk["to_char"], chunk.get("section_header"),
+        )
+    embed_all(tmp_db, doc_id, (1.0, 0.0))
+
+    context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
+    result = await handlers._doc_list_handler(
+        {"full_library": True, "query": "widgets"},
+        context, tmp_db, FakeEmbedClient([1.0, 0.0]), None,
+    )
+    assert f"[ID {doc_id}] Broken" in result.content
+    assert "summary unavailable" in result.content
