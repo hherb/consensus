@@ -157,7 +157,20 @@ contracts below are what to keep before touching this package again.
   posts a transcript notice via `app_discussion_flow.helpers.post_notice`,
   once per failure streak. **The failure marker must be evicted when the
   document becomes healthy again**, or "one notice per streak" silently
-  degrades into "one notice ever."
+  degrades into "one notice ever." Equally, **the failure branch must still
+  re-kick the pass** — gated by `INDEXING_RETRY_INTERVAL` against
+  `IndexingFailure.last_attempt` — or a document whose first pass failed
+  stays dead for the whole process lifetime even after the embedder
+  recovers. Returning early there was a regression against pre-#78
+  behaviour, caught only by the whole-branch review.
+- **This package's module-level bookkeeping is keyed by
+  `doc_key(db, doc_id) -> (db.db_path, doc_id)`, never by `doc_id` alone.**
+  `_embedding_docs`, `_indexing_failures` and `_notified_index_failures` are
+  process-global, but in `--multi-user` every session gets its own SQLite
+  file, so every session's first document is id 1. Keyed bare, one session's
+  failure made another session's healthy document error out and posted a
+  fabricated notice into *its* transcript. Any new per-document state in
+  this package must use `doc_key`.
 - **Retrieval has a relevance floor and reports dimension mismatches as
   errors, not silence.** `_rank_by_similarity` returns a `RankingResult`
   (ranked rows + a dimension-mismatch count); `doc_ask` applies
@@ -179,10 +192,17 @@ contracts below are what to keep before touching this package again.
   scanned PDF raises (naming OCR as the remedy) instead of ingesting as the
   string `"(Empty PDF)"`; the HTML regex fallback is logged and marked
   `degraded`; binary content raises instead of decoding to mojibake.
+  A PDF backend that *opens* the file and finds no text means "scanned —
+  OCR it"; only a PDF backend that cannot be **imported** means "install a
+  library." Conflating the two told users to install `pdfplumber`, which is
+  a declared dependency they already had, and made the OCR message dead code
+  in every default install.
 - **`fetch_url_content` retries transient failures and enforces the byte cap
-  on both sides.** Exponential backoff on timeouts/transport errors/5xx (4xx
-  raises immediately); `MAX_DOCUMENT_BYTES` is enforced on both the declared
-  `content-length` and the actual body.
+  while streaming.** Exponential backoff on timeouts/transport errors/5xx
+  (4xx raises immediately); `MAX_DOCUMENT_BYTES` is checked against the
+  declared `content-length` *and* accumulated across `client.stream()`
+  chunks, aborting mid-transfer. Buffering first and measuring afterwards
+  does not prevent the OOM it is there to prevent.
 - **Two known, deliberate user-visible behaviour changes** (not bugs — record
   them honestly): a legitimately non-UTF-8-encoded text document (Latin-1,
   GBK, Shift-JIS) is now rejected rather than ingested as mojibake (charset
@@ -191,16 +211,24 @@ contracts below are what to keep before touching this package again.
   previously ingested as the string `"(Empty PDF)"`.
 
 **Structural dividend for #61.** `handlers.py` went 541 → 348 (on top of the
-earlier #61 split's 470); new `handlers_rag.py` (374, holds
+earlier #61 split's 470); new `handlers_rag.py` (439, holds
 `doc_ask`/`doc_summary`), `errors.py` (47), `validation.py` (83),
-`background.py` (57) — all four compliant on arrival.
+`background.py` (57) — all compliant. `parsing.py` is 420 and
+`embedding.py` 365; both grew in the final fix round, so the next addition
+to `handlers_rag.py` or `parsing.py` should be weighed against the limit.
 
 **Known gaps, recorded as follow-ups, not fixed here:** no test covers the
-retry-exhaustion path in `fetch_url_content`; no test covers the combined
-"some rows dimension-mismatched AND the rest below threshold" case in
-`doc_ask`; a summary regeneration path is still absent now that
+combined "some rows dimension-mismatched AND the rest below threshold" case
+in `doc_ask`; a summary regeneration path is still absent now that
 `summary_status='failed'` is recordable; OCR for scanned PDFs is named as a
-remedy but not provided.
+remedy but not provided; `INDEXING_RETRY_INTERVAL` is a hardcoded 60s rather
+than configurable, so a permanently dead embedder costs one wasted
+background pass per minute per document still being queried; the Documents
+panel (`static/documents.js`) still does not render `summary_status`,
+`fidelity` or `notes`, so on that one human-facing surface a failed summary
+still looks like a document with nothing to say; `DocumentIndexError` is
+defined but never raised; and the two "Embedding service unavailable"
+returns surface to the user without a log line (golden rule 6 half-met).
 
 Contracts are covered by `tests/test_tools_document_failures.py`,
 `tests/test_background.py`, and the existing `tests/test_tools_document*.py`
