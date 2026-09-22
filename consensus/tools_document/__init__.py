@@ -45,10 +45,13 @@ acyclic:
     The ``doc_ask`` and ``doc_summary`` handlers. Split out from
     ``handlers`` once that module crossed the 500-line rule (issue #78).
 ``handlers``
-    The remaining ``doc_*`` tool handlers; imports ``handlers_rag`` for the
-    two RAG handlers it re-exposes to ``provider``.
+    The six non-RAG ``doc_*`` tool handlers (add/list/length/text/sections/
+    chapter); imports only ``_reindex_message`` from ``handlers_rag``, to
+    report a chunk-dimension mismatch the same way ``doc_ask`` does.
 ``provider``
-    Assembles the handlers and schemas into a ``PythonToolProvider``.
+    Imports all eight handlers directly — six from ``handlers``, ``doc_ask``
+    and ``doc_summary`` from ``handlers_rag`` — and the schemas, assembling
+    them into a ``PythonToolProvider``.
 
 Only the public API is re-exported here, so ``from consensus.tools_document
 import create_document_provider`` keeps working exactly as before the split.
