@@ -8,7 +8,7 @@ from ..tools import ToolContext, ToolResult
 from .constants import (
     AVAILABLE_HEADERS_HINT, LIBRARY_SEARCH_LIMIT, MIN_SIMILARITY_THRESHOLD,
     PASSAGE_PREVIEW_CHARS, RAG_TOP_K, SUMMARY_CHUNK_LIMIT,
-    SUMMARY_SNIPPET_CHARS,
+    SUMMARY_SNIPPET_CHARS, SUMMARY_STATUS_FAILED, SUMMARY_STATUS_OK,
 )
 from .embedding import _embedding_docs, _rank_by_similarity, _spawn_embedding_pass
 from .errors import DocumentError
@@ -19,12 +19,30 @@ from .parsing import fetch_url_content
 logger = logging.getLogger(__name__)
 
 
-def _summary_snippet(summary: Optional[str]) -> str:
-    """Truncate a document summary for a one-line ``doc_list`` entry."""
-    text = summary or ""
-    if len(text) > SUMMARY_SNIPPET_CHARS:
-        return text[:SUMMARY_SNIPPET_CHARS] + "..."
-    return text
+def _summary_snippet(summary: Optional[str], status: str) -> str:
+    """Render a document summary for a one-line ``doc_list`` entry.
+
+    A document with no usable summary says why (issue #78 defect 1):
+    printing an empty line left an LLM failure looking like a document
+    that simply had nothing to say.
+
+    Args:
+        summary: The stored summary text, or ``None``/empty if none exists.
+        status: The document's ``summary_status`` — ``'ok'``, ``'failed'``
+            or ``'pending'``.
+
+    Returns:
+        The truncated summary text, or a status-specific placeholder when
+        no summary text is available.
+    """
+    text = (summary or "").strip()
+    if text:
+        if len(text) > SUMMARY_SNIPPET_CHARS:
+            return text[:SUMMARY_SNIPPET_CHARS] + "..."
+        return text
+    if status == SUMMARY_STATUS_FAILED:
+        return "(summary unavailable — generation failed)"
+    return "(no summary)"
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +140,9 @@ async def _doc_list_handler(
                         "id": doc_id,
                         "title": doc["title"],
                         "summary": doc["summary"],
+                        "summary_status": doc.get(
+                            "summary_status", SUMMARY_STATUS_OK,
+                        ),
                         "filename": doc["filename"],
                         "char_count": doc["char_count"],
                         "best_score": score,
@@ -135,7 +156,9 @@ async def _doc_list_handler(
         )
         lines = [f"Library search for '{query}' — {len(docs_list)} document(s):\n"]
         for doc in docs_list:
-            summary_snippet = _summary_snippet(doc["summary"])
+            summary_snippet = _summary_snippet(
+                doc["summary"], doc.get("summary_status", SUMMARY_STATUS_OK),
+            )
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars, "
                 f"score: {doc['best_score']:.2f})\n    {summary_snippet}"
@@ -149,7 +172,9 @@ async def _doc_list_handler(
             return ToolResult(content="No documents in the library.")
         lines = [f"All documents in library — {len(docs)} total:\n"]
         for doc in docs:
-            summary_snippet = _summary_snippet(doc["summary"])
+            summary_snippet = _summary_snippet(
+                doc["summary"], doc.get("summary_status", SUMMARY_STATUS_OK),
+            )
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars)\n"
                 f"    {summary_snippet}"
@@ -163,7 +188,9 @@ async def _doc_list_handler(
             return ToolResult(content="No documents attached to this discussion.")
         lines = [f"Documents in this discussion — {len(docs)} total:\n"]
         for doc in docs:
-            summary_snippet = _summary_snippet(doc["summary"])
+            summary_snippet = _summary_snippet(
+                doc["summary"], doc.get("summary_status", SUMMARY_STATUS_OK),
+            )
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars)\n"
                 f"    {summary_snippet}"

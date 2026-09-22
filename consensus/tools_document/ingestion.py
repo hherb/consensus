@@ -6,7 +6,10 @@ from typing import Optional
 
 from ..tools import ToolContext
 from .chunking import chunk_document
-from .constants import SUMMARY_EXCERPT_CHARS
+from .constants import (
+    SUMMARY_EXCERPT_CHARS, SUMMARY_STATUS_FAILED, SUMMARY_STATUS_OK,
+    SUMMARY_STATUS_PENDING,
+)
 from .embedding import _embedding_docs, _spawn_embedding_pass
 from .errors import DocumentInterpretationError
 from .llm import _call_interpretation_llm
@@ -42,7 +45,8 @@ async def ingest_document(
       ``_embedding_docs`` marker set for the duration of that pass.
     - ``generate_summary`` is silently a no-op unless both ``context`` and
       ``app`` are supplied; without them the document is stored with an empty
-      summary and no error is reported.
+      summary and ``summary_status`` recorded as ``'pending'`` rather than
+      an error (issue #78 defect 1).
     - The document is associated with ``discussion_id`` when one is given.
     """
     # Parse to markdown
@@ -67,6 +71,7 @@ async def ingest_document(
     # helper returned its error as a string, which was stored and then
     # reprinted to every participant by doc_list forever (issue #78).
     summary = ""
+    summary_status = SUMMARY_STATUS_PENDING
     if generate_summary and context and app:
         try:
             excerpt = markdown[:SUMMARY_EXCERPT_CHARS]
@@ -79,12 +84,14 @@ async def ingest_document(
                 ),
                 user_prompt=excerpt,
             )
+            summary_status = SUMMARY_STATUS_OK
         except DocumentInterpretationError:
             logger.exception(
                 "Summary generation failed for %s — storing no summary",
                 filename,
             )
             summary = ""
+            summary_status = SUMMARY_STATUS_FAILED
 
     # Store document
     doc_id = db.add_document(
@@ -97,6 +104,7 @@ async def ingest_document(
         markdown=markdown,
         char_count=char_count,
         sections_json=sections_json,
+        summary_status=summary_status,
     )
 
     # Associate with discussion
@@ -124,6 +132,7 @@ async def ingest_document(
         "document_id": doc_id,
         "title": title,
         "summary": summary,
+        "summary_status": summary_status,
         "char_count": char_count,
         "filename": filename,
         "sections": len(sections),

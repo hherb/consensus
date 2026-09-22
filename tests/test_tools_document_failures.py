@@ -9,7 +9,7 @@ import logging
 
 import pytest
 
-from consensus.tools_document import ingestion, llm
+from consensus.tools_document import handlers, ingestion, llm
 from consensus.tools_document.errors import (
     DocumentError, DocumentInterpretationError,
 )
@@ -162,3 +162,53 @@ def test_add_document_records_a_failed_status(tmp_db):
     tmp_db.add_discussion_document(disc_id, doc_id)
     attached = tmp_db.get_discussion_documents(disc_id)
     assert attached[0]["summary_status"] == "failed"
+
+
+def test_summary_snippet_reports_a_failed_status():
+    """doc_list says the summary is missing rather than printing nothing."""
+    from consensus.tools_document.constants import (
+        SUMMARY_STATUS_FAILED, SUMMARY_STATUS_OK, SUMMARY_STATUS_PENDING,
+    )
+    assert "unavailable" in handlers._summary_snippet("", SUMMARY_STATUS_FAILED)
+    assert "no summary" in handlers._summary_snippet(
+        "", SUMMARY_STATUS_PENDING).lower()
+    assert handlers._summary_snippet("A real one.", SUMMARY_STATUS_OK) == \
+        "A real one."
+
+
+@pytest.mark.asyncio
+async def test_ingest_records_failed_status(
+    tmp_db, sample_ai_entity, monkeypatch,
+):
+    """A raising summary call is recorded as 'failed', not as 'ok'."""
+    async def boom(*args, **kwargs):
+        raise DocumentInterpretationError("quota exceeded")
+
+    patch_where_defined(
+        monkeypatch, ingestion.ingest_document,
+        "_call_interpretation_llm", boom,
+    )
+
+    class App:
+        db = tmp_db
+
+    context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
+    result = await ingestion.ingest_document(
+        app=App(), db=tmp_db, embed_client=None,
+        content_bytes=b"# T\n\nBody.", filename="d.md",
+        mime_type="text/markdown", context=context,
+    )
+    assert result["summary_status"] == "failed"
+    assert tmp_db.get_document(result["document_id"])["summary_status"] == \
+        "failed"
+
+
+@pytest.mark.asyncio
+async def test_ingest_without_context_records_pending(tmp_db):
+    """Summary generation silently requires app+context; say so."""
+    result = await ingestion.ingest_document(
+        app=None, db=tmp_db, embed_client=None,
+        content_bytes=b"# T\n\nBody.", filename="d.md",
+        mime_type="text/markdown",
+    )
+    assert result["summary_status"] == "pending"
