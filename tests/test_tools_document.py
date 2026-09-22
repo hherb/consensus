@@ -10,6 +10,7 @@ handlers in ``test_tools_document_handlers``.
 import struct
 import sys
 
+import httpx
 import pytest
 
 from consensus.tools_document import chunking, constants, embedding, parsing
@@ -185,7 +186,16 @@ def fake_httpx(monkeypatch):
             return FakeHttpClient(response, state["urls"])
 
         import types
-        module = types.SimpleNamespace(AsyncClient=factory)
+        # fetch_url_content also catches httpx.TimeoutException,
+        # httpx.HTTPStatusError and httpx.TransportError for its retry
+        # logic, so the fake module must carry the real exception classes
+        # alongside the faked-out AsyncClient (issue #78 task 6).
+        module = types.SimpleNamespace(
+            AsyncClient=factory,
+            TimeoutException=httpx.TimeoutException,
+            HTTPStatusError=httpx.HTTPStatusError,
+            TransportError=httpx.TransportError,
+        )
         patch_where_defined(monkeypatch, parsing.fetch_url_content, "httpx", module)
         return state
 

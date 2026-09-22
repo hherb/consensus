@@ -115,9 +115,12 @@ class FakePdf:
 class FakeHttpResponse:
     """Stand-in for an ``httpx`` response carrying bytes and a content type."""
 
-    def __init__(self, content: bytes, content_type: str) -> None:
+    def __init__(
+        self, content: bytes, content_type: str, status_code: int = 200,
+    ) -> None:
         self.content = content
         self.headers = {"content-type": content_type}
+        self.status_code = status_code
 
     def raise_for_status(self) -> None:
         """No-op: these tests only exercise successful fetches."""

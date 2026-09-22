@@ -4,6 +4,7 @@ Converts uploaded or fetched bytes (PDF, HTML, plain text or markdown) into
 markdown, and extracts the markdown header structure with character offsets.
 """
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -11,7 +12,8 @@ from dataclasses import dataclass, field
 import httpx
 
 from .constants import (
-    FIDELITY_DEGRADED, FIDELITY_FULL, MAX_REPLACEMENT_CHAR_RATIO,
+    FIDELITY_DEGRADED, FIDELITY_FULL, MAX_DOCUMENT_BYTES,
+    MAX_REPLACEMENT_CHAR_RATIO, URL_FETCH_BASE_DELAY, URL_FETCH_MAX_RETRIES,
     URL_FETCH_TIMEOUT,
 )
 from .errors import DocumentParseError
@@ -200,25 +202,93 @@ def _parse_html(content: bytes) -> ParsedDocument:
     )
 
 
+def _filename_for(url: str, mime_type: str) -> str:
+    """Derive a filename with a useful extension from a URL and MIME type."""
+    from urllib.parse import urlparse
+    path = urlparse(url).path
+    filename = path.split("/")[-1] or "document"
+    if not filename.endswith((".pdf", ".html", ".htm", ".txt", ".md")):
+        if "pdf" in mime_type:
+            filename += ".pdf"
+        elif "html" in mime_type:
+            filename += ".html"
+    return filename
+
+
 async def fetch_url_content(url: str) -> tuple[bytes, str, str]:
-    """Fetch content from a URL. Returns (content_bytes, filename, mime_type)."""
+    """Fetch a document from a URL.
+
+    Retries transient failures — timeouts, connection errors and 5xx — up
+    to ``URL_FETCH_MAX_RETRIES`` times with exponential backoff (golden
+    rule 5).  A 4xx is permanent and raises immediately.
+
+    Args:
+        url: The document location to fetch.
+
+    Returns:
+        ``(content_bytes, filename, mime_type)``.
+
+    Raises:
+        DocumentParseError: If the fetch fails after all retries, a 4xx is
+            returned, or the body exceeds ``MAX_DOCUMENT_BYTES`` — either by
+            its declared ``content-length`` or by its actual read size.
+    """
+    last_exc: Exception | None = None
     async with httpx.AsyncClient(
-        timeout=URL_FETCH_TIMEOUT, follow_redirects=True
+        timeout=URL_FETCH_TIMEOUT, follow_redirects=True,
     ) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        content_type = response.headers.get("content-type", "text/html")
-        mime_type = content_type.split(";")[0].strip()
-        # Derive filename from URL
-        from urllib.parse import urlparse
-        path = urlparse(url).path
-        filename = path.split("/")[-1] or "document"
-        if not filename.endswith((".pdf", ".html", ".htm", ".txt", ".md")):
-            if "pdf" in mime_type:
-                filename += ".pdf"
-            elif "html" in mime_type:
-                filename += ".html"
-        return response.content, filename, mime_type
+        for attempt in range(URL_FETCH_MAX_RETRIES):
+            try:
+                response = await client.get(url)
+
+                if 400 <= response.status_code < 500:
+                    raise DocumentParseError(
+                        f"{url} returned HTTP {response.status_code}",
+                        hint="check the address, or whether it needs a login",
+                    )
+                response.raise_for_status()
+
+                declared = response.headers.get("content-length")
+                if declared and int(declared) > MAX_DOCUMENT_BYTES:
+                    raise DocumentParseError(
+                        f"{url} is too large ({int(declared)} bytes; the "
+                        f"limit is {MAX_DOCUMENT_BYTES})",
+                        hint="download it and add the relevant extract",
+                    )
+
+                content = response.content
+                if len(content) > MAX_DOCUMENT_BYTES:
+                    raise DocumentParseError(
+                        f"{url} is too large ({len(content)} bytes; the "
+                        f"limit is {MAX_DOCUMENT_BYTES})",
+                        hint="download it and add the relevant extract",
+                    )
+
+                content_type = response.headers.get(
+                    "content-type", "text/html")
+                mime_type = content_type.split(";")[0].strip()
+                return content, _filename_for(url, mime_type), mime_type
+
+            except DocumentParseError:
+                raise
+            except (httpx.TimeoutException, httpx.HTTPStatusError,
+                    httpx.TransportError) as e:
+                last_exc = e
+                if attempt == URL_FETCH_MAX_RETRIES - 1:
+                    break
+                delay = URL_FETCH_BASE_DELAY * (2 ** attempt)
+                logger.warning(
+                    "Fetch of %s failed (attempt %d/%d: %s), retrying in "
+                    "%.1fs", url, attempt + 1, URL_FETCH_MAX_RETRIES, e,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+    raise DocumentParseError(
+        f"Could not fetch {url} after {URL_FETCH_MAX_RETRIES} attempts: "
+        f"{last_exc}",
+        hint="check the address and that the host is reachable",
+    )
 
 
 # ---------------------------------------------------------------------------

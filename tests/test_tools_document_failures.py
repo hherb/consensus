@@ -7,6 +7,7 @@ or a value persisted to the database.
 
 import logging
 
+import httpx
 import pytest
 
 from consensus.tools_document import handlers, ingestion, llm, parsing
@@ -15,6 +16,11 @@ from consensus.tools_document.errors import (
 )
 from consensus.tools import ToolContext
 from tests.document_helpers import patch_where_defined
+
+
+async def _no_sleep(_seconds):
+    """Collapse backoff delays so retry tests stay fast."""
+    return None
 
 
 class FailingApp:
@@ -324,3 +330,108 @@ def test_html_regex_fallback_is_marked_degraded_and_logged(caplog, monkeypatch):
     assert parsed.fidelity == "degraded"
     assert parsed.notes
     assert "fallback" in caplog.text.lower()
+
+
+class _FakeAsyncClient:
+    """Scripted httpx.AsyncClient replacement for fetch_url_content."""
+
+    def __init__(self, outcomes, **kwargs):
+        self._outcomes = list(outcomes)
+        self.calls = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url):
+        self.calls += 1
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def _ok_response(body=b"hello", content_type="text/plain", headers=None):
+    request = httpx.Request("GET", "https://example.com/a.txt")
+    return httpx.Response(
+        200, content=body, request=request,
+        headers={"content-type": content_type, **(headers or {})},
+    )
+
+
+@pytest.mark.asyncio
+async def test_fetch_retries_a_transient_failure(monkeypatch):
+    """A timeout is retried with backoff rather than failing the add."""
+    made = {}
+
+    def factory(**kwargs):
+        client = _FakeAsyncClient(
+            [httpx.TimeoutException("slow"), _ok_response()],
+        )
+        made["client"] = client
+        return client
+
+    monkeypatch.setattr(parsing.httpx, "AsyncClient", factory)
+    monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
+
+    content, filename, mime = await parsing.fetch_url_content(
+        "https://example.com/a.txt")
+    assert content == b"hello"
+    assert made["client"].calls == 2
+
+
+@pytest.mark.asyncio
+async def test_fetch_does_not_retry_a_404(monkeypatch):
+    """A client error is permanent — retrying it just wastes time."""
+    request = httpx.Request("GET", "https://example.com/missing")
+    not_found = httpx.Response(404, request=request)
+
+    made = {}
+
+    def factory(**kwargs):
+        made["client"] = _FakeAsyncClient([not_found])
+        return made["client"]
+
+    monkeypatch.setattr(parsing.httpx, "AsyncClient", factory)
+    monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
+
+    with pytest.raises(DocumentParseError):
+        await parsing.fetch_url_content("https://example.com/missing")
+    assert made["client"].calls == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_an_oversized_content_length(monkeypatch):
+    """A declared multi-GB body is refused before it is read."""
+    from consensus.tools_document.constants import MAX_DOCUMENT_BYTES
+
+    oversized = _ok_response(
+        headers={"content-length": str(MAX_DOCUMENT_BYTES + 1)})
+
+    monkeypatch.setattr(
+        parsing.httpx, "AsyncClient",
+        lambda **kwargs: _FakeAsyncClient([oversized]),
+    )
+    monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
+
+    with pytest.raises(DocumentParseError) as exc:
+        await parsing.fetch_url_content("https://example.com/big")
+    assert "too large" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_fetch_rejects_an_oversized_undeclared_body(monkeypatch):
+    """A header-less oversized body is caught after the read too."""
+    from consensus.tools_document.constants import MAX_DOCUMENT_BYTES
+
+    big = _ok_response(body=b"x" * (MAX_DOCUMENT_BYTES + 1))
+    monkeypatch.setattr(
+        parsing.httpx, "AsyncClient",
+        lambda **kwargs: _FakeAsyncClient([big]),
+    )
+    monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
+
+    with pytest.raises(DocumentParseError):
+        await parsing.fetch_url_content("https://example.com/big")

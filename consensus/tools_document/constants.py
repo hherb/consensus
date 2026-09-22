@@ -51,3 +51,12 @@ FIDELITY_DEGRADED = "degraded"
 # Above this share of U+FFFD replacement characters, a "text" document is
 # really binary that was decoded with errors="replace" (issue #78 defect 7).
 MAX_REPLACEMENT_CHAR_RATIO = 0.1
+
+# URL fetching retry policy (golden rule 5)
+URL_FETCH_MAX_RETRIES = 3
+URL_FETCH_BASE_DELAY = 1.0  # seconds, doubled per attempt
+
+# Largest document accepted from a URL, in bytes. Checked against the
+# content-length header and again after reading, since a header-less
+# response would otherwise be read fully into memory.
+MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
