@@ -6,7 +6,7 @@ import logging
 import time
 from typing import Callable, Optional
 
-from .models import Discussion, Entity, EntityType
+from .models import ConfigurationError, Discussion, Entity, EntityType
 from .ai_client import AIClient, AIResponse
 from .context_strategies import (
     ContextConfig, ContextStrategy, DEFAULT_WINDOW_SIZE,
@@ -252,7 +252,10 @@ class Moderator:
     def _get_client(self, entity: Entity) -> AIClient:
         """Return a cached AI client for the given entity, creating one if needed."""
         if not entity.ai_config:
-            raise ValueError(f"{entity.name} has no AI configuration")
+            raise ConfigurationError(
+                f"{entity.name} has no AI configuration — assign a provider "
+                f"and model to this entity in the Profiles tab.",
+            )
         api_key = self._resolve_api_key(entity)
         # Recreate client if the API key has changed (e.g. BYOK per-request)
         existing = self._clients.get(entity.id)

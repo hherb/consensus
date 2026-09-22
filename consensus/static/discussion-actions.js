@@ -3,12 +3,14 @@
  * Discussion lifecycle actions — start, send, conclude, pause, resume, reassign, mediate.
  */
 
-import { $, show, hide, showToast, escHtml, getInitials, TOAST_WARNING_DURATION_MS } from './utils.js';
+import { $, show, hide, showToast, escHtml, getInitials,
+         TOAST_WARNING_DURATION_MS, TOAST_NOTICE_DURATION_MS } from './utils.js';
 import { state, onStateUpdate, getEntity, resetRenderedMessageCount, resetRenderedStoryboardCount, processing, setProcessing } from './state.js';
 import { api } from './api.js';
 import { renderDiscussion, showTypingIndicator } from './discussion.js';
 import { renderSetupTab } from './setup.js';
 import { showSwitchBlockedDialog } from './method-switch.js';
+import { skipToastMessage } from './turn-notices.js';
 
 /**
  * Start a new discussion.
@@ -294,8 +296,9 @@ export async function processCurrentTurn() {
                 break;
             }
             if (result?.error && !result?.skipped) { showToast(result.error); break; }
-            if (result?.skipped) showToast(`${speaker.name} skipped due to API error`, 5000, 'warning');
-            if (result?.warning) showToast(result.warning, 5000, 'info');
+            if (result?.skipped) showToast(skipToastMessage(speaker, result),
+                                           TOAST_NOTICE_DURATION_MS, 'warning');
+            if (result?.warning) showToast(result.warning, TOAST_NOTICE_DURATION_MS, 'info');
             onStateUpdate(await api.getState());
             if (!state.is_active || state.status === 'concluded') break;
             renderDiscussion();
@@ -348,9 +351,12 @@ export async function onMediate() {
     if (mod.entity_type === 'ai') {
         showTypingIndicator(mod.name + ' (mediating)');
         try {
-            await api.mediate();
+            const result = await api.mediate();
             onStateUpdate(await api.getState());
             renderDiscussion();
+            // mediate() reports failure in the result rather than by
+            // throwing, so the catch below never sees it (#71).
+            if (result?.error) showToast(result.error);
         } catch (e) { showToast('Mediation failed: ' + e.message); }
     } else {
         promptModeratorInput('mediation');
@@ -365,8 +371,21 @@ export async function onConclude() {
     if (mod?.entity_type === 'ai') showTypingIndicator(mod.name + ' (concluding)');
     try {
         const result = await api.conclude();
+        // api.conclude() resolves with {error} rather than throwing on a
+        // non-ok response, and onStateUpdate *replaces* the state — so
+        // without this guard a 5xx wipes entities and messages and leaves
+        // the view broken instead of reporting the failure.
+        if (result?.error) return showToast('Conclusion failed: ' + result.error);
         onStateUpdate(result);
         renderDiscussion();
+        // The discussion concludes either way, so without this the user
+        // just sees a missing Final Synthesis and no reason (issue #71).
+        // The transcript carries the same notice; the toast makes sure it
+        // is not missed at the bottom of a long discussion.
+        if (result?.conclusion_error) {
+            showToast('Final Synthesis failed: ' + result.conclusion_error,
+                      TOAST_WARNING_DURATION_MS, 'warning');
+        }
     } catch (e) { showToast('Conclusion failed: ' + e.message); }
 }
 

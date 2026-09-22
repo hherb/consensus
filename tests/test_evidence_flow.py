@@ -34,14 +34,23 @@ class _FakePhaseMethod:
 
 
 def _human_turn_discussion(db, phase="test_crux"):
-    """An active discussion whose current speaker is a human."""
+    """An active discussion whose current speaker is a human.
+
+    The method is deliberately ``open_discussion``, which has no phases at
+    all: ``_FakePhaseMethod`` is then the *only* thing that can produce a
+    ``test_crux`` phase, so a monkeypatch aimed at the wrong target makes
+    these tests fail instead of silently passing on the real method's
+    behaviour.  Double Crux really does have a tracked ``test_crux`` phase
+    (issue #73), which made the stub indistinguishable from the real thing.
+    """
     eid = db.add_entity("Alice", "human", "#123456")
     alice = Entity.from_db_row(db.get_entity(eid))
     disc = Discussion(
         topic="t", entities=[alice],
         turn_order=[alice.id], base_turn_order=[alice.id],
         current_turn_index=0, turn_number=1,
-        is_active=True, status="active", discussion_method="double_crux",
+        is_active=True, status="active",
+        discussion_method="open_discussion",
     )
     disc.id = db.create_discussion(disc.topic, alice.id)
     disc.method_state = {"current_phase": phase}

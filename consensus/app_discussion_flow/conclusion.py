@@ -16,8 +16,37 @@ from ..models import (
 )
 from ..moderator import Moderator
 from ..pricing import PricingCache
+from .helpers import describe_flow_error, post_notice
 
 logger = logging.getLogger(__name__)
+
+#: Transcript notice posted when the final synthesis could not be produced
+#: at all.  The discussion still concludes — but never silently (#71).
+_CONCLUSION_FAILURE_NOTICE = (
+    "**The Final Synthesis could not be generated.** {detail}\n\n"
+    "The discussion has been marked as concluded; you can reopen it and "
+    "conclude again once the cause is resolved."
+)
+
+#: Transcript notice for the other half of the failure window: the
+#: synthesis above was generated and is on screen, but recording it
+#: failed.  Telling the user it "could not be generated" while it sits
+#: directly above the notice is worse than saying nothing (#71 follow-up).
+_CONCLUSION_NOT_SAVED_NOTICE = (
+    "**The Final Synthesis was generated but could not be fully saved.** "
+    "{detail}\n\nIt is shown above, but it may be missing or incomplete "
+    "when this discussion is reloaded — copy it now if you need it."
+)
+
+#: Transcript notice posted when a requested mediation never happened.
+#: A toast alone is not a record: it is gone in seconds, and the user is
+#: left with a discussion that shows no trace of the intervention they
+#: asked for (golden rule 6, #71 follow-up).
+_MEDIATION_FAILURE_NOTICE = (
+    "**The moderator's mediation could not be generated.** {detail}\n\n"
+    "The discussion is unchanged — you can request mediation again once "
+    "the cause is resolved."
+)
 
 
 async def mediate(
@@ -27,6 +56,8 @@ async def mediate(
     """Have the moderator intervene to mediate a conflict.
 
     Returns a dict with the mediation message, or an error/awaiting dict.
+    A failure is also posted into the transcript, so the attempt leaves a
+    durable trace rather than only a toast (golden rule 6).
     """
     mod = discussion.moderator
     if not mod:
@@ -69,7 +100,16 @@ async def mediate(
             return msg.to_dict()
         except Exception as e:
             logger.exception("Mediation failed")
-            return {"error": f"Mediation failed: {e}"}
+            # describe_flow_error, not str(e): for an HTTP error the
+            # provider's response body is where the actionable message
+            # lives, and a bug here must not read as a provider fault
+            # (issues #71, #74).
+            detail = describe_flow_error(e)
+            post_notice(
+                discussion, db, mod,
+                _MEDIATION_FAILURE_NOTICE.format(detail=detail),
+            )
+            return {"error": f"Mediation failed: {detail}"}
     return {"awaiting_human_moderator": True}
 
 
@@ -80,10 +120,19 @@ async def conclude_discussion(
     """End the discussion, generating a final synthesis if the moderator is AI.
 
     Marks the discussion as concluded and persists the status change.
-    Returns a result dict (the caller is responsible for appending state).
+    Returns a result dict (the caller is responsible for appending state)
+    carrying ``conclusion_error`` when the synthesis could not be produced
+    *or* could not be recorded; the transcript notice distinguishes the
+    two, since a synthesis that is on screen but unsaved needs different
+    advice from one that never existed.
     """
+    conclusion_error = ""
     mod = discussion.moderator
     if mod and mod.entity_type == EntityType.AI:
+        # Flipped once the synthesis is in ``discussion.messages`` and so
+        # already visible to the user; everything that can fail after that
+        # point is a persistence failure, not a generation failure.
+        synthesis_shown = False
         try:
             resp = await moderator.generate_conclusion()
             conclusion = resp.content
@@ -101,6 +150,7 @@ async def conclude_discussion(
                 cost=cost,
             )
             discussion.messages.append(msg)
+            synthesis_shown = True
             db.add_message(
                 discussion.id, mod.id,
                 f"## Final Synthesis\n\n{conclusion}", "moderator",
@@ -125,7 +175,20 @@ async def conclude_discussion(
             )
         except Exception as e:
             logger.exception("Conclusion generation failed")
-            # Continue to mark discussion as concluded even if AI fails
+            # The discussion still concludes — an expensive session must
+            # not be left half-ended — but the user has to be told why
+            # (golden rule 6, issue #71).  The block spans generation and
+            # two persistence steps, so which of the two notices is true
+            # depends on how far it got: the synthesis is appended to the
+            # transcript before it is written, and a write failure after
+            # that leaves it on screen but unrecorded.
+            conclusion_error = describe_flow_error(e)
+            template = (_CONCLUSION_NOT_SAVED_NOTICE if synthesis_shown
+                        else _CONCLUSION_FAILURE_NOTICE)
+            post_notice(
+                discussion, db, mod,
+                template.format(detail=conclusion_error),
+            )
 
     discussion.is_active = False
     discussion.status = "concluded"
@@ -134,4 +197,7 @@ async def conclude_discussion(
             discussion.id,
             status="concluded", ended_at=time.time(),
         )
-    return {"concluded": True}
+    result: dict = {"concluded": True}
+    if conclusion_error:
+        result["conclusion_error"] = conclusion_error
+    return result

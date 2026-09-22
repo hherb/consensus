@@ -11,7 +11,14 @@ from typing import AsyncIterator, Optional
 
 import httpx
 
+from .ai_response import (  # re-exported: this is the client's
+    AIResponseFormatError,  # public error type for its callers
+    _malformed_body_detail,
+    _parse_completion_body,
+)
+
 logger = logging.getLogger(__name__)
+
 
 # Default timeout for API requests (seconds)
 DEFAULT_API_TIMEOUT = 120.0
@@ -338,12 +345,17 @@ class AIClient:
             f"{self.base_url}/chat/completions", payload, model,
         )
         response.raise_for_status()
-        data = response.json()
         elapsed = int((time.monotonic() - start) * 1000)
+        data = _parse_completion_body(response, model)
 
         usage = data.get("usage", {})
-        choice = data["choices"][0]
-        content = _normalize_content(choice["message"]["content"])
+        try:
+            choice = data["choices"][0]
+            content = _normalize_content(choice["message"]["content"])
+        except (KeyError, IndexError, TypeError) as e:
+            raise AIResponseFormatError(
+                _malformed_body_detail(model, data, e),
+            ) from e
         return AIResponse(
             content=content,
             model=data.get("model", model),
@@ -388,11 +400,16 @@ class AIClient:
             f"{self.base_url}/chat/completions", payload, model,
         )
         response.raise_for_status()
-        data = response.json()
         elapsed = int((time.monotonic() - start) * 1000)
+        data = _parse_completion_body(response, model)
 
-        choice = data["choices"][0]
-        message = choice.get("message", {})
+        try:
+            choice = data["choices"][0]
+            message = choice.get("message", {})
+        except (KeyError, IndexError, TypeError) as e:
+            raise AIResponseFormatError(
+                _malformed_body_detail(model, data, e),
+            ) from e
         message["content"] = _normalize_content(message.get("content"))
         usage = data.get("usage", {})
 

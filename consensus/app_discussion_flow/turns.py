@@ -20,12 +20,40 @@ from ..models import (
 from ..moderator import Moderator
 from ..pricing import PricingCache
 from .helpers import (
-    apply_method_turn_order, calculate_discussion_cost, describe_turn_error,
-    is_pass, stamp_turn_index,
+    ERROR_KIND_CONFIG, ERROR_KIND_INTERNAL, ERROR_KIND_PROVIDER,
+    apply_method_turn_order, calculate_discussion_cost, classify_flow_error,
+    describe_flow_error, is_pass, post_notice, stamp_turn_index,
 )
-from .method_switch import handle_triage_handoff, run_triage_recommender
+from .method_switch import (
+    RECOMMENDER_FAILURE_NOTICE, handle_triage_handoff, run_triage_recommender,
+)
 
 logger = logging.getLogger(__name__)
+
+#: Skip notices keyed by :func:`classify_flow_error`'s verdict.
+#:
+#: ``generate_ai_turn``'s ``except`` wraps far more than the provider call
+#: — method handlers, evidence annotation, cost lookup and several DB
+#: writes — so the notice is chosen by classification rather than assumed
+#: to be an API error.  Only the internal case asks the user to report a
+#: bug; blaming Consensus for a provider outage, or a provider for a
+#: missing API key, sends debugging the wrong way (issue #74).
+_SKIP_NOTICES = {
+    ERROR_KIND_PROVIDER: (
+        "*{name} could not respond due to an API error ({detail}). "
+        "Skipping to the next participant.*"
+    ),
+    ERROR_KIND_CONFIG: (
+        "*{name} could not respond because of a configuration problem "
+        "({detail}). This is a setting to fix, not a bug. "
+        "Skipping to the next participant.*"
+    ),
+    ERROR_KIND_INTERNAL: (
+        "*{name}'s turn failed due to an internal error ({detail}). This "
+        "is a fault in Consensus, not in the AI provider — please report "
+        "it. Skipping to the next participant.*"
+    ),
+}
 
 
 async def generate_ai_turn(
@@ -35,7 +63,11 @@ async def generate_ai_turn(
     """Generate an AI participant's contribution for the current turn.
 
     Returns a dict with the message data (including optional 'passed',
-    'warning', 'error', and 'skipped' keys).
+    'warning', 'error' and 'skipped' keys).  A skipped turn also carries
+    ``error_kind`` — one of ``"provider"``, ``"config"`` or ``"internal"``
+    (see :func:`~.helpers.classify_flow_error`) — which the UI uses to
+    word the notification without blaming the wrong party, and
+    ``notice_unsaved`` when the skip notice could not be persisted.
     """
     if not discussion.is_active or discussion.status == "concluded":
         return {"error": "Discussion is not active"}
@@ -87,10 +119,31 @@ async def generate_ai_turn(
                     method_state=serialize_method_state(discussion.method_state),
                 )
             # Triage recommend phase: run async MethodRecommender
-            if (discussion.discussion_method == "triage"
-                    and discussion.method_state.get("current_phase") == "recommend"
-                    and key_resolver):
-                await run_triage_recommender(discussion, current, key_resolver)
+            in_recommend_phase = (
+                discussion.discussion_method == "triage"
+                and discussion.method_state.get("current_phase") == "recommend"
+            )
+            if in_recommend_phase and not key_resolver:
+                # ConsensusApp always supplies one; another embedder might
+                # not, and skipping the classifier in silence is the very
+                # failure #72 is about.
+                logger.warning(
+                    "Triage recommender skipped for discussion %s: no "
+                    "key_resolver was supplied to generate_ai_turn",
+                    discussion.id,
+                )
+            if in_recommend_phase and key_resolver:
+                rec_error = await run_triage_recommender(
+                    discussion, current, key_resolver)
+                if rec_error:
+                    # The recommend phase's whole purpose is to pick a
+                    # method; when the classifier fails the user must see
+                    # that the default was forced, not chosen (golden
+                    # rule 6, issue #72).  Appending to this turn's own
+                    # content puts it where the recommendation would have
+                    # been, and it persists with the message below.
+                    content += RECOMMENDER_FAILURE_NOTICE.format(
+                        detail=rec_error)
                 if discussion.id:
                     db.update_discussion(
                         discussion.id,
@@ -169,26 +222,23 @@ async def generate_ai_turn(
             result["warning"] = resp.warning
         return result
     except Exception as e:
-        logger.exception("AI generation failed for %s", current.name)
-        # Post a visible notification so the moderator/participants
-        # know this participant was skipped due to an API error.
-        detail = describe_turn_error(e)
-        error_notice = (
-            f"*{current.name} could not respond due to an API error "
-            f"({detail}). Skipping to the next participant.*"
-        )
-        msg = Message(
-            entity_id=current.id, entity_name=current.name,
-            content=error_notice, role=MessageRole.PARTICIPANT,
-        )
-        discussion.messages.append(msg)
-        db.add_message(
-            discussion.id, current.id, error_notice, "participant",
-            turn_number=discussion.turn_number,
+        logger.exception("AI turn failed for %s", current.name)
+        # Post a visible notification so the moderator/participants know
+        # this participant was skipped, worded per _SKIP_NOTICES.
+        kind = classify_flow_error(e)
+        detail = describe_flow_error(e)
+        error_notice = _SKIP_NOTICES[kind].format(
+            name=current.name, detail=detail)
+        msg, persisted = post_notice(
+            discussion, db, current, error_notice,
+            role=MessageRole.PARTICIPANT,
         )
         result = msg.to_dict()
         result["error"] = detail
+        result["error_kind"] = kind
         result["skipped"] = True
+        if not persisted:
+            result["notice_unsaved"] = True
         return result
 
 
@@ -261,9 +311,12 @@ async def complete_turn(
                 )
         except Exception as e:
             logger.exception("AI summary generation failed")
+            # describe_flow_error, not describe_turn_error: this block
+            # also wraps a cost lookup and a DB write, so the failure is
+            # not necessarily the provider's (issue #74).
             return {
                 "error":
-                    f"Summary generation failed: {describe_turn_error(e)}",
+                    f"Summary generation failed: {describe_flow_error(e)}",
             }
     elif mod and moderator_summary:
         summary_text = moderator_summary
@@ -298,7 +351,11 @@ async def complete_turn(
         )
         discussion.messages.append(summary_msg)
 
-    next_speaker = moderator.advance_turn()
+    # The returned entity is deliberately discarded: both the phase
+    # transition and the round-completion ``apply_method_turn_order``
+    # below can reorder ``turn_order`` and reset the index, so the speaker
+    # is recomputed from live state before returning.
+    moderator.advance_turn()
 
     # Method phase management
     method = get_active_method(discussion)
@@ -418,10 +475,8 @@ async def complete_turn(
                 "state": get_state_fn(),
             }
 
-    # Recompute the speaker from live state: a phase transition above may
-    # have reordered ``turn_order`` and reset ``current_turn_index`` to 0,
-    # which would make the ``next_speaker`` captured from ``advance_turn()``
-    # stale and point the frontend at the wrong participant.
+    # Recomputed here rather than taken from advance_turn() above — see
+    # the comment there for why the captured value would be stale.
     final_speaker = discussion.current_speaker
     return {
         "next_speaker": final_speaker.to_dict() if final_speaker else None,

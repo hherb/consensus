@@ -43,6 +43,10 @@ const TOAST_FADE_DELAY_MS = 300;
 // warning, #29).
 export const TOAST_WARNING_DURATION_MS = 6000;
 
+// Skip/advisory toasts raised mid-turn, which compete with the turn that
+// is already rendering behind them (golden rule 3: no magic numbers).
+export const TOAST_NOTICE_DURATION_MS = 5000;
+
 /**
  * Show a temporary toast notification.
  * @param {string} msg - Message text

@@ -19,6 +19,17 @@ DEFAULT_EMBEDDING_BACKEND = "ollama"
 DEFAULT_EMBEDDING_MODEL = "nomic-embed-text-v2-moe:latest"
 DEFAULT_EMBEDDING_ENDPOINT = "http://localhost:11434"
 
+class ConfigurationError(ValueError):
+    """This deployment is set up wrong — not a bug, and not the provider.
+
+    Carved out of ``ValueError`` so the flow layer can tell a missing API
+    key or an unassigned model from a genuine fault in Consensus, and show
+    the user the setting to fix instead of asking them to file a bug
+    report (issue #74).  Subclasses ``ValueError`` so existing handlers
+    and tests that catch it keep working.
+    """
+
+
 ENTITY_COLORS = [
     "#3b82f6", "#ef4444", "#22c55e", "#f59e0b",
     "#8b5cf6", "#ec4899", "#06b6d4", "#f97316",

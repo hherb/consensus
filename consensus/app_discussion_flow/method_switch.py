@@ -32,15 +32,59 @@ from ..models import Discussion, Entity, EntityType, Message, MessageRole
 from ..structured_output import (
     _format_tool_block_error, find_tool_blocked_entities,
 )
-from .helpers import apply_method_turn_order, stamp_turn_index
+from .helpers import (
+    apply_method_turn_order, describe_flow_error, stamp_turn_index,
+)
 
 logger = logging.getLogger(__name__)
+
+#: Method the Triage flow falls back to when no recommendation could be
+#: produced.  It is a fallback, never a recommendation — every path that
+#: sets it also records ``recommender_error`` so the two stay
+#: distinguishable (issue #72).
+RECOMMENDER_FALLBACK_METHOD = "open_discussion"
+
+#: Appended to the recommend-phase transcript message when the classifier
+#: failed, so the user can see the default was forced rather than chosen.
+RECOMMENDER_FAILURE_NOTICE = (
+    "\n\n---\n\n**Automatic method recommendation failed.** {detail}\n\n"
+    f"`{RECOMMENDER_FALLBACK_METHOD}` is offered as a fallback — this is a "
+    "failure, not a recommendation. Please name the method you want in the "
+    "confirmation phase, or fix the moderator's model configuration and "
+    "restart the triage."
+)
+
+#: Recorded when the triage moderator has no AI configuration at all, so
+#: the classifier could never have run.
+_NO_AI_CONFIG_DETAIL = (
+    "The triage moderator ({name}) has no AI configuration, so the method "
+    "classifier could not be run."
+)
+
+
+def _record_recommender_failure(state: dict, detail: str) -> str:
+    """Record a recommender failure in ``method_state`` and return ``detail``.
+
+    Both failure paths write the same three keys so the confirm phase can
+    always tell "the classifier ran and chose this" from "the classifier
+    never produced anything" (issue #72).
+    """
+    state["recommender_error"] = detail
+    state["recommendations"] = []
+    state["recommended_method"] = RECOMMENDER_FALLBACK_METHOD
+    return detail
 
 
 async def run_triage_recommender(
     discussion: Discussion, moderator_entity: Entity, key_resolver,
-) -> None:
-    """Call MethodRecommender after the triage moderator's synthesis turn."""
+) -> str | None:
+    """Call MethodRecommender after the triage moderator's synthesis turn.
+
+    Returns a user-facing description of the failure, or ``None`` when the
+    classifier ran.  A failure is also recorded in ``method_state`` so it
+    survives a reload and reaches the confirm-phase prompts; the caller
+    posts it into the transcript (golden rule 6, issue #72).
+    """
     from ..ai_client import AIClient
     from ..methods import list_methods
     from ..methods.recommender import MethodRecommender
@@ -48,30 +92,33 @@ async def run_triage_recommender(
     state = discussion.method_state
     characterization = state.get("moderator_characterization", "")
     if not moderator_entity.ai_config:
-        # Leaves ``recommendations`` unset, which the confirm phase cannot
-        # distinguish from "ran and found nothing" — log so the cause is
-        # recoverable.  Surfacing it in the transcript is issue #72.
         logger.warning(
             "Triage recommender skipped: moderator entity %s (%s) has no "
-            "ai_config; discussion %s will reach the confirm phase with no "
-            "recommendations",
+            "ai_config; discussion %s falls back to %s",
             moderator_entity.id, moderator_entity.name, discussion.id,
+            RECOMMENDER_FALLBACK_METHOD,
         )
-        return
+        return _record_recommender_failure(
+            state, _NO_AI_CONFIG_DETAIL.format(name=moderator_entity.name))
 
-    api_key = key_resolver(
-        moderator_entity.ai_config.provider_id,
-        "",  # env var looked up by resolver
-    )
-    ai_client = AIClient(
-        base_url=moderator_entity.ai_config.base_url,
-        api_key=api_key,
-    )
-    provider = {"model": moderator_entity.ai_config.model}
-
-    recommender = MethodRecommender()
+    # Client construction is inside the try with the call itself: a bad
+    # provider_id or base_url raises here, and letting that escape would
+    # bubble into generate_ai_turn's handler, which discards the
+    # moderator's already-generated, not-yet-persisted characterization
+    # and reports the whole turn as failed (issue #72 follow-up).
+    ai_client = None
     try:
-        recs = await recommender.recommend(
+        api_key = key_resolver(
+            moderator_entity.ai_config.provider_id,
+            "",  # env var looked up by resolver
+        )
+        ai_client = AIClient(
+            base_url=moderator_entity.ai_config.base_url,
+            api_key=api_key,
+        )
+        provider = {"model": moderator_entity.ai_config.model}
+
+        recs = await MethodRecommender().recommend(
             topic=discussion.topic,
             answer_type="",
             method_catalog=list_methods(),
@@ -80,13 +127,25 @@ async def run_triage_recommender(
             additional_context=characterization,
         )
         state["recommendations"] = [r.to_dict() for r in recs]
-        state["recommended_method"] = recs[0].method_name if recs else None
-    except Exception:
+        state["recommended_method"] = recs[0].method_name
+        # Clear a failure recorded by an earlier attempt, so a retry that
+        # succeeds does not leave a stale warning in the prompts.
+        state.pop("recommender_error", None)
+        return None
+    except Exception as e:
         logger.exception("Triage recommender call failed")
-        state["recommendations"] = []
-        state["recommended_method"] = "open_discussion"
+        return _record_recommender_failure(state, describe_flow_error(e))
     finally:
-        await ai_client.close()
+        if ai_client is not None:
+            # Cleanup must not be able to fail a turn that already
+            # succeeded, nor mask the failure being reported above.
+            try:
+                await ai_client.close()
+            except Exception:
+                logger.warning(
+                    "Could not close the recommender AI client for "
+                    "discussion %s", discussion.id, exc_info=True,
+                )
 
 
 def switch_discussion_method(

@@ -5,11 +5,13 @@ Split out of the former single ``app_discussion_flow.py`` (issue #61,
 golden rule 8) into four cohesive layers plus their shared leaf helpers:
 
 ``helpers``
-    Pure/near-pure utilities — pass detection, provider-error description,
-    discussion cost, and turn-order bookkeeping. The leaf of the package:
-    imported by ``submissions``, ``turns`` and ``method_switch``, and
-    importing none of them, so the internal graph stays acyclic.
-    (``conclusion`` needs nothing from it.)
+    Shared utilities — pass detection, error classification and
+    description, transcript notices, discussion cost, and turn-order
+    bookkeeping. The leaf of the package: imported by ``submissions``,
+    ``turns``, ``method_switch`` and ``conclusion``, and importing none of
+    them, so the internal graph stays acyclic. (``turns`` additionally
+    imports ``method_switch``; that edge is the only one between
+    non-leaf modules and it runs one way.)
 ``submissions``
     Everything a *person* submits: free-text human turns, structured human
     payloads (#57), and human-moderator messages.

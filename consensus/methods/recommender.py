@@ -3,6 +3,10 @@
 Stateless utility shared by the quick setup recommendation and the
 Guided Triage meta-method. Sends the topic, answer type, and method
 catalog to an LLM and parses ranked recommendations.
+
+Failures raise :class:`RecommenderError` rather than returning a default
+recommendation, so that callers can tell "the classifier chose this" from
+"the classifier never ran" and say so in the UI (issue #72).
 """
 
 from __future__ import annotations
@@ -26,6 +30,10 @@ logger = logging.getLogger(__name__)
 # method (issue #24, owner decision 2026-07-12).
 _EXCLUDED_METHODS = {"triage"}
 
+#: How much of an unparseable model reply to quote in the error shown to
+#: the user — enough to recognise a refusal or a truncated answer.
+_RESPONSE_EXCERPT_LENGTH = 200
+
 # Answer type options presented to the user
 ANSWER_TYPES = [
     "Explore a topic from multiple perspectives",
@@ -37,7 +45,18 @@ ANSWER_TYPES = [
     "Something else / not sure",
 ]
 
-_FALLBACK = None  # lazily initialized
+
+class RecommenderError(Exception):
+    """The method classifier could not produce a recommendation.
+
+    Raised instead of quietly substituting a default.  A returned default
+    is indistinguishable from a real recommendation once it reaches the
+    UI, which is exactly how a failed classifier came to be presented to
+    users as a considered "50% confidence" choice (issue #72).  Callers
+    decide what to fall back to and are responsible for saying that they
+    did — see ``app_discussion_flow.method_switch.run_triage_recommender``
+    and ``app.ConsensusApp.recommend_method``.
+    """
 
 
 @dataclass
@@ -56,6 +75,7 @@ class MethodRecommendation:
     capability_warning: str = ""
 
     def to_dict(self) -> dict:
+        """Return the JSON-serialisable form sent to the UI."""
         return {
             "method_name": self.method_name,
             "display_name": self.display_name,
@@ -64,17 +84,6 @@ class MethodRecommendation:
             "fit_factors": self.fit_factors,
             "capability_warning": self.capability_warning,
         }
-
-
-def _fallback_recommendation() -> list[MethodRecommendation]:
-    """Return the default fallback recommendation."""
-    return [MethodRecommendation(
-        method_name="open_discussion",
-        display_name="Open Discussion",
-        confidence=0.5,
-        reasoning="Could not reach AI for recommendation. Open Discussion is a safe default.",
-        fit_factors=["fallback"],
-    )]
 
 
 _TAXONOMY = """\
@@ -149,7 +158,11 @@ class MethodRecommender:
     def _parse_response(
         self, content: str, num_recommendations: int,
     ) -> list[MethodRecommendation]:
-        """Parse LLM response into MethodRecommendation objects."""
+        """Parse LLM response into MethodRecommendation objects.
+
+        Raises:
+            RecommenderError: the reply held no parseable recommendation.
+        """
         # Try direct JSON parse first, then code-fence extraction
         data = None
         try:
@@ -158,8 +171,12 @@ class MethodRecommender:
             data = extract_json_block(content)
 
         if not isinstance(data, dict) or "recommendations" not in data:
+            excerpt = content.strip()[:_RESPONSE_EXCERPT_LENGTH]
             logger.warning("Failed to parse recommendation response")
-            return _fallback_recommendation()
+            raise RecommenderError(
+                "The model's reply was not a recommendation object: "
+                f"{excerpt}",
+            )
 
         recs = []
         for item in data["recommendations"][:num_recommendations]:
@@ -174,7 +191,12 @@ class MethodRecommender:
             except (KeyError, TypeError, ValueError) as e:
                 logger.warning("Skipping malformed recommendation: %s", e)
 
-        return recs if recs else _fallback_recommendation()
+        if not recs:
+            raise RecommenderError(
+                "The model returned a recommendation list, but every entry "
+                "was malformed.",
+            )
+        return recs
 
     async def recommend(
         self,
@@ -191,10 +213,19 @@ class MethodRecommender:
         The ``ai_client`` must already be constructed with the correct
         base_url and api_key (``AIClient(base_url=..., api_key=...)``).
         The ``provider`` dict only needs ``"model"`` for the completion call.
+
+        Raises:
+            RecommenderError: the classifier produced nothing usable — the
+                provider call failed, the reply could not be parsed, or the
+                catalog held no recommendable method.  Never returns a
+                stand-in recommendation; see :class:`RecommenderError`.
         """
         filtered = self._filter_catalog(method_catalog)
         if not filtered:
-            return _fallback_recommendation()
+            raise RecommenderError(
+                "No recommendable methods are available — the catalog is "
+                "empty once the non-recommendable methods are excluded.",
+            )
 
         system_prompt = self._build_system_prompt(filtered)
         user_prompt = self._build_user_prompt(
@@ -212,9 +243,11 @@ class MethodRecommender:
                 temperature=0.3,
             )
             return self._parse_response(resp.content, num_recommendations)
-        except Exception:
+        except RecommenderError:
+            raise
+        except Exception as e:
             logger.exception("MethodRecommender.recommend() failed")
-            return _fallback_recommendation()
+            raise RecommenderError(str(e) or type(e).__name__) from e
 
 
 def downrank_incompatible_recommendations(
