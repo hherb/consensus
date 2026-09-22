@@ -10,7 +10,9 @@ import json
 
 import pytest
 
-from consensus.tools_document import chunking, constants, embedding, handlers, parsing
+from consensus.tools_document import (
+    chunking, constants, embedding, handlers, handlers_rag, parsing,
+)
 from consensus.tools_document.provider import create_document_provider
 from consensus.tools import ToolContext
 
@@ -74,7 +76,7 @@ def fake_llm(monkeypatch):
         return f"answer {len(calls)}"
 
     patch_where_defined(
-        monkeypatch, handlers._doc_ask_handler, "_call_interpretation_llm", _fake,
+        monkeypatch, handlers_rag._doc_ask_handler, "_call_interpretation_llm", _fake,
     )
     return calls
 
@@ -499,21 +501,21 @@ class TestDocGetChapterHandler:
 class TestDocAskHandler:
     @pytest.mark.asyncio
     async def test_document_id_is_required(self, tmp_db, ctx):
-        result = await handlers._doc_ask_handler(
+        result = await handlers_rag._doc_ask_handler(
             {"question": "why?"}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "document_id is required" in result.content
 
     @pytest.mark.asyncio
     async def test_question_is_required(self, tmp_db, ctx, doc_id):
-        result = await handlers._doc_ask_handler(
+        result = await handlers_rag._doc_ask_handler(
             {"document_id": doc_id}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "question is required" in result.content
 
     @pytest.mark.asyncio
     async def test_unknown_document_is_an_error(self, tmp_db, ctx):
-        result = await handlers._doc_ask_handler(
+        result = await handlers_rag._doc_ask_handler(
             {"document_id": 4242, "question": "why?"}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "not found" in result.content
@@ -522,7 +524,7 @@ class TestDocAskHandler:
     async def test_unindexed_document_reports_progress_and_is_not_an_error(
         self, tmp_db, ctx, doc_id,
     ):
-        result = await handlers._doc_ask_handler(
+        result = await handlers_rag._doc_ask_handler(
             {"document_id": doc_id, "question": "why?"}, ctx, tmp_db, None, None,
         )
         assert not result.is_error
@@ -536,11 +538,11 @@ class TestDocAskHandler:
     ):
         spawned = []
         patch_where_defined(
-            monkeypatch, handlers._doc_ask_handler, "_spawn_embedding_pass",
+            monkeypatch, handlers_rag._doc_ask_handler, "_spawn_embedding_pass",
             lambda doc_id, db, embed_client: spawned.append(doc_id),
         )
         try:
-            await handlers._doc_ask_handler(
+            await handlers_rag._doc_ask_handler(
                 {"document_id": doc_id, "question": "why?"},
                 ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), None,
             )
@@ -561,12 +563,12 @@ class TestDocAskHandler:
         """
         spawned = []
         patch_where_defined(
-            monkeypatch, handlers._doc_ask_handler, "_spawn_embedding_pass",
+            monkeypatch, handlers_rag._doc_ask_handler, "_spawn_embedding_pass",
             lambda doc_id, db, embed_client: spawned.append(doc_id),
         )
         embedding._embedding_docs.add(doc_id)
         try:
-            result = await handlers._doc_ask_handler(
+            result = await handlers_rag._doc_ask_handler(
                 {"document_id": doc_id, "question": "why?"},
                 ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), None,
             )
@@ -578,7 +580,7 @@ class TestDocAskHandler:
     @pytest.mark.asyncio
     async def test_embedding_outage_is_an_error(self, tmp_db, ctx, doc_id):
         embed_all(tmp_db, doc_id)
-        result = await handlers._doc_ask_handler(
+        result = await handlers_rag._doc_ask_handler(
             {"document_id": doc_id, "question": "why?"}, ctx, tmp_db,
             FakeEmbedClient(error=RuntimeError("ollama down")), None,
         )
@@ -589,7 +591,7 @@ class TestDocAskHandler:
         self, tmp_db, ctx, doc_id, fake_llm,
     ):
         embed_all(tmp_db, doc_id)
-        result = await handlers._doc_ask_handler(
+        result = await handlers_rag._doc_ask_handler(
             {"document_id": doc_id, "question": "What was measured?"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
         )
@@ -614,7 +616,7 @@ class TestDocAskHandler:
                 many_id, index, f"passage {index}", index * 10, index * 10 + 9, None,
             )
         embed_all(tmp_db, many_id)
-        result = await handlers._doc_ask_handler(
+        result = await handlers_rag._doc_ask_handler(
             {"document_id": many_id, "question": "q"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
         )
@@ -625,7 +627,7 @@ class TestDocAskHandler:
         self, tmp_db, ctx, doc_id, fake_llm,
     ):
         embed_all(tmp_db, doc_id)
-        await handlers._doc_ask_handler(
+        await handlers_rag._doc_ask_handler(
             {"document_id": doc_id, "question": "What was measured?"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
         )
@@ -647,7 +649,7 @@ class TestDocAskHandler:
         )
         tmp_db.add_document_chunk(long_id, 0, long_markdown, 0, 4000, None)
         embed_all(tmp_db, long_id)
-        result = await handlers._doc_ask_handler(
+        result = await handlers_rag._doc_ask_handler(
             {"document_id": long_id, "question": "q"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
         )
@@ -663,7 +665,7 @@ class TestDocAskHandler:
             source_type="text", source_url=None, markdown="x", char_count=1,
             sections_json="[]",
         )
-        result = await handlers._doc_ask_handler(
+        result = await handlers_rag._doc_ask_handler(
             {"document_id": bare_id, "question": "q"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), None,
         )
@@ -677,12 +679,12 @@ class TestDocAskHandler:
 class TestDocSummaryHandler:
     @pytest.mark.asyncio
     async def test_document_id_is_required(self, tmp_db, ctx):
-        result = await handlers._doc_summary_handler({}, ctx, tmp_db, None, None)
+        result = await handlers_rag._doc_summary_handler({}, ctx, tmp_db, None, None)
         assert result.is_error and "document_id is required" in result.content
 
     @pytest.mark.asyncio
     async def test_unknown_document_is_an_error(self, tmp_db, ctx):
-        result = await handlers._doc_summary_handler(
+        result = await handlers_rag._doc_summary_handler(
             {"document_id": 4242}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "not found" in result.content
@@ -692,7 +694,7 @@ class TestDocSummaryHandler:
         self, tmp_db, ctx, doc_id, fake_llm,
     ):
         blank_start = MARKDOWN.index("\n\n")
-        result = await handlers._doc_summary_handler(
+        result = await handlers_rag._doc_summary_handler(
             {"document_id": doc_id, "from_char": blank_start, "to_char": blank_start + 2},
             ctx, tmp_db, None, None,
         )
@@ -703,7 +705,7 @@ class TestDocSummaryHandler:
     async def test_short_document_is_summarized_in_one_call(
         self, tmp_db, ctx, doc_id, fake_llm,
     ):
-        result = await handlers._doc_summary_handler(
+        result = await handlers_rag._doc_summary_handler(
             {"document_id": doc_id}, ctx, tmp_db, None, FakeApp(tmp_db),
         )
         assert json.loads(result.content) == {"summary": "answer 1"}
@@ -714,7 +716,7 @@ class TestDocSummaryHandler:
     async def test_metadata_records_the_summarized_range(
         self, tmp_db, ctx, doc_id, fake_llm,
     ):
-        result = await handlers._doc_summary_handler(
+        result = await handlers_rag._doc_summary_handler(
             {"document_id": doc_id, "from_char": 0, "to_char": 30},
             ctx, tmp_db, None, FakeApp(tmp_db),
         )
@@ -729,7 +731,7 @@ class TestDocSummaryHandler:
             source_type="text", source_url=None, markdown=long_markdown,
             char_count=len(long_markdown), sections_json="[]",
         )
-        result = await handlers._doc_summary_handler(
+        result = await handlers_rag._doc_summary_handler(
             {"document_id": long_id}, ctx, tmp_db, None, FakeApp(tmp_db),
         )
         # Three map calls over the excerpt, then one reduce call.
@@ -746,7 +748,7 @@ class TestDocSummaryHandler:
             source_type="text", source_url=None, markdown=long_markdown,
             char_count=len(long_markdown), sections_json="[]",
         )
-        await handlers._doc_summary_handler(
+        await handlers_rag._doc_summary_handler(
             {"document_id": long_id}, ctx, tmp_db, None, FakeApp(tmp_db),
         )
         map_calls = fake_llm[:-1]

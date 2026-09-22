@@ -37,7 +37,7 @@ EXPECTED_PUBLIC_API = {
 # own: an import cycle would only surface as an ImportError at runtime.
 SUBMODULES = [
     "constants", "errors", "parsing", "chunking", "embedding", "schemas",
-    "llm", "ingestion", "handlers", "provider",
+    "llm", "ingestion", "handlers", "handlers_rag", "provider",
 ]
 
 PACKAGE_ROOT = Path(tools_document.__file__).parent

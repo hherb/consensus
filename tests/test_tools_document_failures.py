@@ -10,7 +10,9 @@ import logging
 import httpx
 import pytest
 
-from consensus.tools_document import embedding, handlers, ingestion, llm, parsing
+from consensus.tools_document import (
+    embedding, handlers, handlers_rag, ingestion, llm, parsing,
+)
 from consensus.tools_document.embedding import _pack_embedding
 from consensus.tools_document.errors import (
     DocumentError, DocumentInterpretationError, DocumentParseError,
@@ -550,7 +552,7 @@ async def test_doc_ask_reports_a_dimension_mismatch(tmp_db, sample_ai_entity):
 
     client = FakeEmbedClient(vector=[1.0, 0.0, 0.0])
     context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
-    result = await handlers._doc_ask_handler(
+    result = await handlers_rag._doc_ask_handler(
         {"document_id": doc_id, "question": "what?"},
         context, tmp_db, client, None,
     )
@@ -578,7 +580,7 @@ async def test_doc_ask_reports_no_relevant_passage_below_threshold(
 
     client = FakeEmbedClient(vector=[1.0, 0.0, 0.0])
     context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
-    result = await handlers._doc_ask_handler(
+    result = await handlers_rag._doc_ask_handler(
         {"document_id": doc_id, "question": "what?"},
         context, tmp_db, client, None,
     )
@@ -613,11 +615,11 @@ async def test_doc_ask_reports_an_interpretation_failure_explicitly(
         raise DocumentInterpretationError("401 Unauthorized")
 
     patch_where_defined(
-        monkeypatch, handlers._doc_ask_handler, "_call_interpretation_llm", boom,
+        monkeypatch, handlers_rag._doc_ask_handler, "_call_interpretation_llm", boom,
     )
 
     context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
-    result = await handlers._doc_ask_handler(
+    result = await handlers_rag._doc_ask_handler(
         {"document_id": doc_id, "question": "what?"},
         context, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
     )
@@ -653,12 +655,12 @@ async def test_doc_ask_interpretation_failure_does_not_log_a_traceback(
         raise DocumentInterpretationError("401 Unauthorized")
 
     patch_where_defined(
-        monkeypatch, handlers._doc_ask_handler, "_call_interpretation_llm", boom,
+        monkeypatch, handlers_rag._doc_ask_handler, "_call_interpretation_llm", boom,
     )
 
     context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
     with caplog.at_level(logging.ERROR):
-        await handlers._doc_ask_handler(
+        await handlers_rag._doc_ask_handler(
             {"document_id": doc_id, "question": "what?"},
             context, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
         )

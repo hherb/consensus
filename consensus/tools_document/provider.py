@@ -4,10 +4,10 @@ import logging
 
 from ..tools import PythonToolProvider, ToolContext, ToolDefinition, ToolResult
 from .handlers import (
-    _doc_add_handler, _doc_ask_handler, _doc_get_chapter_handler,
-    _doc_get_length_handler, _doc_get_sections_handler, _doc_get_text_handler,
-    _doc_list_handler, _doc_summary_handler,
+    _doc_add_handler, _doc_get_chapter_handler, _doc_get_length_handler,
+    _doc_get_sections_handler, _doc_get_text_handler, _doc_list_handler,
 )
+from .handlers_rag import _doc_ask_handler, _doc_summary_handler
 from .schemas import (
     _DOC_ADD_SCHEMA, _DOC_ASK_SCHEMA, _DOC_CHAPTER_SCHEMA, _DOC_LENGTH_SCHEMA,
     _DOC_LIST_SCHEMA, _DOC_SECTIONS_SCHEMA, _DOC_SUMMARY_SCHEMA, _DOC_TEXT_SCHEMA,

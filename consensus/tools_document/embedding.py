@@ -106,23 +106,10 @@ def _rank_by_similarity(
     )
 
 
-def _reindex_message(ranking: RankingResult) -> str:
-    """Explain a dimension mismatch in terms a user can act on.
-
-    Args:
-        ranking: A :class:`RankingResult` whose ``skipped_dim_mismatch`` is
-            non-zero — the caller is expected to check that first.
-
-    Returns:
-        A message naming the dimensions involved and the required remedy.
-    """
-    return (
-        f"{ranking.skipped_dim_mismatch} chunk(s) were indexed with a "
-        f"different embedding model (dimension "
-        f"{', '.join(str(d) for d in ranking.row_dims)} vs "
-        f"{ranking.query_dim} now). The documents must be re-indexed "
-        "before they can be searched."
-    )
+# ``_reindex_message``, the user-facing rendering of a dimension mismatch,
+# lives in ``handlers_rag.py`` — it is a string formatter for handlers, not
+# embedding computation, and this module stays pure maths plus the
+# background embedding pass (issue #78 task 8.5).
 
 # ---------------------------------------------------------------------------
 # Background embedding task
