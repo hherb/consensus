@@ -23,11 +23,18 @@ from .constants import (
 )
 from .embedding import (
     RankingResult, _embedding_docs, _rank_by_similarity, _spawn_embedding_pass,
+    get_indexing_failure,
 )
 from .errors import DocumentInterpretationError
 from .llm import _call_interpretation_llm
 
 logger = logging.getLogger(__name__)
+
+# Documents whose indexing failure has already been announced in the
+# transcript. The AI retries doc_ask up to MAX_TOOL_ITERATIONS times per
+# turn, and one notice per failure streak is information while several
+# would just be noise.
+_notified_index_failures: set[int] = set()
 
 
 def _reindex_message(ranking: RankingResult) -> str:
@@ -49,6 +56,60 @@ def _reindex_message(ranking: RankingResult) -> str:
     )
 
 
+def _post_indexing_notice(app, doc_id: int, detail: str) -> None:
+    """Announce an indexing failure in the discussion transcript.
+
+    Golden rule 6 requires a caught error to reach the UI, and the
+    tool-call row carrying this result is collapsed by default in the
+    frontend — so a human who never expands it would otherwise never learn
+    the document is unusable, and would just see a discussion that
+    silently stops using it.
+
+    Fully guarded: this function exists to *report* a failure, so it must
+    never raise one of its own out of the tool call (the lesson of issue
+    #74). A missing discussion, a missing moderator entity, or a
+    ``post_notice`` call that itself raises are all swallowed and logged
+    rather than propagated.
+
+    Args:
+        app: The orchestrator instance. Expected to carry ``.db`` and
+            ``.discussion``, but either may be absent (e.g. a standalone
+            tool call outside an active discussion), in which case no
+            notice is posted.
+        doc_id: Id of the document whose indexing failed.
+        detail: The embedder's own error message, already known to the
+            caller via ``IndexingFailure.last_error``.
+    """
+    if doc_id in _notified_index_failures:
+        return
+    try:
+        from ..app_discussion_flow.helpers import post_notice
+        from ..models import Entity
+
+        discussion = getattr(app, "discussion", None)
+        if discussion is None:
+            return
+        db = getattr(app, "db", None)
+        if db is None:
+            return
+        moderator_row = db.get_entity(discussion.moderator_id)
+        if not moderator_row:
+            return
+        post_notice(
+            discussion, db, Entity.from_db_row(moderator_row),
+            f"Document {doc_id} could not be indexed: {detail}. "
+            "Participants cannot search or ask questions about it until "
+            "the embedding service is working and the document is "
+            "re-indexed.",
+        )
+        _notified_index_failures.add(doc_id)
+    except Exception:
+        logger.exception(
+            "Could not post the indexing-failure notice for document %d",
+            doc_id,
+        )
+
+
 async def _doc_ask_handler(
     arguments: dict, context: ToolContext,
     db, embed_client, app,
@@ -67,20 +128,39 @@ async def _doc_ask_handler(
     if not doc:
         return ToolResult(content=f"Document {doc_id} not found.", is_error=True)
 
-    # Check if embeddings are ready
+    # Check whether embeddings are ready. A failed pass and a first pass
+    # still in flight used to be reported identically, so a dead embedder
+    # claimed to be "still indexing" forever (issue #78 defect 3).
     unembedded = db.count_unembedded_chunks(doc_id)
     if unembedded > 0:
+        total_chunks = len(db.get_document_chunks(doc_id))
+        embedded = total_chunks - unembedded
+        failure = get_indexing_failure(doc_id)
+
+        if failure is not None:
+            detail = failure.last_error
+            _post_indexing_notice(app, doc_id, detail)
+            return ToolResult(
+                content=(
+                    f"Indexing failed: {detail}. "
+                    f"{embedded}/{total_chunks} chunks embedded after "
+                    f"{failure.consecutive_failures} failed pass(es). "
+                    "The embedding service must be working before this "
+                    "document can be queried."
+                ),
+                is_error=True,
+            )
+
         # Re-kick the background embedding pass if it is not already running,
         # so a previously failed/interrupted chunk is retried instead of
         # leaving the document permanently stuck as "still being indexed".
         if embed_client and doc_id not in _embedding_docs:
             _embedding_docs.add(doc_id)
             _spawn_embedding_pass(doc_id, db, embed_client)
-        total_chunks = len(db.get_document_chunks(doc_id))
-        embedded = total_chunks - unembedded
         return ToolResult(
             content=(
-                f"Document is still being indexed ({embedded}/{total_chunks} chunks embedded). "
+                f"Document is still being indexed "
+                f"({embedded}/{total_chunks} chunks embedded). "
                 "Please try again shortly."
             ),
         )

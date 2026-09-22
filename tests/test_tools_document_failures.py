@@ -18,6 +18,7 @@ from consensus.tools_document.errors import (
     DocumentError, DocumentInterpretationError, DocumentParseError,
 )
 from consensus.tools import ToolContext
+from consensus.models import Discussion, Entity, EntityType, MessageRole
 from tests.document_helpers import patch_where_defined
 
 
@@ -446,6 +447,7 @@ def _clear_indexing_state():
     yield
     embedding._indexing_failures.clear()
     embedding._embedding_docs.clear()
+    handlers_rag._notified_index_failures.clear()
 
 
 @pytest.mark.asyncio
@@ -666,3 +668,147 @@ async def test_doc_ask_interpretation_failure_does_not_log_a_traceback(
         )
 
     assert "Traceback" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Task 9: a dead embedder stops reporting itself as a delay
+# ---------------------------------------------------------------------------
+
+class _NoticeApp:
+    """App stand-in carrying a real Discussion so ``post_notice`` can run."""
+
+    def __init__(self, db, moderator: Entity, discussion: Discussion) -> None:
+        """Store the collaborators ``_post_indexing_notice`` needs.
+
+        Args:
+            db: A real database handle (the ``tmp_db`` fixture).
+            moderator: The discussion's moderator entity.
+            discussion: The in-memory discussion the notice is appended to.
+        """
+        self.db = db
+        self.discussion = discussion
+        self._moderator = moderator
+
+    def _resolve_key_for_moderator(self, provider_id, env_name):
+        """Return a dummy key; unused by these notice-only tests."""
+        return "k"
+
+
+@pytest.fixture
+def notice_app(tmp_db):
+    """An app whose discussion can receive an indexing-failure notice."""
+    mod_id = tmp_db.add_entity(
+        "Mod", "human", "#00ff00", None, "", 0.5, 512, "")
+    disc_id = tmp_db.create_discussion("topic", mod_id)
+    discussion = Discussion(id=disc_id, topic="topic", moderator_id=mod_id)
+    moderator = Entity(
+        name="Mod", entity_type=EntityType.HUMAN, id=mod_id,
+        avatar_color="#00ff00",
+    )
+    return _NoticeApp(tmp_db, moderator, discussion)
+
+
+@pytest.mark.asyncio
+async def test_first_pass_still_reports_as_indexing(tmp_db, notice_app):
+    """With no recorded failure, "still indexing" is the honest answer."""
+    from tests.document_helpers import FakeEmbedClient
+
+    doc_id = tmp_db.add_document(
+        filename="f.md", title="F", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# F\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+
+    context = ToolContext(caller_entity_id=0, discussion_id=notice_app.discussion.id)
+    result = await handlers_rag._doc_ask_handler(
+        {"document_id": doc_id, "question": "q"},
+        context, tmp_db, FakeEmbedClient(), notice_app,
+    )
+    assert not result.is_error
+    assert "still being indexed" in result.content
+
+
+@pytest.mark.asyncio
+async def test_failed_indexing_is_an_error_with_the_real_cause(
+    tmp_db, notice_app,
+):
+    """After a failed pass, doc_ask errors and names the embedder problem."""
+    from tests.document_helpers import FakeEmbedClient
+
+    doc_id = tmp_db.add_document(
+        filename="g.md", title="G", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# G\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+    embedding._record_indexing_failure(
+        doc_id, "Cannot connect to embedding service at localhost:11434")
+
+    context = ToolContext(caller_entity_id=0, discussion_id=notice_app.discussion.id)
+    result = await handlers_rag._doc_ask_handler(
+        {"document_id": doc_id, "question": "q"},
+        context, tmp_db, FakeEmbedClient(), notice_app,
+    )
+
+    assert result.is_error
+    assert "localhost:11434" in result.content
+    assert "try again shortly" not in result.content
+
+
+@pytest.mark.asyncio
+async def test_indexing_failure_posts_one_transcript_notice(
+    tmp_db, notice_app,
+):
+    """The human sees it in the transcript, once per failure streak."""
+    from tests.document_helpers import FakeEmbedClient
+
+    doc_id = tmp_db.add_document(
+        filename="h.md", title="H", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# H\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+    embedding._record_indexing_failure(doc_id, "embedder down")
+
+    context = ToolContext(caller_entity_id=0, discussion_id=notice_app.discussion.id)
+    for _ in range(3):
+        await handlers_rag._doc_ask_handler(
+            {"document_id": doc_id, "question": "q"},
+            context, tmp_db, FakeEmbedClient(), notice_app,
+        )
+
+    notices = [
+        m for m in notice_app.discussion.messages
+        if m.role == MessageRole.SYSTEM and "embedder down" in m.content
+    ]
+    assert len(notices) == 1
+
+
+@pytest.mark.asyncio
+async def test_notice_failure_does_not_break_the_tool_call(tmp_db):
+    """A missing discussion must not turn a report into a crash."""
+    from tests.document_helpers import FakeEmbedClient
+
+    class NoDiscussionApp:
+        """App stand-in with no live discussion to notify."""
+
+        def __init__(self, db):
+            self.db = db
+            self.discussion = None
+
+    doc_id = tmp_db.add_document(
+        filename="i.md", title="I", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# I\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+    embedding._record_indexing_failure(doc_id, "embedder down")
+
+    context = ToolContext(caller_entity_id=0, discussion_id=0)
+    result = await handlers_rag._doc_ask_handler(
+        {"document_id": doc_id, "question": "q"},
+        context, tmp_db, FakeEmbedClient(), NoDiscussionApp(tmp_db),
+    )
+    assert result.is_error
+    assert "embedder down" in result.content
