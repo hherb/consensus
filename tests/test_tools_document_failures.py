@@ -9,9 +9,9 @@ import logging
 
 import pytest
 
-from consensus.tools_document import handlers, ingestion, llm
+from consensus.tools_document import handlers, ingestion, llm, parsing
 from consensus.tools_document.errors import (
-    DocumentError, DocumentInterpretationError,
+    DocumentError, DocumentInterpretationError, DocumentParseError,
 )
 from consensus.tools import ToolContext
 from tests.document_helpers import patch_where_defined
@@ -253,3 +253,74 @@ async def test_library_search_reports_a_failed_summary(tmp_db, sample_ai_entity)
     )
     assert f"[ID {doc_id}] Broken" in result.content
     assert "summary unavailable" in result.content
+
+
+def test_image_only_pdf_raises_instead_of_returning_placeholder(monkeypatch):
+    """A scanned PDF must not ingest as the string "(Empty PDF)".
+
+    It was 11 non-blank characters, so the "empty after parsing" guard let
+    it through; doc_ask then answered questions from it.
+
+    Uses ``monkeypatch.setitem(sys.modules, ...)`` rather than manual
+    ``sys.modules`` mutation with a ``try``/``finally`` — pytest unwinds it
+    automatically even if the assertion fails, so a broken test can't leak a
+    fake ``PyPDF2`` module into the rest of the suite.
+    """
+    import sys
+    import types
+
+    class FakePage:
+        def extract_text(self):
+            return ""
+
+    class FakeReader:
+        pages = [FakePage()]
+
+        def __init__(self, *args):
+            pass
+
+    fake = types.ModuleType("PyPDF2")
+    fake.PdfReader = FakeReader
+    monkeypatch.setitem(sys.modules, "pdfplumber", None)
+    monkeypatch.setitem(sys.modules, "PyPDF2", fake)
+
+    with pytest.raises(DocumentParseError) as exc:
+        parsing.parse_document(b"%PDF-1.4 fake", "scan.pdf",
+                               "application/pdf")
+    assert "scanned" in str(exc.value).lower()
+
+
+def test_binary_content_raises_instead_of_mojibake():
+    """A JPEG or .docx must not decode into replacement characters."""
+    with pytest.raises(DocumentParseError) as exc:
+        parsing.parse_document(
+            b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01" + b"\x00" * 64,
+            "photo.jpg", "image/jpeg",
+        )
+    assert "binary" in str(exc.value).lower()
+
+
+def test_plain_text_parses_at_full_fidelity():
+    """The normal path reports full fidelity and no notes."""
+    parsed = parsing.parse_document(b"# Title\n\nBody.", "a.md",
+                                    "text/markdown")
+    assert parsed.markdown == "# Title\n\nBody."
+    assert parsed.fidelity == "full"
+    assert parsed.notes == []
+
+
+def test_html_regex_fallback_is_marked_degraded_and_logged(caplog, monkeypatch):
+    """When trafilatura yields nothing, say the extraction is low fidelity."""
+    import sys
+    import types
+    fake = types.ModuleType("trafilatura")
+    fake.extract = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "trafilatura", fake)
+
+    with caplog.at_level(logging.WARNING):
+        parsed = parsing.parse_document(
+            b"<html><body><p>Hello</p></body></html>", "p.html", "text/html",
+        )
+    assert parsed.fidelity == "degraded"
+    assert parsed.notes
+    assert "fallback" in caplog.text.lower()

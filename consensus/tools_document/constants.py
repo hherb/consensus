@@ -43,3 +43,11 @@ PASSAGE_PREVIEW_CHARS = 500
 SUMMARY_STATUS_OK = "ok"
 SUMMARY_STATUS_FAILED = "failed"
 SUMMARY_STATUS_PENDING = "pending"
+
+# Extraction fidelity reported by parse_document
+FIDELITY_FULL = "full"
+FIDELITY_DEGRADED = "degraded"
+
+# Above this share of U+FFFD replacement characters, a "text" document is
+# really binary that was decoded with errors="replace" (issue #78 defect 7).
+MAX_REPLACEMENT_CHAR_RATIO = 0.1

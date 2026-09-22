@@ -13,6 +13,7 @@ import sys
 import pytest
 
 from consensus.tools_document import chunking, constants, embedding, parsing
+from consensus.tools_document.errors import DocumentParseError
 
 from .document_helpers import (
     FakeHttpClient, FakeHttpResponse, FakePdf, FakePdfPage, patch_where_defined,
@@ -25,25 +26,32 @@ from .document_helpers import (
 
 class TestParseDocument:
     def test_plain_text_passthrough(self):
-        assert parsing.parse_document(b"hello world", "notes.txt", "text/plain") == "hello world"
+        out = parsing.parse_document(b"hello world", "notes.txt", "text/plain")
+        assert out.markdown == "hello world"
 
     def test_markdown_passthrough(self):
         md = b"# Title\n\nbody"
-        assert parsing.parse_document(md, "notes.md", "text/markdown") == "# Title\n\nbody"
+        out = parsing.parse_document(md, "notes.md", "text/markdown")
+        assert out.markdown == "# Title\n\nbody"
 
     def test_undecodable_bytes_are_replaced_not_raised(self):
-        out = parsing.parse_document(b"ok \xff\xfe", "notes.txt", "text/plain")
-        assert out.startswith("ok ")
+        # A couple of stray bad bytes inside an otherwise large, readable
+        # document stay under MAX_REPLACEMENT_CHAR_RATIO and must not be
+        # treated as binary (issue #78 defect 7 is about content that is
+        # *mostly* replacement characters, not a few encoding artifacts).
+        content = b"ok " + b"good text " * 20 + b"\xff\xfe"
+        out = parsing.parse_document(content, "notes.txt", "text/plain")
+        assert out.markdown.startswith("ok ")
 
     def test_html_by_mime_type(self):
         html = b"<html><body><p>Readable paragraph with enough text.</p></body></html>"
         out = parsing.parse_document(html, "page", "text/html")
-        assert "<p>" not in out
+        assert "<p>" not in out.markdown
 
     def test_html_by_extension(self):
         html = b"<html><body><h1>Heading</h1><p>Body text here.</p></body></html>"
         out = parsing.parse_document(html, "PAGE.HTM", "application/octet-stream")
-        assert "<h1>" not in out
+        assert "<h1>" not in out.markdown
 
     def test_pdf_by_extension_routes_to_pdf_parser(self, monkeypatch):
         called = {}
@@ -73,13 +81,13 @@ class TestParsePdf:
     def test_pages_are_numbered_from_one(self, monkeypatch):
         self._install_pdfplumber(monkeypatch, [FakePdfPage("first"), FakePdfPage("second")])
         out = parsing._parse_pdf(b"x")
-        assert out == "## Page 1\n\nfirst\n\n## Page 2\n\nsecond"
+        assert out.markdown == "## Page 1\n\nfirst\n\n## Page 2\n\nsecond"
 
     def test_blank_pages_are_skipped_but_do_not_shift_numbering(self, monkeypatch):
         self._install_pdfplumber(
             monkeypatch, [FakePdfPage("   "), FakePdfPage(None), FakePdfPage("third")],
         )
-        assert parsing._parse_pdf(b"x") == "## Page 3\n\nthird"
+        assert parsing._parse_pdf(b"x").markdown == "## Page 3\n\nthird"
 
     def test_falls_back_to_pypdf2_when_pdfplumber_missing(self, monkeypatch):
         import types
@@ -87,7 +95,7 @@ class TestParsePdf:
         pypdf2 = types.ModuleType("PyPDF2")
         pypdf2.PdfReader = lambda _stream: FakePdf([FakePdfPage("fallback text")])
         monkeypatch.setitem(sys.modules, "PyPDF2", pypdf2)
-        assert parsing._parse_pdf(b"x") == "## Page 1\n\nfallback text"
+        assert parsing._parse_pdf(b"x").markdown == "## Page 1\n\nfallback text"
 
     def test_falls_back_to_pypdf2_when_pdfplumber_raises(self, monkeypatch):
         import types
@@ -101,20 +109,28 @@ class TestParsePdf:
         pypdf2 = types.ModuleType("PyPDF2")
         pypdf2.PdfReader = lambda _stream: FakePdf([FakePdfPage("fallback text")])
         monkeypatch.setitem(sys.modules, "PyPDF2", pypdf2)
-        assert "fallback text" in parsing._parse_pdf(b"x")
+        assert "fallback text" in parsing._parse_pdf(b"x").markdown
 
-    def test_empty_pypdf2_result_reports_empty_pdf(self, monkeypatch):
+    def test_empty_pypdf2_result_raises_instead_of_empty_pdf_placeholder(
+        self, monkeypatch,
+    ):
+        """A scanned PDF raises rather than ingesting as "(Empty PDF)".
+
+        That string was 11 non-blank characters, so the empty-after-parsing
+        guard in ``ingestion.py`` never caught it (issue #78 defect 7).
+        """
         import types
         monkeypatch.setitem(sys.modules, "pdfplumber", None)
         pypdf2 = types.ModuleType("PyPDF2")
         pypdf2.PdfReader = lambda _stream: FakePdf([FakePdfPage("")])
         monkeypatch.setitem(sys.modules, "PyPDF2", pypdf2)
-        assert parsing._parse_pdf(b"x") == "(Empty PDF)"
+        with pytest.raises(DocumentParseError, match="scanned"):
+            parsing._parse_pdf(b"x")
 
     def test_no_pdf_library_raises_with_install_hint(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "pdfplumber", None)
         monkeypatch.setitem(sys.modules, "PyPDF2", None)
-        with pytest.raises(ImportError, match="pdfplumber"):
+        with pytest.raises(DocumentParseError, match="pdfplumber"):
             parsing._parse_pdf(b"x")
 
 
@@ -126,8 +142,8 @@ class TestParseHtml:
             b"</p></article></body></html>"
         )
         out = parsing._parse_html(html)
-        assert "readable article text" in out
-        assert "<p>" not in out
+        assert "readable article text" in out.markdown
+        assert "<p>" not in out.markdown
 
     def test_falls_back_to_tag_stripping_when_trafilatura_fails(self, monkeypatch):
         import types
@@ -139,14 +155,17 @@ class TestParseHtml:
         broken.extract = _boom
         monkeypatch.setitem(sys.modules, "trafilatura", broken)
         out = parsing._parse_html(b"<div><span>bare text</span></div>")
-        assert out == "bare text"
+        assert out.markdown == "bare text"
+        assert out.fidelity == constants.FIDELITY_DEGRADED
 
     def test_falls_back_when_trafilatura_returns_nothing(self, monkeypatch):
         import types
         empty = types.ModuleType("trafilatura")
         empty.extract = lambda *_a, **_k: None
         monkeypatch.setitem(sys.modules, "trafilatura", empty)
-        assert parsing._parse_html(b"<p>only text</p>") == "only text"
+        out = parsing._parse_html(b"<p>only text</p>")
+        assert out.markdown == "only text"
+        assert out.fidelity == constants.FIDELITY_DEGRADED
 
 
 # ---------------------------------------------------------------------------

@@ -37,7 +37,7 @@ async def ingest_document(
     """Parse, chunk and store a document, then *schedule* its embedding.
 
     Returns a document metadata dict, or ``{"error": ...}`` if parsing yielded
-    no text. Note three things the signature does not show:
+    no text. Note four things the signature does not show:
 
     - Embedding is fire-and-forget: on return the chunks are stored but not
       yet embedded, which is why ``_doc_ask_handler`` has a "still being
@@ -48,9 +48,17 @@ async def ingest_document(
       summary and ``summary_status`` recorded as ``'pending'`` rather than
       an error (issue #78 defect 1).
     - The document is associated with ``discussion_id`` when one is given.
+    - ``parse_document`` raises ``DocumentParseError`` (uncaught here, so it
+      propagates to the caller) rather than manufacturing placeholder
+      content for a scanned PDF or an unrecognised binary format; a
+      successful parse still carries a ``fidelity``/``notes`` pair, surfaced
+      below, that says whether a degraded fallback produced the text
+      (issue #78 defect 7).
     """
-    # Parse to markdown
-    markdown = parse_document(content_bytes, filename, mime_type)
+    # Parse to markdown.  Parsing raises rather than returning placeholder
+    # text, so a scanned PDF no longer ingests as a real document.
+    parsed = parse_document(content_bytes, filename, mime_type)
+    markdown = parsed.markdown
     if not markdown.strip():
         return {"error": "Document is empty after parsing."}
 
@@ -137,4 +145,6 @@ async def ingest_document(
         "filename": filename,
         "sections": len(sections),
         "chunks": len(chunks),
+        "fidelity": parsed.fidelity,
+        "notes": parsed.notes,
     }
