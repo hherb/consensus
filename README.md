@@ -374,7 +374,7 @@ ConsensusApp — orchestrator, state management, event emitter
     ├── MCPHTTPToolProvider — MCP Streamable HTTP transport (JSON-RPC 2.0 over HTTP+SSE)
     ├── mcp_config.py — MCP server definitions loaded from JSON/TOML config files
     ├── WebSearch (tools_builtin.py) — Brave Search + DuckDuckGo fallback, page fetching
-    ├── DocumentRAG (tools_document.py) — document ingestion, chunking, RAG Q&A
+    ├── DocumentRAG (tools_document/) — document ingestion, chunking, RAG Q&A
     ├── ImageTools (tools_image.py) — image storage, vision routing, description
     ├── AskUser (tools_ask_user.py) — interactive user input during AI turns
     ├── PythonExec (tools_python.py) — sandboxed Python code execution + package install

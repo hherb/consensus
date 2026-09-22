@@ -26,7 +26,9 @@ python -m consensus --web --port 8080 --debug
 consensus                      # via pyproject.toml [project.scripts]
 ```
 
-~2,550 tests in `tests/` (see HANDOVER.md for the exact current count). No linter or build system configured yet.
+Tests live in `tests/` (see HANDOVER.md for the current count — it is recorded
+in one place on purpose, because copies of the figure go stale). No linter or
+build system configured yet.
 
 ## Architecture
 
@@ -50,7 +52,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
     ├── AIClient (ai_client.py) — async OpenAI-compatible HTTP client
     ├── PricingCache (pricing.py) — model cost lookup via OpenRouter
     ├── MCPToolProvider (mcp_client.py) — MCP server communication (JSON-RPC 2.0)
-    ├── DocumentRAG (tools_document.py) — document ingestion, chunking, RAG Q&A
+    ├── DocumentRAG (tools_document/) — document ingestion, chunking, RAG Q&A
     ├── AskUser (tools_ask_user.py) — interactive user input during AI turns
     ├── PythonExec (tools_python.py) — sandboxed Python code execution + package install
     └── Database (db/) — thread-safe SQLite persistence (domain-specific mixins)
@@ -65,7 +67,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
 - `auth.py` — `AuthManager`, `AuthDatabase`, `User` model, PBKDF2-SHA256 password hashing, OAuth Authorization Code flow (GitHub, Google, LinkedIn, Apple), bearer token management
 - `pricing.py` — `PricingCache` for per-message cost calculation using OpenRouter pricing data; fuzzy model name matching with aliases and variant generation
 - `mcp_client.py` — `MCPToolProvider` for JSON-RPC 2.0 communication with MCP server subprocesses; expert entity consultation
-- `tools_document.py` — Document RAG tool provider: ingestion (URL/text/PDF/HTML), chunking, embedding, RAG Q&A, section navigation, map-reduce summarization
+- `tools_document/` — Document RAG tool provider package: `constants.py`, `parsing.py` (bytes → markdown, URL fetch, section extraction), `chunking.py`, `embedding.py` (cosine/ranking maths + background embedding pass), `schemas.py`, `llm.py`, `ingestion.py` (parse → chunk → store → embed), `handlers.py` (the eight `doc_*` tools), `provider.py`
 - `tools_ask_user.py` — Interactive user-input tool: AI pauses mid-turn, frontend shows input bubble, user response fed back via `asyncio.Future`
 - `tools_python.py` — Sandboxed Python code execution tool provider: `execute_python` runs code in a subprocess with AST pre-analysis, restricted builtins/imports, resource limits (dynamic: 70% of free RAM, 70% of CPU cores), and optional macOS `sandbox-exec`. `install_python_package` lets participants request PyPI package installation with user approval via the ask_user event pattern. Allowed modules include stdlib (math, json, re, etc.) plus scientific/ML libraries (numpy, scipy, pandas, torch, hypercomplex, etc.)
 - `sandbox_worker.py` — Standalone subprocess entry point for sandboxed code execution. Applies `RLIMIT_AS`/`RLIMIT_CPU`, restricts builtins, whitelists imports, sandboxes `open()` to a temp directory, patches `io.open`/`io.FileIO`, captures stdout/stderr + last expression value (REPL-like), outputs JSON results

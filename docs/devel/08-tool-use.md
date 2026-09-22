@@ -418,7 +418,9 @@ access its own memories — no cross-entity memory leakage.
 
 ## Document RAG Tools
 
-Defined in `tools_document.py`. Created via `create_document_provider(db, app)`
+Defined in the `tools_document/` package (`provider.py` assembles the handlers
+in `handlers.py` with the schemas in `schemas.py`). Created via
+`create_document_provider(db, app)`
 and registered in `ConsensusApp._init_document_tools()`. Requires the
 `[documents]` optional dependency group (`sqlite-vec`, `numpy`, `pdfplumber`).
 
@@ -438,20 +440,26 @@ ConsensusApp._init_document_tools()
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `doc_add` | Add a document by URL for analysis | `url: str`, `title?: str` |
-| `doc_list` | List documents in the current discussion | *(none)* |
+| `doc_add` | Add a document from a URL or from inline text | `url?: str`, `text?: str`, `title?: str`, `filename?: str` |
+| `doc_list` | List discussion documents, or search the whole library | `full_library?: bool`, `query?: str` |
 | `doc_get_length` | Get character count of a document | `document_id: int` |
-| `doc_get_text` | Get a slice of document text by character range | `document_id: int`, `start: int`, `end: int` |
+| `doc_get_text` | Get a slice of document text by character range | `document_id: int`, `from_char: int`, `to_char: int` |
 | `doc_get_sections` | Get section headers with character offsets | `document_id: int` |
-| `doc_get_chapter` | Get full text of a named section | `document_id: int`, `section_name: str` |
+| `doc_get_chapter` | Get a named section's text, up to its first subsection | `document_id: int`, `header: str` |
 | `doc_ask` | RAG-based Q&A over a document's chunks | `document_id: int`, `question: str` |
-| `doc_summary` | Map-reduce summarization of a document or range | `document_id: int`, `start?: int`, `end?: int` |
+| `doc_summary` | Map-reduce summarization of a document or range | `document_id: int`, `from_char?: int`, `to_char?: int` |
+
+These names come from `consensus/tools_document/schemas.py`; `to_char` accepts
+`-1` for "end of document". `doc_list` ignores `query` unless `full_library`
+is true.
 
 ### Document ingestion pipeline
 
 1. Content is fetched (URL) or received (upload/paste)
 2. Text is extracted: `trafilatura` for HTML, `pdfplumber` for PDF, raw for text
-3. Text is chunked into overlapping segments (~1000 chars)
+3. Text is chunked into overlapping segments (`DEFAULT_CHUNK_SIZE` 500 chars,
+   `DEFAULT_CHUNK_OVERLAP` 100, in `tools_document/constants.py`; the size is a
+   target, not a bound — a longer paragraph is emitted whole)
 4. Chunks are embedded via the configured embedding service
 5. Embeddings are stored in `document_chunk_embeddings` for RAG retrieval
 6. `doc_ask` performs similarity search, retrieves top-k chunks, and sends them
