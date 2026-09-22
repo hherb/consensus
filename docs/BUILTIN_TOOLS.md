@@ -240,14 +240,17 @@ Tools for ingesting, navigating, and querying reference documents during discuss
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `doc_add` | Add a document by URL for analysis | `url`, `title?` |
-| `doc_list` | List documents in the current discussion | `full_library?` (search all discussions) |
+| `doc_add` | Add a document from a URL or from inline text | `url?`, `text?`, `title?`, `filename?` |
+| `doc_list` | List discussion documents, or search the whole library | `full_library?` (needs `query`), `query?` |
 | `doc_get_length` | Get character count of a document | `document_id` |
-| `doc_get_text` | Get a slice of document text by character range | `document_id`, `start`, `end` |
+| `doc_get_text` | Get a slice of document text by character range | `document_id`, `from_char`, `to_char` |
 | `doc_get_sections` | Get section headers with character offsets | `document_id` |
-| `doc_get_chapter` | Get full text of a named section | `document_id`, `section_name` |
+| `doc_get_chapter` | Get a named section's text, up to its first subsection | `document_id`, `header` |
 | `doc_ask` | RAG-based Q&A: retrieve relevant chunks, LLM-generated answer with citations | `document_id`, `question` |
-| `doc_summary` | Map-reduce summarization of a document or range | `document_id`, `start?`, `end?` |
+| `doc_summary` | Map-reduce summarization of a document or range | `document_id`, `from_char?`, `to_char?` |
+
+Parameter names are defined in `consensus/tools_document/schemas.py` — check
+there before wiring a client, and `to_char` accepts `-1` for "end of document".
 
 Supports PDF (via pdfplumber), HTML (via trafilatura), and plain text/Markdown.
 

@@ -26,7 +26,9 @@ python -m consensus --web --port 8080 --debug
 consensus                      # via pyproject.toml [project.scripts]
 ```
 
-~2,550 tests in `tests/` (see HANDOVER.md for the exact current count). No linter or build system configured yet.
+Tests live in `tests/` (see HANDOVER.md for the current count — it is recorded
+in one place on purpose, because copies of the figure go stale). No linter or
+build system configured yet.
 
 ## Architecture
 

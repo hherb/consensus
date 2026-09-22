@@ -1,7 +1,7 @@
 # HANDOVER
 
 _Last updated: 2026-09-22. `main` is at **v2.0.0** (released 2026-07-20) with
-the suite at **2811 passing**. The discussion-method review & repair campaign
+the suite at **2816 passing**. The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
 (PyPI `consensus-app` + notarized macOS DMG), the public website, and the
 flow-error-visibility work (#71–#74, PR #76 — contracts summarised below).
@@ -23,7 +23,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site deployed to Cloudflare Pages at https://consensus-ai.org/ |
-| Tests | 2811 passing (`uv run pytest`, ~70 s) |
+| Tests | 2816 passing (`uv run pytest`, ~65 s) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -125,36 +125,61 @@ Contracts are covered by `tests/test_flow_error_visibility.py`,
 **Done — two slices.**
 
 1. `app_discussion_flow.py` (1254) → `app_discussion_flow/` — `helpers.py`
-   (133), `submissions.py` (304), `turns.py` (499), `method_switch.py` (362),
-   `conclusion.py` (137), `__init__.py` (92). The only logic change was
+   (287), `submissions.py` (304), `turns.py` (499), `method_switch.py` (421),
+   `conclusion.py` (203), `__init__.py` (94). The only logic change was
    extracting `complete_turn`'s ~90-line Triage-handoff branch into
    `method_switch.handle_triage_handoff` (AST-verified identical); everything
    else moved verbatim. `_run_triage_recommender` became public when the split
    gave it a second consumer across a module boundary.
-   **Watch `turns.py` — the review round took it to 499 lines.** The next
-   addition there crosses the limit; split at that moment, not later.
+   **Watch `turns.py` (499) and `method_switch.py` (421)** — the error-
+   visibility rounds grew both. The next addition to `turns.py` crosses the
+   limit; split at that moment, not later. (These counts drift: the figures
+   recorded here at the time of the split were stale within two PRs. Re-measure
+   with `wc -l` before trusting them.)
 2. `tools_document.py` (1277) → `tools_document/` — `constants.py` (22),
    `parsing.py` (144), `chunking.py` (98), `embedding.py` (177),
    `schemas.py` (137), `llm.py` (48), `ingestion.py` (115), `handlers.py`
-   (456), `provider.py` (138), `__init__.py` (57). Pure move: every range
-   verified byte-identical, only the module headers and two `.` → `..`
-   in-function `tools_memory` imports are new.
+   (456), `provider.py` (138), `__init__.py` (59). Pure move: every range
+   verified byte-identical. The only new lines are the module headers and two
+   `.` → `..` in-function `tools_memory` imports; the only removed lines are
+   two module-level imports that were already dead in the original (`time`,
+   `resolve_api_key`). A follow-up commit on the same PR then acted on the
+   review: the tuning values that were left inline moved into `constants.py`
+   (golden rule 3), the thrice-duplicated summary-snippet expression became
+   `handlers._summary_snippet`, and the dead `LLM_TIMEOUT` was wired into
+   `llm.py` — it equals `ai_client.DEFAULT_API_TIMEOUT`, so that is a no-op
+   today, but the package's timeout is now tunable on its own. `handlers.py`
+   is 470 after this; still under the limit.
+
+   The review also surfaced a cluster of **pre-existing** defects in this
+   package — error strings returned as content and persisted as document
+   summaries, a background embedding pass whose exception is never retrieved,
+   a permanent failure reported as "still being indexed" forever, RAG
+   retrieval with no relevance floor. All are recorded in **issue #78**; none
+   are regressions from the split, and none were fixed here, because touching
+   them would have destroyed the byte-identity property the safety argument
+   rests on.
 
 **Facade guards.** Both packages have one, and they exist because a dropped
 re-export fails *late*: `ConsensusApp` reaches flow functions by attribute
 access at call time (`AttributeError`), and imports the document names lazily
-inside method bodies (`ImportError` on first call). Neither is caught at
-collection — deleting five flow re-exports once left the whole suite green.
-`tests/test_app_discussion_flow_facade.py` and
-`tests/test_tools_document_facade.py` pin `__all__` and AST-parse `app.py`
-for the call sites. Keep them in step when the public API changes — that is
-the point of the pin, and each was verified to fail when a name is removed.
+inside method bodies. For `ingest_document` and `fetch_url_content` that is an
+`ImportError` on first call; for `create_document_provider` it is worse than
+late, it is *silent* — that import sits inside `_init_document_tools`'
+`try: ... except ImportError`, so a dropped re-export just logs INFO ("Document
+tools not available") and the eight `doc_*` tools never register. Neither is
+caught at collection — deleting five flow re-exports once left the whole suite
+green. `tests/test_app_discussion_flow_facade.py` and
+`tests/test_tools_document_facade.py` pin `__all__` (by identity, not merely
+existence) and AST-scan every module under `consensus/` for the call sites.
+Keep them in step when the public API changes — that is the point of the pin,
+and each was verified to fail when a name is removed.
 
 **Two further slices came out of the error-visibility work**, both because the
 additions pushed a previously-compliant file over the limit — refactor at the
 moment you cross it, not later: `consensus/ai_response.py` (73) holds the pure
 completion-body parsing helpers lifted out of `ai_client.py` (472), and
-`consensus/static/turn-notices.js` (34) holds the skip-notice wording lifted
+`consensus/static/turn-notices.js` (38) holds the skip-notice wording lifted
 out of `discussion-actions.js` (494).
 
 **Still over the limit** (`find consensus -name '*.py' | xargs wc -l | sort -rn`):
@@ -216,11 +241,26 @@ missing route tests first.
 4. `uvx ruff check --select F <pkg>` for unused/undefined names, then the
    full suite.
 5. Add the facade guard, then **delete a re-export and watch it fail** before
-   restoring it. An unverified guard is not a guard.
-6. Update the docs that name the old module file — `CLAUDE.md`, `README.md`,
+   restoring it. An unverified guard is not a guard. Pin `__all__` by
+   *identity* (`td.parse_document is parsing.parse_document`), not by
+   existence — a crossed re-export resolves fine and breaks only in
+   production. Scan every module under `consensus/` for call sites, matching
+   both the relative and absolute spelling of the package; scanning only
+   `app.py` misses the next consumer someone adds.
+6. **Mutate the new wiring and watch it fail.** The glue a split *writes* —
+   the factory that forwards dependencies to handlers, the guard conditions
+   duplicated across two call sites, the keyword names production passes — is
+   the code most likely to be got wrong and least likely to be covered, since
+   the characterization tests were written against the old shape. On this
+   slice three such mutations survived the whole suite at 100% coverage.
+   Coverage measures lines executed, not behaviour constrained.
+7. Update the docs that name the old module file — `CLAUDE.md`, `README.md`,
    `docs/BUILTIN_TOOLS.md`, `docs/devel/01-getting-started.md`,
    `02-architecture.md`, `08-tool-use.md`, `programmer-manual.md` all carry
-   module inventories.
+   module inventories. Check the *content* beside the name too: the `doc_*`
+   parameter tables in `BUILTIN_TOOLS.md` and `08-tool-use.md` had been wrong
+   for four of eight tools, in the very blocks earlier PRs edited to fix the
+   module name.
 
 **Writing the safety net, if the target is untested.** Mock one layer further
 out than the code under test: real `Database` (the `tmp_db` fixture), fakes
