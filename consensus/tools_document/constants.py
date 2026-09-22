@@ -4,6 +4,8 @@ Kept in their own module so that every other module in the package can import
 them without depending on the package ``__init__``.
 """
 
+from ..models import SummaryStatus
+
 # Chunking defaults
 DEFAULT_CHUNK_SIZE = 500  # characters
 DEFAULT_CHUNK_OVERLAP = 100  # characters
@@ -38,3 +40,34 @@ AVAILABLE_HEADERS_HINT = 10
 
 # Max chars of each retrieved passage returned by doc_ask
 PASSAGE_PREVIEW_CHARS = 500
+
+# Summary generation outcome recorded in documents.summary_status. The
+# values live on models.SummaryStatus so the db layer can validate against
+# the same source; these aliases keep this package's call sites unchanged.
+SUMMARY_STATUS_OK = SummaryStatus.OK.value
+SUMMARY_STATUS_FAILED = SummaryStatus.FAILED.value
+SUMMARY_STATUS_PENDING = SummaryStatus.PENDING.value
+
+# Extraction fidelity reported by parse_document
+FIDELITY_FULL = "full"
+FIDELITY_DEGRADED = "degraded"
+
+# Above this share of U+FFFD replacement characters, a "text" document is
+# really binary that was decoded with errors="replace" (issue #78 defect 7).
+MAX_REPLACEMENT_CHAR_RATIO = 0.1
+
+# URL fetching retry policy (golden rule 5)
+URL_FETCH_MAX_RETRIES = 3
+URL_FETCH_BASE_DELAY = 1.0  # seconds, doubled per attempt
+
+# Largest document accepted from a URL, in bytes. Checked against the
+# content-length header and again while the body streams in, so a
+# header-less (chunked) response is aborted mid-transfer instead of being
+# read fully into memory first.
+MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
+
+# Minimum seconds between background embedding retries for a document whose
+# last indexing pass failed. doc_ask re-kicks the pass so a transient
+# embedder outage recovers by itself, and this interval is what stops every
+# doc_ask call from hammering a service that is still down.
+INDEXING_RETRY_INTERVAL = 60.0

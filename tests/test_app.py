@@ -661,3 +661,139 @@ class TestConsultExpert:
         assert result["is_error"] is False
         msgs = app.db.get_messages(app.discussion.id)
         assert any("Expert analysis result" in m["content"] for m in msgs)
+
+
+class TestAddDocument:
+    """The human upload path must report parse failures, not raise them.
+
+    ``ingest_document`` raises a typed ``DocumentError`` for a scanned PDF,
+    a .docx or a JPEG (issue #78). ``add_document`` had no handler, so the
+    exception escaped the aiohttp request handler as an HTTP 500 and the
+    Documents panel showed "Upload failed (500)" — losing the whole hint
+    apparatus on the one path a human actually uses (golden rule 6).
+    """
+
+    @pytest.mark.asyncio
+    async def test_unparseable_upload_returns_an_error_dict(self, app, caplog):
+        """A binary upload comes back as {"error": ...}, hint included."""
+        app.documents_available = True
+
+        with caplog.at_level("WARNING"):
+            result = await app.add_document(
+                filename="photo.jpg",
+                content_bytes=b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 64,
+                mime_type="image/jpeg",
+            )
+
+        assert "error" in result
+        assert "binary" in result["error"]
+        # str(DocumentError) appends the hint, which is the actionable half.
+        assert "only PDF, HTML, plain text and markdown" in result["error"]
+        assert "photo.jpg" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_scanned_pdf_upload_returns_the_ocr_hint(self, app):
+        """The flagship #78 message reaches the human uploader too."""
+        from tests.document_helpers import image_only_pdf_bytes
+
+        app.documents_available = True
+        result = await app.add_document(
+            filename="scan.pdf", content_bytes=image_only_pdf_bytes(),
+            mime_type="application/pdf",
+        )
+
+        assert "OCR the file before adding it" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_a_parseable_upload_still_succeeds(self, app):
+        """The guard must not swallow the success path."""
+        app.documents_available = True
+        result = await app.add_document(
+            filename="notes.md", content_bytes=b"# Notes\n\nBody text.",
+            mime_type="text/markdown",
+        )
+
+        assert "error" not in result
+        assert result["document_id"] > 0
+
+
+class TestInterpretationEntityResolution:
+    """Summary generation must borrow a real entity's provider config.
+
+    ``add_document`` passed ``caller_entity_id=0``. SQLite rowids start at
+    1, so ``get_entity(0)`` never resolved: *every* human upload raised
+    ``DocumentInterpretationError``, was caught, and stored
+    ``summary_status='failed'`` while still reporting success to the
+    uploader. Issue #78 stopped the error text being *persisted* but left
+    the cause in place (whole-branch review).
+    """
+
+    def test_no_discussion_yields_no_entity(self, app):
+        """Nothing to borrow from is reported as 0, not as entity 0."""
+        assert app._interpretation_entity_id(0) == 0
+
+    def test_ai_moderator_is_preferred(self, app_with_entities):
+        """The moderator drives interpretation when it is an AI."""
+        app, mod_id, _p1, _p2 = app_with_entities
+        assert app._interpretation_entity_id(app.discussion.id) == mod_id
+
+    def test_falls_back_to_an_ai_participant(self, app):
+        """A human moderator still leaves an AI provider to borrow."""
+        pid = app.db.add_provider("Local", "http://localhost:11434/v1", "")
+        human_mod = app.db.add_entity("Human", "human", "#ccc")
+        ai_id = app.db.add_entity(
+            "Ada", "ai", "#bbb", pid, "llama3", 0.7, 1024, "")
+        app.add_to_discussion(human_mod, is_moderator=True)
+        app.add_to_discussion(ai_id)
+        app.set_topic("T")
+        assert app._interpretation_entity_id(app.discussion.id) == ai_id
+
+    def test_all_human_discussion_yields_no_entity(self, app):
+        """No AI entity means no provider — 0, so the caller skips."""
+        human_mod = app.db.add_entity("Human", "human", "#ccc")
+        app.add_to_discussion(human_mod, is_moderator=True)
+        app.set_topic("T")
+        assert app._interpretation_entity_id(app.discussion.id) == 0
+
+    @pytest.mark.asyncio
+    async def test_upload_without_an_ai_entity_records_pending(self, app):
+        """'pending' (nobody tried) rather than 'failed' (tried, broke)."""
+        app.documents_available = True
+        human_mod = app.db.add_entity("Human", "human", "#ccc")
+        app.add_to_discussion(human_mod, is_moderator=True)
+        app.set_topic("T")
+
+        result = await app.add_document(
+            filename="notes.md", content_bytes=b"# Notes\n\nBody text.",
+            mime_type="text/markdown",
+        )
+        assert "error" not in result
+        assert result["summary_status"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_upload_with_an_ai_moderator_generates_a_summary(
+        self, app_with_entities, monkeypatch,
+    ):
+        """The summary path is reached at all — it never used to be."""
+        from consensus.tools_document import ingestion
+        from tests.document_helpers import patch_where_defined
+
+        app, _mod, _p1, _p2 = app_with_entities
+        app.documents_available = True
+
+        async def fake_llm(*args, **kwargs):
+            return "A real summary."
+
+        # Patch in the module that calls it, not the one that defines it:
+        # ingestion holds its own `from .llm import ...` binding.
+        patch_where_defined(
+            monkeypatch, ingestion.ingest_document,
+            "_call_interpretation_llm", fake_llm,
+        )
+
+        result = await app.add_document(
+            filename="notes.md", content_bytes=b"# Notes\n\nBody text.",
+            mime_type="text/markdown",
+        )
+        assert result["summary_status"] == "ok"
+        assert result["summary"] == "A real summary."

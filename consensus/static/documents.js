@@ -8,6 +8,31 @@ import { api } from './api.js';
 import { state } from './state.js';
 
 /**
+ * Build the toast text for a successful document add.
+ *
+ * A parse failure comes back as `result.error` and is shown already, but a
+ * degraded extraction and a failed summary come back on a *success* result.
+ * Saying only "Document added" left the person who uploaded a consent-walled
+ * page believing the discussion had the article, when what was stored was the
+ * cookie banner (issue #78 whole-branch review, golden rule 6).
+ *
+ * @param {object} result - The document metadata returned by the backend.
+ * @returns {string} The toast message, with any warnings appended.
+ */
+function _addedMessage(result) {
+    let msg = `Document added: ${result.title || result.filename}`;
+    const warnings = [];
+    if (result.fidelity === 'degraded') {
+        warnings.push(...(result.notes || ['text extraction was degraded']));
+    }
+    if (result.summary_status === 'failed') {
+        warnings.push('the summary could not be generated');
+    }
+    if (warnings.length) msg += ` — warning: ${warnings.join(' ')}`;
+    return msg;
+}
+
+/**
  * Render the documents panel for the current discussion setup.
  * Called when the New Discussion tab is shown.
  */
@@ -61,7 +86,7 @@ export async function uploadDocument() {
             const result = await api.uploadDocument(null, discussionId);
             if (result?.cancelled) return;
             if (result?.error) { showToast(result.error); return; }
-            showToast(`Document added: ${result.title || result.filename}`);
+            showToast(_addedMessage(result));
             await renderDocumentPanel();
         } catch (e) {
             showToast('Upload failed: ' + e.message);
@@ -86,7 +111,7 @@ export async function uploadDocument() {
         try {
             const result = await api.uploadDocument(file, discussionId);
             if (result?.error) { showToast(result.error); return; }
-            showToast(`Document added: ${result.title || result.filename}`);
+            showToast(_addedMessage(result));
             await renderDocumentPanel();
         } catch (e) {
             showToast('Upload failed: ' + e.message);
@@ -121,7 +146,7 @@ export async function addDocumentByUrl() {
     try {
         const result = await api.addDocumentFromUrl(url, discussionId, '');
         if (result?.error) { showToast(result.error); return; }
-        showToast(`Document added: ${result.title || result.filename}`);
+        showToast(_addedMessage(result));
         if (urlInput) urlInput.value = '';
         await renderDocumentPanel();
     } catch (e) {

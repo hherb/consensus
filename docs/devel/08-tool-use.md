@@ -445,13 +445,33 @@ ConsensusApp._init_document_tools()
 | `doc_get_length` | Get character count of a document | `document_id: int` |
 | `doc_get_text` | Get a slice of document text by character range | `document_id: int`, `from_char: int`, `to_char: int` |
 | `doc_get_sections` | Get section headers with character offsets | `document_id: int` |
-| `doc_get_chapter` | Get a named section's text, up to its first subsection | `document_id: int`, `header: str` |
+| `doc_get_chapter` | Get a named section's text, including all of its subsections | `document_id: int`, `header: str` |
 | `doc_ask` | RAG-based Q&A over a document's chunks | `document_id: int`, `question: str` |
 | `doc_summary` | Map-reduce summarization of a document or range | `document_id: int`, `from_char?: int`, `to_char?: int` |
 
 These names come from `consensus/tools_document/schemas.py`; `to_char` accepts
 `-1` for "end of document". `doc_list` ignores `query` unless `full_library`
-is true.
+is true. Ranges are validated by `validation.resolve_range()`: a negative
+offset other than `-1`, a start past the end, or a start at or after the end
+returns an error rather than the empty slice `markdown[500:100]` used to
+produce.
+
+`doc_ask` applies `MIN_SIMILARITY_THRESHOLD` (`constants.py`) to the ranked
+chunks: nothing scoring above it is reported as "no relevant passage" rather
+than answered from a low-relevance match. It also distinguishes that case
+from a re-index requirement — chunks embedded with a since-changed embedding
+model are detected by a dimension mismatch and reported as needing
+re-indexing, and when only *some* chunks mismatch the answer still comes
+back, carrying an `incomplete_retrieval` note so a partial document is not
+mistaken for the whole one.
+
+When the background embedding pass itself has failed, `doc_ask` surfaces the
+embedder's own error message and posts a notice to the discussion transcript
+— **once per failure streak, not once per document lifetime**: the marker is
+evicted on both healthy paths, so a document that fails, recovers and fails
+again is announced again. It also schedules a fresh indexing attempt at most
+every `INDEXING_RETRY_INTERVAL`, so a transient embedder outage repairs
+itself without the user re-adding the document.
 
 ### Document ingestion pipeline
 

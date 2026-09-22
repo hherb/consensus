@@ -36,8 +36,8 @@ EXPECTED_PUBLIC_API = {
 # Every module of the package, leaf-first. Each must stay importable on its
 # own: an import cycle would only surface as an ImportError at runtime.
 SUBMODULES = [
-    "constants", "parsing", "chunking", "embedding", "schemas",
-    "llm", "ingestion", "handlers", "provider",
+    "constants", "errors", "parsing", "chunking", "embedding", "schemas",
+    "llm", "ingestion", "handlers", "handlers_rag", "provider", "validation",
 ]
 
 PACKAGE_ROOT = Path(tools_document.__file__).parent
@@ -105,6 +105,19 @@ class TestPublicApi:
 
     def test_no_duplicate_entries_in_all(self):
         assert len(tools_document.__all__) == len(set(tools_document.__all__))
+
+
+def test_parse_document_returns_a_parsed_document():
+    """The public parser returns a ParsedDocument, not a bare string.
+
+    Pinned because ingestion reads ``.markdown``: a revert to a plain str
+    would fail only when a document is actually ingested.
+    """
+    from consensus.tools_document.parsing import ParsedDocument
+
+    parsed = tools_document.parse_document(b"hello", "a.txt", "text/plain")
+    assert isinstance(parsed, ParsedDocument)
+    assert parsed.markdown == "hello"
 
 
 class TestCallSites:

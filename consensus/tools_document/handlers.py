@@ -1,4 +1,9 @@
-"""Handlers behind the eight ``doc_*`` tools."""
+"""The six non-RAG ``doc_*`` handlers.
+
+``doc_add``, ``doc_list``, ``doc_get_length``, ``doc_get_text``,
+``doc_get_sections`` and ``doc_get_chapter``. The two retrieval handlers,
+``doc_ask`` and ``doc_summary``, live in ``handlers_rag``.
+"""
 
 import json
 import logging
@@ -7,25 +12,46 @@ from typing import Optional
 from ..tools import ToolContext, ToolResult
 from .constants import (
     AVAILABLE_HEADERS_HINT, LIBRARY_SEARCH_LIMIT, MIN_SIMILARITY_THRESHOLD,
-    PASSAGE_PREVIEW_CHARS, RAG_TOP_K, SUMMARY_CHUNK_LIMIT,
-    SUMMARY_SNIPPET_CHARS,
+    SUMMARY_SNIPPET_CHARS, SUMMARY_STATUS_FAILED, SUMMARY_STATUS_OK,
+    SUMMARY_STATUS_PENDING,
 )
-from .embedding import (
-    _embed_document_chunks, _embedding_docs, _rank_by_similarity, _spawn_background,
-)
+from .embedding import _rank_by_similarity
+from .errors import DocumentError
+from .handlers_rag import _reindex_message
 from .ingestion import ingest_document
-from .llm import _call_interpretation_llm
 from .parsing import fetch_url_content
+from .validation import chapter_range, resolve_range
 
 logger = logging.getLogger(__name__)
 
 
-def _summary_snippet(summary: Optional[str]) -> str:
-    """Truncate a document summary for a one-line ``doc_list`` entry."""
-    text = summary or ""
-    if len(text) > SUMMARY_SNIPPET_CHARS:
-        return text[:SUMMARY_SNIPPET_CHARS] + "..."
-    return text
+def _summary_snippet(summary: Optional[str], status: str) -> str:
+    """Render a document summary for a one-line ``doc_list`` entry.
+
+    A document with no usable summary says why (issue #78 defect 1):
+    printing an empty line left an LLM failure looking like a document
+    that simply had nothing to say.
+
+    Args:
+        summary: The stored summary text, or ``None``/empty if none exists.
+        status: The document's ``summary_status`` — ``'ok'``, ``'failed'``
+            or ``'pending'``.
+
+    Returns:
+        The truncated summary text, or a status-specific placeholder when
+        no summary text is available.
+    """
+    text = (summary or "").strip()
+    if text:
+        if len(text) > SUMMARY_SNIPPET_CHARS:
+            return text[:SUMMARY_SNIPPET_CHARS] + "..."
+        return text
+    if status == SUMMARY_STATUS_FAILED:
+        return "(summary unavailable — generation failed)"
+    if status == SUMMARY_STATUS_PENDING:
+        # Distinct from a failure and from an empty 'ok': nobody tried.
+        return "(no summary generated)"
+    return "(no summary)"
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +104,11 @@ async def _doc_add_handler(
             content=json.dumps(result, indent=2),
             metadata=result,
         )
+    except DocumentError as e:
+        logger.warning("doc_add failed for %s: %s", url or filename, e)
+        return ToolResult(content=f"Failed to add document: {e}", is_error=True)
     except Exception as e:
+        logger.exception("doc_add failed unexpectedly for %s", url or filename)
         return ToolResult(content=f"Failed to add document: {e}", is_error=True)
 
 
@@ -95,6 +125,12 @@ async def _doc_list_handler(
         try:
             query_vec = await embed_client.embed(query)
         except Exception as e:
+            # Golden rule 6 wants it logged as well as shown; the traceback
+            # matters because this catch is broad enough to swallow a bug in
+            # the client as if it were a service outage.
+            logger.exception(
+                "Library search could not embed the query %r", query,
+            )
             return ToolResult(
                 content=f"Embedding service unavailable: {e}", is_error=True,
             )
@@ -103,10 +139,11 @@ async def _doc_list_handler(
         if not rows:
             return ToolResult(content="No documents in the library yet.")
 
-        scored = _rank_by_similarity(
+        ranking = _rank_by_similarity(
             query_vec, rows, limit=LIBRARY_SEARCH_LIMIT,
             threshold=MIN_SIMILARITY_THRESHOLD,
         )
+        scored = ranking.ranked
 
         # Group by document
         seen_docs: dict[int, dict] = {}
@@ -119,12 +156,18 @@ async def _doc_list_handler(
                         "id": doc_id,
                         "title": doc["title"],
                         "summary": doc["summary"],
+                        "summary_status": doc.get(
+                            "summary_status", SUMMARY_STATUS_OK,
+                        ),
                         "filename": doc["filename"],
                         "char_count": doc["char_count"],
                         "best_score": score,
                     }
 
         if not seen_docs:
+            if ranking.skipped_dim_mismatch:
+                return ToolResult(
+                    content=_reindex_message(ranking), is_error=True)
             return ToolResult(content=f"No documents match '{query}'.")
 
         docs_list = sorted(
@@ -132,11 +175,17 @@ async def _doc_list_handler(
         )
         lines = [f"Library search for '{query}' — {len(docs_list)} document(s):\n"]
         for doc in docs_list:
-            summary_snippet = _summary_snippet(doc["summary"])
+            summary_snippet = _summary_snippet(
+                doc["summary"], doc.get("summary_status", SUMMARY_STATUS_OK),
+            )
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars, "
                 f"score: {doc['best_score']:.2f})\n    {summary_snippet}"
             )
+        if ranking.skipped_dim_mismatch:
+            # Some documents were excluded from the search entirely. Silence
+            # here makes a partial library look like the whole one.
+            lines.append(f"\n{_reindex_message(ranking)}")
         return ToolResult(content="\n".join(lines), metadata={"count": len(docs_list)})
 
     elif full_library:
@@ -146,7 +195,9 @@ async def _doc_list_handler(
             return ToolResult(content="No documents in the library.")
         lines = [f"All documents in library — {len(docs)} total:\n"]
         for doc in docs:
-            summary_snippet = _summary_snippet(doc["summary"])
+            summary_snippet = _summary_snippet(
+                doc["summary"], doc.get("summary_status", SUMMARY_STATUS_OK),
+            )
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars)\n"
                 f"    {summary_snippet}"
@@ -160,7 +211,9 @@ async def _doc_list_handler(
             return ToolResult(content="No documents attached to this discussion.")
         lines = [f"Documents in this discussion — {len(docs)} total:\n"]
         for doc in docs:
-            summary_snippet = _summary_snippet(doc["summary"])
+            summary_snippet = _summary_snippet(
+                doc["summary"], doc.get("summary_status", SUMMARY_STATUS_OK),
+            )
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars)\n"
                 f"    {summary_snippet}"
@@ -203,8 +256,10 @@ async def _doc_get_text_handler(
     if markdown is None:
         return ToolResult(content=f"Document {doc_id} not found.", is_error=True)
 
-    if to_char == -1:
-        to_char = len(markdown)
+    try:
+        from_char, to_char = resolve_range(from_char, to_char, len(markdown))
+    except ValueError as e:
+        return ToolResult(content=f"Invalid range: {e}", is_error=True)
     text = markdown[from_char:to_char]
 
     return ToolResult(
@@ -264,207 +319,49 @@ async def _doc_get_chapter_handler(
     if not sections:
         return ToolResult(content="No sections found in this document.", is_error=True)
 
-    # Find best matching section (case-insensitive substring match)
+    # Find best matching section (case-insensitive substring match). Only
+    # the index is tracked: carrying the matching dict alongside it made
+    # them two things that must agree, which is what left chapter_range
+    # taking an index the type checker could not prove was set.
     header_lower = header.lower()
-    best_match = None
-    best_score = 0
-    for s in sections:
+    best_index = -1
+    best_score = 0.0
+    for i, s in enumerate(sections):
         s_lower = s["header"].lower()
         if s_lower == header_lower:
-            best_match = s
+            best_index = i
             break
         elif header_lower in s_lower or s_lower in header_lower:
             score = len(header_lower) / max(len(s_lower), 1)
             if score > best_score:
                 best_score = score
-                best_match = s
+                best_index = i
 
-    if not best_match:
+    if best_index < 0:
         available = ", ".join(s["header"] for s in sections[:AVAILABLE_HEADERS_HINT])
         return ToolResult(
             content=f"No section matching '{header}'. Available: {available}",
             is_error=True,
         )
 
-    # Get the section text
+    # Get the chapter text: the whole section including its subsections,
+    # not just the preamble up to the next header of any level (issue #78
+    # defect 10).
     markdown = db.get_document_markdown(int(doc_id))
     if markdown is None:
         return ToolResult(content="Could not read document text.", is_error=True)
 
-    text = markdown[best_match["from_char"]:best_match["to_char"]]
+    from_char, to_char, subsections = chapter_range(
+        sections, best_index, len(markdown),
+    )
+    text = markdown[from_char:to_char]
 
     return ToolResult(
         content=text,
         metadata={
-            "header": best_match["header"],
-            "from_char": best_match["from_char"],
-            "to_char": best_match["to_char"],
+            "header": sections[best_index]["header"],
+            "from_char": from_char,
+            "to_char": to_char,
+            "subsections_included": subsections,
         },
-    )
-
-
-async def _doc_ask_handler(
-    arguments: dict, context: ToolContext,
-    db, embed_client, app,
-) -> ToolResult:
-    """RAG pipeline: embed question, retrieve top-k chunks, call LLM."""
-    doc_id = arguments.get("document_id")
-    question = arguments.get("question", "").strip()
-
-    if doc_id is None:
-        return ToolResult(content="document_id is required.", is_error=True)
-    if not question:
-        return ToolResult(content="question is required.", is_error=True)
-
-    doc_id = int(doc_id)
-    doc = db.get_document(doc_id)
-    if not doc:
-        return ToolResult(content=f"Document {doc_id} not found.", is_error=True)
-
-    # Check if embeddings are ready
-    unembedded = db.count_unembedded_chunks(doc_id)
-    if unembedded > 0:
-        # Re-kick the background embedding pass if it is not already running,
-        # so a previously failed/interrupted chunk is retried instead of
-        # leaving the document permanently stuck as "still being indexed".
-        if embed_client and doc_id not in _embedding_docs:
-            _embedding_docs.add(doc_id)
-            _spawn_background(
-                _embed_document_chunks(doc_id, db, embed_client))
-        total_chunks = len(db.get_document_chunks(doc_id))
-        embedded = total_chunks - unembedded
-        return ToolResult(
-            content=(
-                f"Document is still being indexed ({embedded}/{total_chunks} chunks embedded). "
-                "Please try again shortly."
-            ),
-        )
-
-    # Embed the question
-    try:
-        query_vec = await embed_client.embed(question)
-    except Exception as e:
-        return ToolResult(
-            content=f"Embedding service unavailable: {e}", is_error=True,
-        )
-
-    # Retrieve and rank chunks
-    rows = db.get_chunks_with_embeddings(doc_id)
-    if not rows:
-        return ToolResult(content="No embedded chunks found for this document.")
-
-    scored = _rank_by_similarity(query_vec, rows, RAG_TOP_K)
-
-    # Build context for LLM
-    passages = []
-    for i, (score, row) in enumerate(scored, 1):
-        passages.append({
-            "index": i,
-            "text": row["content"],
-            "from_char": row["from_char"],
-            "to_char": row["to_char"],
-            "score": round(score, 3),
-        })
-
-    passages_text = "\n\n".join(
-        f"[Passage {p['index']}] (chars {p['from_char']}-{p['to_char']}, "
-        f"relevance: {p['score']}):\n{p['text']}"
-        for p in passages
-    )
-
-    answer = await _call_interpretation_llm(
-        app, context,
-        system_prompt=(
-            "You are a document analyst. Answer the question based ONLY on the "
-            "provided passages from the document. Cite passage numbers in your answer. "
-            "If the answer is not in the passages, say so clearly."
-        ),
-        user_prompt=(
-            f"DOCUMENT: {doc['title']}\n\n"
-            f"PASSAGES:\n{passages_text}\n\n"
-            f"QUESTION: {question}"
-        ),
-    )
-
-    result = {
-        "answer": answer,
-        "relevant_passages": [
-            {
-                "text": p["text"][:PASSAGE_PREVIEW_CHARS],
-                "from_char": p["from_char"], "to_char": p["to_char"],
-            }
-            for p in passages
-        ],
-    }
-    return ToolResult(
-        content=json.dumps(result, indent=2),
-        metadata=result,
-    )
-
-
-async def _doc_summary_handler(
-    arguments: dict, context: ToolContext,
-    db, embed_client, app,
-) -> ToolResult:
-    """Summarize a document or a range of it."""
-    doc_id = arguments.get("document_id")
-    from_char = int(arguments.get("from_char", 0))
-    to_char = int(arguments.get("to_char", -1))
-
-    if doc_id is None:
-        return ToolResult(content="document_id is required.", is_error=True)
-
-    markdown = db.get_document_markdown(int(doc_id))
-    if markdown is None:
-        return ToolResult(content=f"Document {doc_id} not found.", is_error=True)
-
-    if to_char == -1:
-        to_char = len(markdown)
-    text = markdown[from_char:to_char]
-
-    if not text.strip():
-        return ToolResult(content="Selected range is empty.")
-
-    if len(text) <= SUMMARY_CHUNK_LIMIT:
-        # Direct summarization
-        summary = await _call_interpretation_llm(
-            app, context,
-            system_prompt=(
-                "You are a document analyst. Provide a clear, comprehensive summary "
-                "of the following text. Include key findings, methods, and conclusions."
-            ),
-            user_prompt=text,
-        )
-    else:
-        # Map-reduce: summarize chunks, then summarize summaries
-        chunk_summaries = []
-        for i in range(0, len(text), SUMMARY_CHUNK_LIMIT):
-            chunk = text[i:i + SUMMARY_CHUNK_LIMIT]
-            chunk_summary = await _call_interpretation_llm(
-                app, context,
-                system_prompt=(
-                    "Provide a concise summary of this text excerpt. "
-                    "Focus on key points and findings."
-                ),
-                user_prompt=chunk,
-            )
-            chunk_summaries.append(chunk_summary)
-
-        # Combine
-        combined = "\n\n---\n\n".join(
-            f"Section {i+1}:\n{s}" for i, s in enumerate(chunk_summaries)
-        )
-        summary = await _call_interpretation_llm(
-            app, context,
-            system_prompt=(
-                "You are a document analyst. Synthesize these section summaries "
-                "into a single coherent summary. Include all key findings, methods, "
-                "and conclusions."
-            ),
-            user_prompt=combined,
-        )
-
-    return ToolResult(
-        content=json.dumps({"summary": summary}),
-        metadata={"summary": summary, "from_char": from_char, "to_char": to_char},
     )

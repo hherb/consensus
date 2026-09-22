@@ -11,6 +11,7 @@ import sqlite3
 import pytest
 
 from consensus.tools_document import constants, embedding, ingestion, llm
+from consensus.tools_document.errors import DocumentInterpretationError
 from consensus.tools import ToolContext
 
 from .document_helpers import (
@@ -50,7 +51,9 @@ class TestEmbedSingleChunk:
         chunk = tmp_db.get_document_chunks(doc_id)[0]
         client = FakeEmbedClient([0.1, 0.2])
 
-        assert await embedding._embed_single_chunk(chunk, doc_id, tmp_db, client) is True
+        assert await embedding._embed_single_chunk(
+            chunk, doc_id, tmp_db, client,
+        ) == (True, "")
 
         stored = tmp_db.get_chunks_with_embeddings(doc_id)
         assert [c["id"] for c in stored] == [chunk_ids[0]]
@@ -64,7 +67,13 @@ class TestEmbedSingleChunk:
         chunk = tmp_db.get_document_chunks(doc_id)[0]
         client = FakeEmbedClient(error=RuntimeError("endpoint down"))
 
-        assert await embedding._embed_single_chunk(chunk, doc_id, tmp_db, client) is False
+        ok, error = await embedding._embed_single_chunk(
+            chunk, doc_id, tmp_db, client,
+        )
+        assert ok is False
+        # The embedder's own message is returned, not just a count: it is
+        # the half the user can act on (issue #78 whole-branch review).
+        assert "endpoint down" in error
         assert tmp_db.get_chunks_with_embeddings(doc_id) == []
 
     @pytest.mark.asyncio
@@ -82,7 +91,9 @@ class TestEmbedSingleChunk:
             [0.3], errors_by_text={long_text: EmbeddingContextLengthError("too long")},
         )
 
-        assert await embedding._embed_single_chunk(chunk, doc_id, tmp_db, client) is True
+        assert await embedding._embed_single_chunk(
+            chunk, doc_id, tmp_db, client,
+        ) == (True, "")
 
         remaining = tmp_db.get_document_chunks(doc_id)
         assert big_id not in [c["id"] for c in remaining]
@@ -129,7 +140,11 @@ class TestEmbedSingleChunk:
             first_sub: RuntimeError("sub failed"),
         })
 
-        assert await embedding._embed_single_chunk(chunk, doc_id, tmp_db, client) is False
+        ok, error = await embedding._embed_single_chunk(
+            chunk, doc_id, tmp_db, client,
+        )
+        assert ok is False
+        assert "sub failed" in error
         assert len(tmp_db.get_chunks_with_embeddings(doc_id)) == 2
         # The oversized parent is removed even when a sub-chunk fails.
         assert big_id not in [c["id"] for c in tmp_db.get_document_chunks(doc_id)]
@@ -152,7 +167,9 @@ class TestEmbedSingleChunk:
             chunk["content"]: EmbeddingContextLengthError("x"),
         })
 
-        assert await embedding._embed_single_chunk(chunk, doc_id, tmp_db, client) is True
+        assert await embedding._embed_single_chunk(
+            chunk, doc_id, tmp_db, client,
+        ) == (True, "")
         assert sorted(c["chunk_index"] for c in tmp_db.get_document_chunks(doc_id)) == [0, 1, 2]
 
 
@@ -180,19 +197,21 @@ class TestEmbedDocumentChunks:
     @pytest.mark.asyncio
     async def test_releases_the_in_progress_marker_on_success(self, tmp_db, doc_with_chunks):
         doc_id, _ = doc_with_chunks
-        embedding._embedding_docs.add(doc_id)
+        key = embedding.doc_key(tmp_db, doc_id)
+        embedding._embedding_docs.add(key)
         try:
             await embedding._embed_document_chunks(doc_id, tmp_db, FakeEmbedClient([1.0]))
-            assert doc_id not in embedding._embedding_docs
+            assert key not in embedding._embedding_docs
         finally:
-            embedding._embedding_docs.discard(doc_id)
+            embedding._embedding_docs.discard(key)
 
     @pytest.mark.asyncio
     async def test_releases_the_in_progress_marker_when_every_chunk_fails(
         self, tmp_db, doc_with_chunks,
     ):
         doc_id, _ = doc_with_chunks
-        embedding._embedding_docs.add(doc_id)
+        key = embedding.doc_key(tmp_db, doc_id)
+        embedding._embedding_docs.add(key)
 
         class Exploding:
             async def embed(self, _text):
@@ -200,9 +219,10 @@ class TestEmbedDocumentChunks:
 
         try:
             await embedding._embed_document_chunks(doc_id, tmp_db, Exploding())
-            assert doc_id not in embedding._embedding_docs
+            assert key not in embedding._embedding_docs
         finally:
-            embedding._embedding_docs.discard(doc_id)
+            embedding._embedding_docs.discard(key)
+            embedding._indexing_failures.pop(key, None)
 
     @pytest.mark.asyncio
     async def test_marker_is_released_when_the_pass_itself_raises(
@@ -213,39 +233,69 @@ class TestEmbedDocumentChunks:
         A DB error in ``get_document_chunks`` would otherwise leave the
         document marked "indexing" forever, and the re-kick guard in
         ``_doc_ask_handler`` then refuses to ever start it again.
+
+        As of issue #78 task 7, ``_embed_document_chunks`` also guards this
+        against escaping entirely (it ran as a detached background task, so
+        an escaping exception was visible only as asyncio's GC-time
+        warning): it is caught, logged, and recorded as an indexing
+        failure rather than propagated.
         """
         doc_id, _ = doc_with_chunks
 
         class ExplodingDb:
+            # db_path is a real attribute on Database, set before anything
+            # can fail, so the bookkeeping key stays resolvable even when
+            # every query raises.
+            db_path = "/exploding.db"
+
             def __getattr__(self, name):
                 raise sqlite3.OperationalError("database is locked")
 
-        embedding._embedding_docs.add(doc_id)
+        db = ExplodingDb()
+        key = embedding.doc_key(db, doc_id)
+        embedding._embedding_docs.add(key)
         try:
-            with pytest.raises(sqlite3.OperationalError):
-                await embedding._embed_document_chunks(
-                    doc_id, ExplodingDb(), FakeEmbedClient([1.0]),
-                )
-            assert doc_id not in embedding._embedding_docs
+            await embedding._embed_document_chunks(
+                doc_id, db, FakeEmbedClient([1.0]),
+            )
+            assert key not in embedding._embedding_docs
+            failure = embedding.get_indexing_failure(db, doc_id)
+            assert failure is not None
+            assert "database is locked" in failure.last_error
         finally:
-            embedding._embedding_docs.discard(doc_id)
+            embedding._embedding_docs.discard(key)
+            embedding._indexing_failures.pop(key, None)
 
     @pytest.mark.asyncio
     async def test_failures_are_logged_with_a_count(self, tmp_db, doc_with_chunks, caplog):
         doc_id, _ = doc_with_chunks
         client = FakeEmbedClient(error=RuntimeError("down"))
 
-        with caplog.at_level("WARNING", logger="consensus.tools_document"):
-            await embedding._embed_document_chunks(doc_id, tmp_db, client)
+        try:
+            with caplog.at_level("WARNING", logger="consensus.tools_document"):
+                await embedding._embed_document_chunks(doc_id, tmp_db, client)
 
-        assert any("3/3 chunks failed" in r.getMessage() for r in caplog.records)
+            assert any(
+                "3/3 chunks could not be embedded" in r.getMessage()
+                for r in caplog.records
+            )
+        finally:
+            embedding._indexing_failures.pop(
+                embedding.doc_key(tmp_db, doc_id), None)
 
 
 class TestSpawnBackground:
     @pytest.mark.asyncio
     async def test_reference_is_held_while_running_and_released_when_done(self):
-        """asyncio only weakly references tasks; an unretained one can vanish."""
+        """asyncio only weakly references tasks; an unretained one can vanish.
+
+        ``embedding.py`` no longer has its own spawn helper (issue #78 task
+        1): scheduling now goes through the shared ``consensus.background``
+        module, so this test exercises that module directly.
+        """
         import asyncio
+
+        from consensus import background
 
         started = asyncio.Event()
         release = asyncio.Event()
@@ -254,15 +304,15 @@ class TestSpawnBackground:
             started.set()
             await release.wait()
 
-        embedding._spawn_background(work())
+        background.spawn_background(work(), "test reference is held")
         await asyncio.wait_for(started.wait(), timeout=1.0)
-        running = [t for t in embedding._background_tasks if not t.done()]
+        running = [t for t in background._background_tasks if not t.done()]
         assert running, "task was not retained while running"
 
         release.set()
         await asyncio.wait_for(asyncio.gather(*running), timeout=1.0)
         await asyncio.sleep(0)
-        assert not any(t in embedding._background_tasks for t in running)
+        assert not any(t in background._background_tasks for t in running)
 
 
 # ---------------------------------------------------------------------------
@@ -277,13 +327,19 @@ def llm_app(tmp_db, sample_ai_entity):
 
 class TestCallInterpretationLlm:
     @pytest.mark.asyncio
-    async def test_unknown_entity_returns_an_explanatory_string(self, tmp_db):
+    async def test_unknown_entity_raises(self, tmp_db):
+        """An unresolvable caller entity raises rather than returning prose.
+
+        Was: returns the string "(Error: could not resolve caller entity
+        for LLM call)" as if it were an answer (issue #78 defect 1).
+        """
         app = FakeApp(tmp_db)
-        result = await llm._call_interpretation_llm(
-            app, ToolContext(caller_entity_id=99999, discussion_id=1),
-            "system", "user",
-        )
-        assert "could not resolve caller entity" in result
+        with pytest.raises(DocumentInterpretationError) as exc:
+            await llm._call_interpretation_llm(
+                app, ToolContext(caller_entity_id=99999, discussion_id=1),
+                "system", "user",
+            )
+        assert "99999" in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_returns_the_completion_content(self, monkeypatch, llm_app):
@@ -330,7 +386,12 @@ class TestCallInterpretationLlm:
         assert FakeAIClient.closed is True
 
     @pytest.mark.asyncio
-    async def test_failure_is_reported_in_the_returned_text(self, monkeypatch, llm_app):
+    async def test_completion_failure_raises(self, monkeypatch, llm_app):
+        """A failing completion call raises rather than returning its message.
+
+        Was: returns the string "(LLM call failed: ...)" as if it were an
+        answer (issue #78 defect 1).
+        """
         app, entity_id = llm_app
 
         class FailingClient(FakeAIClient):
@@ -340,10 +401,11 @@ class TestCallInterpretationLlm:
         patch_where_defined(
             monkeypatch, llm._call_interpretation_llm, "AIClient", FailingClient,
         )
-        result = await llm._call_interpretation_llm(
-            app, ToolContext(caller_entity_id=entity_id, discussion_id=1), "s", "u",
-        )
-        assert "LLM call failed" in result and "provider exploded" in result
+        with pytest.raises(DocumentInterpretationError) as exc:
+            await llm._call_interpretation_llm(
+                app, ToolContext(caller_entity_id=entity_id, discussion_id=1), "s", "u",
+            )
+        assert "provider exploded" in str(exc.value)
         assert FakeAIClient.closed is True
 
 
@@ -446,8 +508,13 @@ class TestIngestDocument:
 
     @pytest.mark.asyncio
     async def test_summary_failure_leaves_an_empty_summary(self, tmp_db, monkeypatch, ctx):
+        """A raised DocumentInterpretationError leaves no summary persisted.
+
+        ``_call_interpretation_llm`` only ever raises this type (issue #78);
+        the fake mirrors that contract instead of a bare ``RuntimeError``.
+        """
         async def boom(*_args, **_kwargs):
-            raise RuntimeError("llm down")
+            raise DocumentInterpretationError("llm down")
 
         patch_where_defined(
             monkeypatch, ingestion.ingest_document, "_call_interpretation_llm", boom,
@@ -466,18 +533,20 @@ class TestIngestDocument:
     ):
         spawned = []
         patch_where_defined(
-            monkeypatch, ingestion.ingest_document, "_spawn_background",
-            lambda coro: (spawned.append(coro), coro.close()),
+            monkeypatch, ingestion.ingest_document, "_spawn_embedding_pass",
+            lambda doc_id, db, embed_client: spawned.append(doc_id),
         )
         result = await ingestion.ingest_document(
             app=None, db=tmp_db, embed_client=FakeEmbedClient(), content_bytes=b"body",
             filename="d.txt", mime_type="text/plain",
         )
         try:
+            key = embedding.doc_key(tmp_db, result["document_id"])
             assert len(spawned) == 1
-            assert result["document_id"] in embedding._embedding_docs
+            assert key in embedding._embedding_docs
         finally:
-            embedding._embedding_docs.discard(result["document_id"])
+            embedding._embedding_docs.discard(
+                embedding.doc_key(tmp_db, result["document_id"]))
 
     @pytest.mark.asyncio
     async def test_no_second_pass_while_one_is_already_in_progress(
@@ -491,11 +560,13 @@ class TestIngestDocument:
         """
         spawned = []
         patch_where_defined(
-            monkeypatch, ingestion.ingest_document, "_spawn_background",
-            lambda coro: (spawned.append(coro), coro.close()),
+            monkeypatch, ingestion.ingest_document, "_spawn_embedding_pass",
+            lambda doc_id, db, embed_client: spawned.append(doc_id),
         )
-        # Pre-claim every id this ingestion could be assigned.
-        claimed = set(range(1, 50))
+        # Pre-claim every id this ingestion could be assigned, in this
+        # database: the marker is keyed by (db_path, doc_id) so that one
+        # session's pass cannot mask another session's document.
+        claimed = {embedding.doc_key(tmp_db, i) for i in range(1, 50)}
         embedding._embedding_docs.update(claimed)
         try:
             await ingestion.ingest_document(
@@ -510,7 +581,8 @@ class TestIngestDocument:
     async def test_no_embedding_without_an_embed_client(self, tmp_db, monkeypatch):
         spawned = []
         patch_where_defined(
-            monkeypatch, ingestion.ingest_document, "_spawn_background", spawned.append,
+            monkeypatch, ingestion.ingest_document, "_spawn_embedding_pass",
+            lambda doc_id, db, embed_client: spawned.append(doc_id),
         )
         await ingestion.ingest_document(
             app=None, db=tmp_db, embed_client=None, content_bytes=b"body",

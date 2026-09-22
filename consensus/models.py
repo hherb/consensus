@@ -57,6 +57,22 @@ class MessageRole(Enum):
     SYSTEM = "system"
 
 
+class SummaryStatus(str, Enum):
+    """Why a document's ``summary`` column holds what it holds (issue #78).
+
+    ``OK`` the summary was generated (or the row predates the column),
+    ``FAILED`` generation was attempted and raised, ``PENDING`` it was never
+    attempted — no AI entity to borrow a provider from, or opted out.
+
+    Defined here rather than in ``tools_document.constants`` so the ``db``
+    layer can validate writes against it without importing a tool package,
+    which is what left the literal ``"ok"`` duplicated in three places.
+    """
+    OK = "ok"
+    FAILED = "failed"
+    PENDING = "pending"
+
+
 @dataclass
 class AIConfig:
     """Configuration for an AI entity, resolved from DB + environment."""

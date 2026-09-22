@@ -6,8 +6,12 @@ from typing import Optional
 
 from ..tools import ToolContext
 from .chunking import chunk_document
-from .constants import SUMMARY_EXCERPT_CHARS
-from .embedding import _embed_document_chunks, _embedding_docs, _spawn_background
+from .constants import (
+    SUMMARY_EXCERPT_CHARS, SUMMARY_STATUS_FAILED, SUMMARY_STATUS_OK,
+    SUMMARY_STATUS_PENDING,
+)
+from .embedding import _embedding_docs, _spawn_embedding_pass, doc_key
+from .errors import DocumentInterpretationError
 from .llm import _call_interpretation_llm
 from .parsing import extract_sections, parse_document
 
@@ -33,19 +37,29 @@ async def ingest_document(
     """Parse, chunk and store a document, then *schedule* its embedding.
 
     Returns a document metadata dict, or ``{"error": ...}`` if parsing yielded
-    no text. Note three things the signature does not show:
+    no text. Note four things the signature does not show:
 
     - Embedding is fire-and-forget: on return the chunks are stored but not
       yet embedded, which is why ``_doc_ask_handler`` has a "still being
-      indexed" branch. The document id is added to the module-level
-      ``_embedding_docs`` marker set for the duration of that pass.
+      indexed" branch. The document's ``(db_path, id)`` key is added to the
+      module-level ``_embedding_docs`` marker set for the duration of that
+      pass.
     - ``generate_summary`` is silently a no-op unless both ``context`` and
       ``app`` are supplied; without them the document is stored with an empty
-      summary and no error is reported.
+      summary and ``summary_status`` recorded as ``'pending'`` rather than
+      an error (issue #78 defect 1).
     - The document is associated with ``discussion_id`` when one is given.
+    - ``parse_document`` raises ``DocumentParseError`` (uncaught here, so it
+      propagates to the caller) rather than manufacturing placeholder
+      content for a scanned PDF or an unrecognised binary format; a
+      successful parse still carries a ``fidelity``/``notes`` pair, surfaced
+      below, that says whether a degraded fallback produced the text
+      (issue #78 defect 7).
     """
-    # Parse to markdown
-    markdown = parse_document(content_bytes, filename, mime_type)
+    # Parse to markdown.  Parsing raises rather than returning placeholder
+    # text, so a scanned PDF no longer ingests as a real document.
+    parsed = parse_document(content_bytes, filename, mime_type)
+    markdown = parsed.markdown
     if not markdown.strip():
         return {"error": "Document is empty after parsing."}
 
@@ -62,8 +76,11 @@ async def ingest_document(
         else:
             title = filename
 
-    # Generate summary
+    # Generate summary.  A failed summary must never be persisted: the old
+    # helper returned its error as a string, which was stored and then
+    # reprinted to every participant by doc_list forever (issue #78).
     summary = ""
+    summary_status = SUMMARY_STATUS_PENDING
     if generate_summary and context and app:
         try:
             excerpt = markdown[:SUMMARY_EXCERPT_CHARS]
@@ -76,9 +93,14 @@ async def ingest_document(
                 ),
                 user_prompt=excerpt,
             )
-        except Exception as e:
-            logger.warning("Summary generation failed: %s", e)
+            summary_status = SUMMARY_STATUS_OK
+        except DocumentInterpretationError:
+            logger.exception(
+                "Summary generation failed for %s — storing no summary",
+                filename,
+            )
             summary = ""
+            summary_status = SUMMARY_STATUS_FAILED
 
     # Store document
     doc_id = db.add_document(
@@ -91,6 +113,7 @@ async def ingest_document(
         markdown=markdown,
         char_count=char_count,
         sections_json=sections_json,
+        summary_status=summary_status,
     )
 
     # Associate with discussion
@@ -110,16 +133,23 @@ async def ingest_document(
         )
 
     # Background embedding
-    if embed_client and doc_id not in _embedding_docs:
-        _embedding_docs.add(doc_id)
-        _spawn_background(_embed_document_chunks(doc_id, db, embed_client))
+    embedding_key = doc_key(db, doc_id)
+    if embed_client and embedding_key not in _embedding_docs:
+        _embedding_docs.add(embedding_key)
+        _spawn_embedding_pass(doc_id, db, embed_client)
 
     return {
         "document_id": doc_id,
         "title": title,
         "summary": summary,
+        "summary_status": summary_status,
         "char_count": char_count,
         "filename": filename,
         "sections": len(sections),
         "chunks": len(chunks),
+        "fidelity": parsed.fidelity,
+        # list(), not the tuple: this dict is both returned as metadata and
+        # JSON-encoded for the model, and a tuple round-trips through JSON
+        # as a list, leaving the two views unequal.
+        "notes": list(parsed.notes),
     }
