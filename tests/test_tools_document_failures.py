@@ -867,3 +867,170 @@ async def test_new_failure_streak_after_recovery_posts_a_second_notice(
         and "could not be indexed" in m.content
     ]
     assert len(notices) == 2
+
+
+# ---------------------------------------------------------------------------
+# Task 10: range validation
+# ---------------------------------------------------------------------------
+
+from consensus.tools_document.validation import resolve_range
+
+
+def test_resolve_range_expands_the_sentinel():
+    """-1 means "to the end", as the tool schema documents."""
+    assert resolve_range(0, -1, 100) == (0, 100)
+
+
+def test_resolve_range_clamps_beyond_the_end():
+    """A to_char past the end is a harmless overshoot, not an error."""
+    assert resolve_range(10, 500, 100) == (10, 100)
+
+
+def test_resolve_range_rejects_an_inverted_range():
+    """markdown[500:100] silently returned "" with length 0."""
+    with pytest.raises(ValueError, match="before"):
+        resolve_range(500, 100, 1000)
+
+
+def test_resolve_range_rejects_other_negatives():
+    """-5 used to drop the last five characters via negative slicing."""
+    with pytest.raises(ValueError):
+        resolve_range(0, -5, 100)
+    with pytest.raises(ValueError):
+        resolve_range(-3, 50, 100)
+
+
+def test_resolve_range_rejects_a_start_past_the_end():
+    """A from_char beyond the document is a mistake worth reporting."""
+    with pytest.raises(ValueError):
+        resolve_range(200, -1, 100)
+
+
+@pytest.mark.asyncio
+async def test_doc_get_text_rejects_an_inverted_range(tmp_db):
+    """The handler reports it instead of returning an empty success."""
+    doc_id = tmp_db.add_document(
+        filename="j2.md", title="J2", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None,
+        markdown="# J\n\n" + "x" * 1000, char_count=1005, sections_json="[]",
+    )
+    context = ToolContext(caller_entity_id=0, discussion_id=0)
+    result = await handlers._doc_get_text_handler(
+        {"document_id": doc_id, "from_char": 500, "to_char": 100},
+        context, tmp_db, None, None,
+    )
+    assert result.is_error
+
+
+@pytest.mark.asyncio
+async def test_doc_summary_reports_an_interpretation_failure_explicitly(
+    tmp_db, sample_ai_entity, monkeypatch,
+):
+    """doc_summary names the model, provider and document id on an LLM
+    failure, matching the treatment doc_ask already received.
+
+    Previously ``DocumentInterpretationError`` fell through to
+    ``ToolRegistry``'s generic ``except Exception``, which produces a bare
+    "Tool error: ..." message and always logs a full traceback — even
+    though a failing provider here is an expected, not exceptional, case.
+    """
+    from tests.document_helpers import FakeApp
+
+    doc_id = tmp_db.add_document(
+        filename="summ1.md", title="Summ1", summary="",
+        mime_type="text/markdown", source_type="upload", source_url=None,
+        markdown="# Summ1\n\nSome body text.", char_count=27,
+        sections_json="[]",
+    )
+
+    async def boom(*args, **kwargs):
+        raise DocumentInterpretationError("401 Unauthorized")
+
+    patch_where_defined(
+        monkeypatch, handlers_rag._doc_summary_handler,
+        "_call_interpretation_llm", boom,
+    )
+
+    context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
+    result = await handlers_rag._doc_summary_handler(
+        {"document_id": doc_id}, context, tmp_db, None, FakeApp(tmp_db),
+    )
+
+    assert result.is_error
+    assert str(doc_id) in result.content
+    assert "test-model" in result.content
+    assert "TestProvider" in result.content
+    assert "401 Unauthorized" in result.content
+
+
+@pytest.mark.asyncio
+async def test_doc_summary_interpretation_failure_does_not_log_a_traceback(
+    tmp_db, sample_ai_entity, monkeypatch, caplog,
+):
+    """The explicit catch logs a warning, not ``logger.exception``."""
+    from tests.document_helpers import FakeApp
+
+    doc_id = tmp_db.add_document(
+        filename="summ2.md", title="Summ2", summary="",
+        mime_type="text/markdown", source_type="upload", source_url=None,
+        markdown="# Summ2\n\nSome body text.", char_count=27,
+        sections_json="[]",
+    )
+
+    async def boom(*args, **kwargs):
+        raise DocumentInterpretationError("401 Unauthorized")
+
+    patch_where_defined(
+        monkeypatch, handlers_rag._doc_summary_handler,
+        "_call_interpretation_llm", boom,
+    )
+
+    context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
+    with caplog.at_level(logging.ERROR):
+        await handlers_rag._doc_summary_handler(
+            {"document_id": doc_id}, context, tmp_db, None, FakeApp(tmp_db),
+        )
+
+    assert "Traceback" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_doc_summary_map_reduce_reports_interpretation_failure(
+    tmp_db, sample_ai_entity, monkeypatch,
+):
+    """The map-reduce path (long documents) is covered too.
+
+    ``_doc_summary_handler`` has three separate ``_call_interpretation_llm``
+    call sites — the direct path and two inside map-reduce (per-chunk and
+    the final combine). A failure at the first chunk-summary call site must
+    be reported the same way as a failure on the direct path.
+    """
+    from tests.document_helpers import FakeApp
+    from consensus.tools_document.constants import SUMMARY_CHUNK_LIMIT
+
+    long_text = "# Summ3\n\n" + ("word " * (SUMMARY_CHUNK_LIMIT))
+    doc_id = tmp_db.add_document(
+        filename="summ3.md", title="Summ3", summary="",
+        mime_type="text/markdown", source_type="upload", source_url=None,
+        markdown=long_text, char_count=len(long_text), sections_json="[]",
+    )
+    assert len(long_text) > SUMMARY_CHUNK_LIMIT
+
+    async def boom(*args, **kwargs):
+        raise DocumentInterpretationError("rate limited")
+
+    patch_where_defined(
+        monkeypatch, handlers_rag._doc_summary_handler,
+        "_call_interpretation_llm", boom,
+    )
+
+    context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
+    result = await handlers_rag._doc_summary_handler(
+        {"document_id": doc_id}, context, tmp_db, None, FakeApp(tmp_db),
+    )
+
+    assert result.is_error
+    assert str(doc_id) in result.content
+    assert "test-model" in result.content
+    assert "TestProvider" in result.content
+    assert "rate limited" in result.content

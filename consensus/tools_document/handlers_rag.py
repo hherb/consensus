@@ -27,6 +27,7 @@ from .embedding import (
 )
 from .errors import DocumentInterpretationError
 from .llm import _call_interpretation_llm
+from .validation import resolve_range
 
 logger = logging.getLogger(__name__)
 
@@ -292,50 +293,79 @@ async def _doc_summary_handler(
     if markdown is None:
         return ToolResult(content=f"Document {doc_id} not found.", is_error=True)
 
-    if to_char == -1:
-        to_char = len(markdown)
+    try:
+        from_char, to_char = resolve_range(from_char, to_char, len(markdown))
+    except ValueError as e:
+        return ToolResult(content=f"Invalid range: {e}", is_error=True)
     text = markdown[from_char:to_char]
 
+    # resolve_range guarantees from_char < to_char, but a range that is
+    # entirely whitespace is still a valid selection — not covered by
+    # resolve_range, so this check stays.
     if not text.strip():
         return ToolResult(content="Selected range is empty.")
 
-    if len(text) <= SUMMARY_CHUNK_LIMIT:
-        # Direct summarization
-        summary = await _call_interpretation_llm(
-            app, context,
-            system_prompt=(
-                "You are a document analyst. Provide a clear, comprehensive summary "
-                "of the following text. Include key findings, methods, and conclusions."
-            ),
-            user_prompt=text,
-        )
-    else:
-        # Map-reduce: summarize chunks, then summarize summaries
-        chunk_summaries = []
-        for i in range(0, len(text), SUMMARY_CHUNK_LIMIT):
-            chunk = text[i:i + SUMMARY_CHUNK_LIMIT]
-            chunk_summary = await _call_interpretation_llm(
+    try:
+        if len(text) <= SUMMARY_CHUNK_LIMIT:
+            # Direct summarization
+            summary = await _call_interpretation_llm(
                 app, context,
                 system_prompt=(
-                    "Provide a concise summary of this text excerpt. "
-                    "Focus on key points and findings."
+                    "You are a document analyst. Provide a clear, comprehensive summary "
+                    "of the following text. Include key findings, methods, and conclusions."
                 ),
-                user_prompt=chunk,
+                user_prompt=text,
             )
-            chunk_summaries.append(chunk_summary)
+        else:
+            # Map-reduce: summarize chunks, then summarize summaries
+            chunk_summaries = []
+            for i in range(0, len(text), SUMMARY_CHUNK_LIMIT):
+                chunk = text[i:i + SUMMARY_CHUNK_LIMIT]
+                chunk_summary = await _call_interpretation_llm(
+                    app, context,
+                    system_prompt=(
+                        "Provide a concise summary of this text excerpt. "
+                        "Focus on key points and findings."
+                    ),
+                    user_prompt=chunk,
+                )
+                chunk_summaries.append(chunk_summary)
 
-        # Combine
-        combined = "\n\n---\n\n".join(
-            f"Section {i+1}:\n{s}" for i, s in enumerate(chunk_summaries)
+            # Combine
+            combined = "\n\n---\n\n".join(
+                f"Section {i+1}:\n{s}" for i, s in enumerate(chunk_summaries)
+            )
+            summary = await _call_interpretation_llm(
+                app, context,
+                system_prompt=(
+                    "You are a document analyst. Synthesize these section summaries "
+                    "into a single coherent summary. Include all key findings, methods, "
+                    "and conclusions."
+                ),
+                user_prompt=combined,
+            )
+    except DocumentInterpretationError as e:
+        # Caught explicitly, rather than left to ToolRegistry's generic
+        # `except Exception`, so the failure names the model and provider
+        # that failed instead of a bare "Tool error: ..." — the same
+        # treatment _doc_ask_handler already received. Covers all three
+        # _call_interpretation_llm call sites above: the direct path and
+        # both map-reduce calls.
+        entity = db.get_entity(context.caller_entity_id) or {}
+        model = entity.get("model") or "unknown model"
+        provider = entity.get("provider_name") or "unknown provider"
+        logger.warning(
+            "doc_summary interpretation failed for document %d "
+            "(model=%s, provider=%s): %s",
+            doc_id, model, provider, e,
         )
-        summary = await _call_interpretation_llm(
-            app, context,
-            system_prompt=(
-                "You are a document analyst. Synthesize these section summaries "
-                "into a single coherent summary. Include all key findings, methods, "
-                "and conclusions."
+        return ToolResult(
+            content=(
+                f"Could not summarize document {doc_id}: "
+                f"the interpretation model '{model}' (provider '{provider}') "
+                f"failed: {e}"
             ),
-            user_prompt=combined,
+            is_error=True,
         )
 
     return ToolResult(

@@ -14,6 +14,7 @@ from .errors import DocumentError
 from .handlers_rag import _reindex_message
 from .ingestion import ingest_document
 from .parsing import fetch_url_content
+from .validation import resolve_range
 
 logger = logging.getLogger(__name__)
 
@@ -236,8 +237,10 @@ async def _doc_get_text_handler(
     if markdown is None:
         return ToolResult(content=f"Document {doc_id} not found.", is_error=True)
 
-    if to_char == -1:
-        to_char = len(markdown)
+    try:
+        from_char, to_char = resolve_range(from_char, to_char, len(markdown))
+    except ValueError as e:
+        return ToolResult(content=f"Invalid range: {e}", is_error=True)
     text = markdown[from_char:to_char]
 
     return ToolResult(
