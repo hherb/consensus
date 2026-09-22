@@ -116,3 +116,49 @@ async def test_failed_summary_is_not_persisted(
     assert not stored["summary"]
     assert "401 Unauthorized" not in (stored["summary"] or "")
     assert "401 Unauthorized" in caplog.text
+
+
+def test_migration_adds_summary_status_column(tmp_db):
+    """A freshly created database carries the new column."""
+    cols = {
+        row[1] for row in
+        tmp_db.conn.execute("PRAGMA table_info(documents)").fetchall()
+    }
+    assert "summary_status" in cols
+
+
+def test_existing_rows_default_to_ok(tmp_db):
+    """Rows written without an explicit status read back as 'ok'.
+
+    Pre-015 rows cannot be retro-classified, so the migration's DEFAULT
+    keeps them readable rather than NULL.
+    """
+    tmp_db.conn.execute(
+        "INSERT INTO documents (filename, title, summary, mime_type, "
+        "source_type, source_url, markdown, char_count, sections_json, "
+        "created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        ("a.md", "A", "s", "text/markdown", "upload", None, "# A", 3,
+         "[]", 0.0),
+    )
+    tmp_db.conn.commit()
+    doc_id = tmp_db.conn.execute(
+        "SELECT id FROM documents WHERE filename='a.md'"
+    ).fetchone()[0]
+    assert tmp_db.get_document(doc_id)["summary_status"] == "ok"
+
+
+def test_add_document_records_a_failed_status(tmp_db):
+    """The status round-trips through add_document and every read path."""
+    doc_id = tmp_db.add_document(
+        filename="b.md", title="B", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# B",
+        char_count=3, sections_json="[]", summary_status="failed",
+    )
+    assert tmp_db.get_document(doc_id)["summary_status"] == "failed"
+    all_docs = {d["id"]: d for d in tmp_db.get_all_documents()}
+    assert all_docs[doc_id]["summary_status"] == "failed"
+
+    disc_id = tmp_db.create_discussion("topic", 0)
+    tmp_db.add_discussion_document(disc_id, doc_id)
+    attached = tmp_db.get_discussion_documents(disc_id)
+    assert attached[0]["summary_status"] == "failed"

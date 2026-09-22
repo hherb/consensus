@@ -38,3 +38,8 @@ AVAILABLE_HEADERS_HINT = 10
 
 # Max chars of each retrieved passage returned by doc_ask
 PASSAGE_PREVIEW_CHARS = 500
+
+# Summary generation outcome recorded in documents.summary_status
+SUMMARY_STATUS_OK = "ok"
+SUMMARY_STATUS_FAILED = "failed"
+SUMMARY_STATUS_PENDING = "pending"

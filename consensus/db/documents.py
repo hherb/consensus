@@ -27,15 +27,34 @@ class DocumentsMixin:
         markdown: str,
         char_count: int,
         sections_json: str,
+        summary_status: str = "ok",
     ) -> int:
-        """Insert a new document and return its ID."""
+        """Insert a new document and return its ID.
+
+        Args:
+            filename: Original filename or generated name for the document.
+            title: Document title, auto-detected or provided by the caller.
+            summary: Generated summary text, or empty if none was produced.
+            mime_type: MIME type of the source content.
+            source_type: How the document was sourced (e.g. ``'upload'``).
+            source_url: Origin URL, or ``None`` for non-URL sources.
+            markdown: Full parsed document text.
+            char_count: Character count of ``markdown``.
+            sections_json: JSON-encoded list of extracted section headers.
+            summary_status: Why ``summary`` holds what it holds — ``'ok'``,
+                ``'failed'`` or ``'pending'`` (issue #78 defect 1).
+
+        Returns:
+            The new document's row ID.
+        """
         cur = self._execute_write(
             "INSERT INTO documents "
             "(filename, title, summary, mime_type, source_type, source_url, "
-            "markdown, char_count, sections_json, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "markdown, char_count, sections_json, created_at, summary_status) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (filename, title, summary, mime_type, source_type, source_url,
-             markdown, char_count, sections_json, time.time()),
+             markdown, char_count, sections_json, time.time(),
+             summary_status),
         )
         return cur.lastrowid
 
@@ -43,7 +62,8 @@ class DocumentsMixin:
         """Return a document row as dict, or None."""
         row = self.conn.execute(
             "SELECT id, filename, title, summary, mime_type, source_type, "
-            "source_url, char_count, sections_json, created_at "
+            "source_url, char_count, sections_json, created_at, "
+            "summary_status "
             "FROM documents WHERE id=?",
             (doc_id,),
         ).fetchone()
@@ -54,6 +74,7 @@ class DocumentsMixin:
             "summary": row[3], "mime_type": row[4], "source_type": row[5],
             "source_url": row[6], "char_count": row[7],
             "sections_json": row[8], "created_at": row[9],
+            "summary_status": row[10],
         }
 
     def get_document_markdown(self, doc_id: int) -> Optional[str]:
@@ -80,7 +101,8 @@ class DocumentsMixin:
         """Return all documents (for full library search)."""
         rows = self.conn.execute(
             "SELECT id, filename, title, summary, mime_type, source_type, "
-            "source_url, char_count, sections_json, created_at "
+            "source_url, char_count, sections_json, created_at, "
+            "summary_status "
             "FROM documents ORDER BY created_at DESC",
         ).fetchall()
         return [
@@ -89,6 +111,7 @@ class DocumentsMixin:
                 "summary": r[3], "mime_type": r[4], "source_type": r[5],
                 "source_url": r[6], "char_count": r[7],
                 "sections_json": r[8], "created_at": r[9],
+                "summary_status": r[10],
             }
             for r in rows
         ]
@@ -114,7 +137,8 @@ class DocumentsMixin:
         """Return all documents attached to a discussion."""
         rows = self.conn.execute(
             "SELECT d.id, d.filename, d.title, d.summary, d.mime_type, "
-            "d.source_type, d.source_url, d.char_count, d.created_at "
+            "d.source_type, d.source_url, d.char_count, d.created_at, "
+            "d.summary_status "
             "FROM documents d "
             "JOIN discussion_documents dd ON dd.document_id = d.id "
             "WHERE dd.discussion_id=? ORDER BY dd.added_at",
@@ -125,6 +149,7 @@ class DocumentsMixin:
                 "id": r[0], "filename": r[1], "title": r[2],
                 "summary": r[3], "mime_type": r[4], "source_type": r[5],
                 "source_url": r[6], "char_count": r[7], "created_at": r[8],
+                "summary_status": r[9],
             }
             for r in rows
         ]
