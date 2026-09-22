@@ -151,6 +151,14 @@ async def _doc_ask_handler(
                 is_error=True,
             )
 
+        # No failure recorded: this is a first pass genuinely still in
+        # flight, not a stuck one — the document is currently healthy.
+        # Forget any earlier notice so a *later* failure is treated as a
+        # new streak and announced again, rather than "one notice per
+        # document per failure streak" silently degrading into "one
+        # notice per document ever" (issue #78 task 9 follow-up).
+        _notified_index_failures.discard(doc_id)
+
         # Re-kick the background embedding pass if it is not already running,
         # so a previously failed/interrupted chunk is retried instead of
         # leaving the document permanently stuck as "still being indexed".
@@ -164,6 +172,11 @@ async def _doc_ask_handler(
                 "Please try again shortly."
             ),
         )
+
+    # unembedded == 0: the document is fully embedded and healthy. Same
+    # reasoning as above — a document that failed, recovered, and later
+    # fails again must get a fresh notice for the new streak.
+    _notified_index_failures.discard(doc_id)
 
     # Embed the question
     try:

@@ -812,3 +812,58 @@ async def test_notice_failure_does_not_break_the_tool_call(tmp_db):
     )
     assert result.is_error
     assert "embedder down" in result.content
+
+
+@pytest.mark.asyncio
+async def test_new_failure_streak_after_recovery_posts_a_second_notice(
+    tmp_db, notice_app,
+):
+    """A document that fails, recovers, then fails again earns a fresh notice.
+
+    Without evicting ``doc_id`` from ``_notified_index_failures`` once the
+    document is observed healthy again, "one notice per failure streak"
+    silently degrades into "one notice per document ever" — the human
+    would never learn about a second, genuinely new outage (issue #78
+    task 9 follow-up).
+    """
+    from tests.document_helpers import FakeEmbedClient
+
+    doc_id = tmp_db.add_document(
+        filename="j.md", title="J", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# J\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+    context = ToolContext(
+        caller_entity_id=0, discussion_id=notice_app.discussion.id)
+
+    # First failure streak: one notice.
+    embedding._record_indexing_failure(doc_id, "embedder down")
+    await handlers_rag._doc_ask_handler(
+        {"document_id": doc_id, "question": "q"},
+        context, tmp_db, FakeEmbedClient(), notice_app,
+    )
+
+    # Recover: the failure record clears and doc_ask next observes the
+    # document as healthy (still genuinely indexing, but with no recorded
+    # failure). embed_client=None so no background pass is spawned — this
+    # call only needs to exercise the healthy path's eviction.
+    embedding._clear_indexing_failure(doc_id)
+    await handlers_rag._doc_ask_handler(
+        {"document_id": doc_id, "question": "q"},
+        context, tmp_db, None, notice_app,
+    )
+
+    # A brand new failure streak begins.
+    embedding._record_indexing_failure(doc_id, "embedder down again")
+    await handlers_rag._doc_ask_handler(
+        {"document_id": doc_id, "question": "q"},
+        context, tmp_db, FakeEmbedClient(), notice_app,
+    )
+
+    notices = [
+        m for m in notice_app.discussion.messages
+        if m.role == MessageRole.SYSTEM
+        and "could not be indexed" in m.content
+    ]
+    assert len(notices) == 2
