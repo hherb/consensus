@@ -1,14 +1,13 @@
 # HANDOVER
 
 _Last updated: 2026-09-22. `main` is at **v2.0.0** (released 2026-07-20) with
-the suite at **2643 passing**. The discussion-method review & repair campaign
+the suite at **2811 passing**. The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
-(PyPI `consensus-app` + notarized macOS DMG) and the public website. The four
-defects that the #61 split surfaced — **#71**, **#72**, **#73**, **#74** —
-are fixed in this session, together with the review round that followed them
-(see "Flow error visibility" below). The one open
-structural issue is **#61** (modules over the ~500-line golden rule); its
-first slice — `app_discussion_flow` — is done, fifteen modules remain._
+(PyPI `consensus-app` + notarized macOS DMG), the public website, and the
+flow-error-visibility work (#71–#74, PR #76 — contracts summarised below).
+The one open structural issue is **#61** (modules over the ~500-line golden
+rule): two slices are done — `app_discussion_flow` and `tools_document` —
+and fourteen modules remain._
 
 This file briefs the next session on what is done, what is still open, and the
 conventions to keep. Update it whenever a session materially changes the plan;
@@ -24,7 +23,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site deployed to Cloudflare Pages at https://consensus-ai.org/ |
-| Tests | 2643 passing (`uv run pytest`, ~50 s) |
+| Tests | 2811 passing (`uv run pytest`, ~70 s) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -56,146 +55,112 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
   the #61 split exposed. All fixed; see the next section for the contracts
   they established.
 
-## Flow error visibility (#71–#74, done — keep these contracts)
+## Flow error visibility (#71–#74, merged — keep these contracts)
 
-Three flow paths swallowed caught errors; the repairs added contracts worth
-knowing before touching `app_discussion_flow` again. A PR review round then
-found that the first cut of #72 was unreachable in production and that the
-#74 classifier misattributed two common failures — both are fixed, and the
-contracts below are the corrected ones.
+Three flow paths used to swallow caught errors. The repairs established
+contracts worth knowing before touching `app_discussion_flow` again; the
+narrative is in git history and PR #76.
 
 - **Failures are classified into three kinds, not two.**
   `helpers.classify_flow_error` is the single classifier, returning
   `ERROR_KIND_PROVIDER` / `ERROR_KIND_CONFIG` / `ERROR_KIND_INTERNAL`;
   `is_provider_error` is a thin predicate over it. `internal` is the default
   bucket and only it asks the user to file a bug, so a misclassification is
-  never merely cosmetic. Two rules keep it honest:
-  - **`ConnectionError`, never its `OSError` base.** A document tool reading
-    a missing file also raises `OSError`, and that is our fault, not the
-    provider's.
-  - **Type the fault where it happens.** `AIClient` raises
-    `AIResponseFormatError` (`consensus/ai_response.py`) at its parse sites,
-    because a gateway answering HTTP 200 with an HTML body or
-    `{"error": ...}` instead of `choices` otherwise surfaces as a bare
-    `KeyError` and gets reported to the user as a Consensus bug.
-  `models.ConfigurationError` (a `ValueError` subclass) marks "this
-  deployment is set up wrong" — `Moderator._get_client` raises it for an
-  entity with no `ai_config`. **Add new failure modes to the classifier, not
-  to the notice wording.** The notices live in `turns._SKIP_NOTICES`, keyed
-  by kind, and the toast wording in `static/turn-notices.js` is keyed by the
-  `error_kind` the result carries.
+  never merely cosmetic. Two rules keep it honest: catch `ConnectionError`,
+  never its `OSError` base (a document tool reading a missing file also raises
+  `OSError`, and that is our fault); and **type the fault where it happens** —
+  `AIClient` raises `AIResponseFormatError` (`consensus/ai_response.py`) at
+  its parse sites, because a gateway answering HTTP 200 with an HTML body
+  otherwise surfaces as a bare `KeyError` reported to the user as our bug.
+  `models.ConfigurationError` marks "this deployment is set up wrong".
+  **Add new failure modes to the classifier, not to the notice wording** —
+  notices live in `turns._SKIP_NOTICES` keyed by kind, and the toast wording
+  in `static/turn-notices.js` is keyed by the result's `error_kind`.
 - **`helpers.post_notice` is how a notice reaches the transcript.** It appends
-  the in-memory `Message` first and wraps the `db.add_message` in try/except.
-  That ordering is the point: when the DB is what failed, an unguarded write
-  raised a *second* exception out of the handler and the user saw nothing. It
-  returns `(message, persisted)`, and on a failed write appends
-  `UNSAVED_NOTICE_SUFFIX` to the content — a notice that silently vanishes on
-  reload is the same silent failure one step later. Callers surface the flag
-  as `notice_unsaved`.
+  the in-memory `Message` first and wraps `db.add_message` in try/except: when
+  the DB is what failed, an unguarded write raised a *second* exception out of
+  the handler and the user saw nothing. It returns `(message, persisted)` and
+  on a failed write appends `UNSAVED_NOTICE_SUFFIX`, since a notice that
+  vanishes on reload is the same silent failure one step later. Callers
+  surface the flag as `notice_unsaved`.
 - **`conclude_discussion` returns `conclusion_error`** and posts a system
-  notice; `ConsensusApp.conclude_discussion` merges the key into `get_state()`
-  and the frontend toasts it. The discussion still concludes — deliberately;
-  an expensive session must not be left half-ended. The `try` spans generation
-  *and* two persistence steps, so the notice is chosen by how far it got: a
-  `synthesis_shown` flag picks `_CONCLUSION_NOT_SAVED_NOTICE` over
-  `_CONCLUSION_FAILURE_NOTICE`, because "could not be generated" is simply
-  false when the synthesis is sitting directly above the notice.
-  `mediate` posts an equivalent notice — a toast alone is gone in four seconds
-  and left no trace of the intervention the user asked for.
+  notice; the discussion still concludes, deliberately. A `synthesis_shown`
+  flag picks `_CONCLUSION_NOT_SAVED_NOTICE` over `_CONCLUSION_FAILURE_NOTICE`,
+  because "could not be generated" is false when the synthesis sits directly
+  above the notice. `mediate` posts an equivalent notice.
 - **A failed Triage recommendation is never presented as a recommendation.**
-  This is the one the review caught: the first fix wrapped
-  `MethodRecommender.recommend` in a `try`, but `recommend` caught everything
-  itself and returned a *non-empty* stand-in (`open_discussion`, confidence
-  0.5), so the new handler was unreachable and the crash still reached users
-  as a considered 50%-confidence pick. **`recommend` now raises
-  `RecommenderError`** — for provider failures, unparseable replies, and an
-  all-excluded catalog — and callers own the fallback. Both failure paths in
-  `run_triage_recommender` (exception, and a moderator with no `ai_config`)
-  go through `_record_recommender_failure`, which writes `recommender_error`
-  + empty `recommendations` + `RECOMMENDER_FALLBACK_METHOD` together. Key
+  `MethodRecommender.recommend` **raises `RecommenderError`** (provider
+  failure, unparseable reply, all-excluded catalog) and callers own the
+  fallback — it previously caught everything itself and returned a plausible
+  stand-in, so the error handler above it was unreachable and a crash reached
+  users as a considered 50%-confidence pick. Both failure paths in
+  `run_triage_recommender` go through `_record_recommender_failure`; key
   resolution and client construction are *inside* the `try`, and the `finally`
-  close is itself guarded: a raise from either used to escape into
-  `generate_ai_turn`'s handler, which discards the moderator's
-  already-generated, not-yet-persisted characterization. A later success pops
-  `recommender_error`.
-  `TriageConfirmHandler.process_response` validates a backticked choice
-  against `selectable_method_names()` when the shortlist is empty — the
-  registry **minus `_EXCLUDED_METHODS`**, since choosing `triage` routes the
-  group into the blocked-switch recovery dialog rather than starting a
-  discussion. The same helper renders the candidate list into the moderator's
-  prompt, so "name the method you want" is actionable rather than a guess.
-- **Non-UI consumers were dropping the error too.** `mcp_server.run_discussion`
-  now returns `conclusion_error` as its own field and matches the synthesis on
-  `MessageRole.MODERATOR` — the #71 failure notice contains the words "Final
-  Synthesis", so the old substring scan handed automated callers the error
-  text *as* the synthesis. `evaluation/runner` sets `result.error` instead of
-  silently recording the last moderator message as a successful conclusion.
+  close is itself guarded.
+- **Non-UI consumers must not drop the error either.**
+  `mcp_server.run_discussion` returns `conclusion_error` as its own field and
+  matches the synthesis on `MessageRole.MODERATOR`, not a substring scan;
+  `evaluation/runner` sets `result.error`.
 - **Every new result key has a consumer.** `error_kind`, `notice_unsaved`,
-  `conclusion_error` and `recommender_error` are each read by production code,
-  not only by tests. A key that only tests read is a contract nobody honours —
-  `error_kind` was exactly that until the toast started branching on it.
-- **`tests/test_evidence_flow.py` now uses `open_discussion`** for its fake
-  phase method. It used `double_crux`, which really has a tracked `test_crux`
-  phase, so the stub was indistinguishable from the real method and the
-  monkeypatches proved nothing.
-- Golden rule 5 was confirmed satisfied for these paths: retries with
-  exponential backoff live one layer down in `ai_client._post_with_retry`
-  (`MAX_RETRIES`, `RETRY_BASE_DELAY`), so the flow layer sees only exhausted
-  failures.
+  `conclusion_error` and `recommender_error` are each read by production code.
+  A key that only tests read is a contract nobody honours.
+- Golden rule 5 holds for these paths: retries with exponential backoff live
+  one layer down in `ai_client._post_with_retry`, so the flow layer sees only
+  exhausted failures.
 
 **Testing lesson worth keeping.** The unreachable-#72 defect stayed green
 because the tests patched `MethodRecommender.recommend` with
 `AsyncMock(side_effect=...)` — asserting a raising contract the real class did
-not have. `tests/test_flow_error_classification.py` drives the **real**
-recommender against a failing client for exactly this reason. When a test
-mocks the thing it is supposed to be testing the behaviour of, it proves
-nothing; prefer mocking one layer further out (the `AIClient`).
-
-Flow-package coverage went 89% → 97%; `conclusion.py` 59% → 100%. `mediate`,
-the `reassign_turn` wrapper, moderator-summary cost attribution and the
-turn/complete-turn guard branches now have tests
-(`tests/test_flow_moderator_actions.py`); the error contracts are in
-`tests/test_flow_error_visibility.py`,
-`tests/test_flow_error_classification.py` and
-`tests/test_flow_triage_recommender.py`.
+not have. When a test mocks the thing whose behaviour it is meant to be
+testing, it proves nothing; mock one layer further out (the `AIClient`).
+Contracts are covered by `tests/test_flow_error_visibility.py`,
+`tests/test_flow_error_classification.py`,
+`tests/test_flow_triage_recommender.py` and
+`tests/test_flow_moderator_actions.py`.
 
 ## Open work
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-**Done:** `app_discussion_flow.py` (1254 lines) → the `app_discussion_flow/`
-package — `helpers.py` (133), `submissions.py` (304), `turns.py` (444),
-`method_switch.py` (362), `conclusion.py` (137), plus a re-exporting
-`__init__.py` (92) so `from consensus.app_discussion_flow import …` is
-unchanged for `app.py` and the tests. The only logic change was extracting
-`complete_turn`'s ~90-line Triage-handoff branch into
-`method_switch.handle_triage_handoff` (AST-verified identical to the original
-block); everything else moved verbatim.
+**Done — two slices.**
 
-**Guard added after review.** `ConsensusApp` reaches these functions by
-*attribute access at call time* (`app_discussion_flow.mediate(...)`), so a name
-dropped from `__init__.py` is an `AttributeError` on that route in production,
-never an `ImportError` at collection. Deleting five re-exports left the whole
-suite green, so nothing caught it. `tests/test_app_discussion_flow_facade.py`
-now pins `__all__` and AST-parses `app.py` to assert every
-`app_discussion_flow.X` call site resolves. Keep it in step when the public
-flow API changes — that is the point of the pin.
+1. `app_discussion_flow.py` (1254) → `app_discussion_flow/` — `helpers.py`
+   (133), `submissions.py` (304), `turns.py` (499), `method_switch.py` (362),
+   `conclusion.py` (137), `__init__.py` (92). The only logic change was
+   extracting `complete_turn`'s ~90-line Triage-handoff branch into
+   `method_switch.handle_triage_handoff` (AST-verified identical); everything
+   else moved verbatim. `_run_triage_recommender` became public when the split
+   gave it a second consumer across a module boundary.
+   **Watch `turns.py` — the review round took it to 499 lines.** The next
+   addition there crosses the limit; split at that moment, not later.
+2. `tools_document.py` (1277) → `tools_document/` — `constants.py` (22),
+   `parsing.py` (144), `chunking.py` (98), `embedding.py` (177),
+   `schemas.py` (137), `llm.py` (48), `ingestion.py` (115), `handlers.py`
+   (456), `provider.py` (138), `__init__.py` (57). Pure move: every range
+   verified byte-identical, only the module headers and two `.` → `..`
+   in-function `tools_memory` imports are new.
 
-`_run_triage_recommender` became `run_triage_recommender` when the split gave
-it a second consumer across a module boundary (`turns` → `method_switch`).
+**Facade guards.** Both packages have one, and they exist because a dropped
+re-export fails *late*: `ConsensusApp` reaches flow functions by attribute
+access at call time (`AttributeError`), and imports the document names lazily
+inside method bodies (`ImportError` on first call). Neither is caught at
+collection — deleting five flow re-exports once left the whole suite green.
+`tests/test_app_discussion_flow_facade.py` and
+`tests/test_tools_document_facade.py` pin `__all__` and AST-parse `app.py`
+for the call sites. Keep them in step when the public API changes — that is
+the point of the pin, and each was verified to fail when a name is removed.
 
 **Two further slices came out of the error-visibility work**, both because the
 additions pushed a previously-compliant file over the limit — refactor at the
 moment you cross it, not later: `consensus/ai_response.py` (73) holds the pure
-completion-body parsing helpers lifted out of `ai_client.py` (455 → 472), and
+completion-body parsing helpers lifted out of `ai_client.py` (472), and
 `consensus/static/turn-notices.js` (34) holds the skip-notice wording lifted
-out of `discussion-actions.js` (475 → 494).
+out of `discussion-actions.js` (494).
 
 **Still over the limit** (`find consensus -name '*.py' | xargs wc -l | sort -rn`):
 
 | Lines | File |
 |------:|------|
-| 1277 | `consensus/tools_document.py` |
 | 1227 | `consensus/server.py` |
 | 1200 | `consensus/app.py` |
 | 784 | `consensus/auth.py` |
@@ -212,16 +177,37 @@ out of `discussion-actions.js` (475 → 494).
 | 509 | `consensus/app_discussion_setup.py` |
 
 Structural only — no behaviour change — one module per PR, suite green before
-and after. Next-best targets: `server.py` (routes group by domain, could follow
-the `db/` mixin pattern) and `tools_document.py` (ingestion /
-chunking+embedding / RAG Q&A are three separable concerns).
+and after.
+
+**Next-best target: `consensus/app.py`** (1200) — the orchestrator already has
+an established split pattern (`app_providers`, `app_entities`,
+`app_discussion_setup`, `app_discussion_flow/`, `app_discussion_state`), so the
+remaining groups follow it, and it is well covered by the existing suite.
+`tools_memory.py` (666) is the easy one after that: module-level functions
+under clear banners, like `tools_document` was.
+
+**`server.py` is the awkward one — read this before picking it.** It is a
+single 1170-line `launch_web()` whose middleware and ~35 handlers are all
+closures over `session_manager`, `auth_manager`, `app` and the helpers. There
+is no verbatim move available: extracting them means giving each domain group
+a factory that takes an explicit context object, which is a behaviour-risking
+refactor, not a structural one. Budget for it accordingly, and write the
+missing route tests first.
 
 **Recipe that worked, for the next slice:**
+0. **Check coverage before trusting "suite green before and after."**
+   `uv run --with pytest-cov pytest -q --cov=consensus.<module>
+   --cov-report=term-missing` — `tools_document.py` was at **15%**, so the
+   suite proved nothing about it and the net had to be built first (152
+   characterization tests, 100% coverage, committed *before* a line moved).
+   A split of an untested module is not verified by a green suite.
 1. Move code by line range (`sed -n 'a,bp'`) so it transfers verbatim, then
    diff each moved range back against `git show HEAD:<file>` — every range
-   should come out byte-identical.
+   should come out byte-identical, and every non-blank line of the original
+   should be accounted for by some range.
 2. Fix relative-import depth for anything nested one level deeper
-   (`from .x` → `from ..x`), including imports inside function bodies.
+   (`from .x` → `from ..x`), **including imports inside function bodies** —
+   these are the ones that fail at runtime rather than at collection.
 3. Re-export the public API from `__init__.py`; point test `patch()` targets
    at the *defining* submodule (patching the facade has no effect), and import
    private helpers from their submodule rather than widening the facade.
@@ -229,6 +215,21 @@ chunking+embedding / RAG Q&A are three separable concerns).
    propagate to the package logger.
 4. `uvx ruff check --select F <pkg>` for unused/undefined names, then the
    full suite.
+5. Add the facade guard, then **delete a re-export and watch it fail** before
+   restoring it. An unverified guard is not a guard.
+6. Update the docs that name the old module file — `CLAUDE.md`, `README.md`,
+   `docs/BUILTIN_TOOLS.md`, `docs/devel/01-getting-started.md`,
+   `02-architecture.md`, `08-tool-use.md`, `programmer-manual.md` all carry
+   module inventories.
+
+**Writing the safety net, if the target is untested.** Mock one layer further
+out than the code under test: real `Database` (the `tmp_db` fixture), fakes
+only at the network edges. Shared fakes go in a `tests/*_helpers.py` module,
+following `tests/flow_e2e_helpers.py`. `tests/document_helpers.py` has a
+`patch_where_defined(monkeypatch, anchor, name, replacement)` that resolves
+the target through `sys.modules[anchor.__module__]`, so the tests stay valid
+across the split without naming module paths that are about to change — worth
+copying for the next one.
 
 ### Deferred follow-ups (no issue filed)
 
