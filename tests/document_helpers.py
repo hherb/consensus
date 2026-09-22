@@ -112,18 +112,79 @@ class FakePdf:
         """Never suppress exceptions raised inside the ``with`` block."""
 
 
+def image_only_pdf_bytes() -> bytes:
+    """Build a minimal, structurally valid PDF with one textless page.
+
+    Not a fake: real ``pdfplumber`` opens this and really does extract no
+    text, which is exactly what a scanned or image-only PDF looks like to
+    the parser. Building the bytes here keeps the scanned-PDF test running
+    against the *installed* configuration (pdfplumber present, PyPDF2
+    absent) instead of a ``sys.modules`` fiction — the configuration in
+    which the OCR message was unreachable (issue #78 whole-branch review).
+
+    Returns:
+        The bytes of a one-page PDF containing no text operators.
+    """
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] "
+        b"/Resources << >> >>",
+    ]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+    xref_offset = len(out)
+    out += b"xref\n0 %d\n" % (len(objects) + 1)
+    out += b"0000000000 65535 f \n"
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1, xref_offset,
+    )
+    return bytes(out)
+
+
 class FakeHttpResponse:
-    """Stand-in for an ``httpx`` response carrying bytes and a content type."""
+    """Stand-in for a streaming ``httpx`` response.
+
+    ``fetch_url_content`` reads bodies through ``client.stream(...)`` and
+    ``aiter_bytes()`` so that an oversized body is abandoned mid-transfer
+    rather than buffered first, so this fake offers the streaming surface
+    as well as ``.content``.
+    """
 
     def __init__(
         self, content: bytes, content_type: str, status_code: int = 200,
+        headers: dict | None = None,
     ) -> None:
         self.content = content
-        self.headers = {"content-type": content_type}
+        self.headers = {"content-type": content_type, **(headers or {})}
         self.status_code = status_code
 
     def raise_for_status(self) -> None:
         """No-op: these tests only exercise successful fetches."""
+
+    async def aiter_bytes(self):
+        """Yield the canned body as a single chunk, as httpx would."""
+        yield self.content
+
+
+class FakeHttpStream:
+    """Async context manager returned by :meth:`FakeHttpClient.stream`."""
+
+    def __init__(self, response) -> None:
+        self._response = response
+
+    async def __aenter__(self):
+        """Hand the caller the canned response."""
+        return self._response
+
+    async def __aexit__(self, *exc) -> bool:
+        """Never suppress exceptions raised inside the ``with`` block."""
+        return False
 
 
 class FakeHttpClient:
@@ -139,10 +200,10 @@ class FakeHttpClient:
     async def __aexit__(self, *exc) -> bool:
         return False
 
-    async def get(self, url):
-        """Record the requested URL and return the canned response."""
+    def stream(self, method, url):
+        """Record the requested URL and stream the canned response."""
         self._recorder.append(url)
-        return self._response
+        return FakeHttpStream(self._response)
 
 
 

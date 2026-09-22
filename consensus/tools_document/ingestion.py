@@ -10,7 +10,7 @@ from .constants import (
     SUMMARY_EXCERPT_CHARS, SUMMARY_STATUS_FAILED, SUMMARY_STATUS_OK,
     SUMMARY_STATUS_PENDING,
 )
-from .embedding import _embedding_docs, _spawn_embedding_pass
+from .embedding import _embedding_docs, _spawn_embedding_pass, doc_key
 from .errors import DocumentInterpretationError
 from .llm import _call_interpretation_llm
 from .parsing import extract_sections, parse_document
@@ -41,8 +41,9 @@ async def ingest_document(
 
     - Embedding is fire-and-forget: on return the chunks are stored but not
       yet embedded, which is why ``_doc_ask_handler`` has a "still being
-      indexed" branch. The document id is added to the module-level
-      ``_embedding_docs`` marker set for the duration of that pass.
+      indexed" branch. The document's ``(db_path, id)`` key is added to the
+      module-level ``_embedding_docs`` marker set for the duration of that
+      pass.
     - ``generate_summary`` is silently a no-op unless both ``context`` and
       ``app`` are supplied; without them the document is stored with an empty
       summary and ``summary_status`` recorded as ``'pending'`` rather than
@@ -132,8 +133,9 @@ async def ingest_document(
         )
 
     # Background embedding
-    if embed_client and doc_id not in _embedding_docs:
-        _embedding_docs.add(doc_id)
+    embedding_key = doc_key(db, doc_id)
+    if embed_client and embedding_key not in _embedding_docs:
+        _embedding_docs.add(embedding_key)
         _spawn_embedding_pass(doc_id, db, embed_client)
 
     return {

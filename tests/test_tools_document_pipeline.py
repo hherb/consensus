@@ -181,19 +181,21 @@ class TestEmbedDocumentChunks:
     @pytest.mark.asyncio
     async def test_releases_the_in_progress_marker_on_success(self, tmp_db, doc_with_chunks):
         doc_id, _ = doc_with_chunks
-        embedding._embedding_docs.add(doc_id)
+        key = embedding.doc_key(tmp_db, doc_id)
+        embedding._embedding_docs.add(key)
         try:
             await embedding._embed_document_chunks(doc_id, tmp_db, FakeEmbedClient([1.0]))
-            assert doc_id not in embedding._embedding_docs
+            assert key not in embedding._embedding_docs
         finally:
-            embedding._embedding_docs.discard(doc_id)
+            embedding._embedding_docs.discard(key)
 
     @pytest.mark.asyncio
     async def test_releases_the_in_progress_marker_when_every_chunk_fails(
         self, tmp_db, doc_with_chunks,
     ):
         doc_id, _ = doc_with_chunks
-        embedding._embedding_docs.add(doc_id)
+        key = embedding.doc_key(tmp_db, doc_id)
+        embedding._embedding_docs.add(key)
 
         class Exploding:
             async def embed(self, _text):
@@ -201,10 +203,10 @@ class TestEmbedDocumentChunks:
 
         try:
             await embedding._embed_document_chunks(doc_id, tmp_db, Exploding())
-            assert doc_id not in embedding._embedding_docs
+            assert key not in embedding._embedding_docs
         finally:
-            embedding._embedding_docs.discard(doc_id)
-            embedding._indexing_failures.pop(doc_id, None)
+            embedding._embedding_docs.discard(key)
+            embedding._indexing_failures.pop(key, None)
 
     @pytest.mark.asyncio
     async def test_marker_is_released_when_the_pass_itself_raises(
@@ -225,21 +227,28 @@ class TestEmbedDocumentChunks:
         doc_id, _ = doc_with_chunks
 
         class ExplodingDb:
+            # db_path is a real attribute on Database, set before anything
+            # can fail, so the bookkeeping key stays resolvable even when
+            # every query raises.
+            db_path = "/exploding.db"
+
             def __getattr__(self, name):
                 raise sqlite3.OperationalError("database is locked")
 
-        embedding._embedding_docs.add(doc_id)
+        db = ExplodingDb()
+        key = embedding.doc_key(db, doc_id)
+        embedding._embedding_docs.add(key)
         try:
             await embedding._embed_document_chunks(
-                doc_id, ExplodingDb(), FakeEmbedClient([1.0]),
+                doc_id, db, FakeEmbedClient([1.0]),
             )
-            assert doc_id not in embedding._embedding_docs
-            failure = embedding.get_indexing_failure(doc_id)
+            assert key not in embedding._embedding_docs
+            failure = embedding.get_indexing_failure(db, doc_id)
             assert failure is not None
             assert "database is locked" in failure.last_error
         finally:
-            embedding._embedding_docs.discard(doc_id)
-            embedding._indexing_failures.pop(doc_id, None)
+            embedding._embedding_docs.discard(key)
+            embedding._indexing_failures.pop(key, None)
 
     @pytest.mark.asyncio
     async def test_failures_are_logged_with_a_count(self, tmp_db, doc_with_chunks, caplog):
@@ -255,7 +264,8 @@ class TestEmbedDocumentChunks:
                 for r in caplog.records
             )
         finally:
-            embedding._indexing_failures.pop(doc_id, None)
+            embedding._indexing_failures.pop(
+                embedding.doc_key(tmp_db, doc_id), None)
 
 
 class TestSpawnBackground:
@@ -515,10 +525,12 @@ class TestIngestDocument:
             filename="d.txt", mime_type="text/plain",
         )
         try:
+            key = embedding.doc_key(tmp_db, result["document_id"])
             assert len(spawned) == 1
-            assert result["document_id"] in embedding._embedding_docs
+            assert key in embedding._embedding_docs
         finally:
-            embedding._embedding_docs.discard(result["document_id"])
+            embedding._embedding_docs.discard(
+                embedding.doc_key(tmp_db, result["document_id"]))
 
     @pytest.mark.asyncio
     async def test_no_second_pass_while_one_is_already_in_progress(
@@ -535,8 +547,10 @@ class TestIngestDocument:
             monkeypatch, ingestion.ingest_document, "_spawn_embedding_pass",
             lambda doc_id, db, embed_client: spawned.append(doc_id),
         )
-        # Pre-claim every id this ingestion could be assigned.
-        claimed = set(range(1, 50))
+        # Pre-claim every id this ingestion could be assigned, in this
+        # database: the marker is keyed by (db_path, doc_id) so that one
+        # session's pass cannot mask another session's document.
+        claimed = {embedding.doc_key(tmp_db, i) for i in range(1, 50)}
         embedding._embedding_docs.update(claimed)
         try:
             await ingestion.ingest_document(

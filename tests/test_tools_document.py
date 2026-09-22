@@ -59,17 +59,22 @@ class TestParseDocument:
 
         def fake_pdf(content):
             called["content"] = content
-            return "pdf text"
+            return parsing.ParsedDocument(markdown="pdf text")
 
         patch_where_defined(monkeypatch, parsing.parse_document, "_parse_pdf", fake_pdf)
-        assert parsing.parse_document(b"%PDF-1.4", "report.PDF", "application/octet-stream") == "pdf text"
+        out = parsing.parse_document(
+            b"%PDF-1.4", "report.PDF", "application/octet-stream")
+        assert out.markdown == "pdf text"
+        assert out.fidelity == constants.FIDELITY_FULL
         assert called["content"] == b"%PDF-1.4"
 
     def test_pdf_by_mime_type_routes_to_pdf_parser(self, monkeypatch):
         patch_where_defined(
-            monkeypatch, parsing.parse_document, "_parse_pdf", lambda c: "pdf text",
+            monkeypatch, parsing.parse_document, "_parse_pdf",
+            lambda c: parsing.ParsedDocument(markdown="pdf text"),
         )
-        assert parsing.parse_document(b"x", "no-extension", "application/pdf") == "pdf text"
+        out = parsing.parse_document(b"x", "no-extension", "application/pdf")
+        assert out.markdown == "pdf text"
 
 
 class TestParsePdf:

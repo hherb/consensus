@@ -7,6 +7,7 @@ markdown, and extracts the markdown header structure with character offsets.
 import asyncio
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import httpx
@@ -104,61 +105,126 @@ def _parse_text(
     return ParsedDocument(markdown=text)
 
 
-def _parse_pdf(content: bytes) -> ParsedDocument:
-    """Extract text from PDF bytes, preferring pdfplumber.
+def _pages_via_pdfplumber(content: bytes) -> list[str]:
+    """Extract one markdown block per non-blank page using pdfplumber.
+
+    Args:
+        content: The raw PDF bytes.
+
+    Returns:
+        A ``"## Page N"`` block per page that yielded text; empty when the
+        PDF opened cleanly but carries no extractable text.
 
     Raises:
-        DocumentParseError: If neither pdfplumber nor PyPDF2 is installed,
-            the PDF cannot be opened, or no page yields extractable text —
-            the last case being a scanned or image-only PDF, which
-            previously ingested as the literal string ``"(Empty PDF)"``
-            (issue #78 defect 7).
+        ImportError: If pdfplumber is not installed.
+        Exception: Whatever pdfplumber raises for an unreadable PDF.
     """
-    try:
-        import io
+    import io
 
-        import pdfplumber
-        pages = []
-        with pdfplumber.open(io.BytesIO(content)) as pdf:
-            for i, page in enumerate(pdf.pages):
-                text = page.extract_text() or ""
-                if text.strip():
-                    pages.append(f"## Page {i + 1}\n\n{text}")
-        if pages:
-            return ParsedDocument(markdown="\n\n".join(pages))
-        logger.info("pdfplumber extracted no text, trying PyPDF2")
-    except ImportError:
-        logger.info("pdfplumber not available, trying PyPDF2")
-    except Exception as e:
-        logger.warning("pdfplumber failed: %s, trying PyPDF2", e)
-
-    try:
-        import io
-
-        from PyPDF2 import PdfReader
-        reader = PdfReader(io.BytesIO(content))
-        pages = []
-        for i, page in enumerate(reader.pages):
+    import pdfplumber
+    pages: list[str] = []
+    with pdfplumber.open(io.BytesIO(content)) as pdf:
+        for i, page in enumerate(pdf.pages):
             text = page.extract_text() or ""
             if text.strip():
                 pages.append(f"## Page {i + 1}\n\n{text}")
+    return pages
+
+
+def _pages_via_pypdf2(content: bytes) -> list[str]:
+    """Extract one markdown block per non-blank page using PyPDF2.
+
+    Args:
+        content: The raw PDF bytes.
+
+    Returns:
+        A ``"## Page N"`` block per page that yielded text; empty when the
+        PDF opened cleanly but carries no extractable text.
+
+    Raises:
+        ImportError: If PyPDF2 is not installed.
+        Exception: Whatever PyPDF2 raises for an unreadable PDF.
+    """
+    import io
+
+    from PyPDF2 import PdfReader
+    pages: list[str] = []
+    for i, page in enumerate(PdfReader(io.BytesIO(content)).pages):
+        text = page.extract_text() or ""
+        if text.strip():
+            pages.append(f"## Page {i + 1}\n\n{text}")
+    return pages
+
+
+# Tried in order; the first backend that yields any text wins.
+_PDF_BACKENDS: tuple[tuple[str, Callable[[bytes], list[str]]], ...] = (
+    ("pdfplumber", _pages_via_pdfplumber),
+    ("PyPDF2", _pages_via_pypdf2),
+)
+
+
+def _parse_pdf(content: bytes) -> ParsedDocument:
+    """Extract text from PDF bytes, preferring pdfplumber.
+
+    Three outcomes are kept apart, because they need three different
+    remedies and used to collapse into one misleading message: pdfplumber
+    is a declared dependency while PyPDF2 is not, so an image-only PDF
+    fell through pdfplumber, hit PyPDF2's ``ImportError``, and told the
+    user to install the library they already had — making the OCR hint
+    unreachable in every default install (issue #78 whole-branch review).
+
+    Args:
+        content: The raw PDF bytes.
+
+    Returns:
+        A full-fidelity ``ParsedDocument`` of the page text.
+
+    Raises:
+        DocumentParseError: If a backend read the file but no page yields
+            text (scanned or image-only, the OCR case); if no backend could
+            be imported at all (the install case); or if every imported
+            backend failed to read the file (the corrupt case).
+    """
+    imported_any = False
+    read_any = False
+    last_read_error: Exception | None = None
+
+    for name, extract in _PDF_BACKENDS:
+        try:
+            pages = extract(content)
+        except ImportError:
+            logger.info("%s is not installed — trying the next PDF backend",
+                        name)
+            continue
+        except Exception as e:
+            # The module imported, so the library exists; it simply could
+            # not read these bytes.
+            imported_any = True
+            last_read_error = e
+            logger.warning("%s could not read the PDF: %s", name, e)
+            continue
+
+        imported_any = True
+        read_any = True
         if pages:
             return ParsedDocument(markdown="\n\n".join(pages))
-    except ImportError:
+        logger.info("%s opened the PDF but extracted no text", name)
+
+    if read_any:
+        raise DocumentParseError(
+            "No extractable text in this PDF — it looks scanned or "
+            "image-only",
+            hint="OCR the file before adding it",
+        )
+    if not imported_any:
         raise DocumentParseError(
             "PDF parsing requires pdfplumber or PyPDF2",
             hint="install with: uv pip install pdfplumber",
         )
-    except Exception as e:
-        raise DocumentParseError(
-            f"PDF could not be read: {e}",
-            hint="the file may be corrupt or password-protected",
-        ) from e
-
     raise DocumentParseError(
-        "No extractable text in this PDF — it looks scanned or image-only",
-        hint="OCR the file before adding it",
-    )
+        f"PDF could not be read: {last_read_error}",
+        hint="the file may be corrupt or password-protected",
+    ) from last_read_error
 
 
 def _parse_html(content: bytes) -> ParsedDocument:
@@ -215,6 +281,39 @@ def _filename_for(url: str, mime_type: str) -> str:
     return filename
 
 
+async def _read_capped(response, url: str) -> bytes:
+    """Accumulate a streaming response body, aborting past the size cap.
+
+    Enforcing the cap *while* the body streams in is the whole point: a
+    chunked (header-less) multi-gigabyte response would otherwise be
+    buffered into memory in full and only then measured, so the guard that
+    exists to prevent an OOM caused one (issue #78 whole-branch review).
+
+    Args:
+        response: An open streaming ``httpx.Response``.
+        url: Used only in the error message.
+
+    Returns:
+        The complete body bytes.
+
+    Raises:
+        DocumentParseError: As soon as the bytes read exceed
+            ``MAX_DOCUMENT_BYTES``; the rest of the body is never read.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        total += len(chunk)
+        if total > MAX_DOCUMENT_BYTES:
+            raise DocumentParseError(
+                f"{url} is too large (over {MAX_DOCUMENT_BYTES} bytes; the "
+                "transfer was aborted)",
+                hint="download it and add the relevant extract",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def fetch_url_content(url: str) -> tuple[bytes, str, str]:
     """Fetch a document from a URL.
 
@@ -231,7 +330,8 @@ async def fetch_url_content(url: str) -> tuple[bytes, str, str]:
     Raises:
         DocumentParseError: If the fetch fails after all retries, a 4xx is
             returned, or the body exceeds ``MAX_DOCUMENT_BYTES`` — either by
-            its declared ``content-length`` or by its actual read size.
+            its declared ``content-length`` or by the bytes actually
+            streamed, whichever announces itself first.
     """
     last_exc: Exception | None = None
     async with httpx.AsyncClient(
@@ -239,33 +339,29 @@ async def fetch_url_content(url: str) -> tuple[bytes, str, str]:
     ) as client:
         for attempt in range(URL_FETCH_MAX_RETRIES):
             try:
-                response = await client.get(url)
+                # Streamed, not buffered: the body is measured as it
+                # arrives so an oversized one is abandoned mid-transfer.
+                async with client.stream("GET", url) as response:
+                    if 400 <= response.status_code < 500:
+                        raise DocumentParseError(
+                            f"{url} returned HTTP {response.status_code}",
+                            hint=("check the address, or whether it needs "
+                                  "a login"),
+                        )
+                    response.raise_for_status()
 
-                if 400 <= response.status_code < 500:
-                    raise DocumentParseError(
-                        f"{url} returned HTTP {response.status_code}",
-                        hint="check the address, or whether it needs a login",
-                    )
-                response.raise_for_status()
+                    declared = response.headers.get("content-length")
+                    if declared and int(declared) > MAX_DOCUMENT_BYTES:
+                        raise DocumentParseError(
+                            f"{url} is too large ({int(declared)} bytes; the "
+                            f"limit is {MAX_DOCUMENT_BYTES})",
+                            hint="download it and add the relevant extract",
+                        )
 
-                declared = response.headers.get("content-length")
-                if declared and int(declared) > MAX_DOCUMENT_BYTES:
-                    raise DocumentParseError(
-                        f"{url} is too large ({int(declared)} bytes; the "
-                        f"limit is {MAX_DOCUMENT_BYTES})",
-                        hint="download it and add the relevant extract",
-                    )
+                    content = await _read_capped(response, url)
+                    content_type = response.headers.get(
+                        "content-type", "text/html")
 
-                content = response.content
-                if len(content) > MAX_DOCUMENT_BYTES:
-                    raise DocumentParseError(
-                        f"{url} is too large ({len(content)} bytes; the "
-                        f"limit is {MAX_DOCUMENT_BYTES})",
-                        hint="download it and add the relevant extract",
-                    )
-
-                content_type = response.headers.get(
-                    "content-type", "text/html")
                 mime_type = content_type.split(";")[0].strip()
                 return content, _filename_for(url, mime_type), mime_type
 

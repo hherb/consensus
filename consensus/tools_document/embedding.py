@@ -115,7 +115,33 @@ def _rank_by_similarity(
 # Background embedding task
 # ---------------------------------------------------------------------------
 
-_embedding_docs: set[int] = set()  # track documents currently being embedded
+DocKey = tuple[str, int]
+
+
+def doc_key(db, doc_id: int) -> DocKey:
+    """Scope a document id to the database file that holds it.
+
+    Every dict and set in this module is process-global, but document ids
+    are *per database*: in ``--multi-user`` mode each browser session gets
+    its own SQLite file (``session.py``), so every session's first document
+    is id 1. Keyed by id alone, one session's failed indexing pass made
+    another session's perfectly healthy document report as broken (issue
+    #78 whole-branch review).
+
+    Args:
+        db: A :class:`~consensus.db.Database` (any object carrying a
+            ``db_path``), or the database path itself.
+        doc_id: The document id, unique only within that database.
+
+    Returns:
+        A ``(db_path, doc_id)`` key that is unique across sessions.
+    """
+    path = db if isinstance(db, str) else getattr(db, "db_path", "")
+    return (str(path), doc_id)
+
+
+# Documents currently being embedded, keyed by (db_path, doc_id).
+_embedding_docs: set[DocKey] = set()
 
 
 @dataclass
@@ -125,6 +151,14 @@ class IndexingFailure:
     Recorded so that ``doc_ask`` can tell a genuinely in-flight first pass
     from an embedder that is down: the latter used to be reported forever
     as "still being indexed, please try again shortly" (issue #78).
+
+    Attributes:
+        consecutive_failures: How many passes in a row have failed.
+        last_error: The embedder's own message from the last failure.
+        last_attempt: ``time.time()`` of that failure, which
+            ``_doc_ask_handler`` compares against
+            ``INDEXING_RETRY_INTERVAL`` to decide whether re-kicking the
+            pass is worth it yet.
     """
 
     consecutive_failures: int
@@ -132,20 +166,36 @@ class IndexingFailure:
     last_attempt: float
 
 
-# Documents whose last embedding pass did not fully succeed.
-_indexing_failures: dict[int, IndexingFailure] = {}
+# Documents whose last embedding pass did not fully succeed, keyed by
+# (db_path, doc_id).
+_indexing_failures: dict[DocKey, IndexingFailure] = {}
 
 
-def get_indexing_failure(doc_id: int) -> Optional[IndexingFailure]:
-    """Return the recorded failure for *doc_id*, or None if the last pass
-    succeeded (or none has run)."""
-    return _indexing_failures.get(doc_id)
+def get_indexing_failure(db, doc_id: int) -> Optional[IndexingFailure]:
+    """Return the recorded failure for a document.
+
+    Args:
+        db: The database holding the document (or its path).
+        doc_id: The document id within that database.
+
+    Returns:
+        The recorded :class:`IndexingFailure`, or None if the last pass
+        succeeded (or none has run).
+    """
+    return _indexing_failures.get(doc_key(db, doc_id))
 
 
-def _record_indexing_failure(doc_id: int, error: str) -> None:
-    """Record or increment a document's consecutive failure count."""
-    previous = _indexing_failures.get(doc_id)
-    _indexing_failures[doc_id] = IndexingFailure(
+def _record_indexing_failure(db, doc_id: int, error: str) -> None:
+    """Record or increment a document's consecutive failure count.
+
+    Args:
+        db: The database holding the document (or its path).
+        doc_id: The document id within that database.
+        error: The embedder's own message, reported verbatim to the user.
+    """
+    key = doc_key(db, doc_id)
+    previous = _indexing_failures.get(key)
+    _indexing_failures[key] = IndexingFailure(
         consecutive_failures=(
             previous.consecutive_failures + 1 if previous else 1),
         last_error=error,
@@ -153,9 +203,14 @@ def _record_indexing_failure(doc_id: int, error: str) -> None:
     )
 
 
-def _clear_indexing_failure(doc_id: int) -> None:
-    """Forget a document's failure record after a fully clean pass."""
-    _indexing_failures.pop(doc_id, None)
+def _clear_indexing_failure(db, doc_id: int) -> None:
+    """Forget a document's failure record after a fully clean pass.
+
+    Args:
+        db: The database holding the document (or its path).
+        doc_id: The document id within that database.
+    """
+    _indexing_failures.pop(doc_key(db, doc_id), None)
 
 
 def _spawn_embedding_pass(doc_id: int, db, embed_client) -> None:
@@ -266,7 +321,16 @@ async def _embed_document_chunks(doc_id: int, db, embed_client) -> None:
     visible only as asyncio's GC-time warning; and its outcome is recorded
     in ``_indexing_failures`` so ``doc_ask`` can distinguish a first pass
     still in flight from an embedder that is down (issue #78 defect 2, 3).
+
+    Args:
+        doc_id: Id of the document whose chunks should be embedded.
+        db: The database holding the document; also scopes the module-level
+            bookkeeping, since ids are unique only within one database.
+        embed_client: The embedding client to call per chunk.
     """
+    # Resolved before the try block: the finally clause needs it whatever
+    # happens, including a database that is unusable from the first call.
+    key = doc_key(db, doc_id)
     try:
         chunks = db.get_document_chunks(doc_id)
         existing = db.get_chunks_with_embeddings(doc_id)
@@ -288,14 +352,14 @@ async def _embed_document_chunks(doc_id: int, db, embed_client) -> None:
                 "embedded"
             )
             logger.warning("Doc %d: %s", doc_id, detail)
-            _record_indexing_failure(doc_id, detail)
+            _record_indexing_failure(db, doc_id, detail)
         else:
-            _clear_indexing_failure(doc_id)
+            _clear_indexing_failure(db, doc_id)
 
     except Exception as e:
         # A sibling `except` inside _embed_single_chunk cannot catch what
         # its own handler raises, and a locked database raises right here.
         logger.exception("Embedding pass for doc %d failed", doc_id)
-        _record_indexing_failure(doc_id, str(e))
+        _record_indexing_failure(db, doc_id, str(e))
     finally:
-        _embedding_docs.discard(doc_id)
+        _embedding_docs.discard(key)

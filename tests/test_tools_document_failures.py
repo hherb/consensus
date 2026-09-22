@@ -19,23 +19,12 @@ from consensus.tools_document.errors import (
 )
 from consensus.tools import ToolContext
 from consensus.models import Discussion, Entity, EntityType, MessageRole
-from tests.document_helpers import patch_where_defined
+from tests.document_helpers import image_only_pdf_bytes, patch_where_defined
 
 
 async def _no_sleep(_seconds):
     """Collapse backoff delays so retry tests stay fast."""
     return None
-
-
-class FailingApp:
-    """Minimal ``app`` stand-in whose entity lookup succeeds."""
-
-    def __init__(self, db, entity_row):
-        self.db = db
-        self._entity_row = entity_row
-
-    def _resolve_key_for_moderator(self, provider_id, env_name):
-        return "test-key"
 
 
 def test_interpretation_error_is_a_document_error():
@@ -265,39 +254,73 @@ async def test_library_search_reports_a_failed_summary(tmp_db, sample_ai_entity)
     assert "summary unavailable" in result.content
 
 
-def test_image_only_pdf_raises_instead_of_returning_placeholder(monkeypatch):
+def test_image_only_pdf_raises_instead_of_returning_placeholder():
     """A scanned PDF must not ingest as the string "(Empty PDF)".
 
     It was 11 non-blank characters, so the "empty after parsing" guard let
     it through; doc_ask then answered questions from it.
 
-    Uses ``monkeypatch.setitem(sys.modules, ...)`` rather than manual
-    ``sys.modules`` mutation with a ``try``/``finally`` — pytest unwinds it
-    automatically even if the assertion fails, so a broken test can't leak a
-    fake ``PyPDF2`` module into the rest of the suite.
+    Deliberately patches *nothing*: this runs against the real installed
+    configuration, which is pdfplumber present and PyPDF2 absent (only
+    pdfplumber is a declared dependency). The previous version of this
+    test injected a fake ``PyPDF2`` into ``sys.modules``, so the one test
+    proving this branch's flagship user-visible behaviour passed only in a
+    configuration nobody has: in the real one, PyPDF2's ``ImportError``
+    won and the user was told to install pdfplumber — which they already
+    had (issue #78 whole-branch review).
+    """
+    with pytest.raises(DocumentParseError) as exc:
+        parsing.parse_document(
+            image_only_pdf_bytes(), "scan.pdf", "application/pdf")
+    message = str(exc.value).lower()
+    assert "scanned" in message
+    assert "ocr" in message
+    assert "uv pip install" not in message
+
+
+def test_pdf_with_no_backend_installed_asks_for_an_install(monkeypatch):
+    """With *no* PDF library importable, the install hint is the right one.
+
+    The counterpart to the test above: the "install pdfplumber or PyPDF2"
+    message is correct only here, when nothing could be imported at all.
+    """
+    import sys
+
+    monkeypatch.setitem(sys.modules, "pdfplumber", None)
+    monkeypatch.setitem(sys.modules, "PyPDF2", None)
+
+    with pytest.raises(DocumentParseError) as exc:
+        parsing.parse_document(
+            image_only_pdf_bytes(), "scan.pdf", "application/pdf")
+    message = str(exc.value)
+    assert "requires pdfplumber or PyPDF2" in message
+    assert "uv pip install pdfplumber" in message
+
+
+def test_corrupt_pdf_is_reported_as_unreadable(monkeypatch):
+    """An importable backend that cannot read the bytes is a third case.
+
+    Neither "OCR it" nor "install a library": the file is corrupt or
+    password-protected, and the message must say so.
     """
     import sys
     import types
 
-    class FakePage:
-        def extract_text(self):
-            return ""
+    broken = types.ModuleType("pdfplumber")
 
-    class FakeReader:
-        pages = [FakePage()]
+    def _boom(_stream):
+        raise ValueError("EOF marker not found")
 
-        def __init__(self, *args):
-            pass
-
-    fake = types.ModuleType("PyPDF2")
-    fake.PdfReader = FakeReader
-    monkeypatch.setitem(sys.modules, "pdfplumber", None)
-    monkeypatch.setitem(sys.modules, "PyPDF2", fake)
+    broken.open = _boom
+    monkeypatch.setitem(sys.modules, "pdfplumber", broken)
+    monkeypatch.setitem(sys.modules, "PyPDF2", None)
 
     with pytest.raises(DocumentParseError) as exc:
-        parsing.parse_document(b"%PDF-1.4 fake", "scan.pdf",
+        parsing.parse_document(b"%PDF-1.4 truncated", "x.pdf",
                                "application/pdf")
-    assert "scanned" in str(exc.value).lower()
+    message = str(exc.value)
+    assert "EOF marker not found" in message
+    assert "corrupt or password-protected" in message
 
 
 def test_binary_content_raises_instead_of_mojibake():
@@ -336,6 +359,24 @@ def test_html_regex_fallback_is_marked_degraded_and_logged(caplog, monkeypatch):
     assert "fallback" in caplog.text.lower()
 
 
+class _FakeStream:
+    """The async context manager ``_FakeAsyncClient.stream`` returns.
+
+    ``fetch_url_content`` reads bodies with ``client.stream(...)`` so the
+    size cap can abort an oversized transfer instead of measuring it after
+    the fact, so the scripted outcome is delivered (or raised) on entry.
+    """
+
+    def __init__(self, client):
+        self._client = client
+
+    async def __aenter__(self):
+        return self._client._next_outcome()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 class _FakeAsyncClient:
     """Scripted httpx.AsyncClient replacement for fetch_url_content."""
 
@@ -349,12 +390,44 @@ class _FakeAsyncClient:
     async def __aexit__(self, *exc):
         return False
 
-    async def get(self, url):
+    def stream(self, method, url):
+        """Return the next scripted outcome as a streaming context."""
+        return _FakeStream(self)
+
+    def _next_outcome(self):
+        """Pop the next scripted response, raising a scripted exception."""
         self.calls += 1
         outcome = self._outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+class _ChunkedResponse:
+    """A streaming response with no ``content-length``, as chunked transfer.
+
+    ``httpx.Response(content=...)`` always sets ``content-length``, so it
+    cannot exercise the streaming size cap at all — the very case the cap
+    exists for, since a header-less body is the one that would otherwise be
+    read fully into memory before being measured.
+    """
+
+    status_code = 200
+    headers = {"content-type": "text/plain"}
+
+    def __init__(self, chunk: bytes, chunks: int) -> None:
+        self._chunk = chunk
+        self._chunks = chunks
+        self.yielded = 0
+
+    def raise_for_status(self) -> None:
+        """No-op: this fake is always a 200."""
+
+    async def aiter_bytes(self):
+        """Yield up to *chunks* copies of the body chunk, counting them."""
+        for _ in range(self._chunks):
+            self.yielded += 1
+            yield self._chunk
 
 
 def _ok_response(body=b"hello", content_type="text/plain", headers=None):
@@ -427,18 +500,63 @@ async def test_fetch_rejects_an_oversized_content_length(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fetch_rejects_an_oversized_undeclared_body(monkeypatch):
-    """A header-less oversized body is caught after the read too."""
+    """A header-less oversized body is aborted *while* it streams.
+
+    ``await client.get(url)`` buffered the whole body and only then
+    measured it, so a chunked multi-gigabyte URL passed to ``doc_add``
+    OOM'd the process — the guard that exists to prevent an OOM caused
+    one (issue #78 whole-branch review). The chunk count proves the
+    transfer stopped early rather than being read to the end.
+    """
     from consensus.tools_document.constants import MAX_DOCUMENT_BYTES
 
-    big = _ok_response(body=b"x" * (MAX_DOCUMENT_BYTES + 1))
+    chunk_size = 1024 * 1024
+    chunks_at_the_cap = MAX_DOCUMENT_BYTES // chunk_size
+    response = _ChunkedResponse(b"x" * chunk_size, chunks=chunks_at_the_cap * 100)
+    assert "content-length" not in response.headers
+
     monkeypatch.setattr(
         parsing.httpx, "AsyncClient",
-        lambda **kwargs: _FakeAsyncClient([big]),
+        lambda **kwargs: _FakeAsyncClient([response]),
     )
     monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
 
-    with pytest.raises(DocumentParseError):
+    with pytest.raises(DocumentParseError) as exc:
         await parsing.fetch_url_content("https://example.com/big")
+
+    assert "too large" in str(exc.value).lower()
+    assert response.yielded == chunks_at_the_cap + 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_gives_up_after_the_retry_budget(monkeypatch):
+    """Transient failures are retried exactly URL_FETCH_MAX_RETRIES times.
+
+    Golden rule 5's central contract: retry with backoff, then stop and
+    say so rather than retrying forever or failing on the first blip.
+    """
+    from consensus.tools_document.constants import URL_FETCH_MAX_RETRIES
+
+    made = {}
+
+    def factory(**kwargs):
+        made["client"] = _FakeAsyncClient([
+            httpx.ConnectError("refused"),
+            httpx.TimeoutException("slow"),
+            httpx.ConnectError("refused again"),
+        ])
+        return made["client"]
+
+    monkeypatch.setattr(parsing.httpx, "AsyncClient", factory)
+    monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
+
+    with pytest.raises(DocumentParseError) as exc:
+        await parsing.fetch_url_content("https://example.com/flaky")
+
+    assert made["client"].calls == URL_FETCH_MAX_RETRIES == 3
+    message = str(exc.value)
+    assert f"after {URL_FETCH_MAX_RETRIES} attempts" in message
+    assert "refused again" in message
 
 
 @pytest.fixture(autouse=True)
@@ -457,15 +575,16 @@ async def test_pass_crash_is_logged_not_swallowed(tmp_db, caplog):
         def get_document_chunks(self, doc_id):
             raise RuntimeError("database is locked")
 
+    db = ExplodingDb()
     with caplog.at_level(logging.ERROR):
-        await embedding._embed_document_chunks(7, ExplodingDb(), object())
+        await embedding._embed_document_chunks(7, db, object())
 
     assert "database is locked" in caplog.text
-    failure = embedding.get_indexing_failure(7)
+    failure = embedding.get_indexing_failure(db, 7)
     assert failure is not None
     assert failure.consecutive_failures == 1
     assert "database is locked" in failure.last_error
-    assert 7 not in embedding._embedding_docs
+    assert embedding.doc_key(db, 7) not in embedding._embedding_docs
 
 
 @pytest.mark.asyncio
@@ -483,7 +602,7 @@ async def test_failed_chunks_record_a_failure(tmp_db):
     client = FakeEmbedClient(error=RuntimeError("model not found"))
     await embedding._embed_document_chunks(doc_id, tmp_db, client)
 
-    failure = embedding.get_indexing_failure(doc_id)
+    failure = embedding.get_indexing_failure(tmp_db, doc_id)
     assert failure is not None
     assert failure.consecutive_failures == 1
 
@@ -503,11 +622,12 @@ async def test_consecutive_failures_accumulate_and_clear(tmp_db):
     failing = FakeEmbedClient(error=RuntimeError("down"))
     await embedding._embed_document_chunks(doc_id, tmp_db, failing)
     await embedding._embed_document_chunks(doc_id, tmp_db, failing)
-    assert embedding.get_indexing_failure(doc_id).consecutive_failures == 2
+    assert embedding.get_indexing_failure(
+        tmp_db, doc_id).consecutive_failures == 2
 
     await embedding._embed_document_chunks(
         doc_id, tmp_db, FakeEmbedClient(vector=[1.0, 0.0, 0.0]))
-    assert embedding.get_indexing_failure(doc_id) is None
+    assert embedding.get_indexing_failure(tmp_db, doc_id) is None
 
 
 # ---------------------------------------------------------------------------
@@ -743,7 +863,8 @@ async def test_failed_indexing_is_an_error_with_the_real_cause(
     )
     tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
     embedding._record_indexing_failure(
-        doc_id, "Cannot connect to embedding service at localhost:11434")
+        tmp_db, doc_id,
+        "Cannot connect to embedding service at localhost:11434")
 
     context = ToolContext(caller_entity_id=0, discussion_id=notice_app.discussion.id)
     result = await handlers_rag._doc_ask_handler(
@@ -769,7 +890,7 @@ async def test_indexing_failure_posts_one_transcript_notice(
         char_count=9, sections_json="[]",
     )
     tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
-    embedding._record_indexing_failure(doc_id, "embedder down")
+    embedding._record_indexing_failure(tmp_db, doc_id, "embedder down")
 
     context = ToolContext(caller_entity_id=0, discussion_id=notice_app.discussion.id)
     for _ in range(3):
@@ -803,7 +924,7 @@ async def test_notice_failure_does_not_break_the_tool_call(tmp_db):
         char_count=9, sections_json="[]",
     )
     tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
-    embedding._record_indexing_failure(doc_id, "embedder down")
+    embedding._record_indexing_failure(tmp_db, doc_id, "embedder down")
 
     context = ToolContext(caller_entity_id=0, discussion_id=0)
     result = await handlers_rag._doc_ask_handler(
@@ -838,7 +959,7 @@ async def test_new_failure_streak_after_recovery_posts_a_second_notice(
         caller_entity_id=0, discussion_id=notice_app.discussion.id)
 
     # First failure streak: one notice.
-    embedding._record_indexing_failure(doc_id, "embedder down")
+    embedding._record_indexing_failure(tmp_db, doc_id, "embedder down")
     await handlers_rag._doc_ask_handler(
         {"document_id": doc_id, "question": "q"},
         context, tmp_db, FakeEmbedClient(), notice_app,
@@ -848,14 +969,14 @@ async def test_new_failure_streak_after_recovery_posts_a_second_notice(
     # document as healthy (still genuinely indexing, but with no recorded
     # failure). embed_client=None so no background pass is spawned — this
     # call only needs to exercise the healthy path's eviction.
-    embedding._clear_indexing_failure(doc_id)
+    embedding._clear_indexing_failure(tmp_db, doc_id)
     await handlers_rag._doc_ask_handler(
         {"document_id": doc_id, "question": "q"},
         context, tmp_db, None, notice_app,
     )
 
     # A brand new failure streak begins.
-    embedding._record_indexing_failure(doc_id, "embedder down again")
+    embedding._record_indexing_failure(tmp_db, doc_id, "embedder down again")
     await handlers_rag._doc_ask_handler(
         {"document_id": doc_id, "question": "q"},
         context, tmp_db, FakeEmbedClient(), notice_app,
@@ -867,6 +988,170 @@ async def test_new_failure_streak_after_recovery_posts_a_second_notice(
         and "could not be indexed" in m.content
     ]
     assert len(notices) == 2
+
+
+# ---------------------------------------------------------------------------
+# Whole-branch review: a recorded failure must stay recoverable, and the
+# process-global bookkeeping must not conflate two sessions' documents.
+# ---------------------------------------------------------------------------
+
+def _unindexed_doc(db, filename: str = "retry.md") -> int:
+    """Store a one-chunk document with no embeddings and return its id."""
+    doc_id = db.add_document(
+        filename=filename, title=filename, summary="",
+        mime_type="text/markdown", source_type="upload", source_url=None,
+        markdown="# R\n\nBody.", char_count=9, sections_json="[]",
+    )
+    db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+    return doc_id
+
+
+@pytest.mark.asyncio
+async def test_a_stale_indexing_failure_is_retried(
+    tmp_db, notice_app, monkeypatch,
+):
+    """A recorded failure must not condemn the document forever.
+
+    The embedding service being down for thirty seconds during ingestion
+    used to make every later ``doc_ask`` on that document return an error
+    for the rest of the process lifetime, because the failure branch
+    returned before the re-kick and nothing else ever cleared the record.
+    ``IndexingFailure.last_attempt`` being written and never read was the
+    tell (issue #78 whole-branch review).
+    """
+    from consensus.tools_document.constants import INDEXING_RETRY_INTERVAL
+    from tests.document_helpers import FakeEmbedClient
+
+    spawned = []
+    patch_where_defined(
+        monkeypatch, handlers_rag._doc_ask_handler, "_spawn_embedding_pass",
+        lambda doc_id, db, embed_client: spawned.append(doc_id),
+    )
+
+    doc_id = _unindexed_doc(tmp_db)
+    embedding._record_indexing_failure(tmp_db, doc_id, "embedder down")
+    # Age the recorded attempt past the retry interval.
+    failure = embedding.get_indexing_failure(tmp_db, doc_id)
+    failure.last_attempt -= INDEXING_RETRY_INTERVAL + 1
+
+    context = ToolContext(
+        caller_entity_id=0, discussion_id=notice_app.discussion.id)
+    result = await handlers_rag._doc_ask_handler(
+        {"document_id": doc_id, "question": "q"},
+        context, tmp_db, FakeEmbedClient(), notice_app,
+    )
+
+    assert spawned == [doc_id]
+    # The honest error is still reported; the retry is additional.
+    assert result.is_error
+    assert "embedder down" in result.content
+    assert "fresh indexing attempt" in result.content
+
+
+@pytest.mark.asyncio
+async def test_a_recent_indexing_failure_is_not_retried(
+    tmp_db, notice_app, monkeypatch,
+):
+    """A service that is still down must not be hammered every call.
+
+    ``doc_ask`` is retried up to MAX_TOOL_ITERATIONS times per turn, so
+    the retry is gated on ``INDEXING_RETRY_INTERVAL``.
+    """
+    from tests.document_helpers import FakeEmbedClient
+
+    spawned = []
+    patch_where_defined(
+        monkeypatch, handlers_rag._doc_ask_handler, "_spawn_embedding_pass",
+        lambda doc_id, db, embed_client: spawned.append(doc_id),
+    )
+
+    doc_id = _unindexed_doc(tmp_db)
+    embedding._record_indexing_failure(tmp_db, doc_id, "embedder down")
+
+    context = ToolContext(
+        caller_entity_id=0, discussion_id=notice_app.discussion.id)
+    result = await handlers_rag._doc_ask_handler(
+        {"document_id": doc_id, "question": "q"},
+        context, tmp_db, FakeEmbedClient(), notice_app,
+    )
+
+    assert spawned == []
+    assert result.is_error
+    assert "embedder down" in result.content
+    assert "fresh indexing attempt" not in result.content
+
+
+@pytest.mark.asyncio
+async def test_a_retry_does_not_stack_on_an_in_flight_pass(
+    tmp_db, notice_app, monkeypatch,
+):
+    """The in-flight marker still wins over the retry interval."""
+    from consensus.tools_document.constants import INDEXING_RETRY_INTERVAL
+    from tests.document_helpers import FakeEmbedClient
+
+    spawned = []
+    patch_where_defined(
+        monkeypatch, handlers_rag._doc_ask_handler, "_spawn_embedding_pass",
+        lambda doc_id, db, embed_client: spawned.append(doc_id),
+    )
+
+    doc_id = _unindexed_doc(tmp_db)
+    embedding._record_indexing_failure(tmp_db, doc_id, "embedder down")
+    embedding.get_indexing_failure(
+        tmp_db, doc_id).last_attempt -= INDEXING_RETRY_INTERVAL + 1
+    embedding._embedding_docs.add(embedding.doc_key(tmp_db, doc_id))
+
+    context = ToolContext(
+        caller_entity_id=0, discussion_id=notice_app.discussion.id)
+    await handlers_rag._doc_ask_handler(
+        {"document_id": doc_id, "question": "q"},
+        context, tmp_db, FakeEmbedClient(), notice_app,
+    )
+
+    assert spawned == []
+
+
+@pytest.mark.asyncio
+async def test_two_databases_with_the_same_doc_id_do_not_collide(
+    tmp_db, tmp_path, notice_app,
+):
+    """Session A's broken document must not break session B's healthy one.
+
+    In ``--multi-user`` mode every session gets its own SQLite file, so
+    every session's first document is id 1. Keyed by id alone, one
+    session's failed indexing pass made another session's ``doc_ask``
+    report "Indexing failed" *and* post a fabricated notice into its
+    discussion (issue #78 whole-branch review).
+    """
+    from consensus.db import Database
+
+    other = Database(str(tmp_path / "other-session.db"))
+    try:
+        doc_a = _unindexed_doc(tmp_db, "a.md")
+        doc_b = _unindexed_doc(other, "b.md")
+        assert doc_a == doc_b == 1
+
+        embedding._record_indexing_failure(tmp_db, doc_a, "embedder down")
+
+        assert embedding.get_indexing_failure(other, doc_b) is None
+
+        context = ToolContext(
+            caller_entity_id=0, discussion_id=notice_app.discussion.id)
+        # embed_client=None: this call only needs to prove that B's
+        # document is *seen* as healthy, not to actually index it.
+        result = await handlers_rag._doc_ask_handler(
+            {"document_id": doc_b, "question": "q"},
+            context, other, None, notice_app,
+        )
+
+        assert not result.is_error
+        assert "still being indexed" in result.content
+        assert not [
+            m for m in notice_app.discussion.messages
+            if "could not be indexed" in m.content
+        ]
+    finally:
+        other.conn.close()
 
 
 # ---------------------------------------------------------------------------

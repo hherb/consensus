@@ -57,6 +57,13 @@ URL_FETCH_MAX_RETRIES = 3
 URL_FETCH_BASE_DELAY = 1.0  # seconds, doubled per attempt
 
 # Largest document accepted from a URL, in bytes. Checked against the
-# content-length header and again after reading, since a header-less
-# response would otherwise be read fully into memory.
+# content-length header and again while the body streams in, so a
+# header-less (chunked) response is aborted mid-transfer instead of being
+# read fully into memory first.
 MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
+
+# Minimum seconds between background embedding retries for a document whose
+# last indexing pass failed. doc_ask re-kicks the pass so a transient
+# embedder outage recovers by itself, and this interval is what stops every
+# doc_ask call from hammering a service that is still down.
+INDEXING_RETRY_INTERVAL = 60.0

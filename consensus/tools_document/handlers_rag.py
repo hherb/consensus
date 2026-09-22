@@ -15,15 +15,16 @@ maths and the background embedding pass.
 
 import json
 import logging
+import time
 
 from ..tools import ToolContext, ToolResult
 from .constants import (
-    MIN_SIMILARITY_THRESHOLD, PASSAGE_PREVIEW_CHARS, RAG_TOP_K,
-    SUMMARY_CHUNK_LIMIT,
+    INDEXING_RETRY_INTERVAL, MIN_SIMILARITY_THRESHOLD, PASSAGE_PREVIEW_CHARS,
+    RAG_TOP_K, SUMMARY_CHUNK_LIMIT,
 )
 from .embedding import (
-    RankingResult, _embedding_docs, _rank_by_similarity, _spawn_embedding_pass,
-    get_indexing_failure,
+    DocKey, IndexingFailure, RankingResult, _embedding_docs,
+    _rank_by_similarity, _spawn_embedding_pass, doc_key, get_indexing_failure,
 )
 from .errors import DocumentInterpretationError
 from .llm import _call_interpretation_llm
@@ -32,10 +33,12 @@ from .validation import resolve_range
 logger = logging.getLogger(__name__)
 
 # Documents whose indexing failure has already been announced in the
-# transcript. The AI retries doc_ask up to MAX_TOOL_ITERATIONS times per
-# turn, and one notice per failure streak is information while several
-# would just be noise.
-_notified_index_failures: set[int] = set()
+# transcript, keyed by ``(db_path, doc_id)``. The AI retries doc_ask up to
+# MAX_TOOL_ITERATIONS times per turn, and one notice per failure streak is
+# information while several would just be noise. The key is scoped to the
+# database because document ids restart at 1 in every ``--multi-user``
+# session's own SQLite file (issue #78 whole-branch review).
+_notified_index_failures: set[DocKey] = set()
 
 
 def _reindex_message(ranking: RankingResult) -> str:
@@ -57,7 +60,61 @@ def _reindex_message(ranking: RankingResult) -> str:
     )
 
 
-def _post_indexing_notice(app, doc_id: int, detail: str) -> None:
+def _start_embedding_pass(db, doc_id: int, embed_client) -> bool:
+    """Schedule a background embedding pass unless one is already running.
+
+    Shared by both indexing branches of :func:`_doc_ask_handler` so the
+    in-flight marker is claimed the same way in each: without the guard,
+    every retry within a turn would spawn another pass over the same
+    chunks.
+
+    Args:
+        db: The database holding the document; also scopes the marker.
+        doc_id: Id of the document to index.
+        embed_client: The embedding client, or a falsy value when the
+            caller has none — in which case nothing is scheduled.
+
+    Returns:
+        True if a pass was scheduled by this call.
+    """
+    if not embed_client:
+        return False
+    key = doc_key(db, doc_id)
+    if key in _embedding_docs:
+        return False
+    _embedding_docs.add(key)
+    _spawn_embedding_pass(doc_id, db, embed_client)
+    return True
+
+
+def _retry_indexing_if_due(
+    db, doc_id: int, embed_client, failure: IndexingFailure,
+) -> bool:
+    """Re-kick a failed document's embedding pass once the wait has elapsed.
+
+    A recorded failure used to be terminal: ``doc_ask`` returned the error
+    and never scheduled another pass, so a thirty-second embedder outage
+    during ingestion killed the document for the rest of the process
+    lifetime, even after the service came back. Retrying on every call
+    instead would hammer a service that is still down, so the retry is
+    gated on ``INDEXING_RETRY_INTERVAL`` since ``failure.last_attempt``
+    (issue #78 whole-branch review).
+
+    Args:
+        db: The database holding the document.
+        doc_id: Id of the document whose indexing failed.
+        embed_client: The embedding client to retry with, if any.
+        failure: The recorded failure, whose ``last_attempt`` sets the gate.
+
+    Returns:
+        True if a fresh pass was scheduled by this call.
+    """
+    if time.time() - failure.last_attempt < INDEXING_RETRY_INTERVAL:
+        return False
+    return _start_embedding_pass(db, doc_id, embed_client)
+
+
+def _post_indexing_notice(app, db, doc_id: int, detail: str) -> None:
     """Announce an indexing failure in the discussion transcript.
 
     Golden rule 6 requires a caught error to reach the UI, and the
@@ -73,15 +130,17 @@ def _post_indexing_notice(app, doc_id: int, detail: str) -> None:
     rather than propagated.
 
     Args:
-        app: The orchestrator instance. Expected to carry ``.db`` and
-            ``.discussion``, but either may be absent (e.g. a standalone
-            tool call outside an active discussion), in which case no
-            notice is posted.
+        app: The orchestrator instance. Expected to carry ``.discussion``,
+            but it may be absent (e.g. a standalone tool call outside an
+            active discussion), in which case no notice is posted.
+        db: The database holding the document, used both to resolve the
+            moderator entity and to scope the already-notified marker.
         doc_id: Id of the document whose indexing failed.
         detail: The embedder's own error message, already known to the
             caller via ``IndexingFailure.last_error``.
     """
-    if doc_id in _notified_index_failures:
+    key = doc_key(db, doc_id)
+    if key in _notified_index_failures:
         return
     try:
         from ..app_discussion_flow.helpers import post_notice
@@ -90,7 +149,6 @@ def _post_indexing_notice(app, doc_id: int, detail: str) -> None:
         discussion = getattr(app, "discussion", None)
         if discussion is None:
             return
-        db = getattr(app, "db", None)
         if db is None:
             return
         moderator_row = db.get_entity(discussion.moderator_id)
@@ -103,7 +161,7 @@ def _post_indexing_notice(app, doc_id: int, detail: str) -> None:
             "the embedding service is working and the document is "
             "re-indexed.",
         )
-        _notified_index_failures.add(doc_id)
+        _notified_index_failures.add(key)
     except Exception:
         logger.exception(
             "Could not post the indexing-failure notice for document %d",
@@ -136,18 +194,27 @@ async def _doc_ask_handler(
     if unembedded > 0:
         total_chunks = len(db.get_document_chunks(doc_id))
         embedded = total_chunks - unembedded
-        failure = get_indexing_failure(doc_id)
+        failure = get_indexing_failure(db, doc_id)
 
         if failure is not None:
             detail = failure.last_error
-            _post_indexing_notice(app, doc_id, detail)
+            _post_indexing_notice(app, db, doc_id, detail)
+            # Report the failure honestly *and* schedule another pass when
+            # enough time has passed, so an embedder outage that has since
+            # ended repairs itself instead of condemning the document for
+            # the rest of the process lifetime.
+            retried = _retry_indexing_if_due(db, doc_id, embed_client, failure)
+            retry_note = (
+                " A fresh indexing attempt has just been started."
+                if retried else ""
+            )
             return ToolResult(
                 content=(
                     f"Indexing failed: {detail}. "
                     f"{embedded}/{total_chunks} chunks embedded after "
                     f"{failure.consecutive_failures} failed pass(es). "
                     "The embedding service must be working before this "
-                    "document can be queried."
+                    f"document can be queried.{retry_note}"
                 ),
                 is_error=True,
             )
@@ -158,14 +225,12 @@ async def _doc_ask_handler(
         # new streak and announced again, rather than "one notice per
         # document per failure streak" silently degrading into "one
         # notice per document ever" (issue #78 task 9 follow-up).
-        _notified_index_failures.discard(doc_id)
+        _notified_index_failures.discard(doc_key(db, doc_id))
 
         # Re-kick the background embedding pass if it is not already running,
         # so a previously failed/interrupted chunk is retried instead of
         # leaving the document permanently stuck as "still being indexed".
-        if embed_client and doc_id not in _embedding_docs:
-            _embedding_docs.add(doc_id)
-            _spawn_embedding_pass(doc_id, db, embed_client)
+        _start_embedding_pass(db, doc_id, embed_client)
         return ToolResult(
             content=(
                 f"Document is still being indexed "
@@ -177,7 +242,7 @@ async def _doc_ask_handler(
     # unembedded == 0: the document is fully embedded and healthy. Same
     # reasoning as above — a document that failed, recovered, and later
     # fails again must get a fresh notice for the new streak.
-    _notified_index_failures.discard(doc_id)
+    _notified_index_failures.discard(doc_key(db, doc_id))
 
     # Embed the question
     try:

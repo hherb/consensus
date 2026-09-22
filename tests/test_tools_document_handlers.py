@@ -547,9 +547,9 @@ class TestDocAskHandler:
                 ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), None,
             )
             assert len(spawned) == 1
-            assert doc_id in embedding._embedding_docs
+            assert embedding.doc_key(tmp_db, doc_id) in embedding._embedding_docs
         finally:
-            embedding._embedding_docs.discard(doc_id)
+            embedding._embedding_docs.discard(embedding.doc_key(tmp_db, doc_id))
 
     @pytest.mark.asyncio
     async def test_rekick_is_suppressed_while_a_pass_is_already_running(
@@ -566,7 +566,7 @@ class TestDocAskHandler:
             monkeypatch, handlers_rag._doc_ask_handler, "_spawn_embedding_pass",
             lambda doc_id, db, embed_client: spawned.append(doc_id),
         )
-        embedding._embedding_docs.add(doc_id)
+        embedding._embedding_docs.add(embedding.doc_key(tmp_db, doc_id))
         try:
             result = await handlers_rag._doc_ask_handler(
                 {"document_id": doc_id, "question": "why?"},
@@ -575,7 +575,7 @@ class TestDocAskHandler:
             assert spawned == []
             assert "still being indexed" in result.content
         finally:
-            embedding._embedding_docs.discard(doc_id)
+            embedding._embedding_docs.discard(embedding.doc_key(tmp_db, doc_id))
 
     @pytest.mark.asyncio
     async def test_embedding_outage_is_an_error(self, tmp_db, ctx, doc_id):
