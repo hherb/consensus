@@ -8,6 +8,7 @@ from ..tools import ToolContext
 from .chunking import chunk_document
 from .constants import SUMMARY_EXCERPT_CHARS
 from .embedding import _embedding_docs, _spawn_embedding_pass
+from .errors import DocumentInterpretationError
 from .llm import _call_interpretation_llm
 from .parsing import extract_sections, parse_document
 
@@ -62,7 +63,9 @@ async def ingest_document(
         else:
             title = filename
 
-    # Generate summary
+    # Generate summary.  A failed summary must never be persisted: the old
+    # helper returned its error as a string, which was stored and then
+    # reprinted to every participant by doc_list forever (issue #78).
     summary = ""
     if generate_summary and context and app:
         try:
@@ -76,8 +79,11 @@ async def ingest_document(
                 ),
                 user_prompt=excerpt,
             )
-        except Exception as e:
-            logger.warning("Summary generation failed: %s", e)
+        except DocumentInterpretationError:
+            logger.exception(
+                "Summary generation failed for %s — storing no summary",
+                filename,
+            )
             summary = ""
 
     # Store document

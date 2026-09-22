@@ -36,7 +36,7 @@ EXPECTED_PUBLIC_API = {
 # Every module of the package, leaf-first. Each must stay importable on its
 # own: an import cycle would only surface as an ImportError at runtime.
 SUBMODULES = [
-    "constants", "parsing", "chunking", "embedding", "schemas",
+    "constants", "errors", "parsing", "chunking", "embedding", "schemas",
     "llm", "ingestion", "handlers", "provider",
 ]
 

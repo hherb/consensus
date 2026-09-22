@@ -11,6 +11,7 @@ import sqlite3
 import pytest
 
 from consensus.tools_document import constants, embedding, ingestion, llm
+from consensus.tools_document.errors import DocumentInterpretationError
 from consensus.tools import ToolContext
 
 from .document_helpers import (
@@ -284,13 +285,19 @@ def llm_app(tmp_db, sample_ai_entity):
 
 class TestCallInterpretationLlm:
     @pytest.mark.asyncio
-    async def test_unknown_entity_returns_an_explanatory_string(self, tmp_db):
+    async def test_unknown_entity_raises(self, tmp_db):
+        """An unresolvable caller entity raises rather than returning prose.
+
+        Was: returns the string "(Error: could not resolve caller entity
+        for LLM call)" as if it were an answer (issue #78 defect 1).
+        """
         app = FakeApp(tmp_db)
-        result = await llm._call_interpretation_llm(
-            app, ToolContext(caller_entity_id=99999, discussion_id=1),
-            "system", "user",
-        )
-        assert "could not resolve caller entity" in result
+        with pytest.raises(DocumentInterpretationError) as exc:
+            await llm._call_interpretation_llm(
+                app, ToolContext(caller_entity_id=99999, discussion_id=1),
+                "system", "user",
+            )
+        assert "99999" in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_returns_the_completion_content(self, monkeypatch, llm_app):
@@ -337,7 +344,12 @@ class TestCallInterpretationLlm:
         assert FakeAIClient.closed is True
 
     @pytest.mark.asyncio
-    async def test_failure_is_reported_in_the_returned_text(self, monkeypatch, llm_app):
+    async def test_completion_failure_raises(self, monkeypatch, llm_app):
+        """A failing completion call raises rather than returning its message.
+
+        Was: returns the string "(LLM call failed: ...)" as if it were an
+        answer (issue #78 defect 1).
+        """
         app, entity_id = llm_app
 
         class FailingClient(FakeAIClient):
@@ -347,10 +359,11 @@ class TestCallInterpretationLlm:
         patch_where_defined(
             monkeypatch, llm._call_interpretation_llm, "AIClient", FailingClient,
         )
-        result = await llm._call_interpretation_llm(
-            app, ToolContext(caller_entity_id=entity_id, discussion_id=1), "s", "u",
-        )
-        assert "LLM call failed" in result and "provider exploded" in result
+        with pytest.raises(DocumentInterpretationError) as exc:
+            await llm._call_interpretation_llm(
+                app, ToolContext(caller_entity_id=entity_id, discussion_id=1), "s", "u",
+            )
+        assert "provider exploded" in str(exc.value)
         assert FakeAIClient.closed is True
 
 
@@ -453,8 +466,13 @@ class TestIngestDocument:
 
     @pytest.mark.asyncio
     async def test_summary_failure_leaves_an_empty_summary(self, tmp_db, monkeypatch, ctx):
+        """A raised DocumentInterpretationError leaves no summary persisted.
+
+        ``_call_interpretation_llm`` only ever raises this type (issue #78);
+        the fake mirrors that contract instead of a bare ``RuntimeError``.
+        """
         async def boom(*_args, **_kwargs):
-            raise RuntimeError("llm down")
+            raise DocumentInterpretationError("llm down")
 
         patch_where_defined(
             monkeypatch, ingestion.ingest_document, "_call_interpretation_llm", boom,

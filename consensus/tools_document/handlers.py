@@ -11,6 +11,7 @@ from .constants import (
     SUMMARY_SNIPPET_CHARS,
 )
 from .embedding import _embedding_docs, _rank_by_similarity, _spawn_embedding_pass
+from .errors import DocumentError
 from .ingestion import ingest_document
 from .llm import _call_interpretation_llm
 from .parsing import fetch_url_content
@@ -76,7 +77,11 @@ async def _doc_add_handler(
             content=json.dumps(result, indent=2),
             metadata=result,
         )
+    except DocumentError as e:
+        logger.warning("doc_add failed for %s: %s", url or filename, e)
+        return ToolResult(content=f"Failed to add document: {e}", is_error=True)
     except Exception as e:
+        logger.exception("doc_add failed unexpectedly for %s", url or filename)
         return ToolResult(content=f"Failed to add document: {e}", is_error=True)
 
 
