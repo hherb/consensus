@@ -10,7 +10,7 @@ import logging
 import httpx
 import pytest
 
-from consensus.tools_document import handlers, ingestion, llm, parsing
+from consensus.tools_document import embedding, handlers, ingestion, llm, parsing
 from consensus.tools_document.errors import (
     DocumentError, DocumentInterpretationError, DocumentParseError,
 )
@@ -435,3 +435,71 @@ async def test_fetch_rejects_an_oversized_undeclared_body(monkeypatch):
 
     with pytest.raises(DocumentParseError):
         await parsing.fetch_url_content("https://example.com/big")
+
+
+@pytest.fixture(autouse=True)
+def _clear_indexing_state():
+    """Module-level indexing state must not leak between tests."""
+    yield
+    embedding._indexing_failures.clear()
+    embedding._embedding_docs.clear()
+
+
+@pytest.mark.asyncio
+async def test_pass_crash_is_logged_not_swallowed(tmp_db, caplog):
+    """A crash inside the pass logs a traceback and records a failure."""
+    class ExplodingDb:
+        def get_document_chunks(self, doc_id):
+            raise RuntimeError("database is locked")
+
+    with caplog.at_level(logging.ERROR):
+        await embedding._embed_document_chunks(7, ExplodingDb(), object())
+
+    assert "database is locked" in caplog.text
+    failure = embedding.get_indexing_failure(7)
+    assert failure is not None
+    assert failure.consecutive_failures == 1
+    assert "database is locked" in failure.last_error
+    assert 7 not in embedding._embedding_docs
+
+
+@pytest.mark.asyncio
+async def test_failed_chunks_record_a_failure(tmp_db):
+    """A pass that completes with failed chunks is still a failure."""
+    from tests.document_helpers import FakeEmbedClient
+
+    doc_id = tmp_db.add_document(
+        filename="c.md", title="C", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# C\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+
+    client = FakeEmbedClient(error=RuntimeError("model not found"))
+    await embedding._embed_document_chunks(doc_id, tmp_db, client)
+
+    failure = embedding.get_indexing_failure(doc_id)
+    assert failure is not None
+    assert failure.consecutive_failures == 1
+
+
+@pytest.mark.asyncio
+async def test_consecutive_failures_accumulate_and_clear(tmp_db):
+    """Repeat failures count up; a clean pass wipes the record."""
+    from tests.document_helpers import FakeEmbedClient
+
+    doc_id = tmp_db.add_document(
+        filename="d.md", title="D", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# D\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+
+    failing = FakeEmbedClient(error=RuntimeError("down"))
+    await embedding._embed_document_chunks(doc_id, tmp_db, failing)
+    await embedding._embed_document_chunks(doc_id, tmp_db, failing)
+    assert embedding.get_indexing_failure(doc_id).consecutive_failures == 2
+
+    await embedding._embed_document_chunks(
+        doc_id, tmp_db, FakeEmbedClient(vector=[1.0, 0.0, 0.0]))
+    assert embedding.get_indexing_failure(doc_id) is None

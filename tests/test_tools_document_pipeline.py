@@ -204,6 +204,7 @@ class TestEmbedDocumentChunks:
             assert doc_id not in embedding._embedding_docs
         finally:
             embedding._embedding_docs.discard(doc_id)
+            embedding._indexing_failures.pop(doc_id, None)
 
     @pytest.mark.asyncio
     async def test_marker_is_released_when_the_pass_itself_raises(
@@ -214,6 +215,12 @@ class TestEmbedDocumentChunks:
         A DB error in ``get_document_chunks`` would otherwise leave the
         document marked "indexing" forever, and the re-kick guard in
         ``_doc_ask_handler`` then refuses to ever start it again.
+
+        As of issue #78 task 7, ``_embed_document_chunks`` also guards this
+        against escaping entirely (it ran as a detached background task, so
+        an escaping exception was visible only as asyncio's GC-time
+        warning): it is caught, logged, and recorded as an indexing
+        failure rather than propagated.
         """
         doc_id, _ = doc_with_chunks
 
@@ -223,23 +230,32 @@ class TestEmbedDocumentChunks:
 
         embedding._embedding_docs.add(doc_id)
         try:
-            with pytest.raises(sqlite3.OperationalError):
-                await embedding._embed_document_chunks(
-                    doc_id, ExplodingDb(), FakeEmbedClient([1.0]),
-                )
+            await embedding._embed_document_chunks(
+                doc_id, ExplodingDb(), FakeEmbedClient([1.0]),
+            )
             assert doc_id not in embedding._embedding_docs
+            failure = embedding.get_indexing_failure(doc_id)
+            assert failure is not None
+            assert "database is locked" in failure.last_error
         finally:
             embedding._embedding_docs.discard(doc_id)
+            embedding._indexing_failures.pop(doc_id, None)
 
     @pytest.mark.asyncio
     async def test_failures_are_logged_with_a_count(self, tmp_db, doc_with_chunks, caplog):
         doc_id, _ = doc_with_chunks
         client = FakeEmbedClient(error=RuntimeError("down"))
 
-        with caplog.at_level("WARNING", logger="consensus.tools_document"):
-            await embedding._embed_document_chunks(doc_id, tmp_db, client)
+        try:
+            with caplog.at_level("WARNING", logger="consensus.tools_document"):
+                await embedding._embed_document_chunks(doc_id, tmp_db, client)
 
-        assert any("3/3 chunks failed" in r.getMessage() for r in caplog.records)
+            assert any(
+                "3/3 chunks could not be embedded" in r.getMessage()
+                for r in caplog.records
+            )
+        finally:
+            embedding._indexing_failures.pop(doc_id, None)
 
 
 class TestSpawnBackground:
