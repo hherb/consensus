@@ -399,25 +399,32 @@ class TestRankBySimilarity:
         ]
 
     def test_orders_by_descending_similarity(self):
-        ranked = embedding._rank_by_similarity([1.0, 0.0], self._rows(), limit=3)
+        ranked = embedding._rank_by_similarity([1.0, 0.0], self._rows(), limit=3).ranked
         assert [row["id"] for _, row in ranked] == [1, 3, 2]
 
     def test_limit_truncates_after_sorting(self):
-        ranked = embedding._rank_by_similarity([1.0, 0.0], self._rows(), limit=2)
+        ranked = embedding._rank_by_similarity([1.0, 0.0], self._rows(), limit=2).ranked
         assert [row["id"] for _, row in ranked] == [1, 3]
 
     def test_threshold_excludes_low_scoring_rows(self):
-        ranked = embedding._rank_by_similarity([1.0, 0.0], self._rows(), limit=3, threshold=0.5)
+        ranked = embedding._rank_by_similarity(
+            [1.0, 0.0], self._rows(), limit=3, threshold=0.5).ranked
         assert [row["id"] for _, row in ranked] == [1, 3]
 
     def test_scores_are_returned_alongside_rows(self):
-        ranked = embedding._rank_by_similarity([1.0, 0.0], self._rows(), limit=1)
+        ranked = embedding._rank_by_similarity([1.0, 0.0], self._rows(), limit=1).ranked
         score, row = ranked[0]
         assert score == pytest.approx(1.0)
         assert row["id"] == 1
 
     def test_empty_rows_yield_empty_ranking(self):
-        assert embedding._rank_by_similarity([1.0, 0.0], [], limit=5) == []
+        assert embedding._rank_by_similarity([1.0, 0.0], [], limit=5).ranked == []
+
+    def test_empty_rows_report_no_dimension_mismatches(self):
+        result = embedding._rank_by_similarity([1.0, 0.0], [], limit=5)
+        assert result.skipped_dim_mismatch == 0
+        assert result.query_dim == 2
+        assert result.row_dims == ()
 
 
 class TestSplitIntoSubChunks:

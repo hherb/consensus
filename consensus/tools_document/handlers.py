@@ -10,8 +10,10 @@ from .constants import (
     PASSAGE_PREVIEW_CHARS, RAG_TOP_K, SUMMARY_CHUNK_LIMIT,
     SUMMARY_SNIPPET_CHARS, SUMMARY_STATUS_FAILED, SUMMARY_STATUS_OK,
 )
-from .embedding import _embedding_docs, _rank_by_similarity, _spawn_embedding_pass
-from .errors import DocumentError
+from .embedding import (
+    _embedding_docs, _rank_by_similarity, _reindex_message, _spawn_embedding_pass,
+)
+from .errors import DocumentError, DocumentInterpretationError
 from .ingestion import ingest_document
 from .llm import _call_interpretation_llm
 from .parsing import fetch_url_content
@@ -124,10 +126,11 @@ async def _doc_list_handler(
         if not rows:
             return ToolResult(content="No documents in the library yet.")
 
-        scored = _rank_by_similarity(
+        ranking = _rank_by_similarity(
             query_vec, rows, limit=LIBRARY_SEARCH_LIMIT,
             threshold=MIN_SIMILARITY_THRESHOLD,
         )
+        scored = ranking.ranked
 
         # Group by document
         seen_docs: dict[int, dict] = {}
@@ -149,6 +152,9 @@ async def _doc_list_handler(
                     }
 
         if not seen_docs:
+            if ranking.skipped_dim_mismatch:
+                return ToolResult(
+                    content=_reindex_message(ranking), is_error=True)
             return ToolResult(content=f"No documents match '{query}'.")
 
         docs_list = sorted(
@@ -382,7 +388,21 @@ async def _doc_ask_handler(
     if not rows:
         return ToolResult(content="No embedded chunks found for this document.")
 
-    scored = _rank_by_similarity(query_vec, rows, RAG_TOP_K)
+    ranking = _rank_by_similarity(
+        query_vec, rows, RAG_TOP_K, threshold=MIN_SIMILARITY_THRESHOLD,
+    )
+    if not ranking.ranked:
+        # Two very different situations used to look identical, because
+        # the default threshold of 0.0 let every row through (issue #78).
+        if ranking.skipped_dim_mismatch:
+            return ToolResult(content=_reindex_message(ranking), is_error=True)
+        return ToolResult(
+            content=(
+                f"No passage in '{doc['title']}' is relevant to that "
+                "question (nothing scored above the relevance threshold)."
+            ),
+        )
+    scored = ranking.ranked
 
     # Build context for LLM
     passages = []
@@ -401,19 +421,41 @@ async def _doc_ask_handler(
         for p in passages
     )
 
-    answer = await _call_interpretation_llm(
-        app, context,
-        system_prompt=(
-            "You are a document analyst. Answer the question based ONLY on the "
-            "provided passages from the document. Cite passage numbers in your answer. "
-            "If the answer is not in the passages, say so clearly."
-        ),
-        user_prompt=(
-            f"DOCUMENT: {doc['title']}\n\n"
-            f"PASSAGES:\n{passages_text}\n\n"
-            f"QUESTION: {question}"
-        ),
-    )
+    try:
+        answer = await _call_interpretation_llm(
+            app, context,
+            system_prompt=(
+                "You are a document analyst. Answer the question based ONLY on the "
+                "provided passages from the document. Cite passage numbers in your answer. "
+                "If the answer is not in the passages, say so clearly."
+            ),
+            user_prompt=(
+                f"DOCUMENT: {doc['title']}\n\n"
+                f"PASSAGES:\n{passages_text}\n\n"
+                f"QUESTION: {question}"
+            ),
+        )
+    except DocumentInterpretationError as e:
+        # Caught explicitly, rather than left to ToolRegistry's generic
+        # `except Exception`, so the failure names the model and provider
+        # that failed instead of a bare "Tool error: ..." — and so an
+        # expected provider failure logs a warning, not a full traceback.
+        entity = db.get_entity(context.caller_entity_id) or {}
+        model = entity.get("model") or "unknown model"
+        provider = entity.get("provider_name") or "unknown provider"
+        logger.warning(
+            "doc_ask interpretation failed for document %d "
+            "(model=%s, provider=%s): %s",
+            doc_id, model, provider, e,
+        )
+        return ToolResult(
+            content=(
+                f"Could not answer from document {doc_id} ('{doc['title']}'): "
+                f"the interpretation model '{model}' (provider '{provider}') "
+                f"failed: {e}"
+            ),
+            is_error=True,
+        )
 
     result = {
         "answer": answer,

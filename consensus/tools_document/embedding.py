@@ -40,19 +40,89 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (mag_a * mag_b)
 
 
+@dataclass
+class RankingResult:
+    """Ranked rows plus what was discarded reaching them.
+
+    ``skipped_dim_mismatch`` is what makes an embedding-model change
+    diagnosable: differing dimensions score 0.0, so without the count a
+    re-index requirement is indistinguishable from a document that simply
+    does not address the question (issue #78 defects 4, 5).
+    """
+
+    ranked: list[tuple[float, dict]]
+    skipped_dim_mismatch: int = 0
+    query_dim: int = 0
+    row_dims: tuple[int, ...] = ()
+
+
 def _rank_by_similarity(
     query_vec: list[float], rows: list[dict], limit: int,
     threshold: float = 0.0,
-) -> list[tuple[float, dict]]:
-    """Sort rows by cosine similarity, return top-limit above threshold."""
-    scored = []
+) -> RankingResult:
+    """Sort rows by cosine similarity, keeping the top *limit* above
+    *threshold*.
+
+    Dimension mismatches are counted here rather than logged inside
+    ``_cosine_similarity``, which stays a pure function called once per
+    row (golden rule 1).
+
+    Args:
+        query_vec: The embedding of the search query.
+        rows: DB rows carrying a packed ``embedding`` blob each.
+        limit: Maximum number of ranked rows to return.
+        threshold: Minimum cosine similarity a row must reach to be kept.
+
+    Returns:
+        A :class:`RankingResult` with the top-scoring rows and a count of
+        rows skipped for having a different embedding dimension.
+    """
+    scored: list[tuple[float, dict]] = []
+    mismatched = 0
+    mismatched_dims: set[int] = set()
     for row in rows:
         emb = _unpack_embedding(row["embedding"])
+        if len(emb) != len(query_vec):
+            mismatched += 1
+            mismatched_dims.add(len(emb))
+            continue
         score = _cosine_similarity(query_vec, emb)
         if score >= threshold:
             scored.append((score, row))
     scored.sort(key=lambda x: x[0], reverse=True)
-    return scored[:limit]
+
+    if mismatched:
+        logger.warning(
+            "%d chunk(s) skipped: embedded at dimension(s) %s but the query "
+            "is %d — the embedding model changed",
+            mismatched, sorted(mismatched_dims), len(query_vec),
+        )
+
+    return RankingResult(
+        ranked=scored[:limit],
+        skipped_dim_mismatch=mismatched,
+        query_dim=len(query_vec),
+        row_dims=tuple(sorted(mismatched_dims)),
+    )
+
+
+def _reindex_message(ranking: RankingResult) -> str:
+    """Explain a dimension mismatch in terms a user can act on.
+
+    Args:
+        ranking: A :class:`RankingResult` whose ``skipped_dim_mismatch`` is
+            non-zero — the caller is expected to check that first.
+
+    Returns:
+        A message naming the dimensions involved and the required remedy.
+    """
+    return (
+        f"{ranking.skipped_dim_mismatch} chunk(s) were indexed with a "
+        f"different embedding model (dimension "
+        f"{', '.join(str(d) for d in ranking.row_dims)} vs "
+        f"{ranking.query_dim} now). The documents must be re-indexed "
+        "before they can be searched."
+    )
 
 # ---------------------------------------------------------------------------
 # Background embedding task

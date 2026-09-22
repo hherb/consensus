@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from consensus.tools_document import embedding, handlers, ingestion, llm, parsing
+from consensus.tools_document.embedding import _pack_embedding
 from consensus.tools_document.errors import (
     DocumentError, DocumentInterpretationError, DocumentParseError,
 )
@@ -503,3 +504,163 @@ async def test_consecutive_failures_accumulate_and_clear(tmp_db):
     await embedding._embed_document_chunks(
         doc_id, tmp_db, FakeEmbedClient(vector=[1.0, 0.0, 0.0]))
     assert embedding.get_indexing_failure(doc_id) is None
+
+
+# ---------------------------------------------------------------------------
+# Task 8: relevance floor and dimension-mismatch reporting
+# ---------------------------------------------------------------------------
+
+def test_ranking_reports_dimension_mismatches():
+    """Rows embedded by a different model are counted, not silently zeroed."""
+    rows = [
+        {"id": 1, "embedding": _pack_embedding([1.0, 0.0, 0.0])},
+        {"id": 2, "embedding": _pack_embedding([1.0, 0.0])},
+    ]
+    result = embedding._rank_by_similarity([1.0, 0.0, 0.0], rows, limit=5)
+
+    assert result.skipped_dim_mismatch == 1
+    assert result.query_dim == 3
+    assert 2 in result.row_dims
+    assert [row["id"] for _score, row in result.ranked] == [1]
+
+
+def test_ranking_applies_the_threshold():
+    """Rows below the floor are excluded from ranked."""
+    rows = [
+        {"id": 1, "embedding": _pack_embedding([1.0, 0.0, 0.0])},
+        {"id": 2, "embedding": _pack_embedding([0.0, 1.0, 0.0])},
+    ]
+    result = embedding._rank_by_similarity(
+        [1.0, 0.0, 0.0], rows, limit=5, threshold=0.3)
+    assert [row["id"] for _score, row in result.ranked] == [1]
+
+
+@pytest.mark.asyncio
+async def test_doc_ask_reports_a_dimension_mismatch(tmp_db, sample_ai_entity):
+    """A model switch is reported as needing a re-index, not answered."""
+    from tests.document_helpers import FakeEmbedClient
+
+    doc_id = tmp_db.add_document(
+        filename="e.md", title="E", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# E\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    chunk_id = tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+    tmp_db.set_chunk_embedding(chunk_id, _pack_embedding([1.0, 0.0]))
+
+    client = FakeEmbedClient(vector=[1.0, 0.0, 0.0])
+    context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
+    result = await handlers._doc_ask_handler(
+        {"document_id": doc_id, "question": "what?"},
+        context, tmp_db, client, None,
+    )
+
+    assert result.is_error
+    assert "re-indexed" in result.content
+
+
+@pytest.mark.asyncio
+async def test_doc_ask_reports_no_relevant_passage_below_threshold(
+    tmp_db, sample_ai_entity,
+):
+    """A same-dimension but unrelated embedding reads as 'not relevant',
+    not as a dimension mismatch — the two used to be indistinguishable
+    because the default threshold of 0.0 let every row through."""
+    from tests.document_helpers import FakeEmbedClient
+
+    doc_id = tmp_db.add_document(
+        filename="g.md", title="G", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# G\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    chunk_id = tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+    tmp_db.set_chunk_embedding(chunk_id, _pack_embedding([0.0, 1.0, 0.0]))
+
+    client = FakeEmbedClient(vector=[1.0, 0.0, 0.0])
+    context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
+    result = await handlers._doc_ask_handler(
+        {"document_id": doc_id, "question": "what?"},
+        context, tmp_db, client, None,
+    )
+
+    assert not result.is_error
+    assert "is relevant" in result.content.lower()
+    assert "re-indexed" not in result.content
+
+
+@pytest.mark.asyncio
+async def test_doc_ask_reports_an_interpretation_failure_explicitly(
+    tmp_db, sample_ai_entity, monkeypatch,
+):
+    """doc_ask names the model, provider and document id on an LLM failure.
+
+    Previously ``DocumentInterpretationError`` fell through to
+    ``ToolRegistry``'s generic ``except Exception``, which produces a bare
+    "Tool error: ..." message and always logs a full traceback — even
+    though a failing provider here is an expected, not exceptional, case.
+    """
+    from tests.document_helpers import FakeApp, FakeEmbedClient, embed_all
+
+    doc_id = tmp_db.add_document(
+        filename="f.md", title="F", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# F\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+    embed_all(tmp_db, doc_id, (1.0, 0.0))
+
+    async def boom(*args, **kwargs):
+        raise DocumentInterpretationError("401 Unauthorized")
+
+    patch_where_defined(
+        monkeypatch, handlers._doc_ask_handler, "_call_interpretation_llm", boom,
+    )
+
+    context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
+    result = await handlers._doc_ask_handler(
+        {"document_id": doc_id, "question": "what?"},
+        context, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
+    )
+
+    assert result.is_error
+    assert str(doc_id) in result.content
+    assert "test-model" in result.content
+    assert "TestProvider" in result.content
+    assert "401 Unauthorized" in result.content
+
+
+@pytest.mark.asyncio
+async def test_doc_ask_interpretation_failure_does_not_log_a_traceback(
+    tmp_db, sample_ai_entity, monkeypatch, caplog,
+):
+    """The explicit catch logs a warning, not ``logger.exception``.
+
+    A provider failure here is expected and already reported to the
+    caller; a full traceback for every such failure is noise ToolRegistry's
+    generic handler used to produce.
+    """
+    from tests.document_helpers import FakeApp, FakeEmbedClient, embed_all
+
+    doc_id = tmp_db.add_document(
+        filename="h.md", title="H", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown="# H\n\nBody.",
+        char_count=9, sections_json="[]",
+    )
+    tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
+    embed_all(tmp_db, doc_id, (1.0, 0.0))
+
+    async def boom(*args, **kwargs):
+        raise DocumentInterpretationError("401 Unauthorized")
+
+    patch_where_defined(
+        monkeypatch, handlers._doc_ask_handler, "_call_interpretation_llm", boom,
+    )
+
+    context = ToolContext(caller_entity_id=sample_ai_entity, discussion_id=0)
+    with caplog.at_level(logging.ERROR):
+        await handlers._doc_ask_handler(
+            {"document_id": doc_id, "question": "what?"},
+            context, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
+        )
+
+    assert "Traceback" not in caplog.text
