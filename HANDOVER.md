@@ -1,11 +1,12 @@
 # HANDOVER
 
 _Last updated: 2026-09-22. `main` is at **v2.0.0** (released 2026-07-20) with
-the suite at **2594 passing**. The discussion-method review & repair campaign
+the suite at **2643 passing**. The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
 (PyPI `consensus-app` + notarized macOS DMG) and the public website. The four
 defects that the #61 split surfaced — **#71**, **#72**, **#73**, **#74** —
-are fixed in this session (see "Flow error visibility" below). The one open
+are fixed in this session, together with the review round that followed them
+(see "Flow error visibility" below). The one open
 structural issue is **#61** (modules over the ~500-line golden rule); its
 first slice — `app_discussion_flow` — is done, fifteen modules remain._
 
@@ -23,7 +24,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site deployed to Cloudflare Pages at https://consensus-ai.org/ |
-| Tests | 2594 passing (`uv run pytest`, ~55 s) |
+| Tests | 2643 passing (`uv run pytest`, ~50 s) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -58,53 +59,104 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 ## Flow error visibility (#71–#74, done — keep these contracts)
 
 Three flow paths swallowed caught errors; the repairs added contracts worth
-knowing before touching `app_discussion_flow` again.
+knowing before touching `app_discussion_flow` again. A PR review round then
+found that the first cut of #72 was unreachable in production and that the
+#74 classifier misattributed two common failures — both are fixed, and the
+contracts below are the corrected ones.
 
-- **Provider faults and internal bugs are now distinguished.**
-  `helpers.is_provider_error` is the single classifier (`httpx.HTTPError`,
-  `TimeoutError`, `ConnectionError`, `StructuredOutputError`); everything
-  else is a bug in Consensus. `describe_turn_error` keeps its existing
-  contract for provider faults, `describe_internal_error` always names the
-  exception type (a bare `KeyError` renders as `'positions'`, which told a
-  user nothing), and `describe_flow_error` dispatches between them. A skipped
-  turn carries `error_kind: "provider" | "internal"` and a notice that says
-  which it was — the old text blamed the provider for every failure, including
-  handler and DB bugs. **Add new failure modes to the classifier, not to the
-  notice wording.**
+- **Failures are classified into three kinds, not two.**
+  `helpers.classify_flow_error` is the single classifier, returning
+  `ERROR_KIND_PROVIDER` / `ERROR_KIND_CONFIG` / `ERROR_KIND_INTERNAL`;
+  `is_provider_error` is a thin predicate over it. `internal` is the default
+  bucket and only it asks the user to file a bug, so a misclassification is
+  never merely cosmetic. Two rules keep it honest:
+  - **`ConnectionError`, never its `OSError` base.** A document tool reading
+    a missing file also raises `OSError`, and that is our fault, not the
+    provider's.
+  - **Type the fault where it happens.** `AIClient` raises
+    `AIResponseFormatError` (`consensus/ai_response.py`) at its parse sites,
+    because a gateway answering HTTP 200 with an HTML body or
+    `{"error": ...}` instead of `choices` otherwise surfaces as a bare
+    `KeyError` and gets reported to the user as a Consensus bug.
+  `models.ConfigurationError` (a `ValueError` subclass) marks "this
+  deployment is set up wrong" — `Moderator._get_client` raises it for an
+  entity with no `ai_config`. **Add new failure modes to the classifier, not
+  to the notice wording.** The notices live in `turns._SKIP_NOTICES`, keyed
+  by kind, and the toast wording in `static/turn-notices.js` is keyed by the
+  `error_kind` the result carries.
 - **`helpers.post_notice` is how a notice reaches the transcript.** It appends
   the in-memory `Message` first and wraps the `db.add_message` in try/except.
   That ordering is the point: when the DB is what failed, an unguarded write
-  raised a *second* exception out of the handler and the user saw nothing.
+  raised a *second* exception out of the handler and the user saw nothing. It
+  returns `(message, persisted)`, and on a failed write appends
+  `UNSAVED_NOTICE_SUFFIX` to the content — a notice that silently vanishes on
+  reload is the same silent failure one step later. Callers surface the flag
+  as `notice_unsaved`.
 - **`conclude_discussion` returns `conclusion_error`** and posts a system
   notice; `ConsensusApp.conclude_discussion` merges the key into `get_state()`
   and the frontend toasts it. The discussion still concludes — deliberately;
-  an expensive session must not be left half-ended.
+  an expensive session must not be left half-ended. The `try` spans generation
+  *and* two persistence steps, so the notice is chosen by how far it got: a
+  `synthesis_shown` flag picks `_CONCLUSION_NOT_SAVED_NOTICE` over
+  `_CONCLUSION_FAILURE_NOTICE`, because "could not be generated" is simply
+  false when the synthesis is sitting directly above the notice.
+  `mediate` posts an equivalent notice — a toast alone is gone in four seconds
+  and left no trace of the intervention the user asked for.
 - **A failed Triage recommendation is never presented as a recommendation.**
-  Both failure paths in `run_triage_recommender` (exception, and a moderator
-  with no `ai_config`) go through `_record_recommender_failure`, which writes
-  `recommender_error` + empty `recommendations` + the
-  `RECOMMENDER_FALLBACK_METHOD` fallback together. The function returns the
-  detail string; `generate_ai_turn` appends it to the recommend-phase message,
-  and `TriageConfirmHandler` prefixes its prompts with it. A later success
-  pops `recommender_error`, so retries do not leave stale warnings.
+  This is the one the review caught: the first fix wrapped
+  `MethodRecommender.recommend` in a `try`, but `recommend` caught everything
+  itself and returned a *non-empty* stand-in (`open_discussion`, confidence
+  0.5), so the new handler was unreachable and the crash still reached users
+  as a considered 50%-confidence pick. **`recommend` now raises
+  `RecommenderError`** — for provider failures, unparseable replies, and an
+  all-excluded catalog — and callers own the fallback. Both failure paths in
+  `run_triage_recommender` (exception, and a moderator with no `ai_config`)
+  go through `_record_recommender_failure`, which writes `recommender_error`
+  + empty `recommendations` + `RECOMMENDER_FALLBACK_METHOD` together. Key
+  resolution and client construction are *inside* the `try`, and the `finally`
+  close is itself guarded: a raise from either used to escape into
+  `generate_ai_turn`'s handler, which discards the moderator's
+  already-generated, not-yet-persisted characterization. A later success pops
+  `recommender_error`.
   `TriageConfirmHandler.process_response` validates a backticked choice
-  against the **whole registry** when the shortlist is empty, so the notice's
-  "name the method you want" is actually actionable.
+  against `selectable_method_names()` when the shortlist is empty — the
+  registry **minus `_EXCLUDED_METHODS`**, since choosing `triage` routes the
+  group into the blocked-switch recovery dialog rather than starting a
+  discussion. The same helper renders the candidate list into the moderator's
+  prompt, so "name the method you want" is actionable rather than a guess.
+- **Non-UI consumers were dropping the error too.** `mcp_server.run_discussion`
+  now returns `conclusion_error` as its own field and matches the synthesis on
+  `MessageRole.MODERATOR` — the #71 failure notice contains the words "Final
+  Synthesis", so the old substring scan handed automated callers the error
+  text *as* the synthesis. `evaluation/runner` sets `result.error` instead of
+  silently recording the last moderator message as a successful conclusion.
+- **Every new result key has a consumer.** `error_kind`, `notice_unsaved`,
+  `conclusion_error` and `recommender_error` are each read by production code,
+  not only by tests. A key that only tests read is a contract nobody honours —
+  `error_kind` was exactly that until the toast started branching on it.
 - **`tests/test_evidence_flow.py` now uses `open_discussion`** for its fake
   phase method. It used `double_crux`, which really has a tracked `test_crux`
   phase, so the stub was indistinguishable from the real method and the
-  monkeypatches proved nothing (verified: repointing them at a module that
-  intercepts nothing used to leave the file green, and now fails).
+  monkeypatches proved nothing.
 - Golden rule 5 was confirmed satisfied for these paths: retries with
   exponential backoff live one layer down in `ai_client._post_with_retry`
   (`MAX_RETRIES`, `RETRY_BASE_DELAY`), so the flow layer sees only exhausted
   failures.
 
+**Testing lesson worth keeping.** The unreachable-#72 defect stayed green
+because the tests patched `MethodRecommender.recommend` with
+`AsyncMock(side_effect=...)` — asserting a raising contract the real class did
+not have. `tests/test_flow_error_classification.py` drives the **real**
+recommender against a failing client for exactly this reason. When a test
+mocks the thing it is supposed to be testing the behaviour of, it proves
+nothing; prefer mocking one layer further out (the `AIClient`).
+
 Flow-package coverage went 89% → 97%; `conclusion.py` 59% → 100%. `mediate`,
 the `reassign_turn` wrapper, moderator-summary cost attribution and the
 turn/complete-turn guard branches now have tests
 (`tests/test_flow_moderator_actions.py`); the error contracts are in
-`tests/test_flow_error_visibility.py` and
+`tests/test_flow_error_visibility.py`,
+`tests/test_flow_error_classification.py` and
 `tests/test_flow_triage_recommender.py`.
 
 ## Open work
@@ -132,17 +184,24 @@ flow API changes — that is the point of the pin.
 `_run_triage_recommender` became `run_triage_recommender` when the split gave
 it a second consumer across a module boundary (`turns` → `method_switch`).
 
+**Two further slices came out of the error-visibility work**, both because the
+additions pushed a previously-compliant file over the limit — refactor at the
+moment you cross it, not later: `consensus/ai_response.py` (73) holds the pure
+completion-body parsing helpers lifted out of `ai_client.py` (455 → 472), and
+`consensus/static/turn-notices.js` (34) holds the skip-notice wording lifted
+out of `discussion-actions.js` (475 → 494).
+
 **Still over the limit** (`find consensus -name '*.py' | xargs wc -l | sort -rn`):
 
 | Lines | File |
 |------:|------|
 | 1277 | `consensus/tools_document.py` |
 | 1227 | `consensus/server.py` |
-| 1187 | `consensus/app.py` |
+| 1200 | `consensus/app.py` |
 | 784 | `consensus/auth.py` |
-| 772 | `consensus/moderator.py` |
-| 702 | `consensus/mcp_server.py` |
-| 671 | `consensus/evaluation/runner.py` |
+| 775 | `consensus/moderator.py` |
+| 710 | `consensus/mcp_server.py` |
+| 679 | `consensus/evaluation/runner.py` |
 | 666 | `consensus/tools_memory.py` |
 | 628 | `consensus/desktop.py` |
 | 614 | `consensus/tools_python.py` |

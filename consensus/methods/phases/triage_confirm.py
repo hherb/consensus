@@ -34,6 +34,24 @@ def _recommendation_block(state: dict, lines: str) -> str:
     return _RECOMMENDER_FAILURE_LINE.format(detail=detail) + "\n" + lines
 
 
+def selectable_method_names() -> set[str]:
+    """Return every method the group may choose in the confirm phase.
+
+    The whole registry minus the non-recommendable meta-methods: choosing
+    ``triage`` here would route the group into the blocked-switch recovery
+    dialog rather than starting a discussion.  Shared by the prompt and
+    ``process_response`` so the list the moderator is shown is exactly the
+    list that will be accepted (issue #72).
+    """
+    from .. import list_methods
+    from ..recommender import _EXCLUDED_METHODS
+
+    return {
+        m["name"] for m in list_methods()
+        if m["name"] not in _EXCLUDED_METHODS
+    }
+
+
 class TriageConfirmHandler(PhaseHandler):
     """Phase 3: Group confirms method selection."""
 
@@ -50,6 +68,7 @@ class TriageConfirmHandler(PhaseHandler):
 
     def get_system_prompt(self, entity: Entity,
                           discussion: Discussion) -> str:
+        """Describe the confirm phase and the shortlist under review."""
         state = discussion.method_state
         recs = state.get("recommendations", [])
         rec_text = "\n".join(
@@ -73,6 +92,11 @@ class TriageConfirmHandler(PhaseHandler):
 
     def get_turn_prompt(self, entity: Entity,
                         discussion: Discussion) -> str:
+        """Ask this entity to confirm or override the recommendation.
+
+        The moderator gets the deciding prompt; everyone else is asked for
+        feedback on the shortlist.
+        """
         state = discussion.method_state
         recs = state.get("recommendations", [])
         rec_text = "\n".join(
@@ -85,9 +109,19 @@ class TriageConfirmHandler(PhaseHandler):
 
         if entity.id == discussion.moderator_id:
             # The moderator makes the final selection, so it must know the
-            # "recommendation" it is about to rubber-stamp is a fallback.
-            failure = (f"{rec_text}\n\n"
-                       if state.get("recommender_error") else "")
+            # "recommendation" it is about to rubber-stamp is a fallback —
+            # and, since there is then no shortlist, which names it may
+            # actually pick from.  Asking it to "name the method you want"
+            # without showing the candidates is not an actionable
+            # instruction (issue #72).
+            failure = ""
+            if state.get("recommender_error"):
+                candidates = ", ".join(
+                    f"`{n}`" for n in sorted(selectable_method_names()))
+                failure = (
+                    f"{rec_text}\n\n"
+                    f"Choose from: {candidates}\n\n"
+                )
             return (
                 f"{failure}"
                 "Review the participants' feedback on the method "
@@ -119,13 +153,12 @@ class TriageConfirmHandler(PhaseHandler):
         recs = state.get("recommendations", [])
         valid_names = {r["method_name"] for r in recs}
         if not valid_names:
-            # The recommender failed, so there is no shortlist to validate
-            # against — but the failure notice asks the group to name the
-            # method they want, and that has to be actionable (issue #72).
-            # Widen to the whole registry rather than accepting anything.
-            from .. import list_methods
-
-            valid_names = {m["name"] for m in list_methods()}
+            # No shortlist to validate against — whatever the reason (the
+            # classifier failed, or it was never run).  The failure notice
+            # asks the group to name the method they want, and that has to
+            # be actionable (issue #72), so widen to the registry rather
+            # than accepting anything.
+            valid_names = selectable_method_names()
 
         chosen = None
         # Pattern: `method_name` in backticks

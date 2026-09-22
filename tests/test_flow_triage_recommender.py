@@ -217,3 +217,115 @@ class TestTriageConfirmHonoursExplicitChoice:
             disc, "Let us use `deliberative_telepathy`.")
 
         assert chosen == "open_discussion"
+
+
+class TestTriageConfirmModeratorBranch:
+    """The moderator is the entity whose choice actually sticks.
+
+    ``process_response`` writes ``chosen_method`` only for the moderator,
+    so the moderator branch of ``get_turn_prompt`` is the one where "do not
+    rubber-stamp a fallback" has to hold.  The earlier tests drove a
+    non-moderator entity and therefore only covered the ``else`` branch.
+    """
+
+    def _state_with_failure(self) -> dict:
+        return {
+            "recommendations": [],
+            "recommended_method": "open_discussion",
+            "recommender_error": "HTTP 401: Invalid API key",
+        }
+
+    def test_moderator_prompt_names_the_failure(self, discussion_with_entities):
+        from consensus.methods.phases.triage_confirm import TriageConfirmHandler
+
+        disc = discussion_with_entities
+        disc.method_state = self._state_with_failure()
+
+        turn = TriageConfirmHandler().get_turn_prompt(disc.moderator, disc)
+
+        assert "HTTP 401: Invalid API key" in turn
+        assert "FAILED" in turn
+
+    def test_moderator_prompt_lists_the_names_it_may_pick(
+        self, discussion_with_entities,
+    ):
+        """"Name the method you want" is only actionable with a list.
+
+        With no shortlist the moderator was asked for a registry name it
+        had never been shown; every name offered must also be one
+        ``process_response`` accepts.
+        """
+        from consensus.methods.phases.triage_confirm import (
+            TriageConfirmHandler, selectable_method_names,
+        )
+
+        disc = discussion_with_entities
+        disc.method_state = self._state_with_failure()
+
+        turn = TriageConfirmHandler().get_turn_prompt(disc.moderator, disc)
+
+        assert "Choose from:" in turn
+        for name in selectable_method_names():
+            assert f"`{name}`" in turn
+        assert "`triage`" not in turn
+
+    def test_moderator_prompt_is_clean_when_the_classifier_ran(
+        self, discussion_with_entities,
+    ):
+        """Guard against over-correction: success carries no warning."""
+        from consensus.methods.phases.triage_confirm import TriageConfirmHandler
+
+        disc = discussion_with_entities
+        disc.method_state = {
+            "recommendations": [{
+                "method_name": "delphi", "display_name": "Delphi",
+                "confidence": 0.9, "reasoning": "Forecasting fit.",
+            }],
+            "recommended_method": "delphi",
+        }
+
+        turn = TriageConfirmHandler().get_turn_prompt(disc.moderator, disc)
+
+        assert "FAILED" not in turn
+        assert "Choose from:" not in turn
+        assert "delphi" in turn
+
+
+class TestTriageIsNotSelectable:
+    """Widening the whitelist must not make the meta-method selectable.
+
+    ``triage`` is in the registry but excluded from recommendation, and
+    selecting it here routes the group into the blocked-switch recovery
+    dialog instead of starting a discussion.
+    """
+
+    def test_triage_is_rejected_and_falls_back(self, discussion_with_entities):
+        from consensus.methods.phases.triage_confirm import TriageConfirmHandler
+
+        disc = discussion_with_entities
+        disc.method_state = {
+            "recommendations": [],
+            "recommended_method": "open_discussion",
+            "recommender_error": "HTTP 401: Invalid API key",
+        }
+
+        TriageConfirmHandler().process_response(
+            "Let us run `triage` again.", disc.moderator, disc)
+
+        assert disc.method_state["chosen_method"] == "open_discussion"
+
+    def test_a_real_method_is_still_honoured(self, discussion_with_entities):
+        """The exclusion must not narrow the whitelist to nothing."""
+        from consensus.methods.phases.triage_confirm import TriageConfirmHandler
+
+        disc = discussion_with_entities
+        disc.method_state = {
+            "recommendations": [],
+            "recommended_method": "open_discussion",
+            "recommender_error": "HTTP 401: Invalid API key",
+        }
+
+        TriageConfirmHandler().process_response(
+            "We will use `premortem`.", disc.moderator, disc)
+
+        assert disc.method_state["chosen_method"] == "premortem"

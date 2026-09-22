@@ -213,6 +213,14 @@ async def run_case_condition(
 
             # --- Conclude ---
             conclude_result = await app.conclude_discussion()
+            # A failed synthesis must not produce a successful-looking eval
+            # row: without this the fallback below records the last
+            # moderator message as the conclusion and leaves ``error``
+            # unset (golden rule 6, issue #71).
+            if conclude_result.get("conclusion_error"):
+                result.error = (
+                    f"Conclusion failed: {conclude_result['conclusion_error']}"
+                )
 
             # Extract conclusion from the last moderator message
             for msg in reversed(app.discussion.messages):

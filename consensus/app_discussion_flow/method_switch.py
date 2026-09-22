@@ -101,19 +101,24 @@ async def run_triage_recommender(
         return _record_recommender_failure(
             state, _NO_AI_CONFIG_DETAIL.format(name=moderator_entity.name))
 
-    api_key = key_resolver(
-        moderator_entity.ai_config.provider_id,
-        "",  # env var looked up by resolver
-    )
-    ai_client = AIClient(
-        base_url=moderator_entity.ai_config.base_url,
-        api_key=api_key,
-    )
-    provider = {"model": moderator_entity.ai_config.model}
-
-    recommender = MethodRecommender()
+    # Client construction is inside the try with the call itself: a bad
+    # provider_id or base_url raises here, and letting that escape would
+    # bubble into generate_ai_turn's handler, which discards the
+    # moderator's already-generated, not-yet-persisted characterization
+    # and reports the whole turn as failed (issue #72 follow-up).
+    ai_client = None
     try:
-        recs = await recommender.recommend(
+        api_key = key_resolver(
+            moderator_entity.ai_config.provider_id,
+            "",  # env var looked up by resolver
+        )
+        ai_client = AIClient(
+            base_url=moderator_entity.ai_config.base_url,
+            api_key=api_key,
+        )
+        provider = {"model": moderator_entity.ai_config.model}
+
+        recs = await MethodRecommender().recommend(
             topic=discussion.topic,
             answer_type="",
             method_catalog=list_methods(),
@@ -122,7 +127,7 @@ async def run_triage_recommender(
             additional_context=characterization,
         )
         state["recommendations"] = [r.to_dict() for r in recs]
-        state["recommended_method"] = recs[0].method_name if recs else None
+        state["recommended_method"] = recs[0].method_name
         # Clear a failure recorded by an earlier attempt, so a retry that
         # succeeds does not leave a stale warning in the prompts.
         state.pop("recommender_error", None)
@@ -131,7 +136,16 @@ async def run_triage_recommender(
         logger.exception("Triage recommender call failed")
         return _record_recommender_failure(state, describe_flow_error(e))
     finally:
-        await ai_client.close()
+        if ai_client is not None:
+            # Cleanup must not be able to fail a turn that already
+            # succeeded, nor mask the failure being reported above.
+            try:
+                await ai_client.close()
+            except Exception:
+                logger.warning(
+                    "Could not close the recommender AI client for "
+                    "discussion %s", discussion.id, exc_info=True,
+                )
 
 
 def switch_discussion_method(

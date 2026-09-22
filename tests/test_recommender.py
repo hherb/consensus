@@ -38,7 +38,7 @@ class TestMethodRecommendation:
 
 
 from consensus.methods.recommender import (
-    MethodRecommender, _EXCLUDED_METHODS, ANSWER_TYPES,
+    MethodRecommender, RecommenderError, _EXCLUDED_METHODS, ANSWER_TYPES,
 )
 
 
@@ -123,18 +123,29 @@ class TestParseRecommendations:
         assert len(results) == 1
         assert results[0].method_name == "delphi"
 
-    def test_returns_fallback_on_invalid_json(self):
+    def test_raises_on_invalid_json(self):
+        """Unparseable output is reported, not replaced by a default (#72)."""
         recommender = MethodRecommender()
-        results = recommender._parse_response("not json at all", num_recommendations=3)
-        assert len(results) == 1
-        assert results[0].method_name == "open_discussion"
-        assert results[0].fit_factors == ["fallback"]
+        with pytest.raises(RecommenderError, match="not a recommendation"):
+            recommender._parse_response("not json at all", num_recommendations=3)
 
-    def test_returns_fallback_on_missing_recommendations_key(self):
+    def test_raises_on_missing_recommendations_key(self):
         recommender = MethodRecommender()
-        results = recommender._parse_response('{"other": []}', num_recommendations=3)
-        assert len(results) == 1
-        assert results[0].method_name == "open_discussion"
+        with pytest.raises(RecommenderError, match="not a recommendation"):
+            recommender._parse_response('{"other": []}', num_recommendations=3)
+
+    def test_error_quotes_the_offending_reply(self):
+        """The user needs to see *what* the model said to act on it."""
+        recommender = MethodRecommender()
+        with pytest.raises(RecommenderError, match="I refuse"):
+            recommender._parse_response("I refuse", num_recommendations=3)
+
+    def test_raises_when_every_entry_is_malformed(self):
+        """A well-formed envelope full of junk is still a failure."""
+        recommender = MethodRecommender()
+        raw = json.dumps({"recommendations": [{"no_method_name": 1}]})
+        with pytest.raises(RecommenderError, match="malformed"):
+            recommender._parse_response(raw, num_recommendations=3)
 
     def test_clamps_confidence(self):
         recommender = MethodRecommender()
@@ -147,7 +158,6 @@ class TestParseRecommendations:
 
 
 from unittest.mock import AsyncMock, MagicMock
-from consensus.methods.recommender import _fallback_recommendation
 
 
 class TestRecommendAsync:
@@ -174,7 +184,13 @@ class TestRecommendAsync:
         mock_client.complete.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_recommend_returns_fallback_on_error(self):
+    async def test_recommend_raises_on_provider_error(self):
+        """A failed classifier must not masquerade as a recommendation.
+
+        Returning a stand-in here is what let a crashed classifier reach
+        the user as a considered "50% confidence" pick (issue #72); the
+        caller now decides what to fall back to and has to say so.
+        """
         recommender = MethodRecommender()
         mock_client = MagicMock()
         mock_client.complete = AsyncMock(side_effect=Exception("API down"))
@@ -183,11 +199,45 @@ class TestRecommendAsync:
         catalog = [{"name": "ach", "display_name": "ACH", "description": "d", "phases": []}]
         provider = {"model": "test-model"}
 
-        results = await recommender.recommend(
-            "test topic", "test type", catalog, mock_client, provider,
-        )
-        assert len(results) == 1
-        assert results[0].method_name == "open_discussion"
+        with pytest.raises(RecommenderError, match="API down"):
+            await recommender.recommend(
+                "test topic", "test type", catalog, mock_client, provider,
+            )
+
+    @pytest.mark.asyncio
+    async def test_recommend_raises_on_unparseable_reply(self):
+        """A reply that is not a recommendation object is a failure.
+
+        Previously indistinguishable from "the model recommended Open
+        Discussion", which is the same #72 confusion one layer down.
+        """
+        recommender = MethodRecommender()
+        mock_response = MagicMock()
+        mock_response.content = "I'm afraid I can't help with that."
+        mock_client = MagicMock()
+        mock_client.complete = AsyncMock(return_value=mock_response)
+        mock_client.close = AsyncMock()
+
+        catalog = [{"name": "ach", "display_name": "ACH", "description": "d", "phases": []}]
+        with pytest.raises(RecommenderError, match="not a recommendation"):
+            await recommender.recommend(
+                "t", "a", catalog, mock_client, {"model": "m"},
+            )
+
+    @pytest.mark.asyncio
+    async def test_recommend_raises_when_catalog_has_no_candidates(self):
+        """An all-excluded catalog yields no recommendation, not a default."""
+        recommender = MethodRecommender()
+        mock_client = MagicMock()
+        mock_client.complete = AsyncMock()
+
+        with pytest.raises(RecommenderError, match="No recommendable methods"):
+            await recommender.recommend(
+                "t", "a", [{"name": "triage", "display_name": "T",
+                            "description": "d", "phases": []}],
+                mock_client, {"model": "m"},
+            )
+        mock_client.complete.assert_not_called()
 
 
 def _insert_pricing_row(tmp_db, model_id: str, supported: str) -> None:

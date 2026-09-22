@@ -1,10 +1,12 @@
 """Shared helpers for active-discussion flow — pass detection, error
-description, cost, and turn-order bookkeeping.
+classification and description, transcript notices, cost, and turn-order
+bookkeeping.
 
-These are the leaf of the ``app_discussion_flow`` package: pure (or
-near-pure) functions with no dependency on the other flow modules, so
-submissions, turns, method switching and conclusion can all import from
-here without a cycle.
+These are the leaf of the ``app_discussion_flow`` package: they depend on
+no other flow module, so submissions, turns, method switching and
+conclusion can all import from here without a cycle.  Most are pure;
+``post_notice`` is the deliberate exception, since a notice has to reach
+both the in-memory transcript and the database to be of any use.
 """
 
 import json
@@ -28,25 +30,78 @@ _FORMATTED_PASS_RE = re.compile(r"^.+ passed this round\.$")
 _ERROR_DETAIL_LENGTH = 200
 
 
-def is_provider_error(e: Exception) -> bool:
-    """Report whether ``e`` came from the provider or the network.
+#: ``error_kind`` values attached to failed-turn results.  ``provider``
+#: means the model or the network misbehaved, ``config`` means this
+#: deployment is set up wrong, and ``internal`` means Consensus itself has
+#: a bug.  Only the last warrants asking the user to file a report, which
+#: is the whole point of separating them (issue #74).
+ERROR_KIND_PROVIDER = "provider"
+ERROR_KIND_CONFIG = "config"
+ERROR_KIND_INTERNAL = "internal"
+
+
+def _unwrap_flow_error(e: Exception) -> Exception:
+    """Return the underlying fault behind a wrapper exception.
+
+    ``RecommenderError`` exists to give the classifier a single failure
+    type, but it says nothing about *whose* fault the failure was — that
+    is carried by its cause.  Classifying and describing the wrapper
+    instead of the cause would report a provider outage as a Consensus
+    bug and hide the provider's own error message.
+    """
+    from ..methods.recommender import RecommenderError
+
+    if isinstance(e, RecommenderError) and e.__cause__ is not None:
+        return e.__cause__
+    return e
+
+
+def classify_flow_error(e: Exception) -> str:
+    """Classify a caught flow error as provider, config, or internal.
 
     ``generate_ai_turn`` and friends wrap large blocks that include method
     handlers, serialisation and DB writes, so a bare ``except Exception``
-    cannot honestly call every failure an "API error" — a ``KeyError`` in a
-    phase handler is a bug in Consensus and telling the user their provider
-    failed sends debugging the wrong way (issue #74).  Everything listed
-    here is outside our control; everything else is internal.
+    cannot honestly call every failure an "API error" — a ``KeyError`` in
+    a phase handler is a bug in Consensus, and telling the user their
+    provider failed sends debugging the wrong way (issue #74).
 
-    ``StructuredOutputError`` counts as a provider fault: it is raised when
-    the model will not satisfy a forced tool call.
+    ``internal`` is the default bucket, and the classification is a
+    heuristic rather than a partition: a provider fault can only be
+    recognised here if it arrives as one of the listed types.  That is why
+    ``AIClient`` raises :class:`~consensus.ai_response.AIResponseFormatError`
+    at its parse sites — a gateway answering HTTP 200 with an HTML body
+    would otherwise surface as an internal ``KeyError``.
+
+    ``ConnectionError`` is listed rather than its ``OSError`` base on
+    purpose: a tool reading a missing file also raises ``OSError``, and
+    that is our problem, not the provider's.
+
+    Returns one of :data:`ERROR_KIND_PROVIDER`, :data:`ERROR_KIND_CONFIG`
+    or :data:`ERROR_KIND_INTERNAL`.
     """
+    from ..ai_response import AIResponseFormatError
+    from ..methods.recommender import RecommenderError
+    from ..models import ConfigurationError
     from ..structured_output import StructuredOutputError
 
-    return isinstance(
+    e = _unwrap_flow_error(e)
+    if isinstance(e, ConfigurationError):
+        return ERROR_KIND_CONFIG
+    if isinstance(
         e, (httpx.HTTPError, TimeoutError, ConnectionError,
-            StructuredOutputError),
-    )
+            AIResponseFormatError, StructuredOutputError, RecommenderError),
+    ):
+        return ERROR_KIND_PROVIDER
+    return ERROR_KIND_INTERNAL
+
+
+def is_provider_error(e: Exception) -> bool:
+    """Report whether ``e`` came from the provider or the network.
+
+    Thin predicate over :func:`classify_flow_error` for the call sites
+    that only need "is this our fault or theirs".
+    """
+    return classify_flow_error(e) == ERROR_KIND_PROVIDER
 
 
 def describe_internal_error(e: Exception) -> str:
@@ -54,28 +109,41 @@ def describe_internal_error(e: Exception) -> str:
 
     The exception type is always named: ``str(KeyError("positions"))`` is
     just ``'positions'``, which on its own tells a user nothing about what
-    went wrong (issue #74).
+    went wrong (issue #74).  The message is truncated on the same budget
+    as a provider body, since an internal exception can carry a very long
+    repr and it has to stay readable in a transcript notice and a toast.
     """
-    message = str(e).strip()
+    message = str(e).strip()[:_ERROR_DETAIL_LENGTH].strip()
     name = type(e).__name__
     return f"{name}: {message}" if message else name
 
 
 def describe_flow_error(e: Exception) -> str:
-    """Describe any caught flow error, provider or internal.
+    """Describe any caught flow error, whatever its kind.
 
     Dispatches to :func:`describe_turn_error` for provider/network faults
-    (which know how to dig the actionable message out of an HTTP response
+    (which knows how to dig the actionable message out of an HTTP response
     body) and to :func:`describe_internal_error` otherwise.
     """
-    return (describe_turn_error(e) if is_provider_error(e)
-            else describe_internal_error(e))
+    unwrapped = _unwrap_flow_error(e)
+    if is_provider_error(unwrapped):
+        return describe_turn_error(unwrapped)
+    return describe_internal_error(unwrapped)
+
+
+#: Appended to a notice that could not be written to the database, so the
+#: reader knows the transcript they are looking at will not match the one
+#: they get back after a reload (golden rule 6).
+UNSAVED_NOTICE_SUFFIX = (
+    "\n\n*(This notice could not be saved — it will disappear when the "
+    "discussion is reloaded. See the application log for details.)*"
+)
 
 
 def post_notice(
     discussion: Discussion, db: Database, entity: Entity, content: str,
     role: MessageRole = MessageRole.SYSTEM,
-) -> Message:
+) -> tuple[Message, bool]:
     """Append a notice to the transcript and persist it best-effort.
 
     Notices exist to make a caught error visible (golden rule 6), so the
@@ -83,7 +151,15 @@ def post_notice(
     being reported *is* a database failure, ``db.add_message`` raises too
     and would otherwise replace the user-facing notice with a second
     exception escaping the handler (issue #74).  The in-memory message is
-    appended first and always returned; a failed write is logged only.
+    appended first and always returned.
+
+    A failed write is logged *and* disclosed in the notice itself, because
+    the transcript is the durable record the rest of the flow relies on:
+    silently showing a notice that vanishes on the next reload would just
+    move the silent failure one step later.
+
+    Returns:
+        The appended message and whether it was persisted.
     """
     msg = Message(
         entity_id=entity.id, entity_name=entity.name,
@@ -100,7 +176,9 @@ def post_notice(
             "Could not persist the %s notice for discussion %s",
             role.value, discussion.id,
         )
-    return msg
+        msg.content += UNSAVED_NOTICE_SUFFIX
+        return msg, False
+    return msg, True
 
 
 def describe_turn_error(e: Exception) -> str:

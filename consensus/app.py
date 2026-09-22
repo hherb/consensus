@@ -869,7 +869,14 @@ class ConsensusApp:
         return result
 
     async def conclude_discussion(self) -> dict:
-        """End the discussion, generating a final synthesis if the moderator is AI."""
+        """End the discussion, generating a final synthesis if the moderator is AI.
+
+        Returns the full state dict, carrying ``conclusion_error`` when the
+        synthesis could not be generated or could not be recorded. The
+        frontend feeds the return value straight to ``onStateUpdate``, so
+        the key has to ride along on the state rather than be returned
+        beside it (golden rule 6, issue #71).
+        """
         self._cancel_pending_user_inputs()
         result = await app_discussion_flow.conclude_discussion(
             self.discussion, self.moderator, self.db, self.db.pricing,

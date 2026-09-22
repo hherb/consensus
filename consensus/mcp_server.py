@@ -20,6 +20,7 @@ from typing import Any, Optional
 
 from .config import get_db_path, load_env
 from .database import Database
+from .models import MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -569,15 +570,21 @@ class ConsensusMCPServer:
             logger.warning("run_discussion timed out after 10 minutes")
 
         # Conclude
+        conclusion_error = ""
         try:
-            await app.conclude_discussion()
+            conclude_result = await app.conclude_discussion()
+            conclusion_error = conclude_result.get("conclusion_error", "")
         except Exception as e:
             logger.warning("Conclusion failed: %s", e)
+            conclusion_error = str(e) or type(e).__name__
 
-        # Extract results
+        # Extract results.  Match on the moderator's own message rather
+        # than any message containing "Final Synthesis": the #71 failure
+        # notice contains that phrase too, and returning it here would
+        # hand an automated caller the error text as the synthesis.
         conclusion = ""
         for m in reversed(app.discussion.messages):
-            if "Final Synthesis" in m.content:
+            if m.role == MessageRole.MODERATOR and "Final Synthesis" in m.content:
                 conclusion = m.content
                 break
 
@@ -588,6 +595,7 @@ class ConsensusMCPServer:
             "discussion_id": app.discussion.id,
             "topic": topic,
             "conclusion": conclusion,
+            "conclusion_error": conclusion_error,
             "total_messages": len(app.discussion.messages),
             "total_cost": round(total_cost, 6),
             "participants": participant_names,

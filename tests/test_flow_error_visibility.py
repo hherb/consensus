@@ -359,3 +359,154 @@ class TestTurnErrorWording:
         assert result["error_kind"] == "internal"
         assert "database is locked" in result["content"]
         assert disc.messages[-1].content == result["content"]
+
+
+class TestTurnErrorKindReachesTheCaller:
+    """``error_kind`` exists so the UI can word the toast honestly (#74).
+
+    The transcript bubble and the toast are different surfaces; the toast
+    is what the user reads while a discussion is running, and it used to
+    say "API error" for every skip regardless of cause.
+    """
+
+    @pytest.mark.asyncio
+    async def test_config_error_is_its_own_kind(
+        self, monkeypatch, tmp_db, discussion_with_entities
+    ):
+        """A missing model assignment is a setting to fix, not a bug."""
+        from consensus.models import ConfigurationError
+
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = TestTurnErrorWording()._moderator(
+            disc, tmp_db,
+            error=ConfigurationError("Alice has no AI configuration"))
+
+        result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
+
+        assert result["error_kind"] == "config"
+        assert "configuration problem" in result["content"]
+        # The one thing it must not do is tell the user to file a bug.
+        assert "please report it" not in result["content"]
+        assert "API error" not in result["content"]
+
+    @pytest.mark.asyncio
+    async def test_malformed_provider_body_is_not_blamed_on_consensus(
+        self, monkeypatch, tmp_db, discussion_with_entities
+    ):
+        """HTTP 200 with a junk body is the provider's fault (#74 inverted).
+
+        Before ``AIClient`` typed its parse failures this surfaced as a
+        bare ``KeyError`` and the transcript asked the user to report a
+        Consensus bug for someone else's broken gateway.
+        """
+        from consensus.ai_client import AIResponseFormatError
+
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = TestTurnErrorWording()._moderator(
+            disc, tmp_db,
+            error=AIResponseFormatError(
+                "gpt-x returned a response with no usable choices"))
+
+        result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
+
+        assert result["error_kind"] == "provider"
+        assert "API error" in result["content"]
+        assert "fault in Consensus" not in result["content"]
+
+    @pytest.mark.asyncio
+    async def test_unsaved_notice_is_flagged_to_the_caller(
+        self, monkeypatch, tmp_db, discussion_with_entities
+    ):
+        """A notice that will vanish on reload must say so.
+
+        Showing it now and losing it silently just moves the silent
+        failure one reload later (golden rule 6).
+        """
+        from consensus.app_discussion_flow.helpers import UNSAVED_NOTICE_SUFFIX
+
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = TestTurnErrorWording()._moderator(
+            disc, tmp_db, resp=TestTurnErrorWording()._response())
+        tmp_db.add_message = MagicMock(
+            side_effect=sqlite3.OperationalError("database is locked"))
+
+        result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
+
+        assert result["notice_unsaved"] is True
+        assert UNSAVED_NOTICE_SUFFIX in result["content"]
+
+    @pytest.mark.asyncio
+    async def test_saved_notice_carries_no_unsaved_flag(
+        self, monkeypatch, tmp_db, discussion_with_entities
+    ):
+        """Guard against over-correction."""
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = TestTurnErrorWording()._moderator(
+            disc, tmp_db,
+            error=_http_status_error(429, _INSUFFICIENT_BALANCE))
+
+        result = await generate_ai_turn(disc, moderator, tmp_db, pricing)
+
+        assert "notice_unsaved" not in result
+        rows = tmp_db.get_messages(disc.id)
+        assert any("Insufficient balance" in r["content"] for r in rows)
+
+
+class TestSummaryFailureDetail:
+    """``complete_turn``'s summary path wraps more than the provider call.
+
+    It also covers a cost lookup and a DB write, so a failure there must
+    be described by kind rather than assumed to be an API error — the same
+    defect as #74, in a sibling function that had no coverage at all.
+    """
+
+    def _moderator_with_failing_summary(self, disc, tmp_db, error):
+        from consensus.moderator import Moderator
+
+        moderator = Moderator(disc, tmp_db)
+        moderator.generate_summary = AsyncMock(side_effect=error)
+        moderator.prompt_id = MagicMock(return_value=None)
+        return moderator
+
+    @pytest.mark.asyncio
+    async def test_internal_summary_failure_names_its_type(
+        self, tmp_db, discussion_with_entities
+    ):
+        from consensus.app_discussion_flow import complete_turn
+
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = self._moderator_with_failing_summary(
+            disc, tmp_db, KeyError("storyboard"))
+
+        result = await complete_turn(
+            disc, moderator, tmp_db, pricing, lambda: {})
+
+        assert "Summary generation failed" in result["error"]
+        assert "KeyError: 'storyboard'" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_provider_summary_failure_quotes_the_body(
+        self, tmp_db, discussion_with_entities
+    ):
+        from consensus.app_discussion_flow import complete_turn
+
+        disc = discussion_with_entities
+        disc.id = tmp_db.create_discussion(disc.topic, disc.moderator_id)
+        pricing = PricingCache(tmp_db.conn, tmp_db._lock)
+        moderator = self._moderator_with_failing_summary(
+            disc, tmp_db, _http_status_error(429, _INSUFFICIENT_BALANCE))
+
+        result = await complete_turn(
+            disc, moderator, tmp_db, pricing, lambda: {})
+
+        assert "HTTP 429: Insufficient balance" in result["error"]
