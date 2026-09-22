@@ -1,7 +1,7 @@
 # HANDOVER
 
 _Last updated: 2026-09-23. `main` is at **v2.0.0** (released 2026-07-20) with
-the suite at **2872 passing**. The discussion-method review & repair campaign
+the suite at **2882 passing**. The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
 (PyPI `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
@@ -25,7 +25,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site deployed to Cloudflare Pages at https://consensus-ai.org/ |
-| Tests | 2872 passing (`uv run pytest`, ~55 s) |
+| Tests | 2882 passing (`uv run pytest`, ~60 s) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)

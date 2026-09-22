@@ -1051,11 +1051,32 @@ class ConsensusApp:
                            mime_type: str, discussion_id: int = 0,
                            source_url: str = "",
                            title: str = "") -> dict:
-        """Add a document via file upload or URL fetch."""
+        """Add a document via file upload or URL fetch.
+
+        Args:
+            filename: Name of the uploaded file, used to pick a parser.
+            content_bytes: The raw document bytes.
+            mime_type: The declared content type.
+            discussion_id: Discussion to attach the document to; 0 means
+                the current one.
+            source_url: Where the bytes came from, for a URL add.
+            title: Overrides the auto-detected title when given.
+
+        Returns:
+            The document metadata dict from ``ingest_document``, or
+            ``{"error": ...}`` when the bytes cannot be turned into a
+            document — the same shape ``add_document_from_url`` already
+            returns and the frontend already renders. Parsing raises a
+            typed ``DocumentError`` as of issue #78, and without this the
+            human upload path turned a scanned PDF or a .docx into an
+            HTTP 500 and "Upload failed (500)" in the UI, losing the hint
+            the error carries (golden rule 6).
+        """
         if not self.documents_available:
             return {"error": "Document tools not available (missing sqlite-vec)"}
 
         from .tools_document import ingest_document
+        from .tools_document.errors import DocumentError
         from .tools_memory import EmbeddingClient
 
         embed_client = EmbeddingClient(self.db)
@@ -1066,17 +1087,25 @@ class ConsensusApp:
             discussion_id=discussion_id or (self.discussion.id if self.discussion else 0),
         )
 
-        result = await ingest_document(
-            app=self, db=self.db, embed_client=embed_client,
-            content_bytes=content_bytes,
-            filename=filename,
-            mime_type=mime_type,
-            discussion_id=discussion_id or (self.discussion.id if self.discussion else 0),
-            source_url=source_url or None,
-            title=title or None,
-            source_type="url" if source_url else "upload",
-            context=context,
-        )
+        try:
+            result = await ingest_document(
+                app=self, db=self.db, embed_client=embed_client,
+                content_bytes=content_bytes,
+                filename=filename,
+                mime_type=mime_type,
+                discussion_id=discussion_id or (self.discussion.id if self.discussion else 0),
+                source_url=source_url or None,
+                title=title or None,
+                source_type="url" if source_url else "upload",
+                context=context,
+            )
+        except DocumentError as e:
+            # str() on a DocumentError includes its hint, which is the
+            # actionable half of the message ("OCR the file before adding
+            # it", "only PDF, HTML, plain text and markdown can be
+            # ingested").
+            logger.warning("Document ingestion failed for %s: %s", filename, e)
+            return {"error": str(e)}
         return result
 
     async def add_document_from_url(self, url: str, discussion_id: int = 0,

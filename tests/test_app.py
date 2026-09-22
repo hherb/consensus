@@ -661,3 +661,57 @@ class TestConsultExpert:
         assert result["is_error"] is False
         msgs = app.db.get_messages(app.discussion.id)
         assert any("Expert analysis result" in m["content"] for m in msgs)
+
+
+class TestAddDocument:
+    """The human upload path must report parse failures, not raise them.
+
+    ``ingest_document`` raises a typed ``DocumentError`` for a scanned PDF,
+    a .docx or a JPEG (issue #78). ``add_document`` had no handler, so the
+    exception escaped the aiohttp request handler as an HTTP 500 and the
+    Documents panel showed "Upload failed (500)" — losing the whole hint
+    apparatus on the one path a human actually uses (golden rule 6).
+    """
+
+    @pytest.mark.asyncio
+    async def test_unparseable_upload_returns_an_error_dict(self, app, caplog):
+        """A binary upload comes back as {"error": ...}, hint included."""
+        app.documents_available = True
+
+        with caplog.at_level("WARNING"):
+            result = await app.add_document(
+                filename="photo.jpg",
+                content_bytes=b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 64,
+                mime_type="image/jpeg",
+            )
+
+        assert "error" in result
+        assert "binary" in result["error"]
+        # str(DocumentError) appends the hint, which is the actionable half.
+        assert "only PDF, HTML, plain text and markdown" in result["error"]
+        assert "photo.jpg" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_scanned_pdf_upload_returns_the_ocr_hint(self, app):
+        """The flagship #78 message reaches the human uploader too."""
+        from tests.document_helpers import image_only_pdf_bytes
+
+        app.documents_available = True
+        result = await app.add_document(
+            filename="scan.pdf", content_bytes=image_only_pdf_bytes(),
+            mime_type="application/pdf",
+        )
+
+        assert "OCR the file before adding it" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_a_parseable_upload_still_succeeds(self, app):
+        """The guard must not swallow the success path."""
+        app.documents_available = True
+        result = await app.add_document(
+            filename="notes.md", content_bytes=b"# Notes\n\nBody text.",
+            mime_type="text/markdown",
+        )
+
+        assert "error" not in result
+        assert result["document_id"] > 0
