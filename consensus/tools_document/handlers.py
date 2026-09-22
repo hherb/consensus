@@ -10,9 +10,7 @@ from .constants import (
     PASSAGE_PREVIEW_CHARS, RAG_TOP_K, SUMMARY_CHUNK_LIMIT,
     SUMMARY_SNIPPET_CHARS,
 )
-from .embedding import (
-    _embed_document_chunks, _embedding_docs, _rank_by_similarity, _spawn_background,
-)
+from .embedding import _embedding_docs, _rank_by_similarity, _spawn_embedding_pass
 from .ingestion import ingest_document
 from .llm import _call_interpretation_llm
 from .parsing import fetch_url_content
@@ -329,8 +327,7 @@ async def _doc_ask_handler(
         # leaving the document permanently stuck as "still being indexed".
         if embed_client and doc_id not in _embedding_docs:
             _embedding_docs.add(doc_id)
-            _spawn_background(
-                _embed_document_chunks(doc_id, db, embed_client))
+            _spawn_embedding_pass(doc_id, db, embed_client)
         total_chunks = len(db.get_document_chunks(doc_id))
         embedded = total_chunks - unembedded
         return ToolResult(

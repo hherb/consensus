@@ -7,7 +7,7 @@ from typing import Optional
 from ..tools import ToolContext
 from .chunking import chunk_document
 from .constants import SUMMARY_EXCERPT_CHARS
-from .embedding import _embed_document_chunks, _embedding_docs, _spawn_background
+from .embedding import _embedding_docs, _spawn_embedding_pass
 from .llm import _call_interpretation_llm
 from .parsing import extract_sections, parse_document
 
@@ -112,7 +112,7 @@ async def ingest_document(
     # Background embedding
     if embed_client and doc_id not in _embedding_docs:
         _embedding_docs.add(doc_id)
-        _spawn_background(_embed_document_chunks(doc_id, db, embed_client))
+        _spawn_embedding_pass(doc_id, db, embed_client)
 
     return {
         "document_id": doc_id,

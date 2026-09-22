@@ -1,10 +1,10 @@
 """Embedding maths and the background chunk-embedding pass."""
 
-import asyncio
 import logging
 import math
 import struct
 
+from ..background import spawn_background
 from .constants import DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE
 
 logger = logging.getLogger(__name__)
@@ -55,18 +55,22 @@ def _rank_by_similarity(
 # Background embedding task
 # ---------------------------------------------------------------------------
 
-# Hold strong references to background tasks: asyncio only keeps a weak
-# reference, so an un-retained task can be garbage-collected mid-run.
-_background_tasks: set = set()
-
-
-def _spawn_background(coro) -> None:
-    """Schedule a fire-and-forget coroutine, retaining a strong reference."""
-    task = asyncio.create_task(coro)
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-
 _embedding_docs: set[int] = set()  # track documents currently being embedded
+
+
+def _spawn_embedding_pass(doc_id: int, db, embed_client) -> None:
+    """Schedule the background embedding pass for one document.
+
+    Args:
+        doc_id: Id of the document whose chunks should be embedded.
+        db: Database handle passed through to the embedding pass.
+        embed_client: Embedding client passed through to the embedding pass.
+    """
+    spawn_background(
+        _embed_document_chunks(doc_id, db, embed_client),
+        f"embed document {doc_id}",
+    )
+
 
 def _split_into_sub_chunks(text: str, size: int = DEFAULT_CHUNK_SIZE,
                            overlap: int = DEFAULT_CHUNK_OVERLAP

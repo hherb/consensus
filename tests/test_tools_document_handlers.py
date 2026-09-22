@@ -536,8 +536,8 @@ class TestDocAskHandler:
     ):
         spawned = []
         patch_where_defined(
-            monkeypatch, handlers._doc_ask_handler, "_spawn_background",
-            lambda coro: (spawned.append(coro), coro.close()),
+            monkeypatch, handlers._doc_ask_handler, "_spawn_embedding_pass",
+            lambda doc_id, db, embed_client: spawned.append(doc_id),
         )
         try:
             await handlers._doc_ask_handler(
@@ -561,8 +561,8 @@ class TestDocAskHandler:
         """
         spawned = []
         patch_where_defined(
-            monkeypatch, handlers._doc_ask_handler, "_spawn_background",
-            lambda coro: (spawned.append(coro), coro.close()),
+            monkeypatch, handlers._doc_ask_handler, "_spawn_embedding_pass",
+            lambda doc_id, db, embed_client: spawned.append(doc_id),
         )
         embedding._embedding_docs.add(doc_id)
         try:

@@ -244,8 +244,15 @@ class TestEmbedDocumentChunks:
 class TestSpawnBackground:
     @pytest.mark.asyncio
     async def test_reference_is_held_while_running_and_released_when_done(self):
-        """asyncio only weakly references tasks; an unretained one can vanish."""
+        """asyncio only weakly references tasks; an unretained one can vanish.
+
+        ``embedding.py`` no longer has its own spawn helper (issue #78 task
+        1): scheduling now goes through the shared ``consensus.background``
+        module, so this test exercises that module directly.
+        """
         import asyncio
+
+        from consensus import background
 
         started = asyncio.Event()
         release = asyncio.Event()
@@ -254,15 +261,15 @@ class TestSpawnBackground:
             started.set()
             await release.wait()
 
-        embedding._spawn_background(work())
+        background.spawn_background(work(), "test reference is held")
         await asyncio.wait_for(started.wait(), timeout=1.0)
-        running = [t for t in embedding._background_tasks if not t.done()]
+        running = [t for t in background._background_tasks if not t.done()]
         assert running, "task was not retained while running"
 
         release.set()
         await asyncio.wait_for(asyncio.gather(*running), timeout=1.0)
         await asyncio.sleep(0)
-        assert not any(t in embedding._background_tasks for t in running)
+        assert not any(t in background._background_tasks for t in running)
 
 
 # ---------------------------------------------------------------------------
@@ -466,8 +473,8 @@ class TestIngestDocument:
     ):
         spawned = []
         patch_where_defined(
-            monkeypatch, ingestion.ingest_document, "_spawn_background",
-            lambda coro: (spawned.append(coro), coro.close()),
+            monkeypatch, ingestion.ingest_document, "_spawn_embedding_pass",
+            lambda doc_id, db, embed_client: spawned.append(doc_id),
         )
         result = await ingestion.ingest_document(
             app=None, db=tmp_db, embed_client=FakeEmbedClient(), content_bytes=b"body",
@@ -491,8 +498,8 @@ class TestIngestDocument:
         """
         spawned = []
         patch_where_defined(
-            monkeypatch, ingestion.ingest_document, "_spawn_background",
-            lambda coro: (spawned.append(coro), coro.close()),
+            monkeypatch, ingestion.ingest_document, "_spawn_embedding_pass",
+            lambda doc_id, db, embed_client: spawned.append(doc_id),
         )
         # Pre-claim every id this ingestion could be assigned.
         claimed = set(range(1, 50))
@@ -510,7 +517,8 @@ class TestIngestDocument:
     async def test_no_embedding_without_an_embed_client(self, tmp_db, monkeypatch):
         spawned = []
         patch_where_defined(
-            monkeypatch, ingestion.ingest_document, "_spawn_background", spawned.append,
+            monkeypatch, ingestion.ingest_document, "_spawn_embedding_pass",
+            lambda doc_id, db, embed_client: spawned.append(doc_id),
         )
         await ingestion.ingest_document(
             app=None, db=tmp_db, embed_client=None, content_bytes=b"body",
