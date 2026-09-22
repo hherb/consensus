@@ -1034,3 +1034,73 @@ async def test_doc_summary_map_reduce_reports_interpretation_failure(
     assert "test-model" in result.content
     assert "TestProvider" in result.content
     assert "rate limited" in result.content
+
+
+# ---------------------------------------------------------------------------
+# Task 11: chapters carry their subsections
+# ---------------------------------------------------------------------------
+
+from consensus.tools_document.validation import chapter_range
+
+_SECTIONS = [
+    {"header": "Intro", "level": 1, "from_char": 0, "to_char": 10},
+    {"header": "Methods", "level": 2, "from_char": 10, "to_char": 20},
+    {"header": "Participants", "level": 3, "from_char": 20, "to_char": 30},
+    {"header": "Procedure", "level": 3, "from_char": 30, "to_char": 40},
+    {"header": "Results", "level": 2, "from_char": 40, "to_char": 50},
+]
+
+
+def test_chapter_range_includes_subsections():
+    """A chapter runs to the next header at the same or a higher level."""
+    start, end, subs = chapter_range(_SECTIONS, 1, 50)
+    assert (start, end) == (10, 40)
+    assert subs == ["Participants", "Procedure"]
+
+
+def test_chapter_range_of_a_leaf_section_is_unchanged():
+    """A section with no subsections keeps its original extent."""
+    start, end, subs = chapter_range(_SECTIONS, 2, 50)
+    assert (start, end) == (20, 30)
+    assert subs == []
+
+
+def test_chapter_range_of_the_last_section_runs_to_the_end():
+    """Nothing follows, so the chapter ends with the document."""
+    start, end, subs = chapter_range(_SECTIONS, 4, 50)
+    assert (start, end) == (40, 50)
+
+
+def test_chapter_range_of_a_top_level_section_spans_everything_under_it():
+    """Level 1 swallows every deeper header that follows."""
+    start, end, subs = chapter_range(_SECTIONS, 0, 50)
+    assert (start, end) == (0, 50)
+    assert "Methods" in subs
+
+
+@pytest.mark.asyncio
+async def test_doc_get_chapter_returns_subsection_text(tmp_db):
+    """The handler returns the whole chapter, not just its preamble."""
+    import json
+    markdown = (
+        "# Intro\n\nIntro body.\n\n"
+        "## Methods\n\nMethods preamble.\n\n"
+        "### Participants\n\nTwelve adults.\n\n"
+        "## Results\n\nResults body.\n"
+    )
+    from consensus.tools_document.parsing import extract_sections
+    doc_id = tmp_db.add_document(
+        filename="k.md", title="K", summary="", mime_type="text/markdown",
+        source_type="upload", source_url=None, markdown=markdown,
+        char_count=len(markdown),
+        sections_json=json.dumps(extract_sections(markdown)),
+    )
+    context = ToolContext(caller_entity_id=0, discussion_id=0)
+    result = await handlers._doc_get_chapter_handler(
+        {"document_id": doc_id, "header": "Methods"},
+        context, tmp_db, None, None,
+    )
+    assert "Methods preamble." in result.content
+    assert "Twelve adults." in result.content
+    assert "Results body." not in result.content
+    assert result.metadata["subsections_included"] == ["Participants"]

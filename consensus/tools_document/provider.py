@@ -101,8 +101,9 @@ def create_document_provider(db, app=None) -> PythonToolProvider:
         ToolDefinition(
             name="doc_get_chapter",
             description=(
-                "Get the full text of a named section/chapter. "
-                "Uses fuzzy matching on the header text."
+                "Get the full text of a named section/chapter, including "
+                "all of its subsections. Uses fuzzy matching on the header "
+                "text."
             ),
             parameters=_DOC_CHAPTER_SCHEMA,
         ),

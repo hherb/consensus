@@ -47,3 +47,37 @@ def resolve_range(from_char: int, to_char: int, length: int) -> tuple[int, int]:
         raise ValueError(
             f"from_char {from_char} must be before to_char {resolved_to}")
     return from_char, resolved_to
+
+
+def chapter_range(
+    sections: list[dict], index: int, length: int,
+) -> tuple[int, int, list[str]]:
+    """Return the full extent of the chapter at *index*, with its
+    subsections.
+
+    ``extract_sections`` ends every section at the next header of *any*
+    level, because that is what chunk boundaries need.  A chapter is a
+    different question: ``## Methods`` includes its ``### Participants``,
+    so the range runs to the next header at the same or a higher level
+    (issue #78 defect 10).  The stored ``sections_json`` is untouched, so
+    no document needs re-ingesting.
+
+    Args:
+        sections: The document's sections, in document order.
+        index: Which section to treat as the chapter head.
+        length: The document's character count, used when the chapter runs
+            to the end.
+
+    Returns:
+        ``(from_char, to_char, subsection_headers)``.
+    """
+    head = sections[index]
+    from_char = head["from_char"]
+    subsections: list[str] = []
+
+    for following in sections[index + 1:]:
+        if following["level"] <= head["level"]:
+            return from_char, following["from_char"], subsections
+        subsections.append(following["header"])
+
+    return from_char, length, subsections

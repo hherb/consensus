@@ -14,7 +14,7 @@ from .errors import DocumentError
 from .handlers_rag import _reindex_message
 from .ingestion import ingest_document
 from .parsing import fetch_url_content
-from .validation import resolve_range
+from .validation import chapter_range, resolve_range
 
 logger = logging.getLogger(__name__)
 
@@ -303,17 +303,20 @@ async def _doc_get_chapter_handler(
     # Find best matching section (case-insensitive substring match)
     header_lower = header.lower()
     best_match = None
-    best_score = 0
-    for s in sections:
+    best_index = None
+    best_score = 0.0
+    for i, s in enumerate(sections):
         s_lower = s["header"].lower()
         if s_lower == header_lower:
             best_match = s
+            best_index = i
             break
         elif header_lower in s_lower or s_lower in header_lower:
             score = len(header_lower) / max(len(s_lower), 1)
             if score > best_score:
                 best_score = score
                 best_match = s
+                best_index = i
 
     if not best_match:
         available = ", ".join(s["header"] for s in sections[:AVAILABLE_HEADERS_HINT])
@@ -322,18 +325,24 @@ async def _doc_get_chapter_handler(
             is_error=True,
         )
 
-    # Get the section text
+    # Get the chapter text: the whole section including its subsections,
+    # not just the preamble up to the next header of any level (issue #78
+    # defect 10).
     markdown = db.get_document_markdown(int(doc_id))
     if markdown is None:
         return ToolResult(content="Could not read document text.", is_error=True)
 
-    text = markdown[best_match["from_char"]:best_match["to_char"]]
+    from_char, to_char, subsections = chapter_range(
+        sections, best_index, len(markdown),
+    )
+    text = markdown[from_char:to_char]
 
     return ToolResult(
         content=text,
         metadata={
             "header": best_match["header"],
-            "from_char": best_match["from_char"],
-            "to_char": best_match["to_char"],
+            "from_char": from_char,
+            "to_char": to_char,
+            "subsections_included": subsections,
         },
     )
