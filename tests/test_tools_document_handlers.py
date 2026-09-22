@@ -62,11 +62,15 @@ def doc_id(tmp_db, discussion_id):
 
 @pytest.fixture
 def fake_llm(monkeypatch):
-    """Replace the interpretation LLM and record every prompt pair."""
+    """Replace the interpretation LLM and record every call it receives.
+
+    ``app`` is recorded alongside the prompts so a test can assert which
+    object the provider factory actually forwarded to the handler.
+    """
     calls = []
 
     async def _fake(app, context, system_prompt, user_prompt):
-        calls.append({"system": system_prompt, "user": user_prompt})
+        calls.append({"app": app, "system": system_prompt, "user": user_prompt})
         return f"answer {len(calls)}"
 
     patch_where_defined(
@@ -546,6 +550,32 @@ class TestDocAskHandler:
             embedding._embedding_docs.discard(doc_id)
 
     @pytest.mark.asyncio
+    async def test_rekick_is_suppressed_while_a_pass_is_already_running(
+        self, tmp_db, ctx, doc_id, monkeypatch,
+    ):
+        """Repeated doc_ask calls must not stack embedding passes.
+
+        The AI retries doc_ask every turn while a document is indexing, so
+        without the ``_embedding_docs`` guard each retry spawns another pass
+        over the same chunks.
+        """
+        spawned = []
+        patch_where_defined(
+            monkeypatch, handlers._doc_ask_handler, "_spawn_background",
+            lambda coro: (spawned.append(coro), coro.close()),
+        )
+        embedding._embedding_docs.add(doc_id)
+        try:
+            result = await handlers._doc_ask_handler(
+                {"document_id": doc_id, "question": "why?"},
+                ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), None,
+            )
+            assert spawned == []
+            assert "still being indexed" in result.content
+        finally:
+            embedding._embedding_docs.discard(doc_id)
+
+    @pytest.mark.asyncio
     async def test_embedding_outage_is_an_error(self, tmp_db, ctx, doc_id):
         embed_all(tmp_db, doc_id)
         result = await handlers._doc_ask_handler(
@@ -757,8 +787,40 @@ class TestCreateDocumentProvider:
         assert json.loads(result.content)["char_count"] == len(MARKDOWN)
 
     @pytest.mark.asyncio
-    async def test_handlers_receive_the_app_passed_to_the_factory(self, tmp_db, ctx):
+    async def test_handlers_receive_the_embed_client_and_app_from_the_factory(
+        self, tmp_db, ctx, doc_id, fake_llm, monkeypatch,
+    ):
+        """``_make_handler`` must forward every dependency, in the right order.
+
+        ``doc_ask`` is the only tool that needs ``db``, ``embed_client`` and
+        ``app`` at once, so it is the one call that pins the whole wiring.
+        Dropping either of the last two arguments leaves other tests green.
+        """
+        embed_all(tmp_db, doc_id, vector=(1.0, 0.0))
+
+        class OneClient:
+            """Embedding client shared by the factory and this test."""
+
+            def __init__(self, db) -> None:
+                self.calls = []
+
+            async def embed(self, text):
+                self.calls.append(text)
+                return [1.0, 0.0]
+
+        monkeypatch.setattr(
+            "consensus.tools_memory.EmbeddingClient", OneClient,
+        )
         app = FakeApp(tmp_db)
-        provider = create_document_provider(tmp_db, app)
-        result = await provider.execute("doc_list", {}, ctx)
-        assert not result.is_error
+        # app.py calls this by keyword: create_document_provider(self.db, app=self)
+        provider = create_document_provider(tmp_db, app=app)
+
+        result = await provider.execute(
+            "doc_ask", {"document_id": doc_id, "question": "why?"}, ctx,
+        )
+
+        assert not result.is_error, result.content
+        # The embed_client reached the handler: the question was embedded.
+        assert json.loads(result.content)["answer"] == "answer 1"
+        # The app reached the handler: the interpretation LLM saw it.
+        assert fake_llm[0]["app"] is app

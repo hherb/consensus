@@ -269,8 +269,11 @@ class TestChunkDocument:
     def test_zero_overlap_starts_each_chunk_at_a_paragraph(self):
         md = "\n\n".join("p" * 200 for _ in range(4))
         chunks = chunking.chunk_document(md, chunk_size=300, overlap=0)
-        for chunk in chunks[1:]:
-            assert not chunk["content"].startswith("p" * 200 + "\n\n")
+        # With chunk_size=300 no two 200-char paragraphs fit together, so each
+        # chunk must be exactly one paragraph and carry no overlap prefix.
+        assert len(chunks) == 4
+        for chunk in chunks:
+            assert chunk["content"] == "p" * 200
 
     def test_section_header_is_taken_from_the_chunk_start_offset(self):
         md = "# Alpha\n\n" + "a" * 100 + "\n\n## Beta\n\n" + "b" * 100

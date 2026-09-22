@@ -42,6 +42,15 @@ import create_document_provider`` keeps working exactly as before the split.
 Internal helpers are reached through their defining submodule — which is also
 where tests must aim ``patch()``, since patching a name on this facade would
 not intercept the reference the code actually uses.
+
+The same trap runs the other way, and it is the direction that bites the
+*public* names. Before the split there was one binding per name, so a single
+``patch("consensus.tools_document.ingest_document")`` caught every caller.
+Now ``ingest_document`` is bound three times — here, in ``ingestion``, and in
+``handlers`` — and ``from x import y`` copies the reference, so patching any
+one of them leaves the other two pointing at the original. Patch the binding
+in the module that will *execute* (``document_helpers.patch_where_defined``
+resolves it from an anchor function), or patch every binding.
 """
 
 from .chunking import chunk_document

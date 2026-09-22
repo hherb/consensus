@@ -88,9 +88,13 @@ async def _embed_single_chunk(chunk, doc_id: int, db, embed_client) -> bool:
 
     On context-length errors the chunk is split into smaller overlapping
     sub-chunks which are stored as new DB rows and embedded individually.
-    Transient errors are retried with exponential backoff.
 
-    Returns True on success, False if all attempts exhausted.
+    There is no retry loop here: transient errors arrive already exhausted,
+    because ``tools_memory.EmbeddingClient.embed`` retries with exponential
+    backoff (``EMBED_MAX_RETRIES``) before raising. A caller that supplies a
+    plain embedding client therefore gets no retries at all.
+
+    Returns True on success, False once the embedding client gives up.
     """
     from ..tools_memory import EmbeddingContextLengthError
 

@@ -2,9 +2,14 @@
 
 import json
 import logging
+from typing import Optional
 
 from ..tools import ToolContext, ToolResult
-from .constants import MIN_SIMILARITY_THRESHOLD, RAG_TOP_K, SUMMARY_CHUNK_LIMIT
+from .constants import (
+    AVAILABLE_HEADERS_HINT, LIBRARY_SEARCH_LIMIT, MIN_SIMILARITY_THRESHOLD,
+    PASSAGE_PREVIEW_CHARS, RAG_TOP_K, SUMMARY_CHUNK_LIMIT,
+    SUMMARY_SNIPPET_CHARS,
+)
 from .embedding import (
     _embed_document_chunks, _embedding_docs, _rank_by_similarity, _spawn_background,
 )
@@ -13,6 +18,14 @@ from .llm import _call_interpretation_llm
 from .parsing import fetch_url_content
 
 logger = logging.getLogger(__name__)
+
+
+def _summary_snippet(summary: Optional[str]) -> str:
+    """Truncate a document summary for a one-line ``doc_list`` entry."""
+    text = summary or ""
+    if len(text) > SUMMARY_SNIPPET_CHARS:
+        return text[:SUMMARY_SNIPPET_CHARS] + "..."
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +104,8 @@ async def _doc_list_handler(
             return ToolResult(content="No documents in the library yet.")
 
         scored = _rank_by_similarity(
-            query_vec, rows, limit=20, threshold=MIN_SIMILARITY_THRESHOLD,
+            query_vec, rows, limit=LIBRARY_SEARCH_LIMIT,
+            threshold=MIN_SIMILARITY_THRESHOLD,
         )
 
         # Group by document
@@ -118,8 +132,7 @@ async def _doc_list_handler(
         )
         lines = [f"Library search for '{query}' — {len(docs_list)} document(s):\n"]
         for doc in docs_list:
-            _summary = doc["summary"] or ""
-            summary_snippet = (_summary[:150] + "...") if len(_summary) > 150 else _summary
+            summary_snippet = _summary_snippet(doc["summary"])
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars, "
                 f"score: {doc['best_score']:.2f})\n    {summary_snippet}"
@@ -133,8 +146,7 @@ async def _doc_list_handler(
             return ToolResult(content="No documents in the library.")
         lines = [f"All documents in library — {len(docs)} total:\n"]
         for doc in docs:
-            _summary = doc["summary"] or ""
-            summary_snippet = (_summary[:150] + "...") if len(_summary) > 150 else _summary
+            summary_snippet = _summary_snippet(doc["summary"])
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars)\n"
                 f"    {summary_snippet}"
@@ -148,8 +160,7 @@ async def _doc_list_handler(
             return ToolResult(content="No documents attached to this discussion.")
         lines = [f"Documents in this discussion — {len(docs)} total:\n"]
         for doc in docs:
-            _summary = doc["summary"] or ""
-            summary_snippet = (_summary[:150] + "...") if len(_summary) > 150 else _summary
+            summary_snippet = _summary_snippet(doc["summary"])
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars)\n"
                 f"    {summary_snippet}"
@@ -269,7 +280,7 @@ async def _doc_get_chapter_handler(
                 best_match = s
 
     if not best_match:
-        available = ", ".join(s["header"] for s in sections[:10])
+        available = ", ".join(s["header"] for s in sections[:AVAILABLE_HEADERS_HINT])
         return ToolResult(
             content=f"No section matching '{header}'. Available: {available}",
             is_error=True,
@@ -378,7 +389,10 @@ async def _doc_ask_handler(
     result = {
         "answer": answer,
         "relevant_passages": [
-            {"text": p["text"][:500], "from_char": p["from_char"], "to_char": p["to_char"]}
+            {
+                "text": p["text"][:PASSAGE_PREVIEW_CHARS],
+                "from_char": p["from_char"], "to_char": p["to_char"],
+            }
             for p in passages
         ],
     }

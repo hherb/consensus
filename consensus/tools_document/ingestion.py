@@ -6,6 +6,7 @@ from typing import Optional
 
 from ..tools import ToolContext
 from .chunking import chunk_document
+from .constants import SUMMARY_EXCERPT_CHARS
 from .embedding import _embed_document_chunks, _embedding_docs, _spawn_background
 from .llm import _call_interpretation_llm
 from .parsing import extract_sections, parse_document
@@ -29,9 +30,19 @@ async def ingest_document(
     generate_summary: bool = True,
     context: Optional[ToolContext] = None,
 ) -> dict:
-    """Parse, chunk, store, and embed a document.
+    """Parse, chunk and store a document, then *schedule* its embedding.
 
-    Returns document metadata dict.
+    Returns a document metadata dict, or ``{"error": ...}`` if parsing yielded
+    no text. Note three things the signature does not show:
+
+    - Embedding is fire-and-forget: on return the chunks are stored but not
+      yet embedded, which is why ``_doc_ask_handler`` has a "still being
+      indexed" branch. The document id is added to the module-level
+      ``_embedding_docs`` marker set for the duration of that pass.
+    - ``generate_summary`` is silently a no-op unless both ``context`` and
+      ``app`` are supplied; without them the document is stored with an empty
+      summary and no error is reported.
+    - The document is associated with ``discussion_id`` when one is given.
     """
     # Parse to markdown
     markdown = parse_document(content_bytes, filename, mime_type)
@@ -55,8 +66,7 @@ async def ingest_document(
     summary = ""
     if generate_summary and context and app:
         try:
-            # Use first 3000 chars for summary generation
-            excerpt = markdown[:3000]
+            excerpt = markdown[:SUMMARY_EXCERPT_CHARS]
             summary = await _call_interpretation_llm(
                 app, context,
                 system_prompt=(

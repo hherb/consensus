@@ -56,8 +56,12 @@ class FakeAIClient:
     last_call: dict = {}
     closed = False
 
-    def __init__(self, base_url: str = "", api_key: str = "") -> None:
-        FakeAIClient.last_init = {"base_url": base_url, "api_key": api_key}
+    def __init__(
+        self, base_url: str = "", api_key: str = "", timeout: float = 0.0,
+    ) -> None:
+        FakeAIClient.last_init = {
+            "base_url": base_url, "api_key": api_key, "timeout": timeout,
+        }
         FakeAIClient.closed = False
 
     async def complete(self, **kwargs):
@@ -84,6 +88,8 @@ class FakeApp:
 
 
 class FakePdfPage:
+    """Stand-in for a ``pdfplumber`` page with fixed extractable text."""
+
     def __init__(self, text) -> None:
         self._text = text
 
@@ -93,17 +99,22 @@ class FakePdfPage:
 
 
 class FakePdf:
+    """Stand-in for an opened ``pdfplumber`` document (a context manager)."""
+
     def __init__(self, pages) -> None:
         self.pages = pages
 
     def __enter__(self):
+        """Return self, mimicking ``pdfplumber.open``'s context manager."""
         return self
 
-    def __exit__(self, *exc) -> bool:
-        return False
+    def __exit__(self, *exc) -> None:
+        """Never suppress exceptions raised inside the ``with`` block."""
 
 
 class FakeHttpResponse:
+    """Stand-in for an ``httpx`` response carrying bytes and a content type."""
+
     def __init__(self, content: bytes, content_type: str) -> None:
         self.content = content
         self.headers = {"content-type": content_type}

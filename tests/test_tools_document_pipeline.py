@@ -6,6 +6,8 @@ ahead of the package split for issue #61. The database is a real
 :class:`~consensus.database.Database`; only the network edges are faked.
 """
 
+import sqlite3
+
 import pytest
 
 from consensus.tools_document import constants, embedding, ingestion, llm
@@ -186,7 +188,9 @@ class TestEmbedDocumentChunks:
             embedding._embedding_docs.discard(doc_id)
 
     @pytest.mark.asyncio
-    async def test_releases_the_in_progress_marker_on_failure(self, tmp_db, doc_with_chunks):
+    async def test_releases_the_in_progress_marker_when_every_chunk_fails(
+        self, tmp_db, doc_with_chunks,
+    ):
         doc_id, _ = doc_with_chunks
         embedding._embedding_docs.add(doc_id)
 
@@ -196,6 +200,32 @@ class TestEmbedDocumentChunks:
 
         try:
             await embedding._embed_document_chunks(doc_id, tmp_db, Exploding())
+            assert doc_id not in embedding._embedding_docs
+        finally:
+            embedding._embedding_docs.discard(doc_id)
+
+    @pytest.mark.asyncio
+    async def test_marker_is_released_when_the_pass_itself_raises(
+        self, tmp_db, doc_with_chunks,
+    ):
+        """The ``finally`` exists for a raise *before* the per-chunk loop.
+
+        A DB error in ``get_document_chunks`` would otherwise leave the
+        document marked "indexing" forever, and the re-kick guard in
+        ``_doc_ask_handler`` then refuses to ever start it again.
+        """
+        doc_id, _ = doc_with_chunks
+
+        class ExplodingDb:
+            def __getattr__(self, name):
+                raise sqlite3.OperationalError("database is locked")
+
+        embedding._embedding_docs.add(doc_id)
+        try:
+            with pytest.raises(sqlite3.OperationalError):
+                await embedding._embed_document_chunks(
+                    doc_id, ExplodingDb(), FakeEmbedClient([1.0]),
+                )
             assert doc_id not in embedding._embedding_docs
         finally:
             embedding._embedding_docs.discard(doc_id)
@@ -284,6 +314,8 @@ class TestCallInterpretationLlm:
         )
         assert FakeAIClient.last_call["model"] == "test-model"
         assert FakeAIClient.last_init["api_key"] == "resolved-key"
+        assert FakeAIClient.last_init["timeout"] == constants.LLM_TIMEOUT
+        assert FakeAIClient.last_call["temperature"] == constants.INTERPRETATION_TEMPERATURE
         assert app.resolved and app.resolved[0][1] == "TEST_API_KEY"
 
     @pytest.mark.asyncio
@@ -429,7 +461,9 @@ class TestIngestDocument:
         assert result["document_id"] > 0
 
     @pytest.mark.asyncio
-    async def test_embedding_is_spawned_once_per_document(self, tmp_db, monkeypatch):
+    async def test_ingestion_spawns_one_embedding_pass_and_marks_the_document(
+        self, tmp_db, monkeypatch,
+    ):
         spawned = []
         patch_where_defined(
             monkeypatch, ingestion.ingest_document, "_spawn_background",
@@ -444,6 +478,33 @@ class TestIngestDocument:
             assert result["document_id"] in embedding._embedding_docs
         finally:
             embedding._embedding_docs.discard(result["document_id"])
+
+    @pytest.mark.asyncio
+    async def test_no_second_pass_while_one_is_already_in_progress(
+        self, tmp_db, monkeypatch,
+    ):
+        """The ``_embedding_docs`` marker is the duplicate-spawn guard.
+
+        Without it, concurrent ingestion of the same document runs overlapping
+        passes over the same chunks, racing ``add_document_chunk`` /
+        ``delete_document_chunk`` for oversized chunks.
+        """
+        spawned = []
+        patch_where_defined(
+            monkeypatch, ingestion.ingest_document, "_spawn_background",
+            lambda coro: (spawned.append(coro), coro.close()),
+        )
+        # Pre-claim every id this ingestion could be assigned.
+        claimed = set(range(1, 50))
+        embedding._embedding_docs.update(claimed)
+        try:
+            await ingestion.ingest_document(
+                app=None, db=tmp_db, embed_client=FakeEmbedClient(),
+                content_bytes=b"body", filename="d.txt", mime_type="text/plain",
+            )
+            assert spawned == []
+        finally:
+            embedding._embedding_docs.difference_update(claimed)
 
     @pytest.mark.asyncio
     async def test_no_embedding_without_an_embed_client(self, tmp_db, monkeypatch):
