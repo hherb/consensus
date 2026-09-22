@@ -10,7 +10,8 @@ import json
 
 import pytest
 
-from consensus import tools_document as td
+from consensus.tools_document import chunking, constants, embedding, handlers, parsing
+from consensus.tools_document.provider import create_document_provider
 from consensus.tools import ToolContext
 
 from .document_helpers import (
@@ -43,7 +44,7 @@ def ctx(sample_ai_entity, discussion_id):
 @pytest.fixture
 def doc_id(tmp_db, discussion_id):
     """A stored, chunked document attached to the discussion."""
-    sections = td.extract_sections(MARKDOWN)
+    sections = parsing.extract_sections(MARKDOWN)
     new_id = tmp_db.add_document(
         filename="paper.md", title="Paper", summary="A short summary.",
         mime_type="text/markdown", source_type="text", source_url=None,
@@ -51,7 +52,7 @@ def doc_id(tmp_db, discussion_id):
         sections_json=json.dumps(sections),
     )
     tmp_db.add_discussion_document(discussion_id, new_id)
-    for chunk in td.chunk_document(MARKDOWN, chunk_size=60, overlap=0):
+    for chunk in chunking.chunk_document(MARKDOWN, chunk_size=60, overlap=0):
         tmp_db.add_document_chunk(
             new_id, chunk["chunk_index"], chunk["content"],
             chunk["from_char"], chunk["to_char"], chunk.get("section_header"),
@@ -69,7 +70,7 @@ def fake_llm(monkeypatch):
         return f"answer {len(calls)}"
 
     patch_where_defined(
-        monkeypatch, td._doc_ask_handler, "_call_interpretation_llm", _fake,
+        monkeypatch, handlers._doc_ask_handler, "_call_interpretation_llm", _fake,
     )
     return calls
 
@@ -81,20 +82,20 @@ def fake_llm(monkeypatch):
 class TestDocAddHandler:
     @pytest.mark.asyncio
     async def test_requires_url_or_text(self, tmp_db, ctx):
-        result = await td._doc_add_handler({}, ctx, tmp_db, None, None)
+        result = await handlers._doc_add_handler({}, ctx, tmp_db, None, None)
         assert result.is_error
         assert "url" in result.content and "text" in result.content
 
     @pytest.mark.asyncio
     async def test_blank_url_and_text_are_treated_as_absent(self, tmp_db, ctx):
-        result = await td._doc_add_handler(
+        result = await handlers._doc_add_handler(
             {"url": "  ", "text": " "}, ctx, tmp_db, None, None,
         )
         assert result.is_error
 
     @pytest.mark.asyncio
     async def test_inline_text_is_ingested_and_attached(self, tmp_db, ctx, discussion_id):
-        result = await td._doc_add_handler(
+        result = await handlers._doc_add_handler(
             {"text": "# Note\n\nSome content."}, ctx, tmp_db, None, None,
         )
         assert not result.is_error
@@ -108,7 +109,7 @@ class TestDocAddHandler:
 
     @pytest.mark.asyncio
     async def test_explicit_title_and_filename_are_honoured(self, tmp_db, ctx):
-        result = await td._doc_add_handler(
+        result = await handlers._doc_add_handler(
             {"text": "body", "title": "Chosen", "filename": "chosen.txt"},
             ctx, tmp_db, None, None,
         )
@@ -124,9 +125,9 @@ class TestDocAddHandler:
             return b"# Fetched\n\nbody", "page.html", "text/html"
 
         patch_where_defined(
-            monkeypatch, td._doc_add_handler, "fetch_url_content", fake_fetch,
+            monkeypatch, handlers._doc_add_handler, "fetch_url_content", fake_fetch,
         )
-        result = await td._doc_add_handler(
+        result = await handlers._doc_add_handler(
             {"url": "http://x.test/page.html"}, ctx, tmp_db, None, None,
         )
         stored = tmp_db.get_document(result.metadata["document_id"])
@@ -141,9 +142,9 @@ class TestDocAddHandler:
             raise RuntimeError("404 not found")
 
         patch_where_defined(
-            monkeypatch, td._doc_add_handler, "fetch_url_content", boom,
+            monkeypatch, handlers._doc_add_handler, "fetch_url_content", boom,
         )
-        result = await td._doc_add_handler(
+        result = await handlers._doc_add_handler(
             {"url": "http://x.test/gone"}, ctx, tmp_db, None, None,
         )
         assert result.is_error
@@ -158,9 +159,9 @@ class TestDocAddHandler:
             return b"   \n  ", "blank.txt", "text/plain"
 
         patch_where_defined(
-            monkeypatch, td._doc_add_handler, "fetch_url_content", fake_fetch,
+            monkeypatch, handlers._doc_add_handler, "fetch_url_content", fake_fetch,
         )
-        result = await td._doc_add_handler(
+        result = await handlers._doc_add_handler(
             {"url": "http://x.test/blank"}, ctx, tmp_db, None, None,
         )
         assert result.is_error
@@ -169,7 +170,7 @@ class TestDocAddHandler:
 
     @pytest.mark.asyncio
     async def test_content_is_json_matching_the_metadata(self, tmp_db, ctx):
-        result = await td._doc_add_handler({"text": "body"}, ctx, tmp_db, None, None)
+        result = await handlers._doc_add_handler({"text": "body"}, ctx, tmp_db, None, None)
         assert json.loads(result.content) == result.metadata
 
 
@@ -180,12 +181,12 @@ class TestDocAddHandler:
 class TestDocListHandler:
     @pytest.mark.asyncio
     async def test_empty_discussion_says_so(self, tmp_db, ctx):
-        result = await td._doc_list_handler({}, ctx, tmp_db, None, None)
+        result = await handlers._doc_list_handler({}, ctx, tmp_db, None, None)
         assert "No documents attached" in result.content
 
     @pytest.mark.asyncio
     async def test_lists_documents_of_the_current_discussion(self, tmp_db, ctx, doc_id):
-        result = await td._doc_list_handler({}, ctx, tmp_db, None, None)
+        result = await handlers._doc_list_handler({}, ctx, tmp_db, None, None)
         assert f"[ID {doc_id}] Paper" in result.content
         assert result.metadata == {"count": 1}
 
@@ -198,7 +199,7 @@ class TestDocListHandler:
             source_type="text", source_url=None, markdown="x", char_count=1,
             sections_json="[]",
         )
-        result = await td._doc_list_handler({}, ctx, tmp_db, None, None)
+        result = await handlers._doc_list_handler({}, ctx, tmp_db, None, None)
         assert "Other" not in result.content
 
     @pytest.mark.asyncio
@@ -208,7 +209,7 @@ class TestDocListHandler:
             source_type="text", source_url=None, markdown="x", char_count=1,
             sections_json="[]",
         )
-        result = await td._doc_list_handler(
+        result = await handlers._doc_list_handler(
             {"full_library": True}, ctx, tmp_db, None, None,
         )
         assert "Paper" in result.content and "Other" in result.content
@@ -216,7 +217,7 @@ class TestDocListHandler:
 
     @pytest.mark.asyncio
     async def test_empty_library_says_so(self, tmp_db, ctx):
-        result = await td._doc_list_handler(
+        result = await handlers._doc_list_handler(
             {"full_library": True}, ctx, tmp_db, None, None,
         )
         assert "No documents in the library." in result.content
@@ -231,7 +232,7 @@ class TestDocListHandler:
                 markdown="x", char_count=1, sections_json="[]",
             ),
         )
-        result = await td._doc_list_handler({}, ctx, tmp_db, None, None)
+        result = await handlers._doc_list_handler({}, ctx, tmp_db, None, None)
         assert "s" * 150 + "..." in result.content
         assert "s" * 151 not in result.content
 
@@ -245,7 +246,7 @@ class TestDocListHandler:
                 markdown="x", char_count=1, sections_json="[]",
             ),
         )
-        result = await td._doc_list_handler({}, ctx, tmp_db, None, None)
+        result = await handlers._doc_list_handler({}, ctx, tmp_db, None, None)
         assert "NoSummary" in result.content
 
     @pytest.mark.asyncio
@@ -253,7 +254,7 @@ class TestDocListHandler:
         self, tmp_db, ctx, doc_id,
     ):
         embed_all(tmp_db, doc_id, (1.0, 0.0))
-        result = await td._doc_list_handler(
+        result = await handlers._doc_list_handler(
             {"full_library": True, "query": "measurement"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), None,
         )
@@ -265,7 +266,7 @@ class TestDocListHandler:
     async def test_library_search_without_embeddings_says_the_library_is_empty(
         self, tmp_db, ctx, doc_id,
     ):
-        result = await td._doc_list_handler(
+        result = await handlers._doc_list_handler(
             {"full_library": True, "query": "anything"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), None,
         )
@@ -276,7 +277,7 @@ class TestDocListHandler:
         self, tmp_db, ctx, doc_id,
     ):
         embed_all(tmp_db, doc_id, (0.0, 1.0))
-        result = await td._doc_list_handler(
+        result = await handlers._doc_list_handler(
             {"full_library": True, "query": "orthogonal"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), None,
         )
@@ -286,7 +287,7 @@ class TestDocListHandler:
     async def test_embedding_outage_is_an_error_not_an_empty_result(
         self, tmp_db, ctx, doc_id,
     ):
-        result = await td._doc_list_handler(
+        result = await handlers._doc_list_handler(
             {"full_library": True, "query": "q"}, ctx, tmp_db,
             FakeEmbedClient(error=RuntimeError("ollama down")), None,
         )
@@ -301,19 +302,19 @@ class TestDocListHandler:
 class TestDocGetLengthHandler:
     @pytest.mark.asyncio
     async def test_document_id_is_required(self, tmp_db, ctx):
-        result = await td._doc_get_length_handler({}, ctx, tmp_db, None, None)
+        result = await handlers._doc_get_length_handler({}, ctx, tmp_db, None, None)
         assert result.is_error and "document_id is required" in result.content
 
     @pytest.mark.asyncio
     async def test_unknown_document_is_an_error(self, tmp_db, ctx):
-        result = await td._doc_get_length_handler(
+        result = await handlers._doc_get_length_handler(
             {"document_id": 4242}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "not found" in result.content
 
     @pytest.mark.asyncio
     async def test_returns_the_stored_character_count(self, tmp_db, ctx, doc_id):
-        result = await td._doc_get_length_handler(
+        result = await handlers._doc_get_length_handler(
             {"document_id": doc_id}, ctx, tmp_db, None, None,
         )
         assert json.loads(result.content)["char_count"] == len(MARKDOWN)
@@ -321,7 +322,7 @@ class TestDocGetLengthHandler:
 
     @pytest.mark.asyncio
     async def test_string_document_id_is_coerced(self, tmp_db, ctx, doc_id):
-        result = await td._doc_get_length_handler(
+        result = await handlers._doc_get_length_handler(
             {"document_id": str(doc_id)}, ctx, tmp_db, None, None,
         )
         assert not result.is_error
@@ -330,19 +331,19 @@ class TestDocGetLengthHandler:
 class TestDocGetTextHandler:
     @pytest.mark.asyncio
     async def test_document_id_is_required(self, tmp_db, ctx):
-        result = await td._doc_get_text_handler({}, ctx, tmp_db, None, None)
+        result = await handlers._doc_get_text_handler({}, ctx, tmp_db, None, None)
         assert result.is_error and "document_id is required" in result.content
 
     @pytest.mark.asyncio
     async def test_unknown_document_is_an_error(self, tmp_db, ctx):
-        result = await td._doc_get_text_handler(
+        result = await handlers._doc_get_text_handler(
             {"document_id": 4242}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "not found" in result.content
 
     @pytest.mark.asyncio
     async def test_default_range_returns_the_whole_document(self, tmp_db, ctx, doc_id):
-        result = await td._doc_get_text_handler(
+        result = await handlers._doc_get_text_handler(
             {"document_id": doc_id}, ctx, tmp_db, None, None,
         )
         assert result.content == MARKDOWN
@@ -350,7 +351,7 @@ class TestDocGetTextHandler:
 
     @pytest.mark.asyncio
     async def test_explicit_range_slices_the_markdown(self, tmp_db, ctx, doc_id):
-        result = await td._doc_get_text_handler(
+        result = await handlers._doc_get_text_handler(
             {"document_id": doc_id, "from_char": 2, "to_char": 14},
             ctx, tmp_db, None, None,
         )
@@ -359,7 +360,7 @@ class TestDocGetTextHandler:
 
     @pytest.mark.asyncio
     async def test_to_char_minus_one_means_end_of_document(self, tmp_db, ctx, doc_id):
-        result = await td._doc_get_text_handler(
+        result = await handlers._doc_get_text_handler(
             {"document_id": doc_id, "from_char": 10, "to_char": -1},
             ctx, tmp_db, None, None,
         )
@@ -373,19 +374,19 @@ class TestDocGetTextHandler:
 class TestDocGetSectionsHandler:
     @pytest.mark.asyncio
     async def test_document_id_is_required(self, tmp_db, ctx):
-        result = await td._doc_get_sections_handler({}, ctx, tmp_db, None, None)
+        result = await handlers._doc_get_sections_handler({}, ctx, tmp_db, None, None)
         assert result.is_error and "document_id is required" in result.content
 
     @pytest.mark.asyncio
     async def test_unknown_document_is_an_error(self, tmp_db, ctx):
-        result = await td._doc_get_sections_handler(
+        result = await handlers._doc_get_sections_handler(
             {"document_id": 4242}, ctx, tmp_db, None, None,
         )
         assert result.is_error
 
     @pytest.mark.asyncio
     async def test_lists_headers_with_offsets_and_indentation(self, tmp_db, ctx, doc_id):
-        result = await td._doc_get_sections_handler(
+        result = await handlers._doc_get_sections_handler(
             {"document_id": doc_id}, ctx, tmp_db, None, None,
         )
         assert "Sections in 'Paper' (3 total):" in result.content
@@ -402,7 +403,7 @@ class TestDocGetSectionsHandler:
             source_type="text", source_url=None, markdown="no headers",
             char_count=10, sections_json="[]",
         )
-        result = await td._doc_get_sections_handler(
+        result = await handlers._doc_get_sections_handler(
             {"document_id": plain_id}, ctx, tmp_db, None, None,
         )
         assert "No sections found" in result.content
@@ -412,28 +413,28 @@ class TestDocGetSectionsHandler:
 class TestDocGetChapterHandler:
     @pytest.mark.asyncio
     async def test_document_id_is_required(self, tmp_db, ctx):
-        result = await td._doc_get_chapter_handler(
+        result = await handlers._doc_get_chapter_handler(
             {"header": "Methods"}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "document_id is required" in result.content
 
     @pytest.mark.asyncio
     async def test_header_is_required(self, tmp_db, ctx, doc_id):
-        result = await td._doc_get_chapter_handler(
+        result = await handlers._doc_get_chapter_handler(
             {"document_id": doc_id}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "header is required" in result.content
 
     @pytest.mark.asyncio
     async def test_unknown_document_is_an_error(self, tmp_db, ctx):
-        result = await td._doc_get_chapter_handler(
+        result = await handlers._doc_get_chapter_handler(
             {"document_id": 4242, "header": "Methods"}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "not found" in result.content
 
     @pytest.mark.asyncio
     async def test_exact_header_returns_the_section_text(self, tmp_db, ctx, doc_id):
-        result = await td._doc_get_chapter_handler(
+        result = await handlers._doc_get_chapter_handler(
             {"document_id": doc_id, "header": "Methods"}, ctx, tmp_db, None, None,
         )
         assert result.content.startswith("## Methods")
@@ -443,21 +444,21 @@ class TestDocGetChapterHandler:
 
     @pytest.mark.asyncio
     async def test_match_is_case_insensitive(self, tmp_db, ctx, doc_id):
-        result = await td._doc_get_chapter_handler(
+        result = await handlers._doc_get_chapter_handler(
             {"document_id": doc_id, "header": "mEtHoDs"}, ctx, tmp_db, None, None,
         )
         assert result.metadata["header"] == "Methods"
 
     @pytest.mark.asyncio
     async def test_substring_match_is_accepted(self, tmp_db, ctx, doc_id):
-        result = await td._doc_get_chapter_handler(
+        result = await handlers._doc_get_chapter_handler(
             {"document_id": doc_id, "header": "Intro"}, ctx, tmp_db, None, None,
         )
         assert result.metadata["header"] == "Introduction"
 
     @pytest.mark.asyncio
     async def test_unmatched_header_lists_the_available_ones(self, tmp_db, ctx, doc_id):
-        result = await td._doc_get_chapter_handler(
+        result = await handlers._doc_get_chapter_handler(
             {"document_id": doc_id, "header": "Appendix"}, ctx, tmp_db, None, None,
         )
         assert result.is_error
@@ -469,7 +470,7 @@ class TestDocGetChapterHandler:
     ):
         """The metadata row and the markdown are read separately."""
         monkeypatch.setattr(tmp_db, "get_document_markdown", lambda _id: None)
-        result = await td._doc_get_chapter_handler(
+        result = await handlers._doc_get_chapter_handler(
             {"document_id": doc_id, "header": "Methods"}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "Could not read document text" in result.content
@@ -481,7 +482,7 @@ class TestDocGetChapterHandler:
             source_type="text", source_url=None, markdown="no headers",
             char_count=10, sections_json="[]",
         )
-        result = await td._doc_get_chapter_handler(
+        result = await handlers._doc_get_chapter_handler(
             {"document_id": plain_id, "header": "Any"}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "No sections found" in result.content
@@ -494,21 +495,21 @@ class TestDocGetChapterHandler:
 class TestDocAskHandler:
     @pytest.mark.asyncio
     async def test_document_id_is_required(self, tmp_db, ctx):
-        result = await td._doc_ask_handler(
+        result = await handlers._doc_ask_handler(
             {"question": "why?"}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "document_id is required" in result.content
 
     @pytest.mark.asyncio
     async def test_question_is_required(self, tmp_db, ctx, doc_id):
-        result = await td._doc_ask_handler(
+        result = await handlers._doc_ask_handler(
             {"document_id": doc_id}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "question is required" in result.content
 
     @pytest.mark.asyncio
     async def test_unknown_document_is_an_error(self, tmp_db, ctx):
-        result = await td._doc_ask_handler(
+        result = await handlers._doc_ask_handler(
             {"document_id": 4242, "question": "why?"}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "not found" in result.content
@@ -517,7 +518,7 @@ class TestDocAskHandler:
     async def test_unindexed_document_reports_progress_and_is_not_an_error(
         self, tmp_db, ctx, doc_id,
     ):
-        result = await td._doc_ask_handler(
+        result = await handlers._doc_ask_handler(
             {"document_id": doc_id, "question": "why?"}, ctx, tmp_db, None, None,
         )
         assert not result.is_error
@@ -531,23 +532,23 @@ class TestDocAskHandler:
     ):
         spawned = []
         patch_where_defined(
-            monkeypatch, td._doc_ask_handler, "_spawn_background",
+            monkeypatch, handlers._doc_ask_handler, "_spawn_background",
             lambda coro: (spawned.append(coro), coro.close()),
         )
         try:
-            await td._doc_ask_handler(
+            await handlers._doc_ask_handler(
                 {"document_id": doc_id, "question": "why?"},
                 ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), None,
             )
             assert len(spawned) == 1
-            assert doc_id in td._embedding_docs
+            assert doc_id in embedding._embedding_docs
         finally:
-            td._embedding_docs.discard(doc_id)
+            embedding._embedding_docs.discard(doc_id)
 
     @pytest.mark.asyncio
     async def test_embedding_outage_is_an_error(self, tmp_db, ctx, doc_id):
         embed_all(tmp_db, doc_id)
-        result = await td._doc_ask_handler(
+        result = await handlers._doc_ask_handler(
             {"document_id": doc_id, "question": "why?"}, ctx, tmp_db,
             FakeEmbedClient(error=RuntimeError("ollama down")), None,
         )
@@ -558,7 +559,7 @@ class TestDocAskHandler:
         self, tmp_db, ctx, doc_id, fake_llm,
     ):
         embed_all(tmp_db, doc_id)
-        result = await td._doc_ask_handler(
+        result = await handlers._doc_ask_handler(
             {"document_id": doc_id, "question": "What was measured?"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
         )
@@ -578,23 +579,23 @@ class TestDocAskHandler:
             source_type="text", source_url=None, markdown="x" * 100,
             char_count=100, sections_json="[]",
         )
-        for index in range(td.RAG_TOP_K + 3):
+        for index in range(constants.RAG_TOP_K + 3):
             tmp_db.add_document_chunk(
                 many_id, index, f"passage {index}", index * 10, index * 10 + 9, None,
             )
         embed_all(tmp_db, many_id)
-        result = await td._doc_ask_handler(
+        result = await handlers._doc_ask_handler(
             {"document_id": many_id, "question": "q"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
         )
-        assert len(result.metadata["relevant_passages"]) == td.RAG_TOP_K
+        assert len(result.metadata["relevant_passages"]) == constants.RAG_TOP_K
 
     @pytest.mark.asyncio
     async def test_prompt_carries_the_title_passages_and_question(
         self, tmp_db, ctx, doc_id, fake_llm,
     ):
         embed_all(tmp_db, doc_id)
-        await td._doc_ask_handler(
+        await handlers._doc_ask_handler(
             {"document_id": doc_id, "question": "What was measured?"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
         )
@@ -616,7 +617,7 @@ class TestDocAskHandler:
         )
         tmp_db.add_document_chunk(long_id, 0, long_markdown, 0, 4000, None)
         embed_all(tmp_db, long_id)
-        result = await td._doc_ask_handler(
+        result = await handlers._doc_ask_handler(
             {"document_id": long_id, "question": "q"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), FakeApp(tmp_db),
         )
@@ -632,7 +633,7 @@ class TestDocAskHandler:
             source_type="text", source_url=None, markdown="x", char_count=1,
             sections_json="[]",
         )
-        result = await td._doc_ask_handler(
+        result = await handlers._doc_ask_handler(
             {"document_id": bare_id, "question": "q"},
             ctx, tmp_db, FakeEmbedClient([1.0, 0.0]), None,
         )
@@ -646,12 +647,12 @@ class TestDocAskHandler:
 class TestDocSummaryHandler:
     @pytest.mark.asyncio
     async def test_document_id_is_required(self, tmp_db, ctx):
-        result = await td._doc_summary_handler({}, ctx, tmp_db, None, None)
+        result = await handlers._doc_summary_handler({}, ctx, tmp_db, None, None)
         assert result.is_error and "document_id is required" in result.content
 
     @pytest.mark.asyncio
     async def test_unknown_document_is_an_error(self, tmp_db, ctx):
-        result = await td._doc_summary_handler(
+        result = await handlers._doc_summary_handler(
             {"document_id": 4242}, ctx, tmp_db, None, None,
         )
         assert result.is_error and "not found" in result.content
@@ -661,7 +662,7 @@ class TestDocSummaryHandler:
         self, tmp_db, ctx, doc_id, fake_llm,
     ):
         blank_start = MARKDOWN.index("\n\n")
-        result = await td._doc_summary_handler(
+        result = await handlers._doc_summary_handler(
             {"document_id": doc_id, "from_char": blank_start, "to_char": blank_start + 2},
             ctx, tmp_db, None, None,
         )
@@ -672,7 +673,7 @@ class TestDocSummaryHandler:
     async def test_short_document_is_summarized_in_one_call(
         self, tmp_db, ctx, doc_id, fake_llm,
     ):
-        result = await td._doc_summary_handler(
+        result = await handlers._doc_summary_handler(
             {"document_id": doc_id}, ctx, tmp_db, None, FakeApp(tmp_db),
         )
         assert json.loads(result.content) == {"summary": "answer 1"}
@@ -683,7 +684,7 @@ class TestDocSummaryHandler:
     async def test_metadata_records_the_summarized_range(
         self, tmp_db, ctx, doc_id, fake_llm,
     ):
-        result = await td._doc_summary_handler(
+        result = await handlers._doc_summary_handler(
             {"document_id": doc_id, "from_char": 0, "to_char": 30},
             ctx, tmp_db, None, FakeApp(tmp_db),
         )
@@ -692,13 +693,13 @@ class TestDocSummaryHandler:
 
     @pytest.mark.asyncio
     async def test_long_document_uses_map_reduce(self, tmp_db, ctx, fake_llm):
-        long_markdown = "w" * (td.SUMMARY_CHUNK_LIMIT * 2 + 10)
+        long_markdown = "w" * (constants.SUMMARY_CHUNK_LIMIT * 2 + 10)
         long_id = tmp_db.add_document(
             filename="long.txt", title="Long", summary="", mime_type="text/plain",
             source_type="text", source_url=None, markdown=long_markdown,
             char_count=len(long_markdown), sections_json="[]",
         )
-        result = await td._doc_summary_handler(
+        result = await handlers._doc_summary_handler(
             {"document_id": long_id}, ctx, tmp_db, None, FakeApp(tmp_db),
         )
         # Three map calls over the excerpt, then one reduce call.
@@ -709,17 +710,17 @@ class TestDocSummaryHandler:
 
     @pytest.mark.asyncio
     async def test_map_calls_respect_the_chunk_limit(self, tmp_db, ctx, fake_llm):
-        long_markdown = "w" * (td.SUMMARY_CHUNK_LIMIT + 1)
+        long_markdown = "w" * (constants.SUMMARY_CHUNK_LIMIT + 1)
         long_id = tmp_db.add_document(
             filename="long.txt", title="Long", summary="", mime_type="text/plain",
             source_type="text", source_url=None, markdown=long_markdown,
             char_count=len(long_markdown), sections_json="[]",
         )
-        await td._doc_summary_handler(
+        await handlers._doc_summary_handler(
             {"document_id": long_id}, ctx, tmp_db, None, FakeApp(tmp_db),
         )
         map_calls = fake_llm[:-1]
-        assert [len(c["user"]) for c in map_calls] == [td.SUMMARY_CHUNK_LIMIT, 1]
+        assert [len(c["user"]) for c in map_calls] == [constants.SUMMARY_CHUNK_LIMIT, 1]
 
 
 # ---------------------------------------------------------------------------
@@ -729,7 +730,7 @@ class TestDocSummaryHandler:
 class TestCreateDocumentProvider:
     @pytest.mark.asyncio
     async def test_registers_every_document_tool(self, tmp_db):
-        provider = td.create_document_provider(tmp_db)
+        provider = create_document_provider(tmp_db)
         names = {t.name for t in await provider.list_tools()}
         assert names == {
             "doc_add", "doc_list", "doc_get_length", "doc_get_text",
@@ -738,18 +739,18 @@ class TestCreateDocumentProvider:
 
     @pytest.mark.asyncio
     async def test_provider_is_named_documents(self, tmp_db):
-        assert td.create_document_provider(tmp_db).name == "documents"
+        assert create_document_provider(tmp_db).name == "documents"
 
     @pytest.mark.asyncio
     async def test_every_tool_declares_a_description_and_schema(self, tmp_db):
-        provider = td.create_document_provider(tmp_db)
+        provider = create_document_provider(tmp_db)
         for tool in await provider.list_tools():
             assert tool.description.strip()
             assert tool.parameters["type"] == "object"
 
     @pytest.mark.asyncio
     async def test_execute_routes_through_to_the_handler(self, tmp_db, ctx, doc_id):
-        provider = td.create_document_provider(tmp_db)
+        provider = create_document_provider(tmp_db)
         result = await provider.execute(
             "doc_get_length", {"document_id": doc_id}, ctx,
         )
@@ -758,6 +759,6 @@ class TestCreateDocumentProvider:
     @pytest.mark.asyncio
     async def test_handlers_receive_the_app_passed_to_the_factory(self, tmp_db, ctx):
         app = FakeApp(tmp_db)
-        provider = td.create_document_provider(tmp_db, app)
+        provider = create_document_provider(tmp_db, app)
         result = await provider.execute("doc_list", {}, ctx)
         assert not result.is_error

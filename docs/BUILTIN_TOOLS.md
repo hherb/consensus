@@ -234,7 +234,7 @@ Request installation of a Python package from PyPI. The user is prompted to appr
 
 ## Document Tools
 
-**Provider:** `documents` · **Module:** `tools_document.py` · **Requires:** `uv pip install -e ".[memory]"` + Ollama embedding service
+**Provider:** `documents` · **Module:** `tools_document/` · **Requires:** `uv pip install -e ".[memory]"` + Ollama embedding service
 
 Tools for ingesting, navigating, and querying reference documents during discussions.
 

@@ -114,7 +114,9 @@ consensus/
   desktop.py               pywebview launcher and JS-Python bridge
   tools.py                 Pluggable tool framework (ToolProvider, ToolRegistry)
   tools_builtin.py         Built-in web search tool (Brave + DuckDuckGo fallback)
-  tools_document.py        Document RAG tool provider (ingestion, chunking, Q&A)
+  tools_document/          Document RAG tool provider package (constants, parsing,
+                           chunking, embedding, schemas, llm, ingestion, handlers,
+                           provider)
   tools_image.py           Image tool provider (storage, vision, multimodal context)
   tools_memory.py          Institutional memory tools (sqlite-vec, Ollama)
   mcp_client.py            MCPToolProvider — JSON-RPC 2.0 communication with MCP servers

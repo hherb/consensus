@@ -418,7 +418,9 @@ access its own memories — no cross-entity memory leakage.
 
 ## Document RAG Tools
 
-Defined in `tools_document.py`. Created via `create_document_provider(db, app)`
+Defined in the `tools_document/` package (`provider.py` assembles the handlers
+in `handlers.py` with the schemas in `schemas.py`). Created via
+`create_document_provider(db, app)`
 and registered in `ConsensusApp._init_document_tools()`. Requires the
 `[documents]` optional dependency group (`sqlite-vec`, `numpy`, `pdfplumber`).
 

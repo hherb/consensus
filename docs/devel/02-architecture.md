@@ -29,7 +29,7 @@ ConsensusApp (app.py + app_*.py domain modules)
     +-- MCPHTTPToolProvider (mcp_http_client.py)
     |     JSON-RPC 2.0 over Streamable HTTP+SSE (remote MCP servers)
     |
-    +-- DocumentRAG (tools_document.py)
+    +-- DocumentRAG (tools_document/)
     |     Document ingestion (URL/text/PDF/HTML), chunking, RAG Q&A,
     |     section navigation, map-reduce summarization
     |

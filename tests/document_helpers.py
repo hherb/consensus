@@ -134,7 +134,7 @@ class FakeHttpClient:
 
 def embed_all(db, document_id, vector=(1.0, 0.0)) -> None:
     """Give every chunk of *document_id* the same embedding."""
-    from consensus import tools_document as td
+    from consensus.tools_document import embedding
 
     for chunk in db.get_document_chunks(document_id):
-        db.set_chunk_embedding(chunk["id"], td._pack_embedding(list(vector)))
+        db.set_chunk_embedding(chunk["id"], embedding._pack_embedding(list(vector)))

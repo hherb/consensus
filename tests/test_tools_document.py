@@ -12,7 +12,7 @@ import sys
 
 import pytest
 
-from consensus import tools_document as td
+from consensus.tools_document import chunking, constants, embedding, parsing
 
 from .document_helpers import (
     FakeHttpClient, FakeHttpResponse, FakePdf, FakePdfPage, patch_where_defined,
@@ -25,24 +25,24 @@ from .document_helpers import (
 
 class TestParseDocument:
     def test_plain_text_passthrough(self):
-        assert td.parse_document(b"hello world", "notes.txt", "text/plain") == "hello world"
+        assert parsing.parse_document(b"hello world", "notes.txt", "text/plain") == "hello world"
 
     def test_markdown_passthrough(self):
         md = b"# Title\n\nbody"
-        assert td.parse_document(md, "notes.md", "text/markdown") == "# Title\n\nbody"
+        assert parsing.parse_document(md, "notes.md", "text/markdown") == "# Title\n\nbody"
 
     def test_undecodable_bytes_are_replaced_not_raised(self):
-        out = td.parse_document(b"ok \xff\xfe", "notes.txt", "text/plain")
+        out = parsing.parse_document(b"ok \xff\xfe", "notes.txt", "text/plain")
         assert out.startswith("ok ")
 
     def test_html_by_mime_type(self):
         html = b"<html><body><p>Readable paragraph with enough text.</p></body></html>"
-        out = td.parse_document(html, "page", "text/html")
+        out = parsing.parse_document(html, "page", "text/html")
         assert "<p>" not in out
 
     def test_html_by_extension(self):
         html = b"<html><body><h1>Heading</h1><p>Body text here.</p></body></html>"
-        out = td.parse_document(html, "PAGE.HTM", "application/octet-stream")
+        out = parsing.parse_document(html, "PAGE.HTM", "application/octet-stream")
         assert "<h1>" not in out
 
     def test_pdf_by_extension_routes_to_pdf_parser(self, monkeypatch):
@@ -52,15 +52,15 @@ class TestParseDocument:
             called["content"] = content
             return "pdf text"
 
-        patch_where_defined(monkeypatch, td.parse_document, "_parse_pdf", fake_pdf)
-        assert td.parse_document(b"%PDF-1.4", "report.PDF", "application/octet-stream") == "pdf text"
+        patch_where_defined(monkeypatch, parsing.parse_document, "_parse_pdf", fake_pdf)
+        assert parsing.parse_document(b"%PDF-1.4", "report.PDF", "application/octet-stream") == "pdf text"
         assert called["content"] == b"%PDF-1.4"
 
     def test_pdf_by_mime_type_routes_to_pdf_parser(self, monkeypatch):
         patch_where_defined(
-            monkeypatch, td.parse_document, "_parse_pdf", lambda c: "pdf text",
+            monkeypatch, parsing.parse_document, "_parse_pdf", lambda c: "pdf text",
         )
-        assert td.parse_document(b"x", "no-extension", "application/pdf") == "pdf text"
+        assert parsing.parse_document(b"x", "no-extension", "application/pdf") == "pdf text"
 
 
 class TestParsePdf:
@@ -72,14 +72,14 @@ class TestParsePdf:
 
     def test_pages_are_numbered_from_one(self, monkeypatch):
         self._install_pdfplumber(monkeypatch, [FakePdfPage("first"), FakePdfPage("second")])
-        out = td._parse_pdf(b"x")
+        out = parsing._parse_pdf(b"x")
         assert out == "## Page 1\n\nfirst\n\n## Page 2\n\nsecond"
 
     def test_blank_pages_are_skipped_but_do_not_shift_numbering(self, monkeypatch):
         self._install_pdfplumber(
             monkeypatch, [FakePdfPage("   "), FakePdfPage(None), FakePdfPage("third")],
         )
-        assert td._parse_pdf(b"x") == "## Page 3\n\nthird"
+        assert parsing._parse_pdf(b"x") == "## Page 3\n\nthird"
 
     def test_falls_back_to_pypdf2_when_pdfplumber_missing(self, monkeypatch):
         import types
@@ -87,7 +87,7 @@ class TestParsePdf:
         pypdf2 = types.ModuleType("PyPDF2")
         pypdf2.PdfReader = lambda _stream: FakePdf([FakePdfPage("fallback text")])
         monkeypatch.setitem(sys.modules, "PyPDF2", pypdf2)
-        assert td._parse_pdf(b"x") == "## Page 1\n\nfallback text"
+        assert parsing._parse_pdf(b"x") == "## Page 1\n\nfallback text"
 
     def test_falls_back_to_pypdf2_when_pdfplumber_raises(self, monkeypatch):
         import types
@@ -101,7 +101,7 @@ class TestParsePdf:
         pypdf2 = types.ModuleType("PyPDF2")
         pypdf2.PdfReader = lambda _stream: FakePdf([FakePdfPage("fallback text")])
         monkeypatch.setitem(sys.modules, "PyPDF2", pypdf2)
-        assert "fallback text" in td._parse_pdf(b"x")
+        assert "fallback text" in parsing._parse_pdf(b"x")
 
     def test_empty_pypdf2_result_reports_empty_pdf(self, monkeypatch):
         import types
@@ -109,13 +109,13 @@ class TestParsePdf:
         pypdf2 = types.ModuleType("PyPDF2")
         pypdf2.PdfReader = lambda _stream: FakePdf([FakePdfPage("")])
         monkeypatch.setitem(sys.modules, "PyPDF2", pypdf2)
-        assert td._parse_pdf(b"x") == "(Empty PDF)"
+        assert parsing._parse_pdf(b"x") == "(Empty PDF)"
 
     def test_no_pdf_library_raises_with_install_hint(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "pdfplumber", None)
         monkeypatch.setitem(sys.modules, "PyPDF2", None)
         with pytest.raises(ImportError, match="pdfplumber"):
-            td._parse_pdf(b"x")
+            parsing._parse_pdf(b"x")
 
 
 class TestParseHtml:
@@ -125,7 +125,7 @@ class TestParseHtml:
             b"A reasonably long paragraph of readable article text goes here."
             b"</p></article></body></html>"
         )
-        out = td._parse_html(html)
+        out = parsing._parse_html(html)
         assert "readable article text" in out
         assert "<p>" not in out
 
@@ -138,7 +138,7 @@ class TestParseHtml:
 
         broken.extract = _boom
         monkeypatch.setitem(sys.modules, "trafilatura", broken)
-        out = td._parse_html(b"<div><span>bare text</span></div>")
+        out = parsing._parse_html(b"<div><span>bare text</span></div>")
         assert out == "bare text"
 
     def test_falls_back_when_trafilatura_returns_nothing(self, monkeypatch):
@@ -146,7 +146,7 @@ class TestParseHtml:
         empty = types.ModuleType("trafilatura")
         empty.extract = lambda *_a, **_k: None
         monkeypatch.setitem(sys.modules, "trafilatura", empty)
-        assert td._parse_html(b"<p>only text</p>") == "only text"
+        assert parsing._parse_html(b"<p>only text</p>") == "only text"
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +167,7 @@ def fake_httpx(monkeypatch):
 
         import types
         module = types.SimpleNamespace(AsyncClient=factory)
-        patch_where_defined(monkeypatch, td.fetch_url_content, "httpx", module)
+        patch_where_defined(monkeypatch, parsing.fetch_url_content, "httpx", module)
         return state
 
     return configure
@@ -177,7 +177,7 @@ class TestFetchUrlContent:
     @pytest.mark.asyncio
     async def test_returns_content_filename_and_mime(self, fake_httpx):
         state = fake_httpx(b"<html>hi</html>", "text/html; charset=utf-8")
-        content, filename, mime = await td.fetch_url_content("http://x.test/page.html")
+        content, filename, mime = await parsing.fetch_url_content("http://x.test/page.html")
         assert content == b"<html>hi</html>"
         assert filename == "page.html"
         assert mime == "text/html"
@@ -186,26 +186,26 @@ class TestFetchUrlContent:
     @pytest.mark.asyncio
     async def test_follows_redirects_with_configured_timeout(self, fake_httpx):
         state = fake_httpx(b"x", "text/plain")
-        await td.fetch_url_content("http://x.test/a.txt")
+        await parsing.fetch_url_content("http://x.test/a.txt")
         assert state["kwargs"]["follow_redirects"] is True
-        assert state["kwargs"]["timeout"] == td.URL_FETCH_TIMEOUT
+        assert state["kwargs"]["timeout"] == constants.URL_FETCH_TIMEOUT
 
     @pytest.mark.asyncio
     async def test_extensionless_pdf_gets_pdf_suffix(self, fake_httpx):
         fake_httpx(b"%PDF", "application/pdf")
-        _, filename, _ = await td.fetch_url_content("http://x.test/paper")
+        _, filename, _ = await parsing.fetch_url_content("http://x.test/paper")
         assert filename == "paper.pdf"
 
     @pytest.mark.asyncio
     async def test_extensionless_html_gets_html_suffix(self, fake_httpx):
         fake_httpx(b"<html>", "text/html")
-        _, filename, _ = await td.fetch_url_content("http://x.test/article")
+        _, filename, _ = await parsing.fetch_url_content("http://x.test/article")
         assert filename == "article.html"
 
     @pytest.mark.asyncio
     async def test_empty_path_falls_back_to_document(self, fake_httpx):
         fake_httpx(b"x", "application/octet-stream")
-        _, filename, _ = await td.fetch_url_content("http://x.test/")
+        _, filename, _ = await parsing.fetch_url_content("http://x.test/")
         assert filename == "document"
 
 
@@ -215,27 +215,27 @@ class TestFetchUrlContent:
 
 class TestExtractSections:
     def test_no_headers_yields_no_sections(self):
-        assert td.extract_sections("just a paragraph") == []
+        assert parsing.extract_sections("just a paragraph") == []
 
     def test_header_levels_and_text(self):
-        sections = td.extract_sections("# One\n\ntext\n\n### Three\n\nmore")
+        sections = parsing.extract_sections("# One\n\ntext\n\n### Three\n\nmore")
         assert [(s["header"], s["level"]) for s in sections] == [("One", 1), ("Three", 3)]
 
     def test_each_section_ends_where_the_next_begins(self):
         md = "# One\n\ntext\n\n## Two\n\nmore"
-        sections = td.extract_sections(md)
+        sections = parsing.extract_sections(md)
         assert sections[0]["from_char"] == 0
         assert sections[0]["to_char"] == sections[1]["from_char"]
 
     def test_last_section_runs_to_end_of_document(self):
         md = "# One\n\ntext"
-        assert td.extract_sections(md)[-1]["to_char"] == len(md)
+        assert parsing.extract_sections(md)[-1]["to_char"] == len(md)
 
     def test_five_hashes_are_not_a_header(self):
-        assert td.extract_sections("##### Too deep") == []
+        assert parsing.extract_sections("##### Too deep") == []
 
     def test_header_requires_whitespace_after_hashes(self):
-        assert td.extract_sections("#NoSpace") == []
+        assert parsing.extract_sections("#NoSpace") == []
 
 
 # ---------------------------------------------------------------------------
@@ -244,10 +244,10 @@ class TestExtractSections:
 
 class TestChunkDocument:
     def test_blank_document_yields_no_chunks(self):
-        assert td.chunk_document("   \n\n  ") == []
+        assert chunking.chunk_document("   \n\n  ") == []
 
     def test_short_document_is_a_single_chunk(self):
-        chunks = td.chunk_document("# Title\n\nA short body.")
+        chunks = chunking.chunk_document("# Title\n\nA short body.")
         assert len(chunks) == 1
         assert chunks[0]["chunk_index"] == 0
         assert chunks[0]["from_char"] == 0
@@ -256,74 +256,74 @@ class TestChunkDocument:
 
     def test_chunk_indices_are_consecutive(self):
         md = "\n\n".join("p" * 200 for _ in range(6))
-        chunks = td.chunk_document(md, chunk_size=300, overlap=50)
+        chunks = chunking.chunk_document(md, chunk_size=300, overlap=50)
         assert [c["chunk_index"] for c in chunks] == list(range(len(chunks)))
 
     def test_consecutive_chunks_overlap_by_the_requested_amount(self):
         md = "\n\n".join("p" * 200 for _ in range(4))
-        chunks = td.chunk_document(md, chunk_size=300, overlap=50)
+        chunks = chunking.chunk_document(md, chunk_size=300, overlap=50)
         assert len(chunks) > 1
         for earlier, later in zip(chunks, chunks[1:]):
             assert later["content"].startswith(earlier["content"][-50:])
 
     def test_zero_overlap_starts_each_chunk_at_a_paragraph(self):
         md = "\n\n".join("p" * 200 for _ in range(4))
-        chunks = td.chunk_document(md, chunk_size=300, overlap=0)
+        chunks = chunking.chunk_document(md, chunk_size=300, overlap=0)
         for chunk in chunks[1:]:
             assert not chunk["content"].startswith("p" * 200 + "\n\n")
 
     def test_section_header_is_taken_from_the_chunk_start_offset(self):
         md = "# Alpha\n\n" + "a" * 100 + "\n\n## Beta\n\n" + "b" * 100
-        chunks = td.chunk_document(md, chunk_size=80, overlap=0)
+        chunks = chunking.chunk_document(md, chunk_size=80, overlap=0)
         assert chunks[0]["section_header"] == "Alpha"
         assert chunks[-1]["section_header"] == "Beta"
 
     def test_final_chunk_runs_to_end_of_document(self):
         md = "\n\n".join("p" * 200 for _ in range(4))
-        chunks = td.chunk_document(md, chunk_size=300, overlap=50)
+        chunks = chunking.chunk_document(md, chunk_size=300, overlap=50)
         assert chunks[-1]["to_char"] == len(md)
 
     def test_single_paragraph_larger_than_chunk_size_is_not_split(self):
         md = "x" * 2000
-        chunks = td.chunk_document(md, chunk_size=100, overlap=10)
+        chunks = chunking.chunk_document(md, chunk_size=100, overlap=10)
         assert len(chunks) == 1
         assert chunks[0]["content"] == md
 
 
 class TestSplitParagraphs:
     def test_splits_on_blank_lines_and_strips(self):
-        assert td._split_paragraphs("one\n\n  two  \n\n\nthree") == [
+        assert chunking._split_paragraphs("one\n\n  two  \n\n\nthree") == [
             (0, "one"), (5, "two"), (15, "three"),
         ]
 
     def test_offsets_point_into_the_original_text(self):
         text = "alpha\n\nbeta"
-        for offset, para in td._split_paragraphs(text):
+        for offset, para in chunking._split_paragraphs(text):
             assert text[offset:offset + len(para)] == para
 
     def test_blank_paragraphs_are_dropped(self):
-        assert td._split_paragraphs("\n\n\n") == []
+        assert chunking._split_paragraphs("\n\n\n") == []
 
     def test_repeated_paragraph_text_advances_the_cursor(self):
-        result = td._split_paragraphs("same\n\nsame")
+        result = chunking._split_paragraphs("same\n\nsame")
         assert [offset for offset, _ in result] == [0, 6]
 
 
 class TestFindSectionForOffset:
     def test_returns_none_without_sections(self):
-        assert td._find_section_for_offset(5, []) is None
+        assert chunking._find_section_for_offset(5, []) is None
 
     def test_returns_none_before_the_first_section(self):
         sections = [{"header": "A", "from_char": 10, "to_char": 20}]
-        assert td._find_section_for_offset(4, sections) is None
+        assert chunking._find_section_for_offset(4, sections) is None
 
     def test_returns_the_last_section_starting_at_or_before_the_offset(self):
         sections = [
             {"header": "A", "from_char": 0, "to_char": 10},
             {"header": "B", "from_char": 10, "to_char": 20},
         ]
-        assert td._find_section_for_offset(10, sections) == "B"
-        assert td._find_section_for_offset(9, sections) == "A"
+        assert chunking._find_section_for_offset(10, sections) == "B"
+        assert chunking._find_section_for_offset(9, sections) == "A"
 
 
 # ---------------------------------------------------------------------------
@@ -333,78 +333,78 @@ class TestFindSectionForOffset:
 class TestEmbeddingHelpers:
     def test_pack_unpack_roundtrip(self):
         vec = [0.5, -0.25, 1.0]
-        assert td._unpack_embedding(td._pack_embedding(vec)) == pytest.approx(vec)
+        assert embedding._unpack_embedding(embedding._pack_embedding(vec)) == pytest.approx(vec)
 
     def test_pack_produces_four_bytes_per_float(self):
-        assert len(td._pack_embedding([1.0, 2.0, 3.0])) == 12
+        assert len(embedding._pack_embedding([1.0, 2.0, 3.0])) == 12
 
     def test_unpack_reads_little_endian_native_floats(self):
         blob = struct.pack("2f", 1.5, 2.5)
-        assert td._unpack_embedding(blob) == pytest.approx([1.5, 2.5])
+        assert embedding._unpack_embedding(blob) == pytest.approx([1.5, 2.5])
 
     def test_identical_vectors_score_one(self):
-        assert td._cosine_similarity([1.0, 2.0], [1.0, 2.0]) == pytest.approx(1.0)
+        assert embedding._cosine_similarity([1.0, 2.0], [1.0, 2.0]) == pytest.approx(1.0)
 
     def test_orthogonal_vectors_score_zero(self):
-        assert td._cosine_similarity([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+        assert embedding._cosine_similarity([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
 
     def test_opposite_vectors_score_minus_one(self):
-        assert td._cosine_similarity([1.0, 0.0], [-1.0, 0.0]) == pytest.approx(-1.0)
+        assert embedding._cosine_similarity([1.0, 0.0], [-1.0, 0.0]) == pytest.approx(-1.0)
 
     def test_mismatched_dimensions_score_zero_rather_than_truncating(self):
-        assert td._cosine_similarity([1.0, 0.0, 0.0], [1.0, 0.0]) == 0.0
+        assert embedding._cosine_similarity([1.0, 0.0, 0.0], [1.0, 0.0]) == 0.0
 
     def test_zero_vector_scores_zero(self):
-        assert td._cosine_similarity([0.0, 0.0], [1.0, 1.0]) == 0.0
+        assert embedding._cosine_similarity([0.0, 0.0], [1.0, 1.0]) == 0.0
 
 
 class TestRankBySimilarity:
     def _rows(self):
         return [
-            {"id": 1, "embedding": td._pack_embedding([1.0, 0.0])},
-            {"id": 2, "embedding": td._pack_embedding([0.0, 1.0])},
-            {"id": 3, "embedding": td._pack_embedding([0.7071, 0.7071])},
+            {"id": 1, "embedding": embedding._pack_embedding([1.0, 0.0])},
+            {"id": 2, "embedding": embedding._pack_embedding([0.0, 1.0])},
+            {"id": 3, "embedding": embedding._pack_embedding([0.7071, 0.7071])},
         ]
 
     def test_orders_by_descending_similarity(self):
-        ranked = td._rank_by_similarity([1.0, 0.0], self._rows(), limit=3)
+        ranked = embedding._rank_by_similarity([1.0, 0.0], self._rows(), limit=3)
         assert [row["id"] for _, row in ranked] == [1, 3, 2]
 
     def test_limit_truncates_after_sorting(self):
-        ranked = td._rank_by_similarity([1.0, 0.0], self._rows(), limit=2)
+        ranked = embedding._rank_by_similarity([1.0, 0.0], self._rows(), limit=2)
         assert [row["id"] for _, row in ranked] == [1, 3]
 
     def test_threshold_excludes_low_scoring_rows(self):
-        ranked = td._rank_by_similarity([1.0, 0.0], self._rows(), limit=3, threshold=0.5)
+        ranked = embedding._rank_by_similarity([1.0, 0.0], self._rows(), limit=3, threshold=0.5)
         assert [row["id"] for _, row in ranked] == [1, 3]
 
     def test_scores_are_returned_alongside_rows(self):
-        ranked = td._rank_by_similarity([1.0, 0.0], self._rows(), limit=1)
+        ranked = embedding._rank_by_similarity([1.0, 0.0], self._rows(), limit=1)
         score, row = ranked[0]
         assert score == pytest.approx(1.0)
         assert row["id"] == 1
 
     def test_empty_rows_yield_empty_ranking(self):
-        assert td._rank_by_similarity([1.0, 0.0], [], limit=5) == []
+        assert embedding._rank_by_similarity([1.0, 0.0], [], limit=5) == []
 
 
 class TestSplitIntoSubChunks:
     def test_text_within_size_is_returned_whole(self):
-        assert td._split_into_sub_chunks("abc", size=10, overlap=2) == ["abc"]
+        assert embedding._split_into_sub_chunks("abc", size=10, overlap=2) == ["abc"]
 
     def test_long_text_is_split_into_overlapping_windows(self):
-        chunks = td._split_into_sub_chunks("x" * 1200, size=500, overlap=100)
+        chunks = embedding._split_into_sub_chunks("x" * 1200, size=500, overlap=100)
         assert [len(c) for c in chunks] == [500, 500, 400]
 
     def test_windows_advance_by_size_minus_overlap(self):
         text = "".join(chr(ord("a") + i % 26) for i in range(30))
-        chunks = td._split_into_sub_chunks(text, size=10, overlap=4)
+        chunks = embedding._split_into_sub_chunks(text, size=10, overlap=4)
         assert chunks[0] == text[0:10]
         assert chunks[1] == text[6:16]
 
     def test_reassembly_covers_the_whole_text(self):
         text = "y" * 950
-        chunks = td._split_into_sub_chunks(text, size=400, overlap=50)
+        chunks = embedding._split_into_sub_chunks(text, size=400, overlap=50)
         assert "".join(chunks).count("y") >= len(text)
 
 
