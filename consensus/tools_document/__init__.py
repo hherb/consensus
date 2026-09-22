@@ -18,6 +18,17 @@ acyclic:
 ``constants``
     Chunking, RAG, timeout and summarization tuning values. The leaf every
     other module may import.
+``errors``
+    ``DocumentError`` and its ``DocumentParseError`` /
+    ``DocumentInterpretationError`` / ``DocumentIndexError`` subclasses, each
+    carrying an actionable ``hint``. A leaf, imported wherever a failure
+    needs a type instead of a string.
+``schemas``
+    JSON parameter schemas for the eight ``doc_*`` tools.
+``validation``
+    Pure ``resolve_range()`` / ``chapter_range()`` helpers for model-supplied
+    character ranges. Another leaf, with no dependency on the rest of the
+    package.
 ``parsing``
     Bytes → markdown (PDF, HTML, text) plus URL fetching and markdown
     section extraction.
@@ -26,14 +37,16 @@ acyclic:
 ``embedding``
     Cosine/ranking maths and the background chunk-embedding pass, including
     the re-chunking retry for chunks that exceed the model context.
-``schemas``
-    JSON parameter schemas for the eight ``doc_*`` tools.
 ``llm``
     The interpretation-LLM helper used for summaries and RAG answers.
 ``ingestion``
     The parse → chunk → store → embed pipeline.
+``handlers_rag``
+    The ``doc_ask`` and ``doc_summary`` handlers. Split out from
+    ``handlers`` once that module crossed the 500-line rule (issue #78).
 ``handlers``
-    The eight ``doc_*`` tool handlers.
+    The remaining ``doc_*`` tool handlers; imports ``handlers_rag`` for the
+    two RAG handlers it re-exposes to ``provider``.
 ``provider``
     Assembles the handlers and schemas into a ``PythonToolProvider``.
 

@@ -107,6 +107,19 @@ class TestPublicApi:
         assert len(tools_document.__all__) == len(set(tools_document.__all__))
 
 
+def test_parse_document_returns_a_parsed_document():
+    """The public parser returns a ParsedDocument, not a bare string.
+
+    Pinned because ingestion reads ``.markdown``: a revert to a plain str
+    would fail only when a document is actually ingested.
+    """
+    from consensus.tools_document.parsing import ParsedDocument
+
+    parsed = tools_document.parse_document(b"hello", "a.txt", "text/plain")
+    assert isinstance(parsed, ParsedDocument)
+    assert parsed.markdown == "hello"
+
+
 class TestCallSites:
     """Scans every module under ``consensus/``, not just ``app.py``.
 

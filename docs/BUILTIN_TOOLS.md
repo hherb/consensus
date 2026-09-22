@@ -245,12 +245,17 @@ Tools for ingesting, navigating, and querying reference documents during discuss
 | `doc_get_length` | Get character count of a document | `document_id` |
 | `doc_get_text` | Get a slice of document text by character range | `document_id`, `from_char`, `to_char` |
 | `doc_get_sections` | Get section headers with character offsets | `document_id` |
-| `doc_get_chapter` | Get a named section's text, up to its first subsection | `document_id`, `header` |
+| `doc_get_chapter` | Get a named section's text, including all of its subsections | `document_id`, `header` |
 | `doc_ask` | RAG-based Q&A: retrieve relevant chunks, LLM-generated answer with citations | `document_id`, `question` |
 | `doc_summary` | Map-reduce summarization of a document or range | `document_id`, `from_char?`, `to_char?` |
 
 Parameter names are defined in `consensus/tools_document/schemas.py` — check
 there before wiring a client, and `to_char` accepts `-1` for "end of document".
+
+`doc_ask` only answers from chunks that score above a relevance threshold; if
+none do, it says so rather than guessing. If chunks were indexed with a
+different embedding model (or indexing failed outright), it reports that a
+re-index is required instead of returning a stale or misleading answer.
 
 Supports PDF (via pdfplumber), HTML (via trafilatura), and plain text/Markdown.
 
