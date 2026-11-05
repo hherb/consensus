@@ -13,7 +13,6 @@ Strategies:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from enum import Enum
@@ -260,9 +259,7 @@ async def _load_semantic(
     """
     # Local imports to avoid circular dependencies
     from .tools_memory import (
-        _rank_by_similarity,
-        _index_messages, _indexing_discussions,
-        MemoryUnavailableError,
+        _rank_by_similarity, ensure_discussion_indexed, MemoryUnavailableError,
     )
 
     # -- 1. Budget split ------------------------------------------------
@@ -278,15 +275,7 @@ async def _load_semantic(
         return recent_msgs
 
     # -- 3. Trigger lazy indexing (non-blocking) ------------------------
-    if discussion_id not in _indexing_discussions:
-        try:
-            unindexed = db.get_unindexed_message_ids(discussion_id)
-            if unindexed:
-                _indexing_discussions.add(discussion_id)
-                asyncio.create_task(
-                    _index_messages(unindexed, db, embed_client, discussion_id))
-        except Exception as exc:
-            logger.warning("Could not trigger lazy indexing: %s", exc)
+    ensure_discussion_indexed(db, embed_client, discussion_id)
 
     # -- 4. Build query text from topic + recent messages ---------------
     query_parts: list[str] = []

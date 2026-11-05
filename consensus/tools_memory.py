@@ -29,6 +29,10 @@ EMBED_TIMEOUT = 10.0
 EMBED_MAX_RETRIES = 3
 EMBED_BASE_DELAY = 1.0
 SEARCH_DEFAULT_LIMIT = 5
+# Characters of a message sent to the embedder when indexing it.
+MESSAGE_EMBED_MAX_CHARS = 1000
+# Characters of each matching message shown in a discussion_search result.
+SEARCH_SNIPPET_CHARS = 300
 
 
 class MemoryUnavailableError(Exception):
@@ -46,6 +50,7 @@ class EmbeddingClient:
         self._db = db
 
     def _get_config(self) -> dict:
+        """Return the stored embedding config, or the defaults if it is unreadable."""
         try:
             return self._db.get_memory_config()
         except Exception:
@@ -97,6 +102,8 @@ class EmbeddingClient:
                             ) from e
                     except (ValueError, KeyError):
                         pass  # not JSON or no error field — treat as transient
+                if attempt == EMBED_MAX_RETRIES - 1:
+                    break  # sleeping now would only delay the raise below
                 delay = EMBED_BASE_DELAY * (2 ** attempt)
                 logger.warning(
                     "Embedding attempt %d/%d failed (%s), retrying in %.1fs",
@@ -133,15 +140,18 @@ class EmbeddingClient:
 # ---------------------------------------------------------------------------
 
 def _pack_embedding(vec: list[float]) -> bytes:
+    """Serialise a vector as packed float32 for a BLOB column."""
     return struct.pack(f"{len(vec)}f", *vec)
 
 
 def _unpack_embedding(blob: bytes) -> list[float]:
+    """Inverse of :func:`_pack_embedding`."""
     n = len(blob) // 4
     return list(struct.unpack(f"{n}f", blob))
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Cosine similarity of two vectors; 0.0 for zero or mismatched vectors."""
     # Differing dimensions mean the vectors came from different embedding
     # models; zip() would silently truncate and yield a meaningless score, so
     # treat them as unrelated instead.
@@ -308,6 +318,7 @@ async def _memory_store_handler(
     arguments: dict, context: ToolContext,
     db, embed_client: EmbeddingClient,
 ) -> ToolResult:
+    """memory_store: save an observation now, embed it in the background."""
     content = arguments.get("content", "").strip()
     if not content:
         return ToolResult(content="No content provided.", is_error=True)
@@ -348,6 +359,7 @@ async def _memory_recall_handler(
     arguments: dict, context: ToolContext,
     db, embed_client: EmbeddingClient,
 ) -> ToolResult:
+    """memory_recall: rank the caller's own memories against the query."""
     query = arguments.get("query", "").strip()
     if not query:
         return ToolResult(content="No query provided.", is_error=True)
@@ -379,6 +391,7 @@ async def _memory_forget_handler(
     arguments: dict, context: ToolContext,
     db, embed_client: EmbeddingClient,
 ) -> ToolResult:
+    """memory_forget: delete one of the caller's own memories."""
     memory_id = arguments.get("memory_id", "").strip()
     if not memory_id:
         return ToolResult(content="No memory_id provided.", is_error=True)
@@ -400,26 +413,14 @@ async def _discussion_search_handler(
     arguments: dict, context: ToolContext,
     db, embed_client: EmbeddingClient,
 ) -> ToolResult:
+    """discussion_search: rank indexed past messages; lazily index this discussion."""
     query = arguments.get("query", "").strip()
     if not query:
         return ToolResult(content="No query provided.", is_error=True)
     limit = int(arguments.get("limit", SEARCH_DEFAULT_LIMIT))
     topic_filter: Optional[str] = arguments.get("topic_filter")
 
-    # Lazy-index the current discussion's messages if needed (one task at a time per discussion)
-    disc_id = context.discussion_id
-    disc_key = scoped_key(db, disc_id)
-    if disc_key not in _indexing_discussions:
-        try:
-            unindexed = db.get_unindexed_message_ids(disc_id)
-            if unindexed:
-                _indexing_discussions.add(disc_key)
-                spawn_background(
-                    _index_messages(unindexed, db, embed_client, disc_id),
-                    f"index discussion {disc_id}",
-                )
-        except Exception as e:
-            logger.warning("Could not check unindexed messages: %s", e)
+    ensure_discussion_indexed(db, embed_client, context.discussion_id)
 
     try:
         query_vec = await embed_client.embed(query)
@@ -439,9 +440,46 @@ async def _discussion_search_handler(
     lines = [f"Found {len(top)} relevant passages for '{query}':\n"]
     for i, row in enumerate(top, 1):
         topic = row.get("topic", "unknown topic")
-        lines.append(f"{i}. [Discussion: {topic}]\n   {row['content'][:300]}")
+        lines.append(f"{i}. [Discussion: {topic}]\n   {row['content'][:SEARCH_SNIPPET_CHARS]}")
 
     return ToolResult(content="\n".join(lines), metadata={"count": len(top)})
+
+
+def ensure_discussion_indexed(db, embed_client: EmbeddingClient,
+                              discussion_id: int) -> bool:
+    """Start a background pass embedding the discussion's unindexed messages.
+
+    The one entry point for lazy indexing (``discussion_search`` and the
+    semantic context strategy both use it), so the in-flight marker is
+    always added and released under the same scoped key. A failure to check
+    is logged and swallowed: indexing is an optimisation, never a reason to
+    fail the caller.
+
+    Args:
+        db: The database holding the discussion; scopes the marker.
+        embed_client: The embedding client the pass will use.
+        discussion_id: The discussion to index.
+
+    Returns:
+        True if a pass was started; False if one is already in flight,
+        nothing needs indexing, or the check failed.
+    """
+    disc_key = scoped_key(db, discussion_id)
+    if disc_key in _indexing_discussions:
+        return False
+    try:
+        unindexed = db.get_unindexed_message_ids(discussion_id)
+    except Exception as e:
+        logger.warning("Could not check unindexed messages: %s", e)
+        return False
+    if not unindexed:
+        return False
+    _indexing_discussions.add(disc_key)
+    spawn_background(
+        _index_messages(unindexed, db, embed_client, discussion_id),
+        f"index discussion {discussion_id}",
+    )
+    return True
 
 
 async def _index_messages(
@@ -466,7 +504,7 @@ async def _index_messages(
                 content = db.get_message_content(msg_id)
                 if not content:
                     continue
-                vec = await embed_client.embed(content[:1000])
+                vec = await embed_client.embed(content[:MESSAGE_EMBED_MAX_CHARS])
                 blob = _pack_embedding(vec)
                 db.set_message_embedding(msg_id, blob)
                 indexed += 1
@@ -491,6 +529,7 @@ async def _kg_assert_handler(
     arguments: dict, context: ToolContext,
     db, embed_client: EmbeddingClient,
 ) -> ToolResult:
+    """kg_assert: record a subject --relation--> object triple, creating nodes as needed."""
     subject = arguments.get("subject", "").strip()
     relation = arguments.get("relation", "").strip()
     obj = arguments.get("object", "").strip()
@@ -537,7 +576,10 @@ async def _kg_assert_handler(
                 vec = await embed_client.embed(label)
                 blob = _pack_embedding(vec)
                 db.set_kg_node_embedding(node_id, blob)
-            except MemoryUnavailableError:
+            except MemoryUnavailableError as e:
+                logger.warning(
+                    "Could not embed kg nodes %r/%r: %s", subject, obj, e,
+                )
                 break
             except Exception as e:
                 logger.warning("Failed to embed kg node %s: %s", node_id, e)
@@ -554,6 +596,7 @@ async def _kg_query_handler(
     arguments: dict, context: ToolContext,
     db, embed_client: EmbeddingClient,
 ) -> ToolResult:
+    """kg_query: semantic node search, or the edges of one exactly-named node."""
     query = arguments.get("query", "").strip()
     mode = arguments.get("mode", "search")
 
@@ -599,7 +642,7 @@ async def _kg_query_handler(
         if not rows:
             return ToolResult(content="Knowledge graph is empty.")
 
-        top = _rank_by_similarity(query_vec, rows, 5)
+        top = _rank_by_similarity(query_vec, rows, SEARCH_DEFAULT_LIMIT)
         lines = [f"Knowledge graph nodes related to '{query}':\n"]
         for i, row in enumerate(top, 1):
             desc = f" — {row['description']}" if row.get("description") else ""

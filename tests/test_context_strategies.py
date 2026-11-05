@@ -598,14 +598,13 @@ class TestLoadSemantic:
         for i in range(5):
             tmp_db.add_message(did, sample_ai_entity, f"msg-{i}",
                                "participant", turn_number=i)
-        # No embeddings -> should trigger indexing + fall back
-        with patch("consensus.tools_memory._index_messages",
-                   new_callable=AsyncMock) as mock_index:
-            with patch("consensus.tools_memory._indexing_discussions",
-                       new=set()):
-                msgs = await _load_semantic(tmp_db, did, 8, mock_embed_client)
-                # Falls back to sliding_window because no embeddings
-                assert len(msgs) == 5  # only 5 messages exist
+        # No embeddings -> should trigger indexing + fall back. Patched on the
+        # facade because _load_semantic imports it from there at call time.
+        with patch("consensus.tools_memory.ensure_discussion_indexed") as ensure:
+            msgs = await _load_semantic(tmp_db, did, 8, mock_embed_client)
+        ensure.assert_called_once_with(tmp_db, mock_embed_client, did)
+        # Falls back to sliding_window because no embeddings
+        assert len(msgs) == 5  # only 5 messages exist
 
 
 class TestGetMessagesWithEmbeddingsForDiscussion:
