@@ -90,6 +90,26 @@ class TestFilePermissions:
         assert not (mode & stat.S_IROTH)  # no other read
         monkeypatch.delenv("PERM_KEY", raising=False)
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+    def test_new_file_is_never_world_readable(self, env_file, monkeypatch):
+        """Created 0600 directly, so a permissive umask never exposes keys."""
+        old = os.umask(0)
+        try:
+            save_api_key("PERM_KEY", "secret")
+        finally:
+            os.umask(old)
+        assert stat.S_IMODE(os.stat(env_file).st_mode) == 0o600
+        monkeypatch.delenv("PERM_KEY", raising=False)
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+    def test_loose_existing_file_is_tightened(self, env_file, monkeypatch):
+        with open(env_file, "w") as f:
+            f.write("OTHER=1\n")
+        os.chmod(env_file, 0o644)
+        save_api_key("PERM_KEY", "secret")
+        assert stat.S_IMODE(os.stat(env_file).st_mode) == 0o600
+        monkeypatch.delenv("PERM_KEY", raising=False)
+
 
 class TestSetupLogging:
     """Rotating file logging so post-mortems don't depend on a live
