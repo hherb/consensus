@@ -304,15 +304,17 @@ class TestSpawnBackground:
             started.set()
             await release.wait()
 
-        background.spawn_background(work(), "test reference is held")
+        # Track only this test's task: the set is process-global, and earlier
+        # tests can leave tasks in it that belong to their own (closed) loops.
+        task = background.spawn_background(work(), "test reference is held")
         await asyncio.wait_for(started.wait(), timeout=1.0)
-        running = [t for t in background._background_tasks if not t.done()]
-        assert running, "task was not retained while running"
+        assert task in background._background_tasks and not task.done(), \
+            "task was not retained while running"
 
         release.set()
-        await asyncio.wait_for(asyncio.gather(*running), timeout=1.0)
+        await asyncio.wait_for(task, timeout=1.0)
         await asyncio.sleep(0)
-        assert not any(t in background._background_tasks for t in running)
+        assert task not in background._background_tasks
 
 
 # ---------------------------------------------------------------------------
