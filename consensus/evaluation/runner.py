@@ -22,7 +22,6 @@ import os
 import sys
 import tempfile
 import time
-from dataclasses import asdict
 from pathlib import Path
 
 # Add project root to path
@@ -309,8 +308,6 @@ async def run_case_condition_db(
     ConsensusApp, runs the discussion, and writes messages/conclusion
     back to the eval DB.
     """
-    from consensus.evaluation.eval_db import EvalDatabase
-
     run = eval_db.get_run(run_id)
     if not run:
         raise ValueError(f"Run {run_id} not found")
@@ -629,7 +626,7 @@ def main():
     total_runs = len(cases) * len(conditions)
 
     if args.dry_run:
-        print(f"\nEvaluation configuration:")
+        print("\nEvaluation configuration:")
         print(f"  Provider: {args.provider_url}")
         print(f"  Model:    {args.model}")
         print(f"  API key:  {'(set)' if os.environ.get(args.api_key_env) else '(not set)' if args.api_key_env else '(none needed)'}")
@@ -672,7 +669,7 @@ def main():
     print(f"  Successful: {len(results) - len(errors)}")
     total_tokens = sum(r.total_tokens for r in results)
     print(f"  Total tokens: {total_tokens:,}")
-    print(f"\nRun scoring with: python -m consensus.evaluation.scorer --input <results_dir>")
+    print("\nRun scoring with: python -m consensus.evaluation.scorer --input <results_dir>")
 
 
 if __name__ == "__main__":

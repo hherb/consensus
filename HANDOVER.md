@@ -1,16 +1,15 @@
 # HANDOVER
 
-_Last updated: 2026-11-05. `main` is at **v2.0.0** (released 2026-07-20) with
-the suite at **2952 passing**. The discussion-method review & repair campaign
+_Last updated: 2026-11-06. `main` is at **v2.0.0** (released 2026-07-20) with
+the suite at **2960 passing**. The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
 (PyPI `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
 failure-visibility work (#78) — contracts for both summarised below.
 The one open structural issue is **#61** (modules over the ~500-line golden
 rule): `app_discussion_flow`, `tools_document` and `app.py` (→ `app_api/`
-mixins) are split, and thirteen modules remain over the limit. **#86** lists
-30 pre-existing ruff F-class findings (a few are real defects) and proposes a
-lint gate._
+mixins) are split, and thirteen modules remain over the limit. **#86** (lint gate) is done: zero
+`ruff --select F` findings in `consensus/`, enforced by `tests/test_lint.py`._
 
 This file briefs the next session on what is done, what is still open, and the
 conventions to keep. Update it whenever a session materially changes the plan;
@@ -26,7 +25,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 2952 passing (`uv run pytest`, ~90 s) |
+| Tests | 2960 passing (`uv run pytest`, ~80 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -45,24 +44,14 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
   `submit_human_structured_message` + `consensus/static/structured-form.js`.
 - **Method-flow E2E tests** — `tests/test_method_flow_e2e.py` drives NGT, MCDA,
   Double Crux and ToT start→`method_complete` through the real pipeline.
-- **Provider resilience** (PR #64, #65) — `tool_choice` downgrade to
-  `"required"` when a provider rejects a named function; any 400 naming an
-  optional sampling parameter drops it and retries; `describe_turn_error()`
-  surfaces the provider's response body in skip notices; moderator-summary
-  failures toast instead of stopping the turn cycle silently; an empty
-  completion renders an explanatory notice naming the `max_tokens` cap.
-- **Distribution** — PyPI + DMG pipeline; notarization gate cleared at v1.99.1;
-  v2.0.0 followed the full playbook. See
-  `memory/alpha-distribution-release-process.md` for the release runbook.
-- **Flow error visibility** (#71/#72/#73/#74) — the four pre-existing defects
-  the #61 split exposed. All fixed; see the next section for the contracts
-  they established.
-- **Document failure visibility** (#78) — ten pre-existing defects in
-  `tools_document/` the #61 split review exposed, all sharing one shape: a
-  failure path indistinguishable from success. All fixed; see the section
-  after flow error visibility for the contracts they established. Structural
-  dividend: four new compliant modules (`errors.py`, `validation.py`,
-  `background.py`, `handlers_rag.py`).
+- **Provider resilience** (PR #64, #65) — `tool_choice` / sampling-parameter
+  400 downgrades in `ai_client._post_with_retry`; provider bodies surface in
+  skip notices (see ROADMAP "Provider API error resilience").
+- **Distribution** — PyPI + notarized DMG; runbook in
+  `memory/alpha-distribution-release-process.md`.
+- **Flow error visibility** (#71–#74) and **document failure visibility**
+  (#78) — pre-existing defects the #61 splits exposed; contracts below.
+- **Lint gate** (#86) — contract below.
 
 ## Flow error visibility (#71–#74, merged — keep these contracts)
 
@@ -217,29 +206,21 @@ earlier #61 split's 470); new `handlers_rag.py` (439, holds
 `embedding.py` 365; both grew in the final fix round, so the next addition
 to `handlers_rag.py` or `parsing.py` should be weighed against the limit.
 
-### Whole-branch review follow-up (PR #79 review round, keep these too)
+### Whole-branch review follow-up (PR #79, keep these too)
 
-- **The upload path resolves a real entity.** `add_document` used to pass
-  `caller_entity_id=0` (never a rowid), so every human upload's summary
-  failed. `ConsensusApp._interpretation_entity_id` picks the AI moderator,
-  else an AI participant, else 0 — and then passes no context, so the honest
-  status is `'pending'`, not `'failed'`.
-- **The embedder's own message reaches the user** (`_embed_single_chunk`
-  returns `(ok, error)`; `DocumentIndexError` carries the hint).
-- **A partial dimension mismatch is reported** (`incomplete_retrieval` on
-  `doc_ask`; the library search appends the same notice).
-- **Migration `016` retro-classifies** pre-#78 rows whose summary *is* an
-  LLM error (by the two known prefixes) — a new version, since `015` may
-  already be applied.
-- **`summary_status` has one source and one enforcer**: `models.SummaryStatus`,
-  validated in `db.add_document` / `update_document_summary` (which now
-  writes status with text).
-- **The human uploader sees degraded parses and failed summaries** in the
-  upload toast (`static/documents.js` `_addedMessage()`).
-- **`consensus/dbkey.py` `scoped_key()`** keys process-global bookkeeping by
-  `(db_path, id)`; it raises rather than defaulting a missing path to `""`.
-- **A cancelled pass releases its in-flight marker** via a done callback (a
-  task cancelled before its first step never runs its `finally`).
+- Uploads resolve a real entity (`ConsensusApp._interpretation_entity_id`:
+  AI moderator → AI participant → 0, honest status `'pending'`).
+- The embedder's own message reaches the user (`DocumentIndexError.hint`);
+  partial dimension mismatches are reported (`incomplete_retrieval`).
+- Migration `016` retro-classifies pre-#78 LLM-error summaries; new versions,
+  never edits to applied migrations.
+- `models.SummaryStatus` is the one source of `summary_status`, validated in
+  `db.add_document` / `update_document_summary`.
+- The upload toast shows degraded parses and failed summaries
+  (`static/documents.js` `_addedMessage()`).
+- `consensus/dbkey.py` `scoped_key()` keys process-global bookkeeping by
+  `(db_path, id)` and raises on a missing path; a cancelled pass releases its
+  in-flight marker via a done callback.
 
 **Testing lesson worth keeping.** Three of these were found by *mutating the
 fix back* and watching the suite stay green. Mutation distinguishes a test
@@ -258,6 +239,18 @@ render `summary_status`/`fidelity` and those are not persisted — **issue
 Contracts are covered by `tests/test_tools_document_failures.py`,
 `tests/test_background.py`, and the existing `tests/test_tools_document*.py`
 suite.
+
+## Lint gate (#86, PR #91 — keep in mind)
+
+`tests/test_lint.py` fails on any `ruff --select F` finding in `consensus/`
+(`tests/` is not linted). `kg_query` dropped its fake `path` mode and rejects
+unknown modes; `tools_memory` handler failures log via `_tool_failure`
+(`MemoryUnavailableError` → warning; `EmbeddingClient.embed` logs a
+non-transport fault such as a malformed response with its traceback first).
+**pytest was declared nowhere**, so `uv run pytest` had silently used pyenv's
+global Python. The `dev` group (`pytest`, `pytest-asyncio` 1.x, `ruff`) fixes
+that. pytest-asyncio 1.x leaves no current event loop, so write async tests
+as `async def`, never `get_event_loop().run_until_complete`.
 
 ## Open work
 
@@ -319,28 +312,28 @@ them in step when the public API changes.
 | Lines | File |
 |------:|------|
 | 1227 | `consensus/server.py` |
-| 784 | `consensus/auth.py` |
+| 787 | `consensus/auth.py` |
 | 775 | `consensus/moderator.py` |
 | 710 | `consensus/mcp_server.py` |
-| 684 | `consensus/tools_memory.py` |
-| 679 | `consensus/evaluation/runner.py` |
+| 698 | `consensus/tools_memory.py` |
+| 676 | `consensus/evaluation/runner.py` |
 | 635 | `consensus/desktop.py` |
 | 614 | `consensus/tools_python.py` |
 | 589 | `consensus/evaluation/eval_db.py` |
 | 580 | `consensus/tools_image.py` |
-| 530 | `consensus/evaluation/scorer.py` |
+| 529 | `consensus/evaluation/scorer.py` |
 | 517 | `consensus/methods/base.py` |
 | 509 | `consensus/app_discussion_setup.py` |
 
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next-best target: `consensus/tools_memory.py`** (684) — module-level
-functions under clear banners, like `tools_document` was; check its coverage
-first, and note issue #86 flags a defect in its `_kg_query_handler`
-(advertised-but-unimplemented `path` mode reported as success) that should
-be fixed in its own commit, not inside the move. `moderator.py` (775) and
-`auth.py` (784) are the larger payoffs after that.
+**Next-best target: `consensus/tools_memory.py`** (698) — module-level
+functions under clear banners, like `tools_document` was. Coverage is **43%**
+(only `kg_query` and the background helpers are tested), so write the
+characterization tests for the memory/discussion-search handlers and the
+`EmbeddingClient` retry loop first. The #86 defect in it is already fixed. `moderator.py` (775) and
+`auth.py` (787) are the larger payoffs after that.
 
 **`server.py` is the awkward one — read this before picking it.** It is a
 single 1170-line `launch_web()` whose middleware and ~35 handlers are all
@@ -401,13 +394,6 @@ following `tests/flow_e2e_helpers.py`. `tests/document_helpers.py` has a
 the target through `sys.modules[anchor.__module__]`, so the tests stay valid
 across the split without naming module paths that are about to change — worth
 copying for the next one.
-
-### Issue #86 — ruff F-class findings and a lint gate
-
-30 findings on `main`, mostly dead imports, but `tools_memory._kg_query_handler`
-reports its unimplemented `path` mode as success, and `format_tally` /
-`ai_client` retry loop compute values they never use — check each before a
-mechanical `--fix`. Then add the check as a test so the count stays at zero.
 
 ### Deferred follow-ups (no issue filed)
 

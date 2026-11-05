@@ -10,10 +10,6 @@ import threading
 from typing import Optional
 
 from ..migrator import run_migrations
-from ..models import (
-    DEFAULT_BASE_URL, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS, DEFAULT_AVATAR_COLOR,
-    DEFAULT_EMBEDDING_BACKEND, DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_ENDPOINT,
-)
 from .prompts import PromptsMixin
 from .providers import ProvidersMixin
 from .entities import EntitiesMixin

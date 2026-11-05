@@ -27,8 +27,10 @@ consensus                      # via pyproject.toml [project.scripts]
 ```
 
 Tests live in `tests/` (see HANDOVER.md for the current count — it is recorded
-in one place on purpose, because copies of the figure go stale). No linter or
-build system configured yet.
+in one place on purpose, because copies of the figure go stale). `pytest`,
+`pytest-asyncio` and `ruff` are in the `dev` dependency group, which `uv run`
+syncs automatically. `tests/test_lint.py` fails on any `ruff --select F`
+finding in `consensus/` (issue #86). There is no CI pipeline or formatter.
 
 ## Architecture
 

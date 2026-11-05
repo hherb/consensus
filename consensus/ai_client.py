@@ -171,7 +171,6 @@ class AIClient:
     ) -> httpx.Response:
         """POST with exponential backoff for retryable errors."""
         client = self._get_client()
-        last_exc: Optional[Exception] = None
 
         # Manual attempt counter so a one-shot temperature drop does not
         # consume a retry slot (which would otherwise return the 400 when the
@@ -181,7 +180,6 @@ class AIClient:
             try:
                 response = await client.post(url, json=payload)
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
-                last_exc = exc
                 if attempt < MAX_RETRIES - 1:
                     delay = RETRY_BASE_DELAY * (2 ** attempt)
                     logger.warning(

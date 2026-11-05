@@ -68,7 +68,7 @@ Gives AI participants persistent memory across discussions. See [Chapter 10](10_
 - `memory_forget(memory_id)` — Delete a specific memory
 - `discussion_search(query, limit, topic_filter)` — Search across all past discussion messages
 - `kg_assert(subject, relation, object, evidence)` — Add a knowledge graph triple
-- `kg_query(query, mode, limit)` — Search or traverse the knowledge graph
+- `kg_query(query, mode)` — Search or traverse the knowledge graph
 
 **Requires:** An embedding service (see [Chapter 10](10_institutional_memory.md) for configuration).
 
