@@ -5,7 +5,7 @@ public name behind re-exports in ``__init__.py``.  Those re-exports are load
 bearing in a way the rest of the suite cannot see: ``ConsensusApp`` reaches
 the flow functions by *attribute access at call time* ::
 
-    result = await app_discussion_flow.mediate(...)      # app.py
+    result = await app_discussion_flow.mediate(...)      # app_api/discussion.py
 
 so a name dropped from ``__init__.py`` raises ``AttributeError`` on that route
 in production rather than ``ImportError`` at import time.  Deleting five names

@@ -1,7 +1,7 @@
 # HANDOVER
 
 _Last updated: 2026-11-05. `main` is at **v2.0.0** (released 2026-07-20) with
-the suite at **2931 passing**. The discussion-method review & repair campaign
+the suite at **2950 passing**. The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
 (PyPI `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
@@ -26,7 +26,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 2931 passing (`uv run pytest`, ~85 s) |
+| Tests | 2950 passing (`uv run pytest`, ~90 s) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -273,15 +273,16 @@ suite.
    provider, validation, errors). Pure move; the pre-existing defects its
    review exposed became #78.
 3. `app.py` (1284) → `app.py` (344) + **`app_api/` mixins**:
-   `mcp_experts` (228), `catalog` (109), `discussion` (277), `history`
-   (133), `tool_assignments` (48), `documents` (174), `images` (100),
+   `mcp_experts` (246), `catalog` (108), `discussion` (280), `history`
+   (133), `tool_assignments` (48), `documents` (174), `images` (118),
    `request_keys` (13, the BYOK `ContextVar`). Chosen with the repo owner
    over function-extraction because ~500 of app.py's lines were *already*
    one-line delegators to the `app_*` modules, so moving logic alone could
    not get it under the limit. `ConsensusApp` composes the mixins as
    `Database` composes `db/`; app.py keeps `__init__`, tool registration,
-   key resolution, the event emitter and `get_state`. Every method range
-   byte-identical bar `from .` → `from ..`; no name collides across mixins.
+   key resolution, the event emitter and `get_state`. The move commit is
+   byte-identical bar `from .` → `from ..` (later commits in the PR changed
+   only error paths); no name collides across mixins.
    **Moved code now logs under `consensus.app_api.*`, which is not a child
    of `consensus.app`**, so `caplog`/`assertLogs` on the old name would see
    nothing. Coverage was 66%, so `tests/test_app_characterization.py` came
@@ -289,7 +290,15 @@ suite.
    context-strategy setup) and pins the public method set — verified to
    fail when a mixin is dropped from the bases. The same PR fixed four
    swallowed-and-unlogged errors it found (MCP test, image fetch, image
-   file missing, desktop image data URL).
+   file missing, desktop image data URL). Review follow-ups in the same
+   PR: MCP providers keep `last_error` so "Test connection" shows *why*
+   `connect()` failed; expected vs unexpected faults split (traceback only
+   for the latter) in the MCP test, image fetch and desktop image paths;
+   and `tests/test_app_api_paths.py` closes the gaps a mutation pass found
+   (BYOK through `get_providers`, document detach/delete, export,
+   pause/conclude cancelling `ask_user`, the `consult_expert` registry
+   wiring, the public API's `async` shape). Image fetch retry is #88;
+   redacting URLs in fetch-failure logs is #89.
 
 Smaller slices came out of the error-visibility work when an addition
 pushed a compliant file over: `ai_response.py` (from `ai_client.py`) and
@@ -315,7 +324,7 @@ them in step when the public API changes.
 | 710 | `consensus/mcp_server.py` |
 | 684 | `consensus/tools_memory.py` |
 | 679 | `consensus/evaluation/runner.py` |
-| 629 | `consensus/desktop.py` |
+| 635 | `consensus/desktop.py` |
 | 614 | `consensus/tools_python.py` |
 | 589 | `consensus/evaluation/eval_db.py` |
 | 580 | `consensus/tools_image.py` |

@@ -64,6 +64,8 @@ class MCPToolProvider(ToolProvider):
         self._process: Optional[asyncio.subprocess.Process] = None
         self._reader_task: Optional[asyncio.Task] = None
         self._connected = False
+        # Why the last connect() failed, for callers that show it to the user.
+        self.last_error = ""
         self._next_id = 1
         self._pending: dict[int | str, asyncio.Future] = {}
         self._progress_callbacks: dict[str, Callable] = {}
@@ -71,8 +73,9 @@ class MCPToolProvider(ToolProvider):
     async def connect(self) -> bool:
         """Launch the MCP server subprocess and perform the initialize handshake.
 
-        Returns True on success, False on failure.
+        Returns True on success, False on failure (reason in ``last_error``).
         """
+        self.last_error = ""
         try:
             self._process = await asyncio.create_subprocess_exec(
                 self._command,
@@ -102,8 +105,9 @@ class MCPToolProvider(ToolProvider):
             await self._send_notification("notifications/initialized", {})
             self._connected = True
             return True
-        except Exception:
+        except Exception as e:
             logger.exception("Failed to connect to MCP server %s", self.name)
+            self.last_error = str(e) or type(e).__name__
             await self.close()
             return False
 

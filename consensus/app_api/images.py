@@ -1,11 +1,14 @@
 """ConsensusApp mixin: Image upload, URL ingestion, serving and deletion.
 
-Moved verbatim from ``consensus/app.py`` (issue #61). The host class
-is ``ConsensusApp``, which owns all state.
+Moved from ``consensus/app.py`` (issue #61); the error paths of
+``add_image_from_url`` and ``get_image_data`` have since gained logging.
+The host class is ``ConsensusApp``, which owns all state.
 """
 
 import logging
 from typing import Optional
+
+import httpx
 
 
 logger = logging.getLogger(__name__)
@@ -50,8 +53,13 @@ class ImagesMixin:
         from ..tools_image import fetch_image_from_url
         try:
             content_bytes, filename, mime_type = await fetch_image_from_url(url)
-        except Exception as e:
+        except (ValueError, httpx.HTTPError) as e:
+            # Expected: rejected URL, oversize or non-image body, HTTP fault.
             logger.warning("Image fetch failed for %s: %s", url, e)
+            return {"error": f"Failed to fetch image: {e}"}
+        except Exception as e:
+            # A bug in the fetch path, not a bad URL: keep the traceback.
+            logger.exception("Image fetch failed unexpectedly for %s", url)
             return {"error": f"Failed to fetch image: {e}"}
 
         return await self.add_image(
@@ -105,5 +113,6 @@ class ImagesMixin:
         if image:
             from ..tools_image import delete_image_file
             delete_image_file(image["storage_path"])
-        deleted = self.db.delete_image(image_id)
-        return {"success": deleted}
+        if not self.db.delete_image(image_id):
+            return {"success": False, "error": "Image not found"}
+        return {"success": True}

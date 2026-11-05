@@ -5,7 +5,7 @@ public name behind re-exports in ``__init__.py``. Those re-exports are load
 bearing in a way the rest of the suite cannot see: ``ConsensusApp`` imports
 them *lazily, inside function bodies* ::
 
-    from .tools_document import fetch_url_content      # app.py
+    from ..tools_document import fetch_url_content     # app_api/documents.py
 
 so a name dropped from ``__init__.py`` raises ``ImportError`` when that
 method is first called in production, not at collection time. These tests

@@ -18,7 +18,11 @@ ConsensusApp
     |     +-- PythonToolProvider ("builtin")
     |     |     |
     |     |     +-- web_search (tools_builtin.py)
-    |     |     +-- consult_expert (app_api/mcp_experts.py)
+    |     |
+    |     +-- PythonToolProvider ("experts")  [registered in app.py]
+    |     |     |
+    |     |     +-- consult_expert, list_available_experts
+    |     |           (handlers in app_api/mcp_experts.py)
     |     |
     |     +-- PythonToolProvider ("interactive")
     |     |     |

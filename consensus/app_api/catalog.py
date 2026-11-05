@@ -13,8 +13,7 @@ from .request_keys import _request_api_keys_var
 class CatalogMixin:
     """Provider, entity-profile and prompt management.
 
-    Expects the host class to provide: db, resolve_provider_api_key(),
-    _notify().
+    Expects the host class to provide: db, resolve_provider_api_key().
     """
 
     # ------------------------------------------------------------------

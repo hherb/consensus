@@ -1,12 +1,15 @@
 """ConsensusApp mixin: MCP server management, expert definitions and expert consultation.
 
-Moved verbatim from ``consensus/app.py`` (issue #61). The host class
-is ``ConsensusApp``, which owns all state.
+Moved from ``consensus/app.py`` (issue #61); the error paths of
+``test_mcp_connection`` and ``_handle_consult_expert`` have since gained
+logging. The host class is ``ConsensusApp``, which owns all state.
 """
 
 import asyncio
 import logging
 import time
+
+import httpx
 
 from ..models import Message, MessageRole
 from ..tools import ToolContext, ToolResult
@@ -82,14 +85,26 @@ class MCPExpertsMixin:
 
         try:
             if not await provider.connect():
-                return {"success": False, "error": "Failed to connect"}
+                # connect() has already logged the traceback.
+                reason = provider.last_error
+                return {"success": False,
+                        "error": f"Failed to connect: {reason}" if reason
+                        else "Failed to connect"}
             tools = await provider.list_tools()
             tool_info = [{"name": t.name, "description": t.description} for t in tools]
             return {"success": True, "tools": tool_info}
-        except Exception as e:
+        except (OSError, RuntimeError, httpx.HTTPError) as e:
+            # Expected faults (timeout, dropped pipe, JSON-RPC error); a bare
+            # TimeoutError has an empty str(), hence the type-name fallback.
+            error = str(e) or type(e).__name__
             logger.warning("MCP connection test failed for server %r: %s",
-                           server["name"], e)
-            return {"success": False, "error": str(e)}
+                           server["name"], error)
+            return {"success": False, "error": error}
+        except Exception as e:
+            # A bug in the client, not the server: keep the traceback.
+            logger.exception("MCP connection test failed unexpectedly for server %r",
+                             server["name"])
+            return {"success": False, "error": str(e) or type(e).__name__}
         finally:
             await provider.close()
 
@@ -197,6 +212,7 @@ class MCPExpertsMixin:
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
+            logger.warning("Expert %r timed out after %ss", expert_name, timeout)
             return ToolResult(content=f"Expert '{expert_name}' timed out after {timeout}s", is_error=True)
 
         # Add expert message to discussion

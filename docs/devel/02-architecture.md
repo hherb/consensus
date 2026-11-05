@@ -13,7 +13,7 @@ Frontend (static/ — vanilla JS ES modules)
     | (desktop.py:DesktopBridge)          (server.py)
     |
     v
-ConsensusApp (app.py + app_*.py domain modules)
+ConsensusApp (app.py + app_api/ mixins + app_*.py domain modules)
     |  Central orchestrator: state management, validation, DB writes, event emitter
     |
     +-- Moderator (moderator.py)

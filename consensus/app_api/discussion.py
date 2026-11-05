@@ -17,8 +17,8 @@ class DiscussionMixin:
     """Discussion setup (roster, topic, method, context strategy) and the turn lifecycle.
 
     Expects the host class to provide: db, discussion, moderator,
-    tool_registry, pricing_cache, get_state(), _notify(),
-    _resolve_key_for_moderator(), _cancel_pending_user_inputs().
+    get_state(), _notify(), _resolve_key_for_moderator(),
+    _cancel_pending_user_inputs().
     """
 
     # ------------------------------------------------------------------
@@ -86,6 +86,9 @@ class DiscussionMixin:
                 self.discussion, method_name,
             )
         except ValueError as e:
+            # Usually an unknown name, but a method class's own constructor
+            # can raise ValueError too, so leave a trace either way.
+            logger.warning("Could not set discussion method %r: %s", method_name, e)
             return {"error": str(e)}
         self._notify()
         return result

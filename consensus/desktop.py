@@ -93,8 +93,14 @@ class DesktopBridge:
             return ""
         try:
             return image_to_base64_url(img["storage_path"], img["mime_type"])
-        except Exception as e:
+        except OSError as e:
+            # Missing or unreadable file: a storage fault, not a bug.
             logger.warning("Could not load image %d for display: %s", image_id, e)
+            return ""
+        except Exception:
+            # Path traversal in storage_path (ValueError) or a bug: never
+            # expected, so keep the traceback.
+            logger.exception("Could not load image %d for display", image_id)
             return ""
 
     # -- Providers --

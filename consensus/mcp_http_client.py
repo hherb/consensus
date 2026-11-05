@@ -58,6 +58,8 @@ class MCPHTTPToolProvider(ToolProvider):
         self._extra_headers = headers or {}
         self._timeout = timeout
         self._connected = False
+        # Why the last connect() failed, for callers that show it to the user.
+        self.last_error = ""
         self._next_id = 1
         self._session_id: Optional[str] = None
         self._client: Optional[httpx.AsyncClient] = None
@@ -85,8 +87,9 @@ class MCPHTTPToolProvider(ToolProvider):
         session ID from the response headers.
 
         Returns:
-            True on success, False on failure.
+            True on success, False on failure (reason in ``last_error``).
         """
+        self.last_error = ""
         try:
             self._client = httpx.AsyncClient(timeout=self._timeout)
 
@@ -106,8 +109,9 @@ class MCPHTTPToolProvider(ToolProvider):
 
             self._connected = True
             return True
-        except Exception:
+        except Exception as e:
             logger.exception("Failed to connect to MCP HTTP server %s", self.name)
+            self.last_error = str(e) or type(e).__name__
             await self.close()
             return False
 

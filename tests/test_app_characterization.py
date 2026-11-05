@@ -17,19 +17,7 @@ from consensus.tools import ToolContext, ToolDefinition, ToolResult
 from consensus.tools_document.errors import DocumentParseError
 
 
-@pytest.fixture
-def app(tmp_path):
-    """A ConsensusApp backed by a temporary database."""
-    return ConsensusApp(db_path=str(tmp_path / "app.db"))
-
-
-@pytest.fixture
-def images_dir(tmp_path, monkeypatch):
-    """Redirect image storage away from the real user data directory."""
-    path = tmp_path / "images"
-    path.mkdir()
-    monkeypatch.setattr("consensus.tools_image.get_images_dir", lambda: str(path))
-    return path
+# The ``app`` and ``images_dir`` fixtures live in conftest.py.
 
 
 class FakeMCPProvider:
@@ -37,9 +25,11 @@ class FakeMCPProvider:
 
     def __init__(self, name: str = "fake", connects: bool = True,
                  tools: list | None = None, raises: Exception | None = None,
-                 result: ToolResult | None = None, delay: float = 0.0) -> None:
+                 result: ToolResult | None = None, delay: float = 0.0,
+                 last_error: str = "") -> None:
         self.name = name
         self.connects = connects
+        self.last_error = last_error
         self.tools = tools or []
         self.raises = raises
         self.result = result or ToolResult(content="expert says hi")
