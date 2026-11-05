@@ -87,6 +87,8 @@ class MCPExpertsMixin:
             tool_info = [{"name": t.name, "description": t.description} for t in tools]
             return {"success": True, "tools": tool_info}
         except Exception as e:
+            logger.warning("MCP connection test failed for server %r: %s",
+                           server["name"], e)
             return {"success": False, "error": str(e)}
         finally:
             await provider.close()

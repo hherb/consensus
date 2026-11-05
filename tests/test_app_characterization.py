@@ -343,6 +343,54 @@ class TestImages:
         assert app.db.get_image(result["image_id"])["source_url"] == "http://x/a.png"
 
 
+# --- Caught errors are logged (golden rule 6) --------------------------------
+
+class TestCaughtErrorsAreLogged:
+    """Each of these returned an error to the UI but left no trace in the log,
+    so a user report had nothing to correlate against."""
+
+    @pytest.mark.asyncio
+    async def test_mcp_connection_failure(self, app, caplog):
+        sid = app.add_mcp_server("srv", "", "cmd")["id"]
+        with patch.object(ConsensusApp, "_create_mcp_provider",
+                          return_value=FakeMCPProvider(raises=RuntimeError("boom"))), \
+             caplog.at_level(logging.WARNING, logger="consensus.app_api"):
+            await app.test_mcp_connection(sid)
+        assert "srv" in caplog.text and "boom" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_image_fetch_failure(self, app, images_dir, caplog):
+        with patch("consensus.tools_image.fetch_image_from_url",
+                   AsyncMock(side_effect=ValueError("private address"))), \
+             caplog.at_level(logging.WARNING, logger="consensus.app_api"):
+            await app.add_image_from_url("http://10.0.0.1/a.png")
+        assert "http://10.0.0.1/a.png" in caplog.text
+        assert "private address" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_image_file_missing_on_disk(self, app, images_dir, caplog):
+        iid = (await app.add_image("a.png", PNG, "image/png"))["image_id"]
+        for f in images_dir.iterdir():
+            f.unlink()
+        with caplog.at_level(logging.WARNING, logger="consensus.app_api"):
+            assert app.get_image_data(iid) is None
+        assert f"image {iid}" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_desktop_image_data_url_failure(self, app, images_dir, caplog):
+        from consensus.desktop import DesktopBridge
+        iid = (await app.add_image("a.png", PNG, "image/png"))["image_id"]
+        for f in images_dir.iterdir():
+            f.unlink()
+        bridge = DesktopBridge(app)
+        try:
+            with caplog.at_level(logging.WARNING, logger="consensus.desktop"):
+                assert bridge.get_image_data_url(iid) == ""
+        finally:
+            bridge._loop.call_soon_threadsafe(bridge._loop.stop)
+        assert f"image {iid}" in caplog.text
+
+
 # --- Discussion setup --------------------------------------------------------
 
 class TestDiscussionSetup:

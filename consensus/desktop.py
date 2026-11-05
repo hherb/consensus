@@ -93,7 +93,8 @@ class DesktopBridge:
             return ""
         try:
             return image_to_base64_url(img["storage_path"], img["mime_type"])
-        except Exception:
+        except Exception as e:
+            logger.warning("Could not load image %d for display: %s", image_id, e)
             return ""
 
     # -- Providers --

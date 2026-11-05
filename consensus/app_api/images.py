@@ -4,7 +4,11 @@ Moved verbatim from ``consensus/app.py`` (issue #61). The host class
 is ``ConsensusApp``, which owns all state.
 """
 
+import logging
 from typing import Optional
+
+
+logger = logging.getLogger(__name__)
 
 
 class ImagesMixin:
@@ -47,6 +51,7 @@ class ImagesMixin:
         try:
             content_bytes, filename, mime_type = await fetch_image_from_url(url)
         except Exception as e:
+            logger.warning("Image fetch failed for %s: %s", url, e)
             return {"error": f"Failed to fetch image: {e}"}
 
         return await self.add_image(
@@ -88,6 +93,10 @@ class ImagesMixin:
             data = load_image_file(image["storage_path"])
             return data, image["mime_type"], image["original_filename"]
         except FileNotFoundError:
+            # The row survives but its file is gone: a 404 to the browser,
+            # and a storage inconsistency worth a log line.
+            logger.warning("File for image %d missing from storage: %s",
+                           image_id, image["storage_path"])
             return None
 
     def delete_image(self, image_id: int) -> dict:
