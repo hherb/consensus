@@ -234,7 +234,7 @@ Request installation of a Python package from PyPI. The user is prompted to appr
 
 ## Document Tools
 
-**Provider:** `documents` · **Module:** `tools_document/` · **Requires:** `uv pip install -e ".[memory]"` + Ollama embedding service
+**Provider:** `documents` · **Module:** `tools_document/` · **Requires:** Ollama embedding service
 
 Tools for ingesting, navigating, and querying reference documents during discussions.
 
@@ -294,7 +294,7 @@ Security: path traversal protection, SSRF protection (blocks private IPs), 20 MB
 
 ## Memory Tools
 
-**Provider:** `memory` · **Module:** `tools_memory.py` · **Requires:** `uv pip install -e ".[memory]"` + Ollama embedding service
+**Provider:** `memory` · **Module:** `tools_memory/` · **Requires:** Ollama embedding service
 
 Long-term personal memory and knowledge graph for AI participants. Each entity maintains its own private memory, scoped by entity ID.
 
@@ -335,7 +335,7 @@ Per-discussion overrides can disable specific tools for a particular discussion.
 
 | Provider | Tools | Dependencies |
 |----------|-------|-------------|
-| `documents` | `doc_add`, `doc_list`, `doc_get_length`, `doc_get_text`, `doc_get_sections`, `doc_get_chapter`, `doc_ask`, `doc_summary` | `uv pip install -e ".[memory]"` + Ollama |
+| `documents` | `doc_add`, `doc_list`, `doc_get_length`, `doc_get_text`, `doc_get_sections`, `doc_get_chapter`, `doc_ask`, `doc_summary` | Ollama embedding service |
 | `images` | `describe_image`, `list_images`, `add_image_url` | Pillow (included in `[all]`) |
-| `memory` | `memory_store`, `memory_recall`, `memory_forget`, `discussion_search`, `kg_assert`, `kg_query` | `uv pip install -e ".[memory]"` + Ollama |
+| `memory` | `memory_store`, `memory_recall`, `memory_forget`, `discussion_search`, `kg_assert`, `kg_query` | Ollama embedding service |
 | MCP servers | Discovered dynamically | Per-server configuration |

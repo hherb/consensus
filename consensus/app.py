@@ -117,7 +117,7 @@ class ConsensusApp(
         self.db.add_tool_provider("interactive", "python")
 
     def _init_memory_tools(self) -> None:
-        """Register institutional memory tool provider (requires [memory] extras)."""
+        """Register institutional memory tool provider (needs sqlite-vec; a default dependency)."""
         try:
             import sqlite_vec  # noqa: F401
             from .tools_memory import create_memory_provider
@@ -130,7 +130,7 @@ class ConsensusApp(
             logger.info("Memory tools not available: %s", e)
 
     def _init_document_tools(self) -> None:
-        """Register document RAG tool provider (requires [memory] extras)."""
+        """Register document RAG tool provider (needs sqlite-vec; a default dependency)."""
         try:
             import sqlite_vec  # noqa: F401
             from .tools_document import create_document_provider

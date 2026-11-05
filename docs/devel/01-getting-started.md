@@ -123,7 +123,8 @@ consensus/
                            parsing, chunking, embedding, schemas, validation, llm,
                            ingestion, handlers, handlers_rag, provider)
   tools_image.py           Image tool provider (storage, vision, multimodal context)
-  tools_memory.py          Institutional memory tools (sqlite-vec, Ollama)
+  tools_memory/            Institutional memory tool provider package (constants,
+                           embedding, schemas, handlers, handlers_kg, provider)
   mcp_client.py            MCPToolProvider — JSON-RPC 2.0 communication with MCP servers
   pricing.py               PricingCache — model cost lookup via OpenRouter
   methods.py               Pluggable discussion methods framework

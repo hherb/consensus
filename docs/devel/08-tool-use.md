@@ -347,7 +347,7 @@ See [Database](05-database.md) for full schema.
 
 ## Institutional Memory Tools
 
-Defined in `tools_memory.py`. Created via `create_memory_provider(db)` and
+Defined in the `tools_memory/` package. Created via `create_memory_provider(db)` and
 registered in `ConsensusApp._init_memory_tools()`. Requires the `[memory]`
 optional dependency group (`sqlite-vec`, `numpy`) and an Ollama embedding
 service.
@@ -374,7 +374,7 @@ ConsensusApp._init_memory_tools()
 | `memory_forget` | Delete a specific memory by ID | `memory_id: str` |
 | `discussion_search` | Semantic search across all past discussion messages | `query: str`, `limit?: int`, `topic_filter?: str` |
 | `kg_assert` | Assert a knowledge triple (subject→relation→object) | `subject: str`, `relation: str`, `object: str`, `description?: str` |
-| `kg_query` | Query the knowledge graph | `query: str`, `mode: "search"\|"neighbors"\|"path"` |
+| `kg_query` | Query the knowledge graph | `query: str`, `mode?: "search"\|"neighbors"` |
 
 ### How models use memory
 

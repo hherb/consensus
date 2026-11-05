@@ -81,7 +81,7 @@ ConsensusMCPServer (mcp_server.py)  ← external AI agents connect here
     |  stdio JSON-RPC 2.0 — invoked as `consensus-mcp`
     |
     +-- Database (db/) — direct read/search/write access
-    +-- EmbeddingClient (tools_memory.py) — semantic search
+    +-- EmbeddingClient (tools_memory/embedding.py) — semantic search
     +-- ConsensusApp (app.py) — for run_discussion orchestration
 ```
 
@@ -107,7 +107,7 @@ ConsensusMCPServer (mcp_server.py)  ← external AI agents connect here
   discussions are soft-deleted (marked inactive) rather than hard-deleted.
 - **Institutional memory (optional).** AI entities can persist observations,
   search past discussions semantically, and maintain a knowledge graph across
-  sessions. Implemented as tool providers requiring `[memory]` extras + Ollama.
+  sessions. Implemented as tool providers requiring an Ollama embedding service.
 - **Participant-driven context loading.** Each AI participant loads discussion
   history from the database using a configurable strategy (full, sliding_window,
   summary, or semantic). The semantic strategy uses embedding-based RAG to
