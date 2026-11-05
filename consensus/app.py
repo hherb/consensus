@@ -127,7 +127,9 @@ class ConsensusApp(
             self.memory_available = True
             logger.debug("Institutional memory tools registered")
         except ImportError as e:
-            logger.info("Memory tools not available: %s", e)
+            # A default install always has the deps, so this is a broken
+            # install or a broken import inside the package: say so loudly.
+            logger.warning("Memory tools failed to load: %s", e)
 
     def _init_document_tools(self) -> None:
         """Register document RAG tool provider (needs sqlite-vec; a default dependency)."""
@@ -140,7 +142,7 @@ class ConsensusApp(
             self.documents_available = True
             logger.debug("Document RAG tools registered")
         except ImportError as e:
-            logger.info("Document tools not available: %s", e)
+            logger.warning("Document tools failed to load: %s", e)
 
     def _init_image_tools(self) -> None:
         """Register image tool provider."""

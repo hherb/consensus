@@ -80,7 +80,7 @@ class DocumentsMixin:
             the error carries (golden rule 6).
         """
         if not self.documents_available:
-            return {"error": "Document tools not available (missing sqlite-vec)"}
+            return {"error": "Document tools unavailable on this server (they failed to load; see the server log)"}
 
         from ..tools_document import ingest_document
         from ..tools_document.errors import DocumentError
@@ -135,7 +135,7 @@ class DocumentsMixin:
             the frontend renders.
         """
         if not self.documents_available:
-            return {"error": "Document tools not available (missing sqlite-vec)"}
+            return {"error": "Document tools unavailable on this server (they failed to load; see the server log)"}
 
         from ..tools_document import fetch_url_content
         from ..tools_document.errors import DocumentError

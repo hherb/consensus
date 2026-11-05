@@ -249,7 +249,7 @@ class TestAddDocumentFromURL:
     @pytest.mark.asyncio
     async def test_unavailable(self, app):
         app.documents_available = False
-        assert "not available" in (await app.add_document_from_url("http://x"))["error"]
+        assert "unavailable" in (await app.add_document_from_url("http://x"))["error"]
 
     @pytest.mark.asyncio
     async def test_fetch_failures_become_errors(self, app, caplog):
@@ -379,6 +379,29 @@ class TestCaughtErrorsAreLogged:
         finally:
             bridge._loop.call_soon_threadsafe(bridge._loop.stop)
         assert f"image {iid}" in caplog.text
+
+    @pytest.mark.parametrize("module, flag", [
+        ("consensus.tools_memory", "memory_available"),
+        ("consensus.tools_document", "documents_available"),
+    ])
+    def test_tool_package_that_fails_to_import_is_a_warning(
+        self, tmp_path, monkeypatch, caplog, module, flag,
+    ):
+        """A broken package import used to disable the feature at INFO level.
+
+        Every default install has the dependencies, so an ImportError here is
+        a broken install or a broken import inside the package (e.g. after a
+        split) — and the UI only says "see the server log".
+        """
+        import sys
+        monkeypatch.setitem(sys.modules, module, None)  # import now raises
+        with caplog.at_level(logging.WARNING, logger="consensus.app"):
+            app = ConsensusApp(db_path=str(tmp_path / "broken.db"))
+        assert getattr(app, flag) is False
+        assert any(
+            r.levelno == logging.WARNING and "failed to load" in r.getMessage()
+            for r in caplog.records
+        )
 
 
 # --- Discussion setup --------------------------------------------------------

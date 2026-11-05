@@ -348,9 +348,9 @@ See [Database](05-database.md) for full schema.
 ## Institutional Memory Tools
 
 Defined in the `tools_memory/` package. Created via `create_memory_provider(db)` and
-registered in `ConsensusApp._init_memory_tools()`. Requires the `[memory]`
-optional dependency group (`sqlite-vec`, `numpy`) and an Ollama embedding
-service.
+registered in `ConsensusApp._init_memory_tools()`. Its dependencies
+(`sqlite-vec`, `numpy`) install by default; it needs an Ollama embedding
+service at runtime.
 
 ### Architecture
 
