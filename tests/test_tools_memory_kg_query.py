@@ -1,4 +1,4 @@
-"""kg_query handler contracts (issue #86).
+"""kg_query handler and embedder failure contracts (issue #86).
 
 The tool used to advertise a ``path`` mode that answered "not yet implemented"
 as a *successful* result, and its failure branches returned errors without
@@ -7,9 +7,13 @@ logging them (golden rule 6).
 
 import logging
 
+import httpx
+import pytest
+
 from consensus.tools import ToolContext
 from consensus.tools_memory import (
-    _KG_QUERY_SCHEMA, KG_QUERY_MODES, _kg_query_handler,
+    _KG_QUERY_SCHEMA, KG_QUERY_MODES, EmbeddingClient, MemoryUnavailableError,
+    _kg_query_handler,
 )
 
 CTX = ToolContext(caller_entity_id=1, discussion_id=1)
@@ -70,4 +74,44 @@ async def test_neighbors_db_failure_is_logged_and_reported(
 
     assert result.is_error
     assert "disk I/O error" in result.content
-    assert any("Knowledge graph query failed" in r.getMessage() for r in caplog.records)
+    [rec] = [r for r in caplog.records if "Knowledge graph query failed" in r.getMessage()]
+    assert rec.exc_info is not None
+
+
+async def test_search_embedder_outage_is_a_warning_without_traceback(
+    tmp_db, caplog,
+) -> None:
+    """An unreachable embedder is an expected outage: warning, no traceback, error result."""
+    class DownEmbedder:
+        async def embed(self, text):
+            raise MemoryUnavailableError("connection refused")
+
+    with caplog.at_level(logging.WARNING, logger="consensus.tools_memory"):
+        result = await _kg_query_handler(
+            {"query": "free will", "mode": "search"}, CTX, tmp_db, DownEmbedder(),
+        )
+
+    assert result.is_error
+    assert "Memory service unavailable: connection refused" in result.content
+    [rec] = [r for r in caplog.records if "Memory service unavailable" in r.getMessage()]
+    assert rec.levelno == logging.WARNING
+    assert rec.exc_info is None
+
+
+async def test_malformed_embedding_response_keeps_its_traceback(
+    tmp_db, monkeypatch, caplog,
+) -> None:
+    """A response without 'embedding' is a bug/misconfig, logged with a traceback."""
+    real_client = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"oops": 1}))
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda **kw: real_client(transport=transport, **kw),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="consensus.tools_memory"):
+        with pytest.raises(MemoryUnavailableError):
+            await EmbeddingClient(tmp_db).embed("hello")
+
+    [rec] = [r for r in caplog.records if "Unexpected embedding failure" in r.getMessage()]
+    assert rec.exc_info is not None
+    assert rec.exc_info[0] is KeyError

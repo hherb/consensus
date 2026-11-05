@@ -103,7 +103,14 @@ class EmbeddingClient:
                     attempt + 1, EMBED_MAX_RETRIES, e, delay,
                 )
                 await asyncio.sleep(delay)
+            except httpx.HTTPError as e:  # remaining transport faults (read/protocol errors)
+                raise MemoryUnavailableError(
+                    f"Embedding request failed: {e}"
+                ) from e
             except Exception as e:
+                # A malformed response or a bug, not an outage: callers log
+                # MemoryUnavailableError as a routine warning, so keep the traceback here.
+                logger.exception("Unexpected embedding failure from %s", endpoint)
                 raise MemoryUnavailableError(
                     f"Embedding request failed: {e}"
                 ) from e

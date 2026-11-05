@@ -305,7 +305,7 @@ Long-term personal memory and knowledge graph for AI participants. Each entity m
 | `memory_forget` | Delete a specific memory by ID | `memory_id` |
 | `discussion_search` | Semantic search across all past discussion messages | `query`, `limit?`, `topic_filter?` |
 | `kg_assert` | Assert a knowledge triple (subject → relation → object) | `subject`, `relation`, `object`, `description?` |
-| `kg_query` | Query the knowledge graph | `query`, `mode` ("search", "neighbors", "path") |
+| `kg_query` | Query the knowledge graph | `query`, `mode?` ("search", "neighbors") |
 
 Default prompt templates encourage AI participants to recall past context before responding and store key insights after contributing.
 

@@ -1,7 +1,7 @@
 # HANDOVER
 
 _Last updated: 2026-11-06. `main` is at **v2.0.0** (released 2026-07-20) with
-the suite at **2958 passing**. The discussion-method review & repair campaign
+the suite at **2960 passing**. The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
 (PyPI `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
@@ -25,7 +25,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 2958 passing (`uv run pytest`, ~80 s; runs in `.venv` via the `dev` group) |
+| Tests | 2960 passing (`uv run pytest`, ~80 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -51,7 +51,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
   `memory/alpha-distribution-release-process.md`.
 - **Flow error visibility** (#71–#74) and **document failure visibility**
   (#78) — pre-existing defects the #61 splits exposed; contracts below.
-- **Lint gate** (#86) — see "Open work" for what changed.
+- **Lint gate** (#86) — contract below.
 
 ## Flow error visibility (#71–#74, merged — keep these contracts)
 
@@ -240,6 +240,18 @@ Contracts are covered by `tests/test_tools_document_failures.py`,
 `tests/test_background.py`, and the existing `tests/test_tools_document*.py`
 suite.
 
+## Lint gate (#86, PR #91 — keep in mind)
+
+`tests/test_lint.py` fails on any `ruff --select F` finding in `consensus/`
+(`tests/` is not linted). `kg_query` dropped its fake `path` mode and rejects
+unknown modes; `tools_memory` handler failures log via `_tool_failure`
+(`MemoryUnavailableError` → warning; `EmbeddingClient.embed` logs a
+non-transport fault such as a malformed response with its traceback first).
+**pytest was declared nowhere**, so `uv run pytest` had silently used pyenv's
+global Python. The `dev` group (`pytest`, `pytest-asyncio` 1.x, `ruff`) fixes
+that. pytest-asyncio 1.x leaves no current event loop, so write async tests
+as `async def`, never `get_event_loop().run_until_complete`.
+
 ## Open work
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
@@ -303,7 +315,7 @@ them in step when the public API changes.
 | 787 | `consensus/auth.py` |
 | 775 | `consensus/moderator.py` |
 | 710 | `consensus/mcp_server.py` |
-| 691 | `consensus/tools_memory.py` |
+| 698 | `consensus/tools_memory.py` |
 | 676 | `consensus/evaluation/runner.py` |
 | 635 | `consensus/desktop.py` |
 | 614 | `consensus/tools_python.py` |
@@ -316,12 +328,12 @@ them in step when the public API changes.
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next-best target: `consensus/tools_memory.py`** (691) — module-level
+**Next-best target: `consensus/tools_memory.py`** (698) — module-level
 functions under clear banners, like `tools_document` was. Coverage is **43%**
 (only `kg_query` and the background helpers are tested), so write the
 characterization tests for the memory/discussion-search handlers and the
 `EmbeddingClient` retry loop first. The #86 defect in it is already fixed. `moderator.py` (775) and
-`auth.py` (784) are the larger payoffs after that.
+`auth.py` (787) are the larger payoffs after that.
 
 **`server.py` is the awkward one — read this before picking it.** It is a
 single 1170-line `launch_web()` whose middleware and ~35 handlers are all
@@ -382,16 +394,6 @@ following `tests/flow_e2e_helpers.py`. `tests/document_helpers.py` has a
 the target through `sys.modules[anchor.__module__]`, so the tests stay valid
 across the split without naming module paths that are about to change — worth
 copying for the next one.
-
-### Issue #86 — lint gate (done 2026-11-06, keep this in mind)
-
-`tests/test_lint.py` fails on any `ruff --select F` finding in `consensus/`
-(`tests/` is not linted). `kg_query` dropped its fake `path` mode and rejects
-unknown modes; `tools_memory` handler failures log via `_tool_failure`.
-**pytest was declared nowhere**, so `uv run pytest` had silently used pyenv's
-global Python. The `dev` group (`pytest`, `pytest-asyncio` 1.x, `ruff`) fixes
-that. pytest-asyncio 1.x leaves no current event loop, so write async tests
-as `async def`, never `get_event_loop().run_until_complete`.
 
 ### Deferred follow-ups (no issue filed)
 
