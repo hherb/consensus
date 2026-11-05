@@ -12,7 +12,7 @@ from ..base import Phase
 from ..phase_handler import PhaseHandler
 
 if TYPE_CHECKING:
-    from ...models import Discussion, Entity, EntityType
+    from ...models import Discussion, Entity
 
 
 class TriageIntakeHandler(PhaseHandler):

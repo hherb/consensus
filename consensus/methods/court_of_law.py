@@ -35,7 +35,7 @@ from .phases._court_helpers import (
 )
 
 if TYPE_CHECKING:
-    from ..models import Discussion, Entity
+    from ..models import Discussion
 
 
 class CourtOfLaw(DiscussionMethod):

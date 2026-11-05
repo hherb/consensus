@@ -187,7 +187,6 @@ def format_tally(tally: dict[int, dict[str, int]],
                  motions: list[dict],
                  discussion: Discussion) -> str:
     """Format vote tally for display."""
-    n_voters = len(discussion.turn_order)
     threshold = discussion.method_state.get("threshold", "simple_majority")
 
     lines = []

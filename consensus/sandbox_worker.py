@@ -220,8 +220,8 @@ def _make_sandboxed_open(sandbox_dir: str):
         sandbox_real = os.path.realpath(sandbox_dir)
         if not filepath.startswith(sandbox_real + os.sep) and filepath != sandbox_real:
             raise PermissionError(
-                f"File access denied: only files in the sandbox directory are accessible. "
-                f"Use relative paths or paths within the sandbox."
+                "File access denied: only files in the sandbox directory are accessible. "
+                "Use relative paths or paths within the sandbox."
             )
         return original_open(file, mode, *args, **kwargs)
 

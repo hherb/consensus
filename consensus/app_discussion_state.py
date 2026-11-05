@@ -1,7 +1,6 @@
 """Discussion state management — pause, resume, reopen, reset, load, export, delete, restore."""
 
 import json
-import time
 from typing import Callable, Optional
 
 from .database import Database

@@ -36,7 +36,7 @@ def main():
         for c in CASES:
             print(f"  {c.id}: {c.title} [{c.difficulty}] — {c.gold_diagnosis}")
 
-        print(f"\nConditions:")
+        print("\nConditions:")
         for name, cond in CONDITIONS.items():
             parts = [cond.description]
             if cond.enable_da:

@@ -118,11 +118,9 @@ application state.
 
 These are known gaps that represent good contribution opportunities:
 
-- **Test suite is early-stage.** Initial pytest-based tests exist for `app.py`,
-  `database.py`, `tools.py`, and `mcp_client.py` (including integration tests),
-  but coverage is far from complete.
-- **No linter or formatter configuration.** No ruff, black, flake8, or mypy
-  config.
+- **Lint covers pyflakes only.** `tests/test_lint.py` gates
+  `ruff check --select F` on `consensus/`. No formatter, wider rule set, or
+  mypy, and `tests/` itself is not linted.
 - **No CI/CD pipeline.** No GitHub Actions or similar.
 - **No streaming responses.** `AIClient.stream()` exists but is unused. The
   frontend doesn't handle streaming display.

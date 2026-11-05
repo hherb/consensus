@@ -1,6 +1,5 @@
 """Database mixin for document storage and retrieval (RAG support)."""
 
-import json
 import time
 from typing import Optional
 

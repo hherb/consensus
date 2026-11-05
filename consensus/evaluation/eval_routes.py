@@ -5,7 +5,6 @@ by calling register_eval_routes(webapp, eval_db).
 """
 
 import asyncio
-import json
 import logging
 import os
 import time
@@ -312,7 +311,7 @@ async def _execute_batch(eval_db: EvalDatabase, batch_id: int,
 
     except asyncio.CancelledError:
         eval_db.update_batch_status(batch_id, "cancelled", time.time())
-    except Exception as e:
+    except Exception:
         logger.exception("Batch %d failed", batch_id)
         eval_db.update_batch_status(batch_id, "error", time.time())
     finally:

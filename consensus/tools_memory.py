@@ -249,6 +249,8 @@ _KG_ASSERT_SCHEMA = {
     "required": ["subject", "relation", "object"],
 }
 
+KG_QUERY_MODES = ("search", "neighbors")
+
 _KG_QUERY_SCHEMA = {
     "type": "object",
     "properties": {
@@ -258,17 +260,12 @@ _KG_QUERY_SCHEMA = {
         },
         "mode": {
             "type": "string",
-            "enum": ["search", "neighbors", "path"],
+            "enum": list(KG_QUERY_MODES),
             "description": (
                 "'search': find nodes semantically similar to query; "
-                "'neighbors': return edges connected to the matched node; "
-                "'path': not yet implemented (reserved)."
+                "'neighbors': return edges connected to the matched node."
             ),
             "default": "search",
-        },
-        "target": {
-            "type": "string",
-            "description": "For 'path' mode: the destination node label.",
         },
     },
     "required": ["query"],
@@ -285,6 +282,19 @@ _KG_QUERY_SCHEMA = {
 # let one session's in-flight pass suppress another's, and one session's
 # `finally` discard clear another's marker (issue #78 whole-branch review).
 _indexing_discussions: set[ScopedKey] = set()
+
+
+def _tool_failure(message: str, exc: Exception) -> ToolResult:
+    """Log a caught handler failure and return it as an error result (golden rule 6).
+
+    An unreachable embedder is an expected outage (warning); anything else is
+    unexpected and keeps its traceback.
+    """
+    if isinstance(exc, MemoryUnavailableError):
+        logger.warning("%s: %s", message, exc)
+    else:
+        logger.error("%s: %s", message, exc, exc_info=exc)
+    return ToolResult(content=f"{message}: {exc}", is_error=True)
 
 
 async def _memory_store_handler(
@@ -306,7 +316,7 @@ async def _memory_store_handler(
             discussion_id=discussion_id,
         )
     except Exception as e:
-        return ToolResult(content=f"Failed to store memory: {e}", is_error=True)
+        return _tool_failure("Failed to store memory", e)
 
     # Embed asynchronously in background — don't block the turn
     async def _embed_and_store():
@@ -339,12 +349,12 @@ async def _memory_recall_handler(
     try:
         query_vec = await embed_client.embed(query)
     except MemoryUnavailableError as e:
-        return ToolResult(content=f"Memory service unavailable: {e}", is_error=True)
+        return _tool_failure("Memory service unavailable", e)
 
     try:
         rows = db.get_entity_memories_with_embeddings(context.caller_entity_id)
     except Exception as e:
-        return ToolResult(content=f"Failed to retrieve memories: {e}", is_error=True)
+        return _tool_failure("Failed to retrieve memories", e)
 
     if not rows:
         return ToolResult(content="No memories stored yet.")
@@ -369,7 +379,7 @@ async def _memory_forget_handler(
     try:
         deleted = db.delete_entity_memory(memory_id, context.caller_entity_id)
     except Exception as e:
-        return ToolResult(content=f"Failed to delete memory: {e}", is_error=True)
+        return _tool_failure("Failed to delete memory", e)
 
     if deleted:
         return ToolResult(content=f"Memory {memory_id} deleted.")
@@ -407,12 +417,12 @@ async def _discussion_search_handler(
     try:
         query_vec = await embed_client.embed(query)
     except MemoryUnavailableError as e:
-        return ToolResult(content=f"Memory service unavailable: {e}", is_error=True)
+        return _tool_failure("Memory service unavailable", e)
 
     try:
         rows = db.get_messages_with_embeddings(topic_filter)
     except Exception as e:
-        return ToolResult(content=f"Failed to search discussions: {e}", is_error=True)
+        return _tool_failure("Failed to search discussions", e)
 
     if not rows:
         return ToolResult(content="No indexed discussion messages found yet.")
@@ -511,7 +521,7 @@ async def _kg_assert_handler(
             discussion_id=context.discussion_id,
         )
     except Exception as e:
-        return ToolResult(content=f"Failed to assert knowledge triple: {e}", is_error=True)
+        return _tool_failure("Failed to assert knowledge triple", e)
 
     # Embed nodes in background
     async def _embed_nodes():
@@ -539,22 +549,25 @@ async def _kg_query_handler(
 ) -> ToolResult:
     query = arguments.get("query", "").strip()
     mode = arguments.get("mode", "search")
-    target = arguments.get("target", "").strip()
 
     if not query:
         return ToolResult(content="No query provided.", is_error=True)
+    if mode not in KG_QUERY_MODES:
+        return ToolResult(
+            content=f"Unknown mode {mode!r}; use one of: {', '.join(KG_QUERY_MODES)}.",
+            is_error=True,
+        )
 
     if mode == "neighbors":
-        # Exact label match first
-        row = db.get_kg_node_by_label(query)
+        try:
+            row = db.get_kg_node_by_label(query)  # exact label match
+            neighbors = db.get_kg_neighbors(row["id"]) if row else []
+        except Exception as e:
+            return _tool_failure("Knowledge graph query failed", e)
         if not row:
             return ToolResult(
                 content=f"No node found with label '{query}'. Try mode='search' first.",
             )
-        try:
-            neighbors = db.get_kg_neighbors(row["id"])
-        except Exception as e:
-            return ToolResult(content=f"Knowledge graph query failed: {e}", is_error=True)
 
         if not neighbors:
             return ToolResult(content=f"Node '{query}' has no connections yet.")
@@ -565,22 +578,16 @@ async def _kg_query_handler(
             lines.append(f"  {query} {arrow} {n['label']} (weight: {n['weight']:.2f})")
         return ToolResult(content="\n".join(lines), metadata={"count": len(neighbors)})
 
-    elif mode == "path":
-        return ToolResult(
-            content="Path queries are not yet implemented.",
-            is_error=False,
-        )
-
     else:  # search
         try:
             query_vec = await embed_client.embed(query)
         except MemoryUnavailableError as e:
-            return ToolResult(content=f"Memory service unavailable: {e}", is_error=True)
+            return _tool_failure("Memory service unavailable", e)
 
         try:
             rows = db.get_kg_nodes_with_embeddings()
         except Exception as e:
-            return ToolResult(content=f"Knowledge graph query failed: {e}", is_error=True)
+            return _tool_failure("Knowledge graph query failed", e)
 
         if not rows:
             return ToolResult(content="Knowledge graph is empty.")

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..base import Phase, ProcessedResponse
+from ..base import Phase
 from ..phase_handler import PhaseHandler
 
 if TYPE_CHECKING:

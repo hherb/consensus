@@ -84,10 +84,10 @@ Or use the UI's Providers tab to enter keys, which are saved to
 
 ### Tests
 
-Initial pytest-based tests exist in the `tests/` directory covering `app.py`,
-`database.py`, `tools.py`, and `mcp_client.py` (including MCP integration
-tests). Coverage is still limited — contributions welcome. No linter
-configuration or CI pipeline exists yet.
+Run `uv run pytest`: it syncs the `dev` dependency group (`pytest`,
+`pytest-asyncio`, `ruff`) into the project venv and runs the whole suite.
+`tests/test_lint.py` doubles as the lint gate and fails on any
+`ruff check --select F` finding in `consensus/`. There is no CI pipeline yet.
 
 ---
 
