@@ -13,7 +13,7 @@ document for detailed coverage.
 |---|----------|--------|
 | 1 | [Getting Started](01-getting-started.md) | What is Consensus, dev environment setup, repository layout |
 | 2 | [Architecture](02-architecture.md) | High-level architecture, module overview (models, config, db/, ai_client, moderator) |
-| 3 | [Backend Modules](03-backend-modules.md) | Detailed guide: app.py + app_*.py modules, server.py, session.py, desktop.py |
+| 3 | [Backend Modules](03-backend-modules.md) | Detailed guide: app.py + app_api/ mixins + app_*.py modules, server.py, session.py, desktop.py |
 | 4 | [Frontend](04-frontend.md) | ES module structure, index.html, style.css theming, API adapters |
 | 5 | [Database](05-database.md) | Full schema reference (including document and image tables), seeding, migrations |
 | 6 | [Data Flow and Lifecycle](06-data-flow-and-lifecycle.md) | End-to-end turn flow, discussion lifecycle (setup, active, paused, concluded) |
@@ -36,7 +36,7 @@ Frontend (static/ — vanilla JS ES modules)
     | (desktop.py:DesktopBridge)          (server.py)
     |
     v
-ConsensusApp (app.py + app_*.py domain modules)
+ConsensusApp (app.py + app_api/ mixins + app_*.py domain modules)
     |  Central orchestrator: state management, validation, DB writes, event emitter
     |
     +-- Moderator (moderator.py)

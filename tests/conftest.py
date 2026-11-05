@@ -25,6 +25,25 @@ def tmp_db(tmp_path):
 
 
 @pytest.fixture
+def app(tmp_path):
+    """A ConsensusApp backed by a temporary database.
+
+    Modules that define their own ``app`` fixture override this one.
+    """
+    from consensus.app import ConsensusApp
+    return ConsensusApp(db_path=str(tmp_path / "app.db"))
+
+
+@pytest.fixture
+def images_dir(tmp_path, monkeypatch):
+    """Redirect image storage away from the real user data directory."""
+    path = tmp_path / "images"
+    path.mkdir()
+    monkeypatch.setattr("consensus.tools_image.get_images_dir", lambda: str(path))
+    return path
+
+
+@pytest.fixture
 def sample_provider(tmp_db):
     """Insert a provider and return its ID."""
     return tmp_db.add_provider("TestProvider", "http://localhost:11434/v1", "TEST_API_KEY")

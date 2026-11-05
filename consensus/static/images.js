@@ -18,6 +18,10 @@ export async function loadImageSrc(imgEl, imageId) {
             const dataUrl = await api.getImageDataUrl(imageId);
             if (dataUrl) { imgEl.src = dataUrl; return; }
         } catch { /* fall through */ }
+        // The bridge could not load the file (logged server-side); say so
+        // in place of a bare broken-image icon if the fallback fails too.
+        imgEl.alt = `${imgEl.alt || 'Image'} (could not be loaded)`;
+        imgEl.title = imgEl.alt;
     }
     imgEl.src = api.getImageUrl(imageId);
 }

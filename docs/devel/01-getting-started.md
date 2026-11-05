@@ -102,6 +102,7 @@ consensus/
   ai_client.py             Async OpenAI-compatible HTTP client (httpx)
   moderator.py             Turn flow, AI generation, prompt resolution, tool execution
   app.py                   ConsensusApp orchestrator (central controller)
+  app_api/                 ConsensusApp's public methods, grouped as mixins
   app_providers.py         Provider management (extracted from app.py)
   app_entities.py          Entity CRUD (extracted from app.py)
   app_discussion_setup.py  Discussion creation & configuration

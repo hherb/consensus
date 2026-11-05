@@ -110,14 +110,27 @@ def _read_env_lines(path: str) -> list[str]:
         return f.readlines()
 
 
+#: Owner read/write only: the .env file holds API keys in clear text.
+ENV_FILE_MODE = stat.S_IRUSR | stat.S_IWUSR  # 0600
+
+
 def _write_env(path: str, lines: list[str]) -> None:
-    """Write lines to .env file with restrictive permissions."""
-    with open(path, "w") as f:
-        f.writelines(lines)
+    """Write lines to the .env file, readable by its owner only.
+
+    The file is created with ``ENV_FILE_MODE`` (no window in which a fresh
+    file holds keys under the default umask), and an existing file is
+    tightened to it before being rewritten.
+    """
     try:
-        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)  # 0600
-    except OSError:
-        pass  # Windows may not support chmod
+        if os.path.exists(path):
+            os.chmod(path, ENV_FILE_MODE)
+    except OSError as e:
+        # Windows ignores POSIX modes; elsewhere this means keys may be exposed.
+        logging.getLogger(__name__).warning(
+            "Could not restrict permissions on %s: %s", path, e)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, ENV_FILE_MODE)
+    with os.fdopen(fd, "w") as f:
+        f.writelines(lines)
 
 
 def save_api_key(env_var: str, key_value: str) -> None:

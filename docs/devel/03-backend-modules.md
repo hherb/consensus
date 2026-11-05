@@ -24,25 +24,42 @@ to keep file sizes manageable:
   `from consensus.app_discussion_flow import complete_turn` works unchanged
 - `app_discussion_state.py` — discussion state management
 
-These modules contain standalone functions that `app.py` delegates to.
+These modules contain standalone functions that `ConsensusApp` delegates to.
 
-**Initialisation:**
+**Mixins (`app_api/`, issue #61):** `ConsensusApp`'s public methods are
+grouped into mixin classes it inherits from, the same way `Database`
+composes the `db/` mixins: `mcp_experts.py` (MCP servers, expert
+definitions, `consult_expert`), `catalog.py` (providers, entities,
+prompts), `discussion.py` (roster/topic/method/context-strategy setup and
+the turn lifecycle), `history.py` (load, pause/resume/reopen, ask_user
+input, reset), `tool_assignments.py`, `documents.py` and `images.py`.
+`app.py` itself keeps construction, tool registration, BYOK key
+resolution, the event emitter and `get_state()`. The mixins own no
+state; each docstring lists the attributes it expects from the host.
+
+**Initialisation** (abridged from `app.py`):
 ```python
-class ConsensusApp:
+class ConsensusApp(MCPExpertsMixin, CatalogMixin, DiscussionMixin, HistoryMixin,
+                   ToolAssignmentsMixin, DocumentsMixin, ImagesMixin):
     def __init__(self, db_path=""):
-        self.db = Database(db_path or get_db_path())
+        self.db = Database(db_path or get_db_path())  # db.pricing is the PricingCache
+        self._refresh_pricing_if_needed()
+        self.db.purge_deleted_discussions()
         self.discussion = Discussion()
-        self.moderator = Moderator(self.discussion, self.db)
-        self.tool_registry = ToolRegistry(self.db)
-        self.pricing = PricingCache(self.db.conn, self.db._lock)
-        self._on_update = None    # callback for push-based state updates
-        self._event_handlers = {}  # lightweight event emitter
-        self._mcp_providers = {}   # active MCP server connections
-        self._init_builtin_tools()   # web search, consult_expert
-        self._init_memory_tools()    # memory tools (if sqlite-vec installed)
-        self._init_document_tools()  # document RAG (if pdfplumber installed)
-        self._init_image_tools()     # image tools (if Pillow installed)
-        self._load_mcp_config()      # load MCP servers from config files
+        self.tool_registry = ToolRegistry(db=self.db)
+        self.moderator = Moderator(self.discussion, self.db, key_resolver=...,
+                                   tool_registry=self.tool_registry, progress_callback=...)
+        self._on_update = None          # callback for push-based state updates
+        self._event_listeners = {}      # lightweight event emitter
+        self._mcp_providers = {}        # active MCP server connections
+        self._pending_user_inputs = {}  # ask_user futures awaiting the human
+        self._init_builtin_tools()      # web search; consult_expert / list_available_experts
+        self._init_interactive_tools()  # ask_user
+        self._init_memory_tools()       # memory tools (if sqlite-vec installed)
+        self._init_document_tools()     # document RAG
+        self._init_image_tools()        # image tools
+        self._init_python_tools()       # execute_python, install_python_package
+        self._load_mcp_config()         # load MCP servers from config files
 ```
 
 **Update callback:** `set_update_callback(callback)` registers a function
@@ -74,18 +91,18 @@ def get_state(self):
 | **Provider management** | `add_provider`, `update_provider`, `delete_provider`, `get_providers`, `fetch_models` |
 | **Entity management** | `save_entity`, `delete_entity`, `reactivate_entity`, `get_entities`, `get_inactive_entities` |
 | **Prompt management** | `save_prompt`, `delete_prompt`, `get_prompts` |
-| **Discussion setup** | `add_to_discussion`, `remove_from_discussion`, `set_moderator`, `set_topic` |
-| **Discussion lifecycle** | `start_discussion`, `submit_human_message`, `submit_moderator_message`, `generate_ai_turn`, `complete_turn`, `reassign_turn`, `mediate`, `conclude_discussion`, `pause_discussion`, `resume_discussion`, `reopen_discussion` |
-| **Dynamic participation** | `add_participant`, `remove_participant` |
+| **Discussion setup** | `add_to_discussion`, `remove_from_discussion`, `set_moderator`, `set_participant_role`, `set_topic`, `set_cost_limit`, `list_discussion_methods`, `set_discussion_method`, `recommend_method`, `set_default_context_strategy`, `set_member_context_strategy` |
+| **Discussion lifecycle** | `start_discussion`, `submit_human_message`, `submit_human_structured_message`, `submit_moderator_message`, `generate_ai_turn`, `complete_turn`, `reassign_turn`, `retry_method_switch`, `continue_discussion`, `mediate`, `conclude_discussion`, `pause_discussion`, `resume_discussion`, `reopen_discussion` |
+| **Interactive input** | `submit_user_input`, `cancel_user_input` (answers to an AI's `ask_user` call) |
 | **Tool management** | `list_available_tools`, `get_entity_tools`, `assign_tool_to_entity`, `remove_entity_tool`, `set_discussion_tool_override` |
 | **MCP server management** | `add_mcp_server`, `get_mcp_servers`, `update_mcp_server`, `delete_mcp_server`, `test_mcp_connection`, `connect_mcp_server` |
 | **Expert definitions** | `save_expert_definition`, `get_expert_definitions`, `consult_expert` |
-| **Document management** | `add_document`, `add_document_by_url`, `get_discussion_documents`, `remove_document`, `delete_document` |
+| **Document management** | `add_document`, `add_document_from_url`, `get_discussion_documents`, `remove_document`, `delete_document` |
 | **Image management** | `add_image`, `add_image_from_url`, `get_discussion_images`, `remove_discussion_image`, `get_image_data`, `delete_image` |
 | **Cost tracking** | Automatic via `PricingCache` during message generation |
-| **Events** | `on`, `emit` — lightweight pub/sub for real-time updates |
+| **Events** | `on`, `off`, `emit` — lightweight pub/sub for real-time updates |
 | **BYOK** | `set_request_api_keys`, `clear_request_api_keys`, `resolve_provider_api_key` |
-| **History / export** | `load_discussion`, `get_export_data`, `reset` |
+| **History / export** | `load_discussion`, `get_export_data`, `delete_discussions`, `restore_discussion`, `reset` |
 
 ### Entity soft-delete
 

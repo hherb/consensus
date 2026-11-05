@@ -13,7 +13,7 @@ Frontend (static/ — vanilla JS ES modules)
     | (desktop.py:DesktopBridge)          (server.py)
     |
     v
-ConsensusApp (app.py + app_*.py domain modules)
+ConsensusApp (app.py + app_api/ mixins + app_*.py domain modules)
     |  Central orchestrator: state management, validation, DB writes, event emitter
     |
     +-- Moderator (moderator.py)
@@ -60,8 +60,8 @@ ConsensusApp (app.py + app_*.py domain modules)
 ```
 
 **Key principle:** Both UI modes (desktop and web) funnel everything through
-`ConsensusApp`. If you are adding backend functionality, add it in `app.py`
-(or an `app_*.py` domain module) and expose it through both `server.py` and
+`ConsensusApp`. If you are adding backend functionality, add it to the matching
+`app_api/` mixin (with logic in an `app_*.py` domain module) and expose it through both `server.py` and
 `desktop.py`.
 
 ### Data ownership

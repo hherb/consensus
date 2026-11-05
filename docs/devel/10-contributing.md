@@ -8,8 +8,8 @@
 
 ### Adding a new backend feature
 
-1. Add the business logic method to `ConsensusApp` in `app.py` (or an
-   `app_*.py` domain module for larger features)
+1. Add the method to `ConsensusApp` via the matching `app_api/` mixin
+   (logic for larger features goes in an `app_*.py` domain module)
 2. Expose it in **both**:
    - `server.py` -- add a route handler (dispatch-style for simple methods,
      or dedicated REST endpoints for resource-oriented features like

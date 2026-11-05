@@ -57,7 +57,7 @@ Fetch a URL and extract its readable text content. Use after `web_search` to rea
 
 ## Consult Expert
 
-**Provider:** `experts` · **Module:** `app.py` · **Requires:** configured MCP server + expert entity
+**Provider:** `experts` · **Module:** `app_api/mcp_experts.py` (registered in `app.py`) · **Requires:** configured MCP server + expert entity
 
 Consult a specialist expert entity for authoritative analysis. Expert entities wrap MCP tool servers as consultable participants.
 

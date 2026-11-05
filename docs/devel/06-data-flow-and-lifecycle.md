@@ -21,9 +21,11 @@ Here is what happens when an AI participant takes a turn in web mode:
    app.generate_ai_turn()
        |
        v
-4. app.py: ConsensusApp.generate_ai_turn()
-   - Checks current_speaker is AI
-   - Calls self.moderator.generate_turn(entity)
+4. app_api/discussion.py: ConsensusApp.generate_ai_turn()
+   - Delegates to app_discussion_flow/turns.py: generate_ai_turn(
+     discussion, moderator, db, pricing, key_resolver)
+   - turns.py checks current_speaker is AI and calls
+     moderator.generate_turn(entity)
        |
        v
 5. moderator.py: Moderator.generate_turn(entity)
@@ -43,13 +45,13 @@ Here is what happens when an AI participant takes a turn in web mode:
    - Returns AIResponse(content, model, tokens, latency, tool_calls)
        |
        v
-6. Back in app.py:
+6. Back in app_discussion_flow/turns.py:
    - Creates a Message dataclass from the AIResponse
    - Serialises tool_calls to tool_calls_json
-   - Appends to self.discussion.messages (in-memory)
-   - Persists to DB via self.db.add_message(...)
-   - Calls self._notify() which triggers state push
-   - Returns the message dict
+   - Appends to discussion.messages (in-memory)
+   - Persists to DB via db.add_message(...)
+   - Returns the message dict; the app_api/discussion.py mixin then
+     calls self._notify(), which triggers the state push
        |
        v
 7. server.py: wraps result + full state in JSON response
@@ -61,7 +63,8 @@ Here is what happens when an AI participant takes a turn in web mode:
    - Proceeds to call api.completeTurn()
        |
        v
-9. app.py: ConsensusApp.complete_turn()
+9. app_api/discussion.py: ConsensusApp.complete_turn()
+   delegates to app_discussion_flow/turns.py: complete_turn(), which:
    - If moderator is AI: generates summary via moderator.generate_summary()
    - Stores summary as a message + storyboard entry
    - Calls moderator.advance_turn() to move to next speaker
