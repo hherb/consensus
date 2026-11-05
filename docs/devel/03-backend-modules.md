@@ -24,7 +24,18 @@ to keep file sizes manageable:
   `from consensus.app_discussion_flow import complete_turn` works unchanged
 - `app_discussion_state.py` — discussion state management
 
-These modules contain standalone functions that `app.py` delegates to.
+These modules contain standalone functions that `ConsensusApp` delegates to.
+
+**Mixins (`app_api/`, issue #61):** `ConsensusApp`'s public methods are
+grouped into mixin classes it inherits from, the same way `Database`
+composes the `db/` mixins: `mcp_experts.py` (MCP servers, expert
+definitions, `consult_expert`), `catalog.py` (providers, entities,
+prompts), `discussion.py` (roster/topic/method/context-strategy setup and
+the turn lifecycle), `history.py` (load, pause/resume/reopen, ask_user
+input, reset), `tool_assignments.py`, `documents.py` and `images.py`.
+`app.py` itself keeps construction, tool registration, BYOK key
+resolution, the event emitter and `get_state()`. The mixins own no
+state; each docstring lists the attributes it expects from the host.
 
 **Initialisation:**
 ```python

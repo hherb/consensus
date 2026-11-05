@@ -269,7 +269,7 @@ class TestAddDocumentFromURL:
             result = await app.add_document_from_url("http://x")
         assert result["error"].startswith("Failed to fetch URL: bad")
 
-        with caplog.at_level(logging.ERROR, logger="consensus.app"), \
+        with caplog.at_level(logging.ERROR, logger="consensus.app_api.documents"), \
              patch(fetch, AsyncMock(side_effect=KeyError("oops"))):
             result = await app.add_document_from_url("http://x")
         assert result["error"] == "Failed to fetch URL: 'oops'"

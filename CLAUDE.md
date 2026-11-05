@@ -38,6 +38,8 @@ build system configured yet.
 Frontend (static HTML/CSS/JS in consensus/static/)
     ↕ pywebview bridge OR aiohttp REST API
 ConsensusApp (app.py) — orchestrator, state management, event emitter
+    ├── app_api/ — ConsensusApp's public methods as mixins (mcp_experts,
+    │     catalog, discussion, history, tool_assignments, documents, images)
     ├── app_providers.py — provider management
     ├── app_entities.py — entity CRUD
     ├── app_discussion_setup.py — discussion creation & configuration
@@ -59,6 +61,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
 ```
 
 **Key modules:**
+- `app_api/` — mixins `ConsensusApp` composes (issue #61): `mcp_experts.py` (MCP servers, expert definitions, `consult_expert`), `catalog.py` (providers/entities/prompts), `discussion.py` (setup + turn lifecycle), `history.py` (load/pause/resume/reopen, ask_user input, reset), `tool_assignments.py`, `documents.py`, `images.py`; `request_keys.py` holds the per-request BYOK `ContextVar`. `app.py` keeps construction, tool registration, key resolution, the event emitter and `get_state()`
 - `models.py` — dataclasses: `Entity`, `AIConfig`, `Message`, `Discussion`, `StoryboardEntry`
 - `config.py` — platform-aware data dirs (macOS: `~/Library/Application Support/consensus`)
 - `background.py` — `spawn_background()`: fire-and-forget asyncio tasks that keep a strong reference and log their exception (used by `tools_document/embedding.py` and `tools_memory.py`)

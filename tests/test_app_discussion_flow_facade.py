@@ -81,21 +81,23 @@ def test_no_duplicate_entries_in_all() -> None:
 
 
 def test_consensusapp_call_sites_resolve() -> None:
-    """Every ``app_discussion_flow.X`` that ``app.py`` calls is re-exported.
+    """Every ``app_discussion_flow.X`` called anywhere in ``consensus/`` is re-exported.
 
     This is the production failure mode the package split introduced: these
     are attribute reads, so a missing re-export surfaces only when the route
     is hit, and six of the nine call sites are never driven through
-    ``ConsensusApp`` by the suite.
+    ``ConsensusApp`` by the suite. Every module is scanned, not just
+    ``app.py``: the #61 mixin split moved the call sites into ``app_api/``,
+    and the next consumer will land somewhere else again.
     """
-    app_py = Path(__file__).resolve().parent.parent / "consensus" / "app.py"
-    used = _facade_attributes_used_by(app_py)
+    pkg = Path(__file__).resolve().parent.parent / "consensus"
+    used = set().union(*(_facade_attributes_used_by(p) for p in pkg.rglob("*.py")))
 
-    assert used, "found no app_discussion_flow.* call sites in app.py — test is stale"
+    assert used, "found no app_discussion_flow.* call sites in consensus/ — test is stale"
 
     unresolved = sorted(n for n in used if not hasattr(app_discussion_flow, n))
     assert unresolved == [], (
-        f"app.py calls app_discussion_flow.{{{','.join(unresolved)}}} "
+        f"consensus/ calls app_discussion_flow.{{{','.join(unresolved)}}} "
         "but the package does not export them — this is an AttributeError "
         "waiting to happen on those routes"
     )

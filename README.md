@@ -350,6 +350,8 @@ Embedding settings (backend, model, endpoint) are **not** environment variables 
 Frontend (static HTML/CSS/JS)
     ↕ pywebview bridge OR aiohttp REST API
 ConsensusApp — orchestrator, state management, event emitter
+    ├── app_api/ — ConsensusApp's public methods as mixins (mcp_experts,
+    │     catalog, discussion, history, tool_assignments, documents, images)
     ├── app_providers.py — provider management
     ├── app_entities.py — entity CRUD
     ├── app_discussion_setup.py — discussion creation & configuration
