@@ -12,7 +12,7 @@ import logging
 import httpx
 import pytest
 
-from consensus import tools_memory
+from consensus.tools_memory import constants
 from consensus.models import DEFAULT_EMBEDDING_ENDPOINT, DEFAULT_EMBEDDING_MODEL
 from consensus.tools_memory import (
     EmbeddingClient, EmbeddingContextLengthError, MemoryUnavailableError,
@@ -92,7 +92,7 @@ class TestEmbed:
         # The trailing slash is stripped, not doubled.
         assert str(request.url) == "http://embed.test:1234/api/embeddings"
         assert request.read() == b'{"model":"my-model","prompt":"hello"}'
-        assert transport.timeouts == [tools_memory.EMBED_TIMEOUT]
+        assert transport.timeouts == [constants.EMBED_TIMEOUT]
 
     async def test_unreadable_config_falls_back_to_defaults(
         self, tmp_db, transport, monkeypatch,
@@ -159,7 +159,7 @@ class TestEmbed:
 
         assert vec == [1.0]
         assert len(transport.requests) == 2
-        assert sleeps == [tools_memory.EMBED_BASE_DELAY]
+        assert sleeps == [constants.EMBED_BASE_DELAY]
         assert any("retrying" in r.getMessage() for r in caplog.records)
 
     async def test_persistent_failure_backs_off_exponentially_then_gives_up(
@@ -170,8 +170,8 @@ class TestEmbed:
         with pytest.raises(MemoryUnavailableError, match="after 3 attempts"):
             await EmbeddingClient(tmp_db).embed("x")
 
-        assert len(transport.requests) == tools_memory.EMBED_MAX_RETRIES
-        base = tools_memory.EMBED_BASE_DELAY
+        assert len(transport.requests) == constants.EMBED_MAX_RETRIES
+        base = constants.EMBED_BASE_DELAY
         # No sleep after the final attempt: nothing follows it but the raise.
         assert sleeps == [base, base * 2]
 
@@ -212,7 +212,7 @@ class TestConnectionCheck:
 
 class TestVectorHelpers:
     def test_pack_round_trips_through_float32(self):
-        from consensus.tools_memory import _unpack_embedding
+        from consensus.tools_memory.embedding import _unpack_embedding
 
         blob = _pack_embedding([0.25, -1.5, 3.0])
         assert len(blob) == 12
@@ -227,7 +227,7 @@ class TestVectorHelpers:
         ([1.0, 0.0], [0.0, 0.0], 0.0),
     ])
     def test_cosine_similarity(self, a, b, expected):
-        from consensus.tools_memory import _cosine_similarity
+        from consensus.tools_memory.embedding import _cosine_similarity
 
         assert _cosine_similarity(a, b) == pytest.approx(expected)
 

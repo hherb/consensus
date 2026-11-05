@@ -16,9 +16,9 @@ import pytest
 from consensus import background
 from consensus.tools import ToolContext
 from consensus.tools_memory import (
-    MemoryUnavailableError, _index_messages, _pack_embedding,
-    create_memory_provider,
+    MemoryUnavailableError, _pack_embedding, create_memory_provider,
 )
+from consensus.tools_memory.handlers import _index_messages
 from .document_helpers import FakeEmbedClient, patch_where_defined
 
 LOGGER = "consensus.tools_memory"
@@ -461,7 +461,7 @@ class TestKgQuerySearch:
         assert result.metadata == {"count": 2}
 
     async def test_returns_at_most_the_default_limit(self, run, tmp_db):
-        from consensus.tools_memory import SEARCH_DEFAULT_LIMIT
+        from consensus.tools_memory.constants import SEARCH_DEFAULT_LIMIT
 
         for i in range(SEARCH_DEFAULT_LIMIT + 2):
             self._node(tmp_db, f"n{i}", f"node {i}", [1.0, float(i)])
