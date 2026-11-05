@@ -1,15 +1,16 @@
 # HANDOVER
 
-_Last updated: 2026-09-23. `main` is at **v2.0.0** (released 2026-07-20) with
-the suite at **2905 passing**. The discussion-method review & repair campaign
+_Last updated: 2026-11-05. `main` is at **v2.0.0** (released 2026-07-20) with
+the suite at **2931 passing**. The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
 (PyPI `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
 failure-visibility work (#78) — contracts for both summarised below.
 The one open structural issue is **#61** (modules over the ~500-line golden
-rule): `app_discussion_flow` and `tools_document` are split, the #78 work
-added four more compliant modules on top of that, and fourteen modules
-remain over the limit._
+rule): `app_discussion_flow`, `tools_document` and `app.py` (→ `app_api/`
+mixins) are split, and thirteen modules remain over the limit. **#86** lists
+30 pre-existing ruff F-class findings (a few are real defects) and proposes a
+lint gate._
 
 This file briefs the next session on what is done, what is still open, and the
 conventions to keep. Update it whenever a session materially changes the plan;
@@ -24,8 +25,8 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Discussion methods | 18 methods, all reviewed/repaired; composable `PhaseHandler` library (68 handlers) |
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
-| Website | `website/` — static site deployed to Cloudflare Pages at https://consensus-ai.org/ |
-| Tests | 2905 passing (`uv run pytest`, ~70 s) |
+| Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
+| Tests | 2931 passing (`uv run pytest`, ~85 s) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -218,81 +219,41 @@ to `handlers_rag.py` or `parsing.py` should be weighed against the limit.
 
 ### Whole-branch review follow-up (PR #79 review round, keep these too)
 
-A five-agent review of the finished branch found the repair had stopped one
-step short in several places. What that round added:
-
-- **The upload path resolves a real entity.** `add_document` passed
-  `caller_entity_id=0`; SQLite rowids start at 1, so `get_entity(0)` never
-  resolved and *every* human upload's summary raised, was caught, and stored
-  `summary_status='failed'` while still reporting success. #78 had stopped
-  the error text being persisted but left the cause.
-  `ConsensusApp._interpretation_entity_id` picks the AI moderator, else an
-  AI participant, else returns 0 — and then no context is passed at all, so
-  the honest status is `'pending'` (nobody tried), not `'failed'`.
-- **The embedder's own message reaches the user.** `_embed_single_chunk`
-  returns `(ok, error)` rather than a bare bool; the recorded detail names
-  the endpoint that is down instead of only a chunk count. This is where
-  `DocumentIndexError` finally gets raised, so the hint rides along.
-- **A *partial* dimension mismatch is reported.** `skipped_dim_mismatch` was
-  consulted only when nothing ranked at all, so a document holding two
-  embedding dimensions answered from the survivors in silence. `doc_ask` now
-  carries `incomplete_retrieval`, and the library search appends the same
-  notice.
-- **Migration `016` retro-classifies the defect-1 rows.** `015`'s
-  `DEFAULT 'ok'` marked pre-#78 rows as having a good summary — including
-  the rows whose summary literally *is* an LLM error. The old helper emitted
-  exactly two strings, so they classify by prefix; "cannot be
-  retro-classified" was wrong. A new version rather than an edit to `015`,
-  which may already be recorded as applied.
-- **`summary_status` has one source and one enforcer.** `models.SummaryStatus`
-  (importable by `db/`, which cannot import a tool package), and
-  `db.add_document` / `update_document_summary` validate against it — SQLite
-  cannot add a CHECK to an existing column. `update_document_summary` now
-  writes the status with the text; it previously left it stale, which is the
-  trap the recorded regeneration follow-up would have walked into.
-- **The human uploader sees degraded parses and failed summaries.**
-  `static/documents.js` `_addedMessage()` appends the warnings to the toast.
-  Parse failures already arrived as `result.error`; these came back on a
-  *success* result and were dropped.
-- **`consensus/dbkey.py`** holds `scoped_key()` once. `tools_memory`'s
-  `_indexing_discussions` was still keyed by bare `discussion_id` — the same
-  cross-session collision `doc_key` was written to fix, in a file #78
-  touched. Both now raise rather than defaulting a missing path to `""`,
-  which silently produced a colliding key.
-- **A cancelled pass releases its in-flight marker** via a done callback:
-  cancelled before its first step, the coroutine body never ran, so the
-  `finally` never fired and `doc_ask` reported "still being indexed" for the
-  process lifetime — defect 3 through a narrower door.
-- Smaller: an empty completion raises instead of storing `''` at status
-  `'ok'`; `_parse_html` shares the plain-text binary guard; `pending` renders
-  distinctly from an empty `'ok'`; `ParsedDocument` validates its fidelity
-  and carries an immutable `notes` tuple; `chapter_range` guards its index;
-  both "Embedding service unavailable" returns and
-  `add_document_from_url` now log; `_index_messages` says why it stopped
-  instead of a bare `break`.
+- **The upload path resolves a real entity.** `add_document` used to pass
+  `caller_entity_id=0` (never a rowid), so every human upload's summary
+  failed. `ConsensusApp._interpretation_entity_id` picks the AI moderator,
+  else an AI participant, else 0 — and then passes no context, so the honest
+  status is `'pending'`, not `'failed'`.
+- **The embedder's own message reaches the user** (`_embed_single_chunk`
+  returns `(ok, error)`; `DocumentIndexError` carries the hint).
+- **A partial dimension mismatch is reported** (`incomplete_retrieval` on
+  `doc_ask`; the library search appends the same notice).
+- **Migration `016` retro-classifies** pre-#78 rows whose summary *is* an
+  LLM error (by the two known prefixes) — a new version, since `015` may
+  already be applied.
+- **`summary_status` has one source and one enforcer**: `models.SummaryStatus`,
+  validated in `db.add_document` / `update_document_summary` (which now
+  writes status with text).
+- **The human uploader sees degraded parses and failed summaries** in the
+  upload toast (`static/documents.js` `_addedMessage()`).
+- **`consensus/dbkey.py` `scoped_key()`** keys process-global bookkeeping by
+  `(db_path, id)`; it raises rather than defaulting a missing path to `""`.
+- **A cancelled pass releases its in-flight marker** via a done callback (a
+  task cancelled before its first step never runs its `finally`).
 
 **Testing lesson worth keeping.** Three of these were found by *mutating the
-fix back* and watching the suite stay green, not by reading. Mutation is
-what distinguishes a test that pins behaviour from one that merely executes
-it. Two `caplog.at_level(logging.ERROR)` assertions were vacuous because the
-code logs at WARNING — they asserted against an empty string and would have
-passed against a handler that logged nothing.
+fix back* and watching the suite stay green. Mutation distinguishes a test
+that pins behaviour from one that merely executes it. Two
+`caplog.at_level(logging.ERROR)` assertions were vacuous because the code logs
+at WARNING.
 
-**Known gaps, recorded as follow-ups, not fixed here:** no test covers the
-combined "some rows dimension-mismatched AND the rest below threshold" case
-in `doc_ask`; a summary regeneration path is still absent now that
-`summary_status='failed'` is recordable and `update_document_summary` can
-write it; OCR for scanned PDFs is named as a remedy but not provided;
-**charset detection** for legitimately non-UTF-8 text documents (Latin-1,
-GBK, Shift-JIS), which are now rejected rather than ingested as mojibake —
-the better answer than rejection; `INDEXING_RETRY_INTERVAL` is a hardcoded
-60s rather than configurable, so a permanently dead embedder costs one
-wasted background pass per minute per document still being queried; the
-Documents *panel* still does not render `summary_status`/`fidelity` (only
-the upload toast does), and `fidelity`/`notes` are not persisted, so a
-degraded extraction is invisible on every later read — **issue #81**; and
-pre-#78 documents stored with the markdown `'(Empty PDF)'` remain chunked
-and answerable — **issue #80**.
+**Known gaps, recorded as follow-ups:** no test for "some rows
+dimension-mismatched AND the rest below threshold" in `doc_ask`; no summary
+regeneration path; OCR for scanned PDFs is named but not provided; charset
+detection for non-UTF-8 text (now rejected rather than mojibake);
+`INDEXING_RETRY_INTERVAL` is a hardcoded 60s; the Documents *panel* does not
+render `summary_status`/`fidelity` and those are not persisted — **issue
+#81**; pre-#78 `'(Empty PDF)'` documents remain answerable — **issue #80**.
 
 Contracts are covered by `tests/test_tools_document_failures.py`,
 `tests/test_background.py`, and the existing `tests/test_tools_document*.py`
@@ -302,77 +263,59 @@ suite.
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-**Done — two slices.**
+**Done — three slices** (detail in git history; one PR each):
 
-1. `app_discussion_flow.py` (1254) → `app_discussion_flow/` — `helpers.py`
-   (287), `submissions.py` (304), `turns.py` (499), `method_switch.py` (421),
-   `conclusion.py` (203), `__init__.py` (94). The only logic change was
-   extracting `complete_turn`'s ~90-line Triage-handoff branch into
-   `method_switch.handle_triage_handoff` (AST-verified identical); everything
-   else moved verbatim. `_run_triage_recommender` became public when the split
-   gave it a second consumer across a module boundary.
-   **Watch `turns.py` (499) and `method_switch.py` (421)** — the error-
-   visibility rounds grew both. The next addition to `turns.py` crosses the
-   limit; split at that moment, not later. (These counts drift: the figures
-   recorded here at the time of the split were stale within two PRs. Re-measure
-   with `wc -l` before trusting them.)
-2. `tools_document.py` (1277) → `tools_document/` — `constants.py` (22),
-   `parsing.py` (144), `chunking.py` (98), `embedding.py` (177),
-   `schemas.py` (137), `llm.py` (48), `ingestion.py` (115), `handlers.py`
-   (456), `provider.py` (138), `__init__.py` (59). Pure move: every range
-   verified byte-identical. The only new lines are the module headers and two
-   `.` → `..` in-function `tools_memory` imports; the only removed lines are
-   two module-level imports that were already dead in the original (`time`,
-   `resolve_api_key`). A follow-up commit on the same PR then acted on the
-   review: the tuning values that were left inline moved into `constants.py`
-   (golden rule 3), the thrice-duplicated summary-snippet expression became
-   `handlers._summary_snippet`, and the dead `LLM_TIMEOUT` was wired into
-   `llm.py` — it equals `ai_client.DEFAULT_API_TIMEOUT`, so that is a no-op
-   today, but the package's timeout is now tunable on its own. `handlers.py`
-   is 470 after this; still under the limit.
+1. `app_discussion_flow.py` (1254) → `app_discussion_flow/` (helpers,
+   submissions, turns, method_switch, conclusion). **Watch `turns.py`
+   (499)**: the next addition crosses the limit, so split at that moment.
+2. `tools_document.py` (1277) → `tools_document/` (constants, parsing,
+   chunking, embedding, schemas, llm, ingestion, handlers, handlers_rag,
+   provider, validation, errors). Pure move; the pre-existing defects its
+   review exposed became #78.
+3. `app.py` (1284) → `app.py` (344) + **`app_api/` mixins**:
+   `mcp_experts` (228), `catalog` (109), `discussion` (277), `history`
+   (133), `tool_assignments` (48), `documents` (174), `images` (100),
+   `request_keys` (13, the BYOK `ContextVar`). Chosen with the repo owner
+   over function-extraction because ~500 of app.py's lines were *already*
+   one-line delegators to the `app_*` modules, so moving logic alone could
+   not get it under the limit. `ConsensusApp` composes the mixins as
+   `Database` composes `db/`; app.py keeps `__init__`, tool registration,
+   key resolution, the event emitter and `get_state`. Every method range
+   byte-identical bar `from .` → `from ..`; no name collides across mixins.
+   **Moved code now logs under `consensus.app_api.*`, which is not a child
+   of `consensus.app`**, so `caplog`/`assertLogs` on the old name would see
+   nothing. Coverage was 66%, so `tests/test_app_characterization.py` came
+   first (MCP, experts, ask_user input, URL documents, images, tool and
+   context-strategy setup) and pins the public method set — verified to
+   fail when a mixin is dropped from the bases. The same PR fixed four
+   swallowed-and-unlogged errors it found (MCP test, image fetch, image
+   file missing, desktop image data URL).
 
-   The review also surfaced a cluster of **pre-existing** defects in this
-   package, deliberately left untouched here because fixing them would have
-   destroyed the byte-identity property the safety argument rests on. They
-   were fixed as **issue #78**, splitting `handlers.py` further (470 → 348,
-   with `handlers_rag.py`, `errors.py`, `validation.py` and
-   `consensus/background.py` born compliant) — see the "Document failure
-   visibility" section above for the contracts.
+Smaller slices came out of the error-visibility work when an addition
+pushed a compliant file over: `ai_response.py` (from `ai_client.py`) and
+`static/turn-notices.js` (from `discussion-actions.js`).
 
-**Facade guards.** Both packages have one, and they exist because a dropped
-re-export fails *late*: `ConsensusApp` reaches flow functions by attribute
-access at call time (`AttributeError`), and imports the document names lazily
-inside method bodies. For `ingest_document` and `fetch_url_content` that is an
-`ImportError` on first call; for `create_document_provider` it is worse than
-late, it is *silent* — that import sits inside `_init_document_tools`'
-`try: ... except ImportError`, so a dropped re-export just logs INFO ("Document
-tools not available") and the eight `doc_*` tools never register. Neither is
-caught at collection — deleting five flow re-exports once left the whole suite
-green. `tests/test_app_discussion_flow_facade.py` and
-`tests/test_tools_document_facade.py` pin `__all__` (by identity, not merely
-existence) and AST-scan every module under `consensus/` for the call sites.
-Keep them in step when the public API changes — that is the point of the pin,
-and each was verified to fail when a name is removed.
-
-**Two further slices came out of the error-visibility work**, both because the
-additions pushed a previously-compliant file over the limit — refactor at the
-moment you cross it, not later: `consensus/ai_response.py` (73) holds the pure
-completion-body parsing helpers lifted out of `ai_client.py` (472), and
-`consensus/static/turn-notices.js` (38) holds the skip-notice wording lifted
-out of `discussion-actions.js` (494).
+**Facade guards.** A dropped re-export fails *late*: callers reach flow
+functions by attribute access at call time, and the document names are
+imported lazily inside method bodies — for `create_document_provider` even
+*silently*, inside an `except ImportError`. Deleting five flow re-exports
+once left the whole suite green. `tests/test_app_discussion_flow_facade.py`
+and `tests/test_tools_document_facade.py` pin `__all__` by identity and
+AST-scan **every module under `consensus/`** for call sites (the flow guard
+scanned only `app.py` until slice 3 moved the call sites out of it). Keep
+them in step when the public API changes.
 
 **Still over the limit** (`find consensus -name '*.py' | xargs wc -l | sort -rn`):
 
 | Lines | File |
 |------:|------|
-| 1284 | `consensus/app.py` |
 | 1227 | `consensus/server.py` |
 | 784 | `consensus/auth.py` |
 | 775 | `consensus/moderator.py` |
 | 710 | `consensus/mcp_server.py` |
 | 684 | `consensus/tools_memory.py` |
 | 679 | `consensus/evaluation/runner.py` |
-| 628 | `consensus/desktop.py` |
+| 629 | `consensus/desktop.py` |
 | 614 | `consensus/tools_python.py` |
 | 589 | `consensus/evaluation/eval_db.py` |
 | 580 | `consensus/tools_image.py` |
@@ -383,13 +326,12 @@ out of `discussion-actions.js` (494).
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next-best target: `consensus/app.py`** (1284) — now the largest module in
-the codebase, having overtaken `server.py` during the #78 work. The
-orchestrator already has an established split pattern (`app_providers`,
-`app_entities`, `app_discussion_setup`, `app_discussion_flow/`,
-`app_discussion_state`), so the remaining groups follow it, and it is well
-covered by the existing suite. `tools_memory.py` (684) is the easy one after
-that: module-level functions under clear banners, like `tools_document` was.
+**Next-best target: `consensus/tools_memory.py`** (684) — module-level
+functions under clear banners, like `tools_document` was; check its coverage
+first, and note issue #86 flags a defect in its `_kg_query_handler`
+(advertised-but-unimplemented `path` mode reported as success) that should
+be fixed in its own commit, not inside the move. `moderator.py` (775) and
+`auth.py` (784) are the larger payoffs after that.
 
 **`server.py` is the awkward one — read this before picking it.** It is a
 single 1170-line `launch_web()` whose middleware and ~35 handlers are all
@@ -451,6 +393,13 @@ the target through `sys.modules[anchor.__module__]`, so the tests stay valid
 across the split without naming module paths that are about to change — worth
 copying for the next one.
 
+### Issue #86 — ruff F-class findings and a lint gate
+
+30 findings on `main`, mostly dead imports, but `tools_memory._kg_query_handler`
+reports its unimplemented `path` mode as success, and `format_tally` /
+`ai_client` retry loop compute values they never use — check each before a
+mechanical `--fix`. Then add the check as a test so the count stays at zero.
+
 ### Deferred follow-ups (no issue filed)
 
 - **Panel diversity** — family-level model grouping (exact-model only today,
@@ -475,15 +424,9 @@ copying for the next one.
 - **Packaging** — `consensus/evaluation/runner.py`'s default results dir lands
   in site-packages for wheel installs; `packaging/macos/make_icns.sh`
   regeneration needs Pillow on system python3; icon bubbles blur at 16–32 px.
-  (Fixed here: `scripts/release_pypi.sh` cleaned `dist/` but not `build/`,
-  setuptools' staging tree, so a module deleted or moved since the last build
-  survived in `build/lib` and was packaged into the new wheel alongside its
-  replacement — reproduced with `app_discussion_flow.py` during this split.
-  The clean now covers `build/` and `*.egg-info/` too, and because the wheel
-  checks were presence-only — a wheel shipping *both* `X.py` and `X/` passed
-  every one of them — `check_no_shadowed_packages` asserts no name ships as
-  both. Verified by injecting a stale `app_discussion_flow.py` into a built
-  wheel: the check fails as intended.)
+  (`scripts/release_pypi.sh` now cleans `build/` and `*.egg-info/` and
+  `check_no_shadowed_packages` rejects a wheel shipping both `X.py` and `X/` —
+  a stale `build/lib` once packaged a moved module beside its replacement.)
 
 ### Roadmap
 
