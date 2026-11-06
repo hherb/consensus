@@ -8,18 +8,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from consensus.tools_python import (
-    _analyze_ast,
-    _build_macos_sandbox_cmd,
-    _compute_wall_timeout,
-    _install_package_handler,
-    create_python_provider,
-    execute_python_handler,
+from consensus.tools_python import create_python_provider
+from consensus.tools_python.constants import (
     BLOCKED_MODULES,
     MIN_WALL_TIMEOUT_SECONDS,
     PACKAGE_NAME_RE,
     WALL_TIMEOUT_MULTIPLIER,
 )
+from consensus.tools_python.execution import (
+    _analyze_ast,
+    _build_macos_sandbox_cmd,
+    _compute_wall_timeout,
+    execute_python_handler,
+)
+from consensus.tools_python.install import _install_package_handler
 from consensus.sandbox_worker import (
     execute_code, ALLOWED_MODULES,
     MEMORY_FRACTION, CPU_FRACTION,
@@ -597,7 +599,7 @@ class TestTimeoutEnforcement:
     def test_infinite_loop_killed(self, tool_context):
         """An infinite loop should be terminated by the timeout."""
         # Use a very short timeout for this test
-        with patch("consensus.tools_python._compute_wall_timeout", return_value=3.0):
+        with patch("consensus.tools_python.execution._compute_wall_timeout", return_value=3.0):
             result = run_async(execute_python_handler(
                 {"code": "while True: pass"},
                 tool_context,
@@ -613,21 +615,21 @@ class TestMacosSandboxCmd:
 
     def test_returns_none_on_linux(self):
         """Should return None on non-macOS platforms."""
-        with patch("consensus.tools_python.platform.system", return_value="Linux"):
+        with patch("consensus.tools_python.execution.platform.system", return_value="Linux"):
             result = _build_macos_sandbox_cmd("/usr/bin/python3", ["-m", "worker"], "/tmp/sb")
             assert result is None
 
     def test_returns_none_if_sandbox_exec_missing(self):
         """Should return None if sandbox-exec binary doesn't exist."""
-        with patch("consensus.tools_python.platform.system", return_value="Darwin"):
-            with patch("consensus.tools_python.os.path.exists", return_value=False):
+        with patch("consensus.tools_python.execution.platform.system", return_value="Darwin"):
+            with patch("consensus.tools_python.execution.os.path.exists", return_value=False):
                 result = _build_macos_sandbox_cmd("/usr/bin/python3", ["-m", "worker"], "/tmp/sb")
                 assert result is None
 
     def test_returns_command_on_macos(self):
         """Should return a valid command list on macOS with sandbox-exec present."""
-        with patch("consensus.tools_python.platform.system", return_value="Darwin"):
-            with patch("consensus.tools_python.os.path.exists", return_value=True):
+        with patch("consensus.tools_python.execution.platform.system", return_value="Darwin"):
+            with patch("consensus.tools_python.execution.os.path.exists", return_value=True):
                 result = _build_macos_sandbox_cmd(
                     "/usr/bin/python3", ["-m", "consensus.sandbox_worker"], "/tmp/sb-1234",
                 )
@@ -687,7 +689,7 @@ class TestInstallPackageHandler:
         mock_proc.returncode = 0
 
         async def run_test():
-            with patch("consensus.tools_python.asyncio.create_subprocess_exec",
+            with patch("consensus.tools_python.install.asyncio.create_subprocess_exec",
                        return_value=mock_proc):
                 return await _install_package_handler(
                     {"package_name": "json", "reason": "need JSON"},
@@ -738,7 +740,7 @@ class TestInstallPackageHandler:
 
         async def run_test():
             approval_task = asyncio.create_task(simulate_approval())
-            with patch("consensus.tools_python.asyncio.create_subprocess_exec") as mock_exec:
+            with patch("consensus.tools_python.install.asyncio.create_subprocess_exec") as mock_exec:
                 # First call: import check (fail = not installed)
                 check_proc = AsyncMock()
                 check_proc.wait.return_value = 1

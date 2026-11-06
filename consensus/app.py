@@ -165,8 +165,9 @@ class ConsensusApp(
             self.tool_registry.register_provider(provider)
             self.db.add_tool_provider("python_exec", "python")
             logger.debug("Python execution tools registered")
-        except Exception as e:
-            logger.info("Python execution tools not available: %s", e)
+        except Exception:
+            # No optional deps here, so any failure is a real fault.
+            logger.warning("Python execution tools failed to load", exc_info=True)
 
     def _load_mcp_config(self) -> None:
         """Load MCP server definitions from config files on startup."""

@@ -19,7 +19,8 @@ import pytest
 
 from consensus import sandbox_worker
 from consensus.tools import ToolContext
-from consensus.tools_python import _install_package_handler, create_python_provider
+from consensus.tools_python import create_python_provider
+from consensus.tools_python.install import _install_package_handler
 from .document_helpers import patch_where_defined
 
 
@@ -130,10 +131,10 @@ def test_wall_timeout_falls_back_and_logs_when_cpu_limit_fails(monkeypatch, capl
         raise OSError("no cpu count")
 
     monkeypatch.setattr(sandbox_worker, "_compute_cpu_time_limit", boom)
-    from consensus.tools_python import (
+    from consensus.tools_python.constants import (
         FALLBACK_CPU_LIMIT_SECONDS, MIN_WALL_TIMEOUT_SECONDS, WALL_TIMEOUT_MULTIPLIER,
-        _compute_wall_timeout,
     )
+    from consensus.tools_python.execution import _compute_wall_timeout
     with caplog.at_level(logging.WARNING, logger="consensus.tools_python"):
         timeout = _compute_wall_timeout()
     assert timeout == max(
@@ -232,7 +233,7 @@ async def test_format_empty_output(monkeypatch):
 
 
 async def test_format_truncates_long_output(monkeypatch):
-    from consensus.tools_python import PYTHON_MAX_OUTPUT
+    from consensus.tools_python.constants import PYTHON_MAX_OUTPUT
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec",
                         FakeSpawner(_worker_json(stdout="x" * (PYTHON_MAX_OUTPUT + 10))))
@@ -333,3 +334,18 @@ async def test_install_nonzero_exit(monkeypatch, stdout, stderr, expected):
     assert result.is_error
     assert expected in result.content
     assert result.metadata == {"package": "some-pkg", "status": "failed"}
+
+
+# --- app registration ---
+
+
+def test_app_logs_a_warning_when_python_tools_fail_to_load(app, monkeypatch, caplog):
+    """Python tools have no optional deps, so a load failure is a fault, not INFO."""
+    def boom(app=None):
+        raise ImportError("broken facade")
+
+    monkeypatch.setattr("consensus.tools_python.create_python_provider", boom)
+    with caplog.at_level(logging.WARNING, logger="consensus.app"):
+        app._init_python_tools()
+    assert any(r.levelno == logging.WARNING and "Python execution tools failed to load"
+               in r.getMessage() and r.exc_info for r in caplog.records)
