@@ -106,6 +106,7 @@ consensus/
   app_providers.py         Provider management (extracted from app.py)
   app_entities.py          Entity CRUD (extracted from app.py)
   app_discussion_setup.py  Discussion creation & configuration
+  app_discussion_roles.py  Participant roles (devil's advocate)
   app_discussion_flow/     Turn flow package (submissions, turns,
                            method_switch, conclusion, helpers)
   app_discussion_state.py  Discussion state management

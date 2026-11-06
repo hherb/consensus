@@ -1,19 +1,12 @@
 """Tests for consensus.app_discussion_setup — discussion setup and membership."""
 
-import pytest
-
 from consensus.app_discussion_setup import (
     add_to_discussion,
-    auto_assign_da_tools,
     remove_from_discussion,
-    reorder_da_in_turn_order,
     set_moderator,
-    set_participant_role,
     set_topic,
-    start_discussion,
 )
-from consensus.models import Discussion, Entity, EntityType, MessageRole
-from consensus.moderator import Moderator
+from consensus.models import Discussion
 
 
 class TestAddToDiscussion:
@@ -64,16 +57,3 @@ class TestSetModerator:
         assert set_moderator(disc, sample_ai_entity) is True
         assert disc.moderator_id == sample_ai_entity
 
-
-class TestReorderDaTurnOrder:
-    def test_da_moved_to_end(self):
-        disc = Discussion(turn_order=[1, 2, 3], current_turn_index=0)
-        disc.member_roles = {1: "standard", 2: "devils_advocate", 3: "standard"}
-        reorder_da_in_turn_order(disc)
-        assert disc.turn_order[-1] == 2
-
-    def test_no_da_is_noop(self):
-        disc = Discussion(turn_order=[1, 2, 3], current_turn_index=0)
-        disc.member_roles = {1: "standard", 2: "standard", 3: "standard"}
-        reorder_da_in_turn_order(disc)
-        assert disc.turn_order == [1, 2, 3]

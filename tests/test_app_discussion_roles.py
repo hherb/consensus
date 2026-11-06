@@ -8,7 +8,7 @@ Covers ``set_participant_role``, ``auto_assign_da_tools``,
 
 import pytest
 
-from consensus.app_discussion_setup import (
+from consensus.app_discussion_roles import (
     _DA_TOOL_NAMES,
     auto_assign_da_tools,
     reorder_da_in_turn_order,
@@ -130,6 +130,18 @@ class TestAutoAssignDaTools:
 
 
 class TestReorderDaTurnOrder:
+    def test_da_moved_to_end(self):
+        disc = Discussion(turn_order=[1, 2, 3], current_turn_index=0)
+        disc.member_roles = {1: "standard", 2: "devils_advocate", 3: "standard"}
+        reorder_da_in_turn_order(disc)
+        assert disc.turn_order[-1] == 2
+
+    def test_no_da_is_noop(self):
+        disc = Discussion(turn_order=[1, 2, 3], current_turn_index=0)
+        disc.member_roles = {1: "standard", 2: "standard", 3: "standard"}
+        reorder_da_in_turn_order(disc)
+        assert disc.turn_order == [1, 2, 3]
+
     def test_turn_index_kept_in_range(self):
         disc = Discussion(turn_order=[1, 2, 3], current_turn_index=2)
         disc.member_roles = {1: DA, 2: "standard", 3: "standard"}
