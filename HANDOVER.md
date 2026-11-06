@@ -1,7 +1,7 @@
 # HANDOVER
 
-_Last updated: 2026-11-06. `main` is at **v2.0.0** (released 2026-07-20); the
-`refactor/tools-python-split-61` branch has the suite at **3111 passing**. The
+_Last updated: 2026-11-06. `main` is at **v2.0.0** (released 2026-07-20) plus
+the merged #61 slices; the suite is at **3111 passing**. The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
@@ -365,7 +365,8 @@ likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
-#96 no UI flag when Python tools fail to load; #92 tool error results echo
+#97 Seatbelt profile does not confine writes; #96 no UI flag when Python
+tools fail to load; #92 tool error results echo
 raw exception text to the model and UI; #88
 image URL fetch lacks retry/backoff; #89 redact URLs in fetch-failure logs;
 #81 persist parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents.
