@@ -1,15 +1,16 @@
 # HANDOVER
 
 _Last updated: 2026-11-06. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices; the suite is at **3111 passing**. The
+the merged #61 slices; the `refactor/tools-image-split-61` branch has the
+suite at **3231 passing**. The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
 the tools_document failure-visibility work (#78) — contracts for both
 summarised below. The one open structural issue is **#61** (modules over the
 ~500-line golden rule): `app_discussion_flow`, `tools_document`, `app.py`
-(→ `app_api/` mixins), `tools_memory` and `tools_python` are split; eleven
-modules remain over the limit. **#86** (lint gate) is done: zero `ruff --select F` findings in
+(→ `app_api/` mixins), `tools_memory`, `tools_python` and `tools_image` are
+split; ten modules remain over the limit. **#86** (lint gate) is done: zero `ruff --select F` findings in
 `consensus/`, enforced by `tests/test_lint.py`._
 
 This file briefs the next session on what is done, what is still open, and the
@@ -26,7 +27,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3111 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3231 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -184,7 +185,7 @@ as `async def`, never `get_event_loop().run_until_complete`.
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-**Done — five slices** (detail in git history; one PR each):
+**Done — six slices** (detail in git history; one PR each):
 
 1. `app_discussion_flow.py` (1254) → `app_discussion_flow/`. **Watch
    `turns.py` (499)**: the next addition crosses the limit — split then.
@@ -223,17 +224,39 @@ as `async def`, never `get_event_loop().run_until_complete`.
    longer reported as denials, silent failure paths log. The Seatbelt
    profile's write confinement is looser than documented — docs corrected,
    tightening is **#97**.
+6. `tools_image.py` (643 after fixes) → `tools_image/` (constants, storage,
+   fetch, vision, schemas, handlers, provider; largest 190). Coverage 38% →
+   100% first (`tests/test_tools_image.py`, fakes in
+   `tests/image_helpers.py` — `patch_image_module` rebinds a name in every
+   `consensus.tools_image*` module, so patches survive any split). **URL
+   fetching is now one policy in `consensus/http_fetch.py`**
+   (`fetch_capped`: retry/backoff, 4xx permanent, streaming cap, optional
+   `guard` run as an httpx request hook on *every redirect hop*;
+   `redact_url` for logs/messages; `InvalidURL` / `UnsupportedProtocol` /
+   `DecodingError` are permanent, never retried) — `tools_document.fetch_url_content`
+   wraps it, closing #88 and #89. Image fetch failures are typed
+   `FetchError`, not `ValueError`. Defects fixed: the SSRF guard checked
+   only the first URL (a redirect reached 169.254.169.254) and passed
+   CGNAT/multicast; a failed vision call was returned as a description
+   **and persisted** as one; SVGs were sent to vision models (providers
+   reject them, failing every vision turn); GIF resize re-encoded as JPEG;
+   `_init_image_tools` logged load failures at INFO. Found, filed: **#98**
+   (document and `fetch_webpage` fetches have no SSRF guard — needs a
+   policy decision for desktop/intranet use), **#99** (SVG served
+   same-origin can run script). Lesson: a fetch test that installs no fake
+   transport passes while the guard works and hits the real network the
+   moment it breaks — every fetch test installs one.
 
 Smaller slices came out of the error-visibility work: `ai_response.py` (from
 `ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).
 
 **Facade guards.** A dropped re-export fails *late*: every consumer imports
 lazily inside function bodies, and `app._init_memory_tools` /
-`_init_document_tools` / `_init_python_tools` turn an `ImportError` into "feature unavailable" (now
+`_init_document_tools` / `_init_python_tools` / `_init_image_tools` turn an `ImportError` into "feature unavailable" (now
 logged at WARNING; it was INFO before the tools_memory slice, so a broken facade quietly
 disabled the feature). `tests/test_app_discussion_flow_facade.py`,
-`test_tools_document_facade.py`, `test_tools_memory_facade.py` and
-`test_tools_python_facade.py` pin
+`test_tools_document_facade.py`, `test_tools_memory_facade.py`,
+`test_tools_python_facade.py` and `test_tools_image_facade.py` pin
 `__all__` by identity and AST-scan **every module under `consensus/`** for
 call sites. Keep them in step when the public API changes.
 
@@ -249,7 +272,6 @@ call sites. Keep them in step when the public API changes.
 | 676 | **0%** | `consensus/evaluation/runner.py` |
 | 636 | 35% | `consensus/desktop.py` |
 | 589 | **0%** | `consensus/evaluation/eval_db.py` |
-| 580 | 38% | `consensus/tools_image.py` |
 | 529 | **0%** | `consensus/evaluation/scorer.py` |
 | 517 | 94% | `consensus/methods/base.py` |
 | 509 | 78% | `consensus/app_discussion_setup.py` |
@@ -257,14 +279,10 @@ call sites. Keep them in step when the public API changes.
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next-best target: `consensus/tools_image.py`** (580, 38%) — module-level
-functions (file storage, URL fetch with `_is_private_ip` SSRF guard, vision
-LLM call, three handlers, provider), the same shape as `tools_python` was.
-Build the net to 100% first; the fetch path is where **#88** (no retry) and
-**#89** (unredacted URLs in logs) live, so the characterization pass is the
-natural place to close them. `methods/base.py` (517, 94%) is the cheapest
-win — move the `Phase` / `ProcessedResponse` / `OutputToolSpec` dataclasses
-out of the `DiscussionMethod` module.
+**Next-best target: `consensus/methods/base.py`** (517, 94%) — the
+cheapest win: move the `Phase` / `ProcessedResponse` / `OutputToolSpec`
+dataclasses out of the `DiscussionMethod` module (grep every
+`from .base import` / `methods.base` consumer — there are many).
 `moderator.py` and `auth.py` are bigger payoffs but are a single class and a
 security-critical module at ~50–60% — build their nets before moving a line.
 `evaluation/` is entirely untested.
@@ -365,11 +383,12 @@ likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
-#97 Seatbelt profile does not confine writes; #96 no UI flag when Python
-tools fail to load; #92 tool error results echo
-raw exception text to the model and UI; #88
-image URL fetch lacks retry/backoff; #89 redact URLs in fetch-failure logs;
-#81 persist parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents.
+#99 SVG images served same-origin can run script (needs a `server.py`
+route-test harness); #98 no SSRF guard on document / `fetch_webpage`
+fetches; #97 Seatbelt profile does not confine writes; #96 no UI flag when
+Python or image tools fail to load; #92 tool error results echo raw
+exception text to the model and UI; #81 persist parse fidelity/notes; #80
+pre-#78 `'(Empty PDF)'` documents. (#88/#89 close with the tools_image PR.)
 
 ### Roadmap
 

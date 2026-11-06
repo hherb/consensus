@@ -185,3 +185,32 @@ async def test_messages_and_logs_redact_secrets(monkeypatch, no_sleep, caplog):
     for text in (caplog.text, str(info.value)):
         assert "SECRET" not in text and "pw" not in text
     assert "https://files.test/a" in caplog.text
+
+
+# --- permanent transport faults (PR review) -------------------------------------
+
+@pytest.mark.parametrize("fault", [
+    httpx.UnsupportedProtocol("no scheme"),
+    httpx.DecodingError("bad gzip"),
+    httpx.InvalidURL("bad https://h.test/x?token=SECRET"),
+])
+async def test_permanent_faults_are_rejected_without_retry(monkeypatch,
+                                                           no_sleep, fault):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        raise fault
+
+    install_transport(monkeypatch, handler)
+    with pytest.raises(FetchRejected) as info:
+        await _fetch("https://h.test/x?token=SECRET")
+    assert len(calls) == 1 and no_sleep == []
+    assert "SECRET" not in str(info.value)
+    assert type(fault).__name__ in str(info.value)
+
+
+async def test_garbage_content_length_falls_back_to_streamed_cap(monkeypatch):
+    install_transport(monkeypatch, lambda r: httpx.Response(
+        200, content=b"ok", headers={"content-length": "lots"}))
+    assert (await _fetch())[0] == b"ok"

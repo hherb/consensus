@@ -75,6 +75,24 @@ def redact_url(url: str) -> str:
     return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
 
+# Faults no retry can cure. UnsupportedProtocol subclasses TransportError,
+# so this is checked before the retry branch.
+_PERMANENT_FAULTS = (httpx.InvalidURL, httpx.UnsupportedProtocol,
+                     httpx.DecodingError)
+
+
+def _declared_length(response: httpx.Response) -> int | None:
+    """Return the ``content-length`` header as an int, or ``None``.
+
+    A missing or non-numeric header is not trusted; the streamed cap in
+    :func:`_read_capped` still bounds the body.
+    """
+    try:
+        return int(response.headers.get("content-length", ""))
+    except ValueError:
+        return None
+
+
 def _describe_fault(exc: Exception) -> str:
     """Summarise a transient fault without echoing the request URL.
 
@@ -159,16 +177,22 @@ async def fetch_capped(
                         raise FetchRejected(
                             f"{shown} returned HTTP {response.status_code}")
                     response.raise_for_status()
-                    declared = response.headers.get("content-length")
-                    if declared and int(declared) > max_bytes:
+                    declared = _declared_length(response)
+                    if declared is not None and declared > max_bytes:
                         raise FetchTooLarge(
-                            f"{shown} is too large ({int(declared)} bytes; "
+                            f"{shown} is too large ({declared} bytes; "
                             f"the limit is {max_bytes})")
                     content = await _read_capped(response, shown, max_bytes)
                     return content, response.headers.get("content-type", "")
             except httpx.TooManyRedirects as e:
                 raise FetchRejected(
                     f"{shown} led to too many redirects") from e
+            except _PERMANENT_FAULTS as e:
+                # Retrying cannot help, and InvalidURL's text embeds the
+                # raw URL, so only the type name is reported.
+                raise FetchRejected(
+                    f"{shown} could not be fetched ({type(e).__name__})"
+                ) from e
             except (httpx.TimeoutException, httpx.HTTPStatusError,
                     httpx.TransportError) as e:
                 last_fault = _describe_fault(e)
