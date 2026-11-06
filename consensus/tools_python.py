@@ -20,6 +20,7 @@ import logging
 import os
 import platform
 import re
+import shutil
 import sys
 import tempfile
 import uuid
@@ -38,6 +39,8 @@ PYTHON_MAX_OUTPUT: int = 50_000  # Max chars of output returned
 # that doesn't count against RLIMIT_CPU linearly.
 WALL_TIMEOUT_MULTIPLIER: float = 1.5
 MIN_WALL_TIMEOUT_SECONDS: float = 30.0  # Floor: never less than 30s
+# CPU limit assumed when the sandbox worker's own computation fails.
+FALLBACK_CPU_LIMIT_SECONDS: int = 30
 INSTALL_APPROVAL_TIMEOUT: float = 300.0  # 5 minutes for user to approve
 INSTALL_EXEC_TIMEOUT: float = 120.0  # 2 minutes for uv pip install
 # Regex for valid PyPI package names (PEP 508)
@@ -125,8 +128,12 @@ def _compute_wall_timeout() -> float:
     try:
         from .sandbox_worker import _compute_cpu_time_limit
         cpu_limit = _compute_cpu_time_limit()
-    except Exception:
-        cpu_limit = 30  # safe fallback
+    except Exception as e:
+        logger.warning(
+            "Could not compute sandbox CPU limit (%s); assuming %ss",
+            e, FALLBACK_CPU_LIMIT_SECONDS,
+        )
+        cpu_limit = FALLBACK_CPU_LIMIT_SECONDS
     return max(cpu_limit * WALL_TIMEOUT_MULTIPLIER, MIN_WALL_TIMEOUT_SECONDS)
 
 
@@ -333,12 +340,7 @@ async def execute_python_handler(
         return _format_result(result_data, description)
 
     finally:
-        # Clean up sandbox directory
-        try:
-            import shutil
-            shutil.rmtree(sandbox_dir, ignore_errors=True)
-        except Exception:
-            pass
+        shutil.rmtree(sandbox_dir, ignore_errors=True)
 
 
 def _format_result(result_data: dict, description: str) -> ToolResult:
@@ -506,8 +508,9 @@ async def _install_package_handler(
                 content=f"Package '{package_name}' is already installed.",
                 metadata={"package": package_name, "status": "already_installed"},
             )
-    except Exception:
-        pass  # Proceed to install attempt
+    except Exception as e:
+        # Not fatal: the user is still asked, and uv reports an existing install.
+        logger.warning("Could not check whether '%s' is installed: %s", package_name, e)
 
     # Request user approval via the ask_user event pattern
     request_id = f"pkg_{context.discussion_id}_{uuid.uuid4().hex[:8]}"
@@ -524,7 +527,7 @@ async def _install_package_handler(
         f"**{entity_name or 'A participant'}** is requesting to install "
         f"Python package **{package_name}**.\n\n"
         f"**Reason:** {reason}\n\n"
-        f"This will run: `uv pip install {package_name}`\n\n"
+        f"This will run: `uv pip install --python {sys.executable} {package_name}`\n\n"
         f"Type **yes** to approve or **no** to deny."
     )
 
@@ -565,11 +568,13 @@ async def _install_package_handler(
             metadata={"package": package_name, "status": "denied"},
         )
 
-    # Run uv pip install
+    # Run uv pip install into the interpreter the sandbox worker and the
+    # already-installed check use — without --python, uv picks whatever venv
+    # VIRTUAL_ENV or the working directory resolves to.
     logger.info("Installing package '%s' (approved by user)", package_name)
     try:
         install_proc = await asyncio.create_subprocess_exec(
-            "uv", "pip", "install", package_name,
+            "uv", "pip", "install", "--python", sys.executable, package_name,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -578,6 +583,9 @@ async def _install_package_handler(
             timeout=INSTALL_EXEC_TIMEOUT,
         )
     except asyncio.TimeoutError:
+        install_proc.kill()
+        await install_proc.wait()
+        logger.warning("uv pip install '%s' timed out", package_name)
         return ToolResult(
             content=f"Installation of '{package_name}' timed out after "
             f"{INSTALL_EXEC_TIMEOUT:.0f} seconds.",
