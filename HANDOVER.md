@@ -1,15 +1,15 @@
 # HANDOVER
 
 _Last updated: 2026-11-06. `main` is at **v2.0.0** (released 2026-07-20); the
-`refactor/tools-memory-split-61` branch has the suite at **3050 passing**. The
+`refactor/tools-python-split-61` branch has the suite at **3093 passing**. The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
 the tools_document failure-visibility work (#78) — contracts for both
 summarised below. The one open structural issue is **#61** (modules over the
 ~500-line golden rule): `app_discussion_flow`, `tools_document`, `app.py`
-(→ `app_api/` mixins) and `tools_memory` are split; twelve modules remain over
-the limit. **#86** (lint gate) is done: zero `ruff --select F` findings in
+(→ `app_api/` mixins), `tools_memory` and `tools_python` are split; eleven
+modules remain over the limit. **#86** (lint gate) is done: zero `ruff --select F` findings in
 `consensus/`, enforced by `tests/test_lint.py`._
 
 This file briefs the next session on what is done, what is still open, and the
@@ -26,7 +26,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3050 passing (`uv run pytest`, ~80 s; runs in `.venv` via the `dev` group) |
+| Tests | 3093 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -184,7 +184,7 @@ as `async def`, never `get_event_loop().run_until_complete`.
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-**Done — four slices** (detail in git history; one PR each):
+**Done — five slices** (detail in git history; one PR each):
 
 1. `app_discussion_flow.py` (1254) → `app_discussion_flow/`. **Watch
    `turns.py` (499)**: the next addition crosses the limit — split then.
@@ -206,6 +206,16 @@ as `async def`, never `get_event_loop().run_until_complete`.
    retry loop slept after its final attempt; `kg_assert`'s background embed
    stopped silently on an outage. Submodule loggers are children of
    `consensus.tools_memory`, so old `caplog` names still work.
+5. `tools_python.py` (622) → `tools_python/` (constants, schemas, execution,
+   install, provider; largest 295). Coverage 82% → 100% first
+   (`tests/test_tools_python_failures.py`); facade exports only
+   `create_python_provider`. Defects fixed: **`uv pip install` had no
+   `--python`**, so it installed into whatever venv `VIRTUAL_ENV`/the cwd
+   resolved to while the worker imports from `sys.executable` (now
+   `--python sys.executable`); a timed-out install was left running; the
+   already-installed check and the CPU-limit fallback failed silently;
+   `_init_python_tools` logged load failures at INFO (now WARNING +
+   traceback — there is still no UI flag for "Python tools failed to load").
 
 Smaller slices came out of the error-visibility work: `ai_response.py` (from
 `ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).
@@ -230,7 +240,6 @@ call sites. Keep them in step when the public API changes.
 | 714 | 51% | `consensus/mcp_server.py` |
 | 676 | **0%** | `consensus/evaluation/runner.py` |
 | 636 | 35% | `consensus/desktop.py` |
-| 614 | 82% | `consensus/tools_python.py` |
 | 589 | **0%** | `consensus/evaluation/eval_db.py` |
 | 580 | 38% | `consensus/tools_image.py` |
 | 529 | **0%** | `consensus/evaluation/scorer.py` |
@@ -240,10 +249,14 @@ call sites. Keep them in step when the public API changes.
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next-best target: `consensus/tools_python.py`** (614, 82%) — module-level
-functions (config, AST pre-analysis, macOS sandbox command, execute handler,
-result formatting, provider, package install), the same shape as
-`tools_memory` was, and already mostly covered; close the gap to 100% first.
+**Next-best target: `consensus/tools_image.py`** (580, 38%) — module-level
+functions (file storage, URL fetch with `_is_private_ip` SSRF guard, vision
+LLM call, three handlers, provider), the same shape as `tools_python` was.
+Build the net to 100% first; the fetch path is where **#88** (no retry) and
+**#89** (unredacted URLs in logs) live, so the characterization pass is the
+natural place to close them. `methods/base.py` (517, 94%) is the cheapest
+win — move the `Phase` / `ProcessedResponse` / `OutputToolSpec` dataclasses
+out of the `DiscussionMethod` module.
 `moderator.py` and `auth.py` are bigger payoffs but are a single class and a
 security-critical module at ~50–60% — build their nets before moving a line.
 `evaluation/` is entirely untested.
