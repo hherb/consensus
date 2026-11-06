@@ -52,11 +52,8 @@ def add_to_discussion(
     if is_moderator:
         discussion.moderator_id = entity_id
 
-    # Single-DA enforcement: revert any existing DA
     if participant_role == "devils_advocate":
-        for eid, role in list(discussion.member_roles.items()):
-            if role == "devils_advocate" and eid != entity_id:
-                discussion.member_roles[eid] = "standard"
+        revert_other_devils_advocates(discussion, db, entity_id)
         auto_assign_da_tools(db, entity_id)
 
     # Persist to DB if discussion is already started
@@ -202,14 +199,8 @@ def set_participant_role(
     if entity_id == discussion.moderator_id:
         return {"error": "Cannot assign a role to the moderator"}
 
-    # Single-DA enforcement: revert any existing DA
     if participant_role == "devils_advocate":
-        for eid, role in list(discussion.member_roles.items()):
-            if role == "devils_advocate" and eid != entity_id:
-                discussion.member_roles[eid] = "standard"
-                if discussion.id:
-                    db.update_member_role(
-                        discussion.id, eid, "standard")
+        revert_other_devils_advocates(discussion, db, entity_id)
 
     discussion.member_roles[entity_id] = participant_role
 
@@ -227,6 +218,21 @@ def set_participant_role(
             discussion.id, entity_id, participant_role)
 
     return entity.to_dict()
+
+
+def revert_other_devils_advocates(
+    discussion: Discussion, db: Database, entity_id: int,
+) -> None:
+    """Enforce a single devil's advocate: demote every DA but ``entity_id``.
+
+    The demotion is persisted once the discussion has a DB record, or a
+    reload would restore two devil's advocates.
+    """
+    for eid, role in list(discussion.member_roles.items()):
+        if role == "devils_advocate" and eid != entity_id:
+            discussion.member_roles[eid] = "standard"
+            if discussion.id:
+                db.update_member_role(discussion.id, eid, "standard")
 
 
 def auto_assign_da_tools(db: Database, entity_id: int) -> None:
