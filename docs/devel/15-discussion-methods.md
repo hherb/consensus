@@ -22,7 +22,8 @@ Method classes are thin assemblies that declare an ordered tuple of handlers.
 ```
 consensus/methods/
     __init__.py          — method registry (get_method, list_methods)
-    base.py              — DiscussionMethod ABC, Phase, ProcessedResponse
+    base.py              — DiscussionMethod ABC (re-exports phase_types)
+    phase_types.py       — Phase, ProcessedResponse, OutputToolSpec, LINEAR_NEXT
     phase_handler.py     — PhaseHandler ABC
     parsing.py           — shared parsing utilities
     open_discussion.py   — OpenDiscussion (no handlers, wraps default behaviour)

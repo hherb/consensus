@@ -1,16 +1,16 @@
 # HANDOVER
 
 _Last updated: 2026-11-06. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices; the `refactor/tools-image-split-61` branch has the
-suite at **3288 passing**. The
+the merged #61 slices; the `refactor/methods-base-split-61` branch has the
+suite at **3290 passing**. The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
 the tools_document failure-visibility work (#78) — contracts for both
 summarised below. The one open structural issue is **#61** (modules over the
 ~500-line golden rule): `app_discussion_flow`, `tools_document`, `app.py`
-(→ `app_api/` mixins), `tools_memory`, `tools_python` and `tools_image` are
-split; ten modules remain over the limit. **#86** (lint gate) is done: zero `ruff --select F` findings in
+(→ `app_api/` mixins), `tools_memory`, `tools_python`, `tools_image` and
+`methods/base.py` are split; nine modules remain over the limit. **#86** (lint gate) is done: zero `ruff --select F` findings in
 `consensus/`, enforced by `tests/test_lint.py`._
 
 This file briefs the next session on what is done, what is still open, and the
@@ -27,7 +27,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3288 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3290 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -185,7 +185,7 @@ as `async def`, never `get_event_loop().run_until_complete`.
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-**Done — six slices** (detail in git history; one PR each):
+**Done — seven slices** (detail in git history; one PR each):
 
 1. `app_discussion_flow.py` (1254) → `app_discussion_flow/`. **Watch
    `turns.py` (499)**: the next addition crosses the limit — split then.
@@ -256,6 +256,11 @@ as `async def`, never `get_event_loop().run_until_complete`.
    stays open for its route test (needs the `server.py` harness). Lesson: a fetch test that installs no fake
    transport passes while the guard works and hits the real network the
    moment it breaks — every fetch test installs one.
+7. `methods/base.py` (517 → 469) → `LINEAR_NEXT`, `Phase`,
+   `ProcessedResponse`, `OutputToolSpec` moved verbatim to
+   `methods/phase_types.py`. `base.py` **re-exports them** (`__all__`), so
+   none of the 124 importing modules changed; guard is
+   `tests/test_methods_base_facade.py`. Import new code from either.
 
 Smaller slices came out of the error-visibility work: `ai_response.py` (from
 `ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).
@@ -285,16 +290,14 @@ call sites. Keep them in step when the public API changes.
 | 636 | 35% | `consensus/desktop.py` |
 | 589 | **0%** | `consensus/evaluation/eval_db.py` |
 | 529 | **0%** | `consensus/evaluation/scorer.py` |
-| 517 | 94% | `consensus/methods/base.py` |
 | 509 | 78% | `consensus/app_discussion_setup.py` |
 
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next-best target: `consensus/methods/base.py`** (517, 94%) — the
-cheapest win: move the `Phase` / `ProcessedResponse` / `OutputToolSpec`
-dataclasses out of the `DiscussionMethod` module (grep every
-`from .base import` / `methods.base` consumer — there are many).
+**Next-best target: `consensus/app_discussion_setup.py`** (509, 78%) —
+only 9 lines over; lift coverage of the moved part first, then move one
+cohesive helper group out verbatim.
 `moderator.py` and `auth.py` are bigger payoffs but are a single class and a
 security-critical module at ~50–60% — build their nets before moving a line.
 `evaluation/` is entirely untested.
@@ -400,7 +403,7 @@ budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #99 route
 `server.py` route-test harness); #97 Seatbelt profile does not confine writes; #96 no UI flag when
 Python or image tools fail to load; #92 tool error results echo raw
 exception text to the model and UI; #81 persist parse fidelity/notes; #80
-pre-#78 `'(Empty PDF)'` documents. (#88/#89/#98 close with the tools_image PR #100.)
+pre-#78 `'(Empty PDF)'` documents. (#88/#89/#98 closed with PR #100.)
 
 ### Roadmap
 
