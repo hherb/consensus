@@ -202,9 +202,9 @@ in addition to `'human'` and `'ai'`.
 
 ## Memory Tables (Optional)
 
-These tables support the institutional memory system. Created via the
-`_migrate_memory()` migration, which only runs when `sqlite-vec` is installed
-(the `[memory]` optional dependency group).
+These tables support the institutional memory system. They are created by
+the baseline migration (`001_baseline.sql`) and work with or without the
+`sqlite-vec` extension.
 
 ```sql
 -- Per-entity long-term memories (observations, positions, reflections)

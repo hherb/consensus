@@ -20,7 +20,7 @@ ConsensusMCPServer (mcp_server.py)
     |
     +-- Database (db/) — direct SQLite read/search/write
     |
-    +-- EmbeddingClient (tools_memory.py) — semantic search via Ollama
+    +-- EmbeddingClient (tools_memory/embedding.py) — semantic search via Ollama
     |
     +-- ConsensusApp (app.py) — discussion orchestration (run_discussion only)
 ```
@@ -155,9 +155,9 @@ The server reuses existing infrastructure:
 | Need | Source |
 |------|--------|
 | Database access | `Database` class (`db/__init__.py`) — all 10 mixins |
-| Embeddings | `EmbeddingClient` (`tools_memory.py`) |
-| Similarity search | `_rank_by_similarity()` (`tools_memory.py`) |
-| Embedding serialization | `_pack_embedding()` (`tools_memory.py`) |
+| Embeddings | `EmbeddingClient` (`tools_memory/embedding.py`) |
+| Similarity search | `_rank_by_similarity()` (`tools_memory/embedding.py`) |
+| Embedding serialization | `_pack_embedding()` (`tools_memory/embedding.py`) |
 | Discussion export | `get_export_data()` (`app_discussion_state.py`) |
 | Discussion orchestration | `ConsensusApp` (`app.py`) |
 | Data paths | `get_db_path()` (`config.py`) |

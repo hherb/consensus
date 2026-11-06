@@ -746,7 +746,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"error": "Server at capacity"}, status=503)
         if not app_inst.memory_available:
             return web.json_response(
-                {"error": "Memory feature not installed (pip install consensus[memory])"},
+                {"error": "Memory feature unavailable on this server (it failed to load; see the server log)"},
                 status=404,
             )
         try:
@@ -764,7 +764,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"error": "Server at capacity"}, status=503)
         if not app_inst.memory_available:
             return web.json_response(
-                {"error": "Memory feature not installed (pip install consensus[memory])"},
+                {"error": "Memory feature unavailable on this server (it failed to load; see the server log)"},
                 status=404,
             )
         try:
@@ -789,7 +789,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"error": "Server at capacity"}, status=503)
         if not app_inst.memory_available:
             return web.json_response(
-                {"error": "Memory feature not installed (pip install consensus[memory])"},
+                {"error": "Memory feature unavailable on this server (it failed to load; see the server log)"},
                 status=404,
             )
         try:
@@ -813,7 +813,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"error": "Server at capacity"}, status=503)
         if not app_inst.documents_available:
             return web.json_response(
-                {"error": "Document tools not available (install consensus[memory])"},
+                {"error": "Document tools unavailable on this server (they failed to load; see the server log)"},
                 status=404,
             )
 
@@ -863,7 +863,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"error": "Server at capacity"}, status=503)
         if not app_inst.documents_available:
             return web.json_response(
-                {"error": "Document tools not available (install consensus[memory])"},
+                {"error": "Document tools unavailable on this server (they failed to load; see the server log)"},
                 status=404,
             )
 

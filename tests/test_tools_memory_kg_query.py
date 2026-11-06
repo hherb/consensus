@@ -11,10 +11,9 @@ import httpx
 import pytest
 
 from consensus.tools import ToolContext
-from consensus.tools_memory import (
-    _KG_QUERY_SCHEMA, KG_QUERY_MODES, EmbeddingClient, MemoryUnavailableError,
-    _kg_query_handler,
-)
+from consensus.tools_memory import EmbeddingClient, MemoryUnavailableError
+from consensus.tools_memory.handlers_kg import _kg_query_handler
+from consensus.tools_memory.schemas import _KG_QUERY_SCHEMA, KG_QUERY_MODES
 
 CTX = ToolContext(caller_entity_id=1, discussion_id=1)
 
