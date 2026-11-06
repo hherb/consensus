@@ -493,9 +493,11 @@ itself without the user re-adding the document.
 
 ## Image Tools
 
-Defined in `tools_image.py`. Created via `create_image_provider(db, app)` and
-registered in `ConsensusApp._init_image_tools()`. Optional dependency: Pillow
-(`[images]` extra) for image dimension detection and resizing.
+Defined in the `tools_image/` package (`constants`, `storage`, `fetch`,
+`vision`, `schemas`, `handlers`, `provider`). Created via
+`create_image_provider(db, app)` and registered in
+`ConsensusApp._init_image_tools()`. Pillow (a default dependency) is used for
+image dimension detection and resizing; without it images are stored as-is.
 
 ### Tools
 
@@ -507,8 +509,10 @@ registered in `ConsensusApp._init_image_tools()`. Optional dependency: Pillow
 
 ### Vision model detection
 
-`is_vision_capable(model)` checks the model name against known patterns
-(GPT-4o, Claude 3, Gemini, LLaVA, Pixtral, Qwen-VL, etc.). This determines
+`is_vision_capable(model, pricing_cache, base_url)` first asks the
+OpenRouter-backed pricing cache whether the model accepts image input, and
+falls back to matching the name against known patterns (GPT-4o, Claude 3,
+Gemini, LLaVA, Pixtral, Qwen-VL, etc.) when the model is unknown. This determines
 whether the moderator injects images as multimodal content blocks or whether
 the `describe_image` tool should be used instead.
 
@@ -516,20 +520,46 @@ the `describe_image` tool should be used instead.
 
 When a discussion has attached images and the current entity's model is
 vision-capable, `Moderator._build_multimodal_context()` injects images as
-base64 `image_url` content blocks in the message context. Non-vision models
-can use the `describe_image` tool to get a text description via a
-vision-capable model (falling back to the moderator's model).
+base64 `image_url` content blocks in the message context. Only PNG, JPEG,
+GIF and WebP are sent (`VISION_IMAGE_TYPES`); an SVG is listed by title but
+never sent, because providers reject it and would fail the whole turn. Non-vision models
+can use the `describe_image` tool to get a text description: it uses the
+caller's model if vision-capable, else the moderator's if that one is, else
+still tries the caller's (capability detection can miss a model); SVGs are
+refused.
 
 ### Security
 
 - **Path traversal protection:** `_safe_image_path()` validates that resolved
   paths stay within the images directory using `os.path.realpath()`
-- **SSRF protection:** `_is_private_ip()` blocks fetching from private,
-  loopback, link-local, and reserved IP ranges
+- **SSRF protection:** `http_fetch.require_public_host()` refuses any host
+  with an address that is not public (private, loopback, link-local,
+  reserved, CGNAT, multicast, and IPv4 hidden in NAT64 or IPv4-compatible
+  IPv6); a host with several records is refused if any one is internal. It
+  runs on **every request, redirect hops included**, as an httpx request
+  hook, and guards document and `fetch_webpage` fetches too, in every mode
+  (#98). DNS rebinding between the check and the connection is not
+  prevented
+- **Retry and size cap:** URL fetches go through the shared
+  `consensus/http_fetch.py` (`fetch_capped`, also used by document
+  ingestion and `fetch_webpage`). Timeouts, transport errors, DNS failures,
+  408/425/429 and 5xx other than 501/505 are retried with backoff; any
+  other non-2xx is permanent; the body is capped while it streams. Tool
+  calls pass `deadline=TOOL_FETCH_DEADLINE`, so the fetch's own error
+  arrives before the generic tool timeout. URLs in its messages and logs
+  are passed through `redact_url()`
+- **Content validation:** raster bytes Pillow cannot decode are refused at
+  ingestion rather than stored (a response without Content-Type is assumed
+  PNG and must prove it)
+- **Serving:** `/api/images/file/<id>` sends `IMAGE_SERVE_CSP`
+  (`default-src 'none'; style-src 'unsafe-inline'; sandbox`), so an SVG
+  opened directly cannot run script in the app's origin (#99)
 - **Size limits:** 20 MB maximum for both uploads and URL fetches
 - **MIME validation:** Only PNG, JPEG, GIF, WebP, SVG accepted
 - **Auto-resize:** Images larger than 2048px in either dimension are
-  thumbnailed down (requires Pillow)
+  thumbnailed down and re-encoded in their own format (requires Pillow)
+- **Failures are errors:** a failed vision call returns an error result and is
+  never cached as the image's description
 
 ---
 

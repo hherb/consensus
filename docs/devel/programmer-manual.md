@@ -58,7 +58,7 @@ ConsensusApp (app.py + app_api/ mixins + app_*.py domain modules)
     +-- AskUser (tools_ask_user.py)
     |     Interactive user input during AI turns (Future-based blocking)
     |
-    +-- ImageTools (tools_image.py)
+    +-- ImageTools (tools_image/)
     |     Image storage, vision-model description, multimodal context
     |
     +-- DiscussionMethod (methods/)

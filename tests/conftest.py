@@ -39,7 +39,7 @@ def images_dir(tmp_path, monkeypatch):
     """Redirect image storage away from the real user data directory."""
     path = tmp_path / "images"
     path.mkdir()
-    monkeypatch.setattr("consensus.tools_image.get_images_dir", lambda: str(path))
+    monkeypatch.setattr("consensus.tools_image.storage.get_images_dir", lambda: str(path))
     return path
 
 

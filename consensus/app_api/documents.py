@@ -6,6 +6,7 @@ is ``ConsensusApp``, which owns all state.
 
 import logging
 
+from ..http_fetch import redact_url
 from ..models import EntityType
 from ..tools import ToolContext
 
@@ -143,12 +144,13 @@ class DocumentsMixin:
             content_bytes, filename, mime_type = await fetch_url_content(url)
         except DocumentError as e:
             # str() carries the hint; an expected fault needs no traceback.
-            logger.warning("URL fetch failed for %s: %s", url, e)
+            logger.warning("URL fetch failed for %s: %s", redact_url(url), e)
             return {"error": f"Failed to fetch URL: {e}"}
         except Exception as e:
             # A bug in the fetch path, not a bad URL — golden rule 6 wants
             # this logged with a traceback, not just shown.
-            logger.exception("URL fetch failed unexpectedly for %s", url)
+            logger.exception("URL fetch failed unexpectedly for %s",
+                             redact_url(url))
             return {"error": f"Failed to fetch URL: {e}"}
 
         return await self.add_document(

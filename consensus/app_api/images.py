@@ -8,7 +8,7 @@ The host class is ``ConsensusApp``, which owns all state.
 import logging
 from typing import Optional
 
-import httpx
+from ..http_fetch import FetchError, redact_url
 
 
 logger = logging.getLogger(__name__)
@@ -53,13 +53,14 @@ class ImagesMixin:
         from ..tools_image import fetch_image_from_url
         try:
             content_bytes, filename, mime_type = await fetch_image_from_url(url)
-        except (ValueError, httpx.HTTPError) as e:
+        except FetchError as e:
             # Expected: rejected URL, oversize or non-image body, HTTP fault.
-            logger.warning("Image fetch failed for %s: %s", url, e)
+            logger.warning("Image fetch failed for %s: %s", redact_url(url), e)
             return {"error": f"Failed to fetch image: {e}"}
         except Exception as e:
             # A bug in the fetch path, not a bad URL: keep the traceback.
-            logger.exception("Image fetch failed unexpectedly for %s", url)
+            logger.exception("Image fetch failed unexpectedly for %s",
+                             redact_url(url))
             return {"error": f"Failed to fetch image: {e}"}
 
         return await self.add_image(

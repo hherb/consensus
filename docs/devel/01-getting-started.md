@@ -122,7 +122,8 @@ consensus/
   tools_document/          Document RAG tool provider package (constants, errors,
                            parsing, chunking, embedding, schemas, validation, llm,
                            ingestion, handlers, handlers_rag, provider)
-  tools_image.py           Image tool provider (storage, vision, multimodal context)
+  tools_image/             Image tool provider package (constants, storage, fetch, vision, schemas, handlers, provider)
+  http_fetch.py            Shared URL fetch: retry/backoff, deadline, streaming size cap, SSRF guard
   tools_memory/            Institutional memory tool provider package (constants,
                            embedding, schemas, handlers, handlers_kg, provider)
   mcp_client.py            MCPToolProvider — JSON-RPC 2.0 communication with MCP servers

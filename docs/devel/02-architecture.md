@@ -33,7 +33,7 @@ ConsensusApp (app.py + app_api/ mixins + app_*.py domain modules)
     |     Document ingestion (URL/text/PDF/HTML), chunking, RAG Q&A,
     |     section navigation, map-reduce summarization
     |
-    +-- ImageTools (tools_image.py)
+    +-- ImageTools (tools_image/)
     |     Image storage, vision-model description, multimodal context blocks
     |
     +-- DiscussionMethod (methods/)

@@ -5,6 +5,7 @@ from a success: an error string returned as content, a non-error result,
 or a value persisted to the database.
 """
 
+import asyncio
 import logging
 
 import httpx
@@ -413,6 +414,7 @@ class _ChunkedResponse:
     """
 
     status_code = 200
+    is_success = True
     headers = {"content-type": "text/plain"}
 
     def __init__(self, chunk: bytes, chunks: int) -> None:
@@ -450,8 +452,8 @@ async def test_fetch_retries_a_transient_failure(monkeypatch):
         made["client"] = client
         return client
 
-    monkeypatch.setattr(parsing.httpx, "AsyncClient", factory)
-    monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
 
     content, filename, mime = await parsing.fetch_url_content(
         "https://example.com/a.txt")
@@ -471,8 +473,8 @@ async def test_fetch_does_not_retry_a_404(monkeypatch):
         made["client"] = _FakeAsyncClient([not_found])
         return made["client"]
 
-    monkeypatch.setattr(parsing.httpx, "AsyncClient", factory)
-    monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
 
     with pytest.raises(DocumentParseError):
         await parsing.fetch_url_content("https://example.com/missing")
@@ -488,10 +490,10 @@ async def test_fetch_rejects_an_oversized_content_length(monkeypatch):
         headers={"content-length": str(MAX_DOCUMENT_BYTES + 1)})
 
     monkeypatch.setattr(
-        parsing.httpx, "AsyncClient",
+        httpx, "AsyncClient",
         lambda **kwargs: _FakeAsyncClient([oversized]),
     )
-    monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
 
     with pytest.raises(DocumentParseError) as exc:
         await parsing.fetch_url_content("https://example.com/big")
@@ -516,10 +518,10 @@ async def test_fetch_rejects_an_oversized_undeclared_body(monkeypatch):
     assert "content-length" not in response.headers
 
     monkeypatch.setattr(
-        parsing.httpx, "AsyncClient",
+        httpx, "AsyncClient",
         lambda **kwargs: _FakeAsyncClient([response]),
     )
-    monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
 
     with pytest.raises(DocumentParseError) as exc:
         await parsing.fetch_url_content("https://example.com/big")
@@ -547,8 +549,8 @@ async def test_fetch_gives_up_after_the_retry_budget(monkeypatch):
         ])
         return made["client"]
 
-    monkeypatch.setattr(parsing.httpx, "AsyncClient", factory)
-    monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
 
     with pytest.raises(DocumentParseError) as exc:
         await parsing.fetch_url_content("https://example.com/flaky")
@@ -1672,8 +1674,8 @@ async def test_fetch_retries_a_500(monkeypatch):
         made["client"] = client
         return client
 
-    monkeypatch.setattr(parsing.httpx, "AsyncClient", factory)
-    monkeypatch.setattr(parsing.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
 
     content, _filename, _mime = await parsing.fetch_url_content(
         "https://example.com/a.txt")
@@ -1702,8 +1704,8 @@ async def test_fetch_backoff_is_exponential(monkeypatch):
             [httpx.TimeoutException("slow")] * URL_FETCH_MAX_RETRIES,
         )
 
-    monkeypatch.setattr(parsing.httpx, "AsyncClient", factory)
-    monkeypatch.setattr(parsing.asyncio, "sleep", record)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    monkeypatch.setattr(asyncio, "sleep", record)
 
     with pytest.raises(DocumentParseError):
         await parsing.fetch_url_content("https://example.com/a.txt")
