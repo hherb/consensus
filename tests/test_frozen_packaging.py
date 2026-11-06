@@ -30,7 +30,7 @@ def test_worker_command_frozen(monkeypatch):
 
 
 async def test_install_package_refused_when_frozen(monkeypatch):
-    from consensus.tools_python import _install_package_handler
+    from consensus.tools_python.install import _install_package_handler
 
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     result = await _install_package_handler(

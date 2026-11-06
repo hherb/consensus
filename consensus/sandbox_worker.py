@@ -327,7 +327,9 @@ def execute_code(code: str) -> dict[str, Any]:
             finally:
                 os.chdir(old_cwd)
 
-        except Exception:
+        except BaseException:
+            # BaseException so SystemExit/KeyboardInterrupt raised by user code
+            # still produce a JSON result instead of losing captured output.
             result["error"] = traceback.format_exc()
         finally:
             sys.stdout = old_stdout

@@ -8,18 +8,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from consensus.tools_python import (
-    _analyze_ast,
-    _build_macos_sandbox_cmd,
-    _compute_wall_timeout,
-    _install_package_handler,
-    create_python_provider,
-    execute_python_handler,
+from consensus.tools_python import create_python_provider
+from consensus.tools_python.constants import (
     BLOCKED_MODULES,
     MIN_WALL_TIMEOUT_SECONDS,
     PACKAGE_NAME_RE,
     WALL_TIMEOUT_MULTIPLIER,
 )
+from consensus.tools_python.execution import (
+    _analyze_ast,
+    _build_macos_sandbox_cmd,
+    _compute_wall_timeout,
+    execute_python_handler,
+)
+from consensus.tools_python.install import _install_package_handler
 from consensus.sandbox_worker import (
     execute_code, ALLOWED_MODULES,
     MEMORY_FRACTION, CPU_FRACTION,
@@ -266,6 +268,14 @@ avg
         result = execute_code("'string' + 42")
         assert result["error"] is not None
         assert "TypeError" in result["error"]
+
+    @pytest.mark.parametrize("raise_stmt", ["raise SystemExit(0)", "raise SystemExit(3)",
+                                            "raise KeyboardInterrupt"])
+    def test_base_exception_keeps_output(self, raise_stmt):
+        """SystemExit/KeyboardInterrupt must not skip the JSON result and lose output."""
+        result = execute_code(f"print('before')\n{raise_stmt}")
+        assert result["stdout"] == "before\n"
+        assert result["error"] is not None
 
     def test_class_definition(self):
         """Class definitions should work."""
@@ -597,7 +607,7 @@ class TestTimeoutEnforcement:
     def test_infinite_loop_killed(self, tool_context):
         """An infinite loop should be terminated by the timeout."""
         # Use a very short timeout for this test
-        with patch("consensus.tools_python._compute_wall_timeout", return_value=3.0):
+        with patch("consensus.tools_python.execution._compute_wall_timeout", return_value=3.0):
             result = run_async(execute_python_handler(
                 {"code": "while True: pass"},
                 tool_context,
@@ -613,21 +623,21 @@ class TestMacosSandboxCmd:
 
     def test_returns_none_on_linux(self):
         """Should return None on non-macOS platforms."""
-        with patch("consensus.tools_python.platform.system", return_value="Linux"):
+        with patch("consensus.tools_python.execution.platform.system", return_value="Linux"):
             result = _build_macos_sandbox_cmd("/usr/bin/python3", ["-m", "worker"], "/tmp/sb")
             assert result is None
 
     def test_returns_none_if_sandbox_exec_missing(self):
         """Should return None if sandbox-exec binary doesn't exist."""
-        with patch("consensus.tools_python.platform.system", return_value="Darwin"):
-            with patch("consensus.tools_python.os.path.exists", return_value=False):
+        with patch("consensus.tools_python.execution.platform.system", return_value="Darwin"):
+            with patch("consensus.tools_python.execution.os.path.exists", return_value=False):
                 result = _build_macos_sandbox_cmd("/usr/bin/python3", ["-m", "worker"], "/tmp/sb")
                 assert result is None
 
     def test_returns_command_on_macos(self):
         """Should return a valid command list on macOS with sandbox-exec present."""
-        with patch("consensus.tools_python.platform.system", return_value="Darwin"):
-            with patch("consensus.tools_python.os.path.exists", return_value=True):
+        with patch("consensus.tools_python.execution.platform.system", return_value="Darwin"):
+            with patch("consensus.tools_python.execution.os.path.exists", return_value=True):
                 result = _build_macos_sandbox_cmd(
                     "/usr/bin/python3", ["-m", "consensus.sandbox_worker"], "/tmp/sb-1234",
                 )
@@ -647,6 +657,21 @@ class TestMacosSandboxCmd:
 
 class TestInstallPackageHandler:
     """Tests for the install_python_package tool handler."""
+
+    @pytest.fixture(autouse=True)
+    def no_real_install(self, monkeypatch):
+        """Keep every test off the network and fail fast instead of hanging.
+
+        The default fake process reports "not installed"; tests that need a
+        specific subprocess result patch ``create_subprocess_exec`` themselves.
+        A regression reaching the approval wait fails in seconds, not 300.
+        """
+        not_installed = AsyncMock()
+        not_installed.returncode = 1
+        not_installed.wait.return_value = 1
+        monkeypatch.setattr("consensus.tools_python.install.asyncio.create_subprocess_exec",
+                            AsyncMock(return_value=not_installed))
+        monkeypatch.setattr("consensus.tools_python.install.INSTALL_APPROVAL_TIMEOUT", 5.0)
 
     @pytest.fixture
     def mock_app(self):
@@ -687,7 +712,7 @@ class TestInstallPackageHandler:
         mock_proc.returncode = 0
 
         async def run_test():
-            with patch("consensus.tools_python.asyncio.create_subprocess_exec",
+            with patch("consensus.tools_python.install.asyncio.create_subprocess_exec",
                        return_value=mock_proc):
                 return await _install_package_handler(
                     {"package_name": "json", "reason": "need JSON"},
@@ -738,7 +763,7 @@ class TestInstallPackageHandler:
 
         async def run_test():
             approval_task = asyncio.create_task(simulate_approval())
-            with patch("consensus.tools_python.asyncio.create_subprocess_exec") as mock_exec:
+            with patch("consensus.tools_python.install.asyncio.create_subprocess_exec") as mock_exec:
                 # First call: import check (fail = not installed)
                 check_proc = AsyncMock()
                 check_proc.wait.return_value = 1
@@ -766,7 +791,7 @@ class TestInstallPackageHandler:
             # Verify the prompt content
             assert "fancy-lib" in request_data["question"]
             assert "matrix operations" in request_data["question"]
-            assert "uv pip install" in request_data["question"]
+            assert f"uv pip install --python {sys.executable} fancy-lib" in request_data["question"]
             # Deny to end the flow
             future = mock_app._pending_user_inputs[request_id][0]
             future.set_result("no")
