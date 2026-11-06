@@ -336,6 +336,6 @@ Per-discussion overrides can disable specific tools for a particular discussion.
 | Provider | Tools | Dependencies |
 |----------|-------|-------------|
 | `documents` | `doc_add`, `doc_list`, `doc_get_length`, `doc_get_text`, `doc_get_sections`, `doc_get_chapter`, `doc_ask`, `doc_summary` | Ollama embedding service |
-| `images` | `describe_image`, `list_images`, `add_image_url` | Pillow (included in `[all]`) |
+| `images` | `describe_image`, `list_images`, `add_image_url` | Pillow (default dependency) |
 | `memory` | `memory_store`, `memory_recall`, `memory_forget`, `discussion_search`, `kg_assert`, `kg_query` | Ollama embedding service |
 | MCP servers | Discovered dynamically | Per-server configuration |

@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from typing import Optional
+from typing import Callable, Optional
 
 from ..background import spawn_background
 from ..dbkey import ScopedKey, scoped_key
@@ -70,7 +70,7 @@ async def _memory_store_handler(
         except MemoryUnavailableError as e:
             logger.warning("Could not embed memory %s: %s", memory_id, e)
         except Exception as e:
-            logger.warning("Unexpected error embedding memory %s: %s", memory_id, e)
+            logger.error("Unexpected error embedding memory %s: %s", memory_id, e, exc_info=e)
 
     spawn_background(_embed_and_store(), f"embed memory {memory_id}")
 
@@ -96,6 +96,10 @@ async def _memory_recall_handler(
         return _tool_failure("Memory service unavailable", e)
 
     try:
+        await backfill_embeddings(
+            db.get_unembedded_entity_memories(context.caller_entity_id),
+            embed_client, db.set_entity_memory_embedding, "memory",
+        )
         rows = db.get_entity_memories_with_embeddings(context.caller_entity_id)
     except Exception as e:
         return _tool_failure("Failed to retrieve memories", e)
@@ -189,10 +193,10 @@ def ensure_discussion_indexed(db, embed_client: EmbeddingClient,
         True if a pass was started; False if one is already in flight,
         nothing needs indexing, or the check failed.
     """
-    disc_key = scoped_key(db, discussion_id)
-    if disc_key in _indexing_discussions:
-        return False
     try:
+        disc_key = scoped_key(db, discussion_id)
+        if disc_key in _indexing_discussions:
+            return False
         unindexed = db.get_unindexed_message_ids(discussion_id)
     except Exception as e:
         logger.warning("Could not check unindexed messages: %s", e)
@@ -245,6 +249,40 @@ async def _index_messages(
                 )
                 break
             except Exception as e:
-                logger.warning("Failed to index message %s: %s", msg_id, e)
+                logger.error("Failed to index message %s: %s", msg_id, e, exc_info=e)
     finally:
         _indexing_discussions.discard(scoped_key(db, discussion_id))
+
+
+async def backfill_embeddings(pending: list[tuple[str, str]],
+                              embed_client: EmbeddingClient,
+                              store: Callable[[str, bytes], None],
+                              kind: str) -> int:
+    """Embed rows whose background embed never landed, before a read ranks them.
+
+    ``memory_store`` and ``kg_assert`` embed in the background; a row saved
+    during an embedder outage would otherwise never be embedded, and the
+    INNER JOIN reads would hide it for good.
+
+    Args:
+        pending: (id, text) pairs still lacking an embedding.
+        embed_client: The embedding client to call per row.
+        store: Persists one packed embedding, e.g. ``db.set_kg_node_embedding``.
+        kind: What the rows are, for the log lines.
+
+    Returns:
+        How many rows were embedded. Stops early (logged) if the embedder
+        goes down; the rest stay pending for the next read.
+    """
+    done = 0
+    for row_id, text in pending:
+        try:
+            store(row_id, _pack_embedding(await embed_client.embed(text)))
+            done += 1
+        except MemoryUnavailableError as e:
+            logger.warning("Backfill of %d %s embedding(s) stopped after %d: %s",
+                           len(pending), kind, done, e)
+            break
+        except Exception as e:
+            logger.error("Could not backfill %s %s: %s", kind, row_id, e, exc_info=e)
+    return done

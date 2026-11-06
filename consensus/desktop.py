@@ -335,13 +335,13 @@ class DesktopBridge:
     def get_memory_config(self) -> dict:
         """Return memory configuration."""
         if not self.app.memory_available:
-            return {"error": "Memory feature not available"}
+            return {"error": "Memory tools failed to load; see the application log for the cause"}
         return self.app.db.get_memory_config()
 
     def save_memory_config(self, data: dict) -> dict:
         """Update memory configuration keys."""
         if not self.app.memory_available:
-            return {"error": "Memory feature not available"}
+            return {"error": "Memory tools failed to load; see the application log for the cause"}
         allowed_keys = {"embedding_backend", "embedding_model", "embedding_endpoint"}
         for key, value in data.items():
             if key in allowed_keys:
@@ -351,13 +351,14 @@ class DesktopBridge:
     def test_memory_connection(self) -> dict:
         """Test the embedding connection."""
         if not self.app.memory_available:
-            return {"ok": False, "message": "Memory feature not available"}
+            return {"ok": False, "message": "Memory tools failed to load; see the application log for the cause"}
         try:
             from .tools_memory import EmbeddingClient
             client = EmbeddingClient(self.app.db)
             ok, message = self._run_async(client.test_connection())
             return {"ok": ok, "message": message}
         except Exception as e:
+            logger.exception("Memory connection test failed")
             return {"ok": False, "message": str(e)}
 
     # -- Documents --
@@ -367,7 +368,7 @@ class DesktopBridge:
         if not self._window:
             return {"error": "No window available"}
         if not self.app.documents_available:
-            return {"error": "Document tools not available"}
+            return {"error": "Document tools failed to load; see the application log for the cause"}
 
         result = self._window.create_file_dialog(
             webview.FileDialog.OPEN,
@@ -403,7 +404,7 @@ class DesktopBridge:
                                title: str = "") -> dict:
         """Add a document by fetching from a URL."""
         if not self.app.documents_available:
-            return {"error": "Document tools not available"}
+            return {"error": "Document tools failed to load; see the application log for the cause"}
         return self._run_async(self.app.add_document_from_url(
             url=url, discussion_id=discussion_id, title=title,
         ))

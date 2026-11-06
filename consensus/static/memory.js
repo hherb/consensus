@@ -26,8 +26,12 @@ export async function loadMemoryConfig() {
             $('#memory-model').value = result.embedding_model || '';
         }
     } catch (e) {
+        // The request itself failed — not the tools — so say that.
+        console.error('Could not load memory settings', e);
         show('#memory-unavailable-msg');
         hide('#memory-config-form');
+        const msgEl = $('#memory-unavailable-msg');
+        if (msgEl) msgEl.textContent = `Could not load memory settings: ${e.message}`;
     }
 }
 

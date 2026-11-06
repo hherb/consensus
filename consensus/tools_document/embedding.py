@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Embedding helpers (reuse patterns from tools_memory.py)
+# Embedding helpers (reuse patterns from tools_memory/embedding.py)
 # ---------------------------------------------------------------------------
 
 def _pack_embedding(vec: list[float]) -> bytes:

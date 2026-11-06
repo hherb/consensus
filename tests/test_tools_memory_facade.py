@@ -30,6 +30,7 @@ EXPECTED_PUBLIC_API = {
     "MemoryUnavailableError",
     "_pack_embedding",
     "_rank_by_similarity",
+    "backfill_embeddings",
     "create_memory_provider",
     "ensure_discussion_indexed",
 }
@@ -93,6 +94,7 @@ class TestPublicApi:
             "MemoryUnavailableError": embedding.MemoryUnavailableError,
             "_pack_embedding": embedding._pack_embedding,
             "_rank_by_similarity": embedding._rank_by_similarity,
+            "backfill_embeddings": handlers.backfill_embeddings,
             "create_memory_provider": provider.create_memory_provider,
             "ensure_discussion_indexed": handlers.ensure_discussion_indexed,
         }

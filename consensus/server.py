@@ -746,13 +746,14 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"error": "Server at capacity"}, status=503)
         if not app_inst.memory_available:
             return web.json_response(
-                {"error": "Memory feature unavailable on this server (it failed to load; see the server log)"},
+                {"error": "Memory tools failed to load; see the application log for the cause"},
                 status=404,
             )
         try:
             config = app_inst.db.get_memory_config()
             return web.json_response(config)
         except Exception as e:
+            logger.exception("Could not read memory config")
             return web.json_response({"error": str(e)}, status=500)
 
     async def handle_memory_config_put(request: web.Request) -> web.StreamResponse:
@@ -764,7 +765,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"error": "Server at capacity"}, status=503)
         if not app_inst.memory_available:
             return web.json_response(
-                {"error": "Memory feature unavailable on this server (it failed to load; see the server log)"},
+                {"error": "Memory tools failed to load; see the application log for the cause"},
                 status=404,
             )
         try:
@@ -789,7 +790,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"error": "Server at capacity"}, status=503)
         if not app_inst.memory_available:
             return web.json_response(
-                {"error": "Memory feature unavailable on this server (it failed to load; see the server log)"},
+                {"error": "Memory tools failed to load; see the application log for the cause"},
                 status=404,
             )
         try:
@@ -798,6 +799,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             ok, message = await client.test_connection()
             return web.json_response({"ok": ok, "message": message})
         except Exception as e:
+            logger.exception("Memory connection test failed")
             return web.json_response({"ok": False, "message": str(e)})
 
     # ------------------------------------------------------------------
@@ -813,7 +815,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"error": "Server at capacity"}, status=503)
         if not app_inst.documents_available:
             return web.json_response(
-                {"error": "Document tools unavailable on this server (they failed to load; see the server log)"},
+                {"error": "Document tools failed to load; see the application log for the cause"},
                 status=404,
             )
 
@@ -863,7 +865,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"error": "Server at capacity"}, status=503)
         if not app_inst.documents_available:
             return web.json_response(
-                {"error": "Document tools unavailable on this server (they failed to load; see the server log)"},
+                {"error": "Document tools failed to load; see the application log for the cause"},
                 status=404,
             )
 

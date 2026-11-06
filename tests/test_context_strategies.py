@@ -521,10 +521,13 @@ class TestLoadSemantic:
         assert len(msgs) == 8
         assert msgs[0].content == "msg-2"
 
-    async def test_fallback_on_embed_error(self, tmp_db, sample_ai_entity):
-        from consensus.tools_memory import MemoryUnavailableError
+    @pytest.mark.parametrize("error_name", [
+        "MemoryUnavailableError", "EmbeddingContextLengthError",
+    ])
+    async def test_fallback_on_embed_error(self, tmp_db, sample_ai_entity, error_name):
+        from consensus import tools_memory
         client = AsyncMock()
-        client.embed = AsyncMock(side_effect=MemoryUnavailableError("down"))
+        client.embed = AsyncMock(side_effect=getattr(tools_memory, error_name)("x"))
 
         did = tmp_db.create_discussion("T", sample_ai_entity)
         for i in range(10):

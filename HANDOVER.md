@@ -1,7 +1,7 @@
 # HANDOVER
 
 _Last updated: 2026-11-06. `main` is at **v2.0.0** (released 2026-07-20); the
-`refactor/tools-memory-split-61` branch has the suite at **3043 passing**. The
+`refactor/tools-memory-split-61` branch has the suite at **3050 passing**. The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
@@ -26,7 +26,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3043 passing (`uv run pytest`, ~80 s; runs in `.venv` via the `dev` group) |
+| Tests | 3050 passing (`uv run pytest`, ~80 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -143,7 +143,7 @@ history; keep these before touching the package:
 - **Process-global bookkeeping is keyed by `dbkey.scoped_key(db, id)`**
   (`(db_path, id)`), never the bare id: in `--multi-user` every session's
   first row is id 1. This bit twice — in `tools_document` (#78) and again in
-  `context_strategies` vs `tools_memory` (fixed on this branch).
+  `context_strategies` vs `tools_memory` (fixed in the #61 tools_memory slice).
 - **Retrieval has a relevance floor** (`MIN_SIMILARITY_THRESHOLD`) and
   reports embedding-dimension mismatches as errors, not silence.
 - **`validation.chapter_range()` owns chapter extent**; `extract_sections`
@@ -190,14 +190,14 @@ as `async def`, never `get_event_loop().run_until_complete`.
    `turns.py` (499)**: the next addition crosses the limit — split then.
 2. `tools_document.py` (1277) → `tools_document/`. Its review's
    pre-existing defects became #78.
-3. `app.py` (1284) → `app.py` (344) + `app_api/` mixins, composed like
+3. `app.py` (1284) → `app.py` (344 at the time; 346 now) + `app_api/` mixins, composed like
    `Database` composes `db/` (chosen with the repo owner: ~500 lines were
    already one-line delegators, so moving logic alone could not get it under
    the limit). **Moved code logs under `consensus.app_api.*`, not a child of
    `consensus.app`** — `caplog` on the old name sees nothing. Image-fetch
    retry is #88; URL redaction in fetch-failure logs is #89.
 4. `tools_memory.py` (698) → `tools_memory/` (constants, embedding, schemas,
-   handlers, handlers_kg, provider; largest 250). Coverage 45% → 100% first
+   handlers, handlers_kg, provider; largest 288). Coverage 45% → 100% first
    (`tests/test_tools_memory_{embedding,handlers}.py`); the move commit is
    byte-identical per range. The characterization pass found three defects,
    fixed in the PR's first commit: semantic-context lazy indexing ran only
@@ -213,7 +213,7 @@ Smaller slices came out of the error-visibility work: `ai_response.py` (from
 **Facade guards.** A dropped re-export fails *late*: every consumer imports
 lazily inside function bodies, and `app._init_memory_tools` /
 `_init_document_tools` turn an `ImportError` into "feature unavailable" (now
-logged at WARNING; it was INFO until this branch, so a broken facade quietly
+logged at WARNING; it was INFO before the tools_memory slice, so a broken facade quietly
 disabled the feature). `tests/test_app_discussion_flow_facade.py`,
 `test_tools_document_facade.py` and `test_tools_memory_facade.py` pin
 `__all__` by identity and AST-scan **every module under `consensus/`** for
@@ -224,12 +224,12 @@ call sites. Keep them in step when the public API changes.
 
 | Lines | Cover | File |
 |------:|------:|------|
-| 1227 | **0%** | `consensus/server.py` |
+| 1229 | **0%** | `consensus/server.py` |
 | 787 | 49% | `consensus/auth.py` |
 | 775 | 59% | `consensus/moderator.py` (one `Moderator` class) |
-| 710 | 51% | `consensus/mcp_server.py` |
+| 714 | 51% | `consensus/mcp_server.py` |
 | 676 | **0%** | `consensus/evaluation/runner.py` |
-| 635 | 35% | `consensus/desktop.py` |
+| 636 | 35% | `consensus/desktop.py` |
 | 614 | 82% | `consensus/tools_python.py` |
 | 589 | **0%** | `consensus/evaluation/eval_db.py` |
 | 580 | 38% | `consensus/tools_image.py` |
@@ -288,8 +288,8 @@ missing route tests first.
    the factory that forwards dependencies to handlers, the guard conditions
    duplicated across two call sites, the keyword names production passes — is
    the code most likely to be got wrong and least likely to be covered, since
-   the characterization tests were written against the old shape. On this
-   slice three such mutations survived the whole suite at 100% coverage.
+   the characterization tests were written against the old shape. On the
+   `tools_document` slice three such mutations survived the whole suite at 100% coverage.
    Coverage measures lines executed, not behaviour constrained.
 7. Update the docs that name the old module file — `CLAUDE.md`, `README.md`,
    `docs/BUILTIN_TOOLS.md`, `docs/devel/01-getting-started.md`,

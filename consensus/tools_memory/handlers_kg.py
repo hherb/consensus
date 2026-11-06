@@ -7,7 +7,7 @@ from ..background import spawn_background
 from ..tools import ToolContext, ToolResult
 from .constants import SEARCH_DEFAULT_LIMIT
 from .embedding import EmbeddingClient, MemoryUnavailableError, _pack_embedding, _rank_by_similarity
-from .handlers import _tool_failure
+from .handlers import _tool_failure, backfill_embeddings
 from .schemas import KG_QUERY_MODES
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ async def _kg_assert_handler(
                 )
                 break
             except Exception as e:
-                logger.warning("Failed to embed kg node %s: %s", node_id, e)
+                logger.error("Failed to embed kg node %s: %s", node_id, e, exc_info=e)
 
     spawn_background(_embed_nodes(), f"embed kg nodes {subject!r}/{obj!r}")
 
@@ -123,6 +123,8 @@ async def _kg_query_handler(
             return _tool_failure("Memory service unavailable", e)
 
         try:
+            await backfill_embeddings(db.get_unembedded_kg_nodes(), embed_client,
+                                      db.set_kg_node_embedding, "kg node")
             rows = db.get_kg_nodes_with_embeddings()
         except Exception as e:
             return _tool_failure("Knowledge graph query failed", e)

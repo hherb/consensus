@@ -348,8 +348,8 @@ See [Database](05-database.md) for full schema.
 ## Institutional Memory Tools
 
 Defined in the `tools_memory/` package. Created via `create_memory_provider(db)` and
-registered in `ConsensusApp._init_memory_tools()`. Its dependencies
-(`sqlite-vec`, `numpy`) install by default; it needs an Ollama embedding
+registered in `ConsensusApp._init_memory_tools()`, which registers it only
+if `sqlite-vec` (a default dependency) imports; it needs an Ollama embedding
 service at runtime.
 
 ### Architecture
@@ -425,8 +425,8 @@ access its own memories — no cross-entity memory leakage.
 Defined in the `tools_document/` package (`provider.py` assembles the handlers
 in `handlers.py` with the schemas in `schemas.py`). Created via
 `create_document_provider(db, app)`
-and registered in `ConsensusApp._init_document_tools()`. Requires the
-`[documents]` optional dependency group (`sqlite-vec`, `numpy`, `pdfplumber`).
+and registered in `ConsensusApp._init_document_tools()`, only if `sqlite-vec`
+imports. Its dependencies (`sqlite-vec`, `pdfplumber`, `trafilatura`) install by default.
 
 ### Architecture
 
