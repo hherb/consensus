@@ -39,8 +39,8 @@ ConsensusApp
     |     |
     |     +-- PythonToolProvider ("python_exec")
     |     |     |
-    |     |     +-- execute_python (tools_python.py → sandbox_worker.py subprocess)
-    |     |     +-- install_python_package (tools_python.py, user-approval flow)
+    |     |     +-- execute_python (tools_python/execution.py → sandbox_worker.py subprocess)
+    |     |     +-- install_python_package (tools_python/install.py, user-approval flow)
     |     |
     |     +-- PythonToolProvider ("memory")     [optional, requires sqlite-vec]
     |     |     |
@@ -620,7 +620,8 @@ these tools, allowing them to manage their own timeout internally.
 
 ## Sandboxed Python Code Execution
 
-Defined in `tools_python.py` and `sandbox_worker.py`. Created via
+Defined in the `tools_python/` package (`constants`, `schemas`, `execution`,
+`install`, `provider`) and `sandbox_worker.py`. Created via
 `create_python_provider(app)` and registered in
 `ConsensusApp._init_python_tools()`. No optional dependencies required — uses
 only Python stdlib.
@@ -683,11 +684,11 @@ Bio, shapely, pyproj, pint, uncertainties, regex
 
 1. AI calls `install_python_package(package_name="hypercomplex", reason="...")`
 2. Handler validates package name against strict regex (prevents command injection)
-3. Handler checks if package is already importable (skips if yes)
+3. Handler checks `importlib.metadata.version(<package>)` (skips if installed)
 4. Handler emits `user_input_request` event via `app._pending_user_inputs` (same pattern as `ask_user`)
 5. Frontend shows approval prompt with package name, reason, and exact `uv pip install` command
 6. User approves or denies
-7. On approval, handler runs `uv pip install <package>` with 2-minute timeout
+7. On approval, handler runs `uv pip install --python sys.executable <package>` with a 2-minute timeout (killed on timeout). `--python` matters: without it uv installs into whatever venv `VIRTUAL_ENV` or the working directory resolves to
 8. Returns success/failure as ToolResult
 
 ### Dynamic resource limits

@@ -94,7 +94,7 @@ Pause the AI's turn to request input from the human user. The frontend displays 
 
 ## Execute Python
 
-**Provider:** `python_exec` · **Module:** `tools_python.py` + `sandbox_worker.py` · **No optional dependencies**
+**Provider:** `python_exec` · **Module:** `tools_python/` + `sandbox_worker.py` · **No optional dependencies**
 
 Execute Python code in a secure, sandboxed subprocess. Designed for calculations, data analysis, string processing, ML experiments, and any computation that benefits from running actual code.
 
@@ -105,11 +105,12 @@ Execute Python code in a secure, sandboxed subprocess. Designed for calculations
 
 ### Output format
 
-The result includes up to three sections:
+The result includes up to four sections:
 
 1. **Output** — anything written to stdout via `print()`
 2. **Result** — the `repr()` of the last expression value (REPL-like behavior, similar to a Jupyter cell)
 3. **Error** — full traceback if the code raises an exception
+4. **Warnings** — anything written to stderr, shown only when there is no error
 
 ### Security sandbox
 
@@ -207,7 +208,7 @@ eigenvalues
 
 ## Install Python Package
 
-**Provider:** `python_exec` · **Module:** `tools_python.py` · **Requires:** `uv` on PATH
+**Provider:** `python_exec` · **Module:** `tools_python/install.py` · **Requires:** `uv` on PATH
 
 Request installation of a Python package from PyPI. The user is prompted to approve before installation proceeds. Use this when `execute_python` fails due to a missing library.
 
@@ -219,9 +220,9 @@ Request installation of a Python package from PyPI. The user is prompted to appr
 ### Behavior
 
 1. **Validation** — package name is checked against a strict regex (`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`) to prevent command injection
-2. **Already-installed check** — attempts `import <package>` in a subprocess; returns immediately if it succeeds
+2. **Already-installed check** — looks up the distribution with `importlib.metadata.version(<package>)` in a subprocess (so `pillow`, `scikit-learn` etc. are found despite differing import names); returns immediately if it succeeds
 3. **User approval** — emits a `user_input_request` event (same mechanism as `ask_user`); the frontend shows a prompt with the package name, reason, and the exact `uv pip install` command that will run
-4. **Installation** — on user approval ("yes"/"y"/"approve"/"ok"), runs `uv pip install <package>` with a 2-minute timeout
+4. **Installation** — on user approval ("yes"/"y"/"approve"/"ok"), runs `uv pip install --python <interpreter> <package>` — targeting the interpreter Consensus runs on, which is the one the sandbox worker imports from — with a 2-minute timeout (a timed-out install is killed)
 5. **Result** — returns success or failure as a ToolResult
 
 ### Security
