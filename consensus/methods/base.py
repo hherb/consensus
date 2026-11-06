@@ -1,4 +1,8 @@
-"""Base class and data structures for discussion methods.
+"""Base class for discussion methods.
+
+The shared data structures (``Phase``, ``ProcessedResponse``,
+``OutputToolSpec``, ``LINEAR_NEXT``) live in ``phase_types.py`` and are
+re-exported here.
 
 A DiscussionMethod controls the high-level structure of a discussion:
 which phases it goes through, what prompts are used in each phase,

@@ -256,7 +256,7 @@ as `async def`, never `get_event_loop().run_until_complete`.
    stays open for its route test (needs the `server.py` harness). Lesson: a fetch test that installs no fake
    transport passes while the guard works and hits the real network the
    moment it breaks — every fetch test installs one.
-7. `methods/base.py` (517 → 465) → `LINEAR_NEXT`, `Phase`,
+7. `methods/base.py` (517 → 469) → `LINEAR_NEXT`, `Phase`,
    `ProcessedResponse`, `OutputToolSpec` moved verbatim to
    `methods/phase_types.py`. `base.py` **re-exports them** (`__all__`), so
    none of the 124 importing modules changed; guard is
