@@ -13,6 +13,7 @@ import sys
 import httpx
 import pytest
 
+from consensus import http_fetch
 from consensus.tools_document import chunking, constants, embedding, parsing
 from consensus.tools_document.errors import DocumentParseError
 
@@ -200,8 +201,10 @@ def fake_httpx(monkeypatch):
             TimeoutException=httpx.TimeoutException,
             HTTPStatusError=httpx.HTTPStatusError,
             TransportError=httpx.TransportError,
+            TooManyRedirects=httpx.TooManyRedirects,
         )
-        patch_where_defined(monkeypatch, parsing.fetch_url_content, "httpx", module)
+        # The fetch loop lives in the shared consensus.http_fetch (#88).
+        patch_where_defined(monkeypatch, http_fetch.fetch_capped, "httpx", module)
         return state
 
     return configure

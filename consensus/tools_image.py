@@ -16,10 +16,11 @@ import os
 import uuid
 from typing import Optional
 
-import httpx
+from urllib.parse import urlparse
 
 from .ai_client import AIClient
 from .config import get_images_dir
+from .http_fetch import FetchRejected, fetch_capped
 from .models import AIConfig
 from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolResult
 
@@ -38,6 +39,18 @@ URL_FETCH_TIMEOUT = 30.0
 SUPPORTED_IMAGE_TYPES = frozenset({
     "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml",
 })
+
+# Raster types Pillow can measure and re-encode, mapped to its format names.
+# Re-encoding in the image's own format keeps the bytes matching the stored
+# MIME type (an oversized GIF used to be saved as JPEG bytes).
+_PIL_FORMATS = {
+    "image/png": "PNG", "image/jpeg": "JPEG", "image/gif": "GIF",
+    "image/webp": "WEBP",
+}
+
+# What vision APIs accept as image input. SVG is storable and viewable in
+# the UI, but providers reject it, so it must never reach an image block.
+VISION_IMAGE_TYPES = frozenset(_PIL_FORMATS)
 
 
 # ---------------------------------------------------------------------------
@@ -92,34 +105,48 @@ def save_image_file(
     images_dir = get_images_dir()
     full_path = os.path.join(images_dir, safe_name)
 
-    width, height = None, None
-
-    try:
-        from PIL import Image as PILImage
-
-        img = PILImage.open(io.BytesIO(content_bytes))
-        width, height = img.size
-
-        # Resize if too large
-        if max(width, height) > MAX_IMAGE_DIMENSION:
-            img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
-            width, height = img.size
-            buf = io.BytesIO()
-            fmt = "PNG" if mime_type == "image/png" else "JPEG"
-            if mime_type == "image/webp":
-                fmt = "WEBP"
-            img.save(buf, format=fmt)
-            content_bytes = buf.getvalue()
-    except ImportError:
-        logger.debug("Pillow not available; saving image without resize")
-    except Exception as e:
-        logger.warning("Pillow processing failed: %s; saving raw bytes", e)
+    content_bytes, width, height = _measure_and_shrink(content_bytes,
+                                                      mime_type)
 
     with open(full_path, "wb") as f:
         f.write(content_bytes)
 
     file_size = len(content_bytes)
     return safe_name, width, height, file_size
+
+
+def _measure_and_shrink(
+    content_bytes: bytes, mime_type: str,
+) -> tuple[bytes, Optional[int], Optional[int]]:
+    """Return the bytes to store and their dimensions.
+
+    An image larger than ``MAX_IMAGE_DIMENSION`` is shrunk and re-encoded in
+    its own format. The dimensions returned always describe the bytes
+    returned: when the re-encode fails the original is kept with its
+    original size. Vector (SVG) or unmeasurable input yields ``None`` sizes.
+    """
+    fmt = _PIL_FORMATS.get(mime_type)
+    if fmt is None:
+        return content_bytes, None, None
+    try:
+        from PIL import Image as PILImage
+    except ImportError:
+        logger.debug("Pillow not available; saving image without resize")
+        return content_bytes, None, None
+
+    width = height = None
+    try:
+        img = PILImage.open(io.BytesIO(content_bytes))
+        width, height = img.size
+        if max(width, height) <= MAX_IMAGE_DIMENSION:
+            return content_bytes, width, height
+        img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
+        buf = io.BytesIO()
+        img.save(buf, format=fmt)
+        return buf.getvalue(), img.size[0], img.size[1]
+    except Exception as e:
+        logger.warning("Pillow processing failed: %s; saving raw bytes", e)
+        return content_bytes, width, height
 
 
 def _safe_image_path(storage_path: str) -> str:
@@ -240,36 +267,55 @@ def _is_private_ip(hostname: str) -> bool:
         addr = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         for _family, _, _, _, sockaddr in addr:
             ip = ipaddress.ip_address(sockaddr[0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            # is_global excludes private, loopback, link-local, reserved and
+            # CGNAT space; multicast is "global" but never an image host.
+            if not ip.is_global or ip.is_multicast:
                 return True
     except (socket.gaierror, ValueError):
         return True  # treat unresolvable as blocked
     return False
 
 
+def _require_public_host(url: str) -> None:
+    """SSRF guard: refuse a URL whose host is not a public address.
+
+    Runs on every request of a fetch, redirect hops included.
+
+    shortcut: the host is resolved here and again by httpx, so DNS
+    rebinding between the two lookups is not prevented; pin the resolved
+    address in a custom transport if multi-user deployments need that.
+    """
+    if _is_private_ip(urlparse(url).hostname or ""):
+        raise FetchRejected(
+            "Cannot fetch images from private/internal addresses")
+
+
 async def fetch_image_from_url(url: str) -> tuple[bytes, str, str]:
-    """Fetch an image from a URL. Returns (content_bytes, filename, mime_type)."""
-    from urllib.parse import urlparse
+    """Fetch an image from a URL.
+
+    Transient faults are retried with backoff and the body is size-capped
+    while it streams (``consensus.http_fetch``); every hop is SSRF-checked.
+
+    Returns:
+        ``(content_bytes, filename, mime_type)``.
+
+    Raises:
+        FetchError: The URL was refused, unreachable, too large or not a
+            supported image. ``str()`` is safe to show the user.
+    """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
-    if _is_private_ip(parsed.hostname or ""):
-        raise ValueError("Cannot fetch images from private/internal addresses")
-
-    async with httpx.AsyncClient(
-        timeout=URL_FETCH_TIMEOUT, follow_redirects=True,
-    ) as client:
-        response = await client.get(url)
-        response.raise_for_status()
-        if len(response.content) > MAX_IMAGE_BYTES:
-            raise ValueError(f"Image too large ({len(response.content)} bytes). Maximum is {MAX_IMAGE_BYTES} bytes.")
-        content_type = response.headers.get("content-type", "image/png")
-        mime_type = content_type.split(";")[0].strip()
-        if mime_type not in SUPPORTED_IMAGE_TYPES:
-            raise ValueError(f"URL does not point to a supported image type: {mime_type}")
-        path = parsed.path
-        filename = path.split("/")[-1] or "image"
-        return response.content, filename, mime_type
+        raise FetchRejected(f"Unsupported URL scheme: {parsed.scheme}")
+    content, content_type = await fetch_capped(
+        url, max_bytes=MAX_IMAGE_BYTES, timeout=URL_FETCH_TIMEOUT,
+        guard=_require_public_host,
+    )
+    mime_type = (content_type or "image/png").split(";")[0].strip()
+    if mime_type not in SUPPORTED_IMAGE_TYPES:
+        raise FetchRejected(
+            f"URL does not point to a supported image type: {mime_type}")
+    filename = parsed.path.split("/")[-1] or "image"
+    return content, filename, mime_type
 
 
 # ---------------------------------------------------------------------------
@@ -287,18 +333,24 @@ def build_image_content_blocks(
     blocks: list[dict] = []
     labels = []
     for img in images:
+        label = img.get("title") or img.get("original_filename") or f"Image {img['id']}"
+        if img["mime_type"] not in VISION_IMAGE_TYPES:
+            # Listed so the model knows it exists, but never sent: one
+            # unsupported block makes the provider reject the whole turn.
+            labels.append(f"[Image {img['id']}] {label} ({img['mime_type']}, "
+                          "not viewable by vision models)")
+            continue
         try:
             data_url = image_to_base64_url(img["storage_path"], img["mime_type"])
             blocks.append({
                 "type": "image_url",
                 "image_url": {"url": data_url, "detail": "auto"},
             })
-            label = img.get("title") or img.get("original_filename") or f"Image {img['id']}"
             labels.append(f"[Image {img['id']}] {label}")
         except Exception as e:
             logger.warning("Failed to load image %s: %s", img.get("id"), e)
 
-    if not blocks:
+    if not labels:
         return []
 
     # Prepend a text block describing the images
@@ -315,11 +367,16 @@ async def _call_vision_llm(
     image_data_url: str,
     question: str,
 ) -> str:
-    """Call a vision-capable LLM to describe or answer questions about an image."""
+    """Call a vision-capable LLM to describe or answer questions about an image.
+
+    Raises:
+        LookupError: The calling entity is not in the database.
+        Exception: Whatever the AI client raises; the caller reports it.
+    """
     # Find a vision-capable model to use
     entity = app.db.get_entity(context.caller_entity_id)
     if not entity:
-        return "(Error: could not resolve caller entity for vision LLM call)"
+        raise LookupError("could not resolve the caller entity")
 
     ai_config = AIConfig.from_db_row(entity)
 
@@ -363,9 +420,6 @@ async def _call_vision_llm(
             max_tokens=ai_config.max_tokens,
         )
         return response.content
-    except Exception as e:
-        logger.warning("Vision LLM call failed: %s", e)
-        return f"(Vision LLM call failed: {e})"
     finally:
         await client.close()
 
@@ -439,14 +493,23 @@ async def _describe_image_handler(
     except Exception as e:
         return ToolResult(content=f"Failed to load image: {e}", is_error=True)
 
-    description = await _call_vision_llm(app, context, data_url, question)
+    try:
+        description = await _call_vision_llm(app, context, data_url, question)
+    except Exception as e:
+        # Never returned as a description: the AI would read it as fact and
+        # the cache below would persist it as the image's description.
+        logger.warning("Vision LLM call failed for image %s: %s", image_id, e)
+        return ToolResult(content=f"Vision LLM call failed: {e}",
+                          is_error=True)
 
     # Cache the description if it was a general describe request
     if "describe" in question.lower() and not image.get("description"):
         try:
             db.update_image_description(int(image_id), description)
-        except Exception:
-            pass
+        except Exception as e:
+            # The description is still returned; only the cache is lost.
+            logger.warning("Could not cache description of image %s: %s",
+                           image_id, e)
 
     result = {
         "image_id": image_id,

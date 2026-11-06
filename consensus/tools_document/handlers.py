@@ -9,6 +9,7 @@ import json
 import logging
 from typing import Optional
 
+from ..http_fetch import redact_url
 from ..tools import ToolContext, ToolResult
 from .constants import (
     AVAILABLE_HEADERS_HINT, LIBRARY_SEARCH_LIMIT, MIN_SIMILARITY_THRESHOLD,
@@ -105,10 +106,12 @@ async def _doc_add_handler(
             metadata=result,
         )
     except DocumentError as e:
-        logger.warning("doc_add failed for %s: %s", url or filename, e)
+        logger.warning("doc_add failed for %s: %s",
+                       redact_url(url) if url else filename, e)
         return ToolResult(content=f"Failed to add document: {e}", is_error=True)
     except Exception as e:
-        logger.exception("doc_add failed unexpectedly for %s", url or filename)
+        logger.exception("doc_add failed unexpectedly for %s",
+                         redact_url(url) if url else filename)
         return ToolResult(content=f"Failed to add document: {e}", is_error=True)
 
 

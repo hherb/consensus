@@ -16,6 +16,7 @@ import httpx
 import pytest
 
 import consensus.tools_image as ti
+from consensus.http_fetch import FetchError
 from consensus.tools import ToolContext
 from tests.image_helpers import (
     FakeApp, FakePricing, FakeVisionClient, fake_dns, image_size,
@@ -230,7 +231,7 @@ async def test_fetch_missing_content_type_assumes_png(monkeypatch):
 
 @pytest.mark.parametrize("url", ["ftp://img.test/a.png", "file:///etc/x"])
 async def test_fetch_rejects_non_http_scheme(url):
-    with pytest.raises(ValueError, match="Unsupported URL scheme"):
+    with pytest.raises(FetchError, match="Unsupported URL scheme"):
         await ti.fetch_image_from_url(url)
 
 
@@ -239,22 +240,24 @@ async def test_fetch_rejects_non_http_scheme(url):
 async def test_fetch_rejects_private_addresses(monkeypatch, ip):
     fake_dns(monkeypatch, {"internal.test": ip})
     seen = install_transport(monkeypatch, _png_response)
-    with pytest.raises(ValueError, match="private/internal"):
+    with pytest.raises(FetchError, match="private/internal"):
         await ti.fetch_image_from_url("http://internal.test/a.png")
     assert seen == []
 
 
 async def test_fetch_rejects_unresolvable_host(monkeypatch):
     fake_dns(monkeypatch, fail={"nowhere.test"})
-    with pytest.raises(ValueError, match="private/internal"):
+    seen = install_transport(monkeypatch, _png_response)
+    with pytest.raises(FetchError, match="private/internal"):
         await ti.fetch_image_from_url("http://nowhere.test/a.png")
+    assert seen == []
 
 
 async def test_fetch_rejects_oversized_body(monkeypatch):
     fake_dns(monkeypatch)
     patch_image_module(monkeypatch, "MAX_IMAGE_BYTES", 4)
     install_transport(monkeypatch, _png_response)
-    with pytest.raises(ValueError, match="too large"):
+    with pytest.raises(FetchError, match="too large"):
         await ti.fetch_image_from_url("https://img.test/a.png")
 
 
@@ -262,7 +265,7 @@ async def test_fetch_rejects_non_image_content(monkeypatch):
     fake_dns(monkeypatch)
     install_transport(monkeypatch, lambda r: httpx.Response(
         200, content=b"<html>", headers={"content-type": "text/html"}))
-    with pytest.raises(ValueError, match="supported image type: text/html"):
+    with pytest.raises(FetchError, match="supported image type: text/html"):
         await ti.fetch_image_from_url("https://img.test/a.png")
 
 
@@ -370,8 +373,10 @@ async def test_add_image_url_ingests_and_links(tmp_db, images_dir,
     assert len(tmp_db.get_discussion_images(discussion_id)) == 1
 
 
-async def test_add_image_url_reports_fetch_failure(tmp_db, monkeypatch):
+async def test_add_image_url_reports_fetch_failure(tmp_db, images_dir,
+                                                  monkeypatch):
     fake_dns(monkeypatch, {"internal.test": "10.0.0.1"})
+    install_transport(monkeypatch, _png_response)
     result = await _run(tmp_db, None, "add_image_url",
                         {"url": "http://internal.test/a.png"}, _ctx())
     assert result.is_error

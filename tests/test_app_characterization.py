@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from consensus.app import ConsensusApp
+from consensus.http_fetch import FetchRejected
 from consensus.tools import ToolContext, ToolDefinition, ToolResult
 from consensus.tools_document.errors import DocumentParseError
 
@@ -323,7 +324,7 @@ class TestImages:
     @pytest.mark.asyncio
     async def test_from_url(self, app, images_dir):
         fetch = "consensus.tools_image.fetch_image_from_url"
-        with patch(fetch, AsyncMock(side_effect=ValueError("private address"))):
+        with patch(fetch, AsyncMock(side_effect=FetchRejected("private address"))):
             result = await app.add_image_from_url("http://10.0.0.1/a.png")
         assert result == {"error": "Failed to fetch image: private address"}
 
@@ -351,7 +352,7 @@ class TestCaughtErrorsAreLogged:
     @pytest.mark.asyncio
     async def test_image_fetch_failure(self, app, images_dir, caplog):
         with patch("consensus.tools_image.fetch_image_from_url",
-                   AsyncMock(side_effect=ValueError("private address"))), \
+                   AsyncMock(side_effect=FetchRejected("private address"))), \
              caplog.at_level(logging.WARNING, logger="consensus.app_api"):
             await app.add_image_from_url("http://10.0.0.1/a.png")
         assert "http://10.0.0.1/a.png" in caplog.text

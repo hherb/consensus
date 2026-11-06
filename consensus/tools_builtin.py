@@ -11,6 +11,7 @@ from typing import Optional
 
 import httpx
 
+from .http_fetch import redact_url
 from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -233,7 +234,7 @@ async def fetch_webpage_handler(arguments: dict,
             is_error=True,
         )
     except Exception as e:
-        logger.warning("fetch_webpage failed for %s: %s", url, e)
+        logger.warning("fetch_webpage failed for %s: %s", redact_url(url), e)
         return ToolResult(content=f"Failed to fetch {url}: {e}", is_error=True)
 
 

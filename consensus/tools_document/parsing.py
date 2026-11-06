@@ -4,14 +4,14 @@ Converts uploaded or fetched bytes (PDF, HTML, plain text or markdown) into
 markdown, and extracts the markdown header structure with character offsets.
 """
 
-import asyncio
 import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-import httpx
-
+from ..http_fetch import (
+    FetchError, FetchRejected, FetchTooLarge, FetchUnavailable, fetch_capped,
+)
 from .constants import (
     FIDELITY_DEGRADED, FIDELITY_FULL, MAX_DOCUMENT_BYTES,
     MAX_REPLACEMENT_CHAR_RATIO, URL_FETCH_BASE_DELAY, URL_FETCH_MAX_RETRIES,
@@ -327,45 +327,20 @@ def _filename_for(url: str, mime_type: str) -> str:
     return filename
 
 
-async def _read_capped(response, url: str) -> bytes:
-    """Accumulate a streaming response body, aborting past the size cap.
-
-    Enforcing the cap *while* the body streams in is the whole point: a
-    chunked (header-less) multi-gigabyte response would otherwise be
-    buffered into memory in full and only then measured, so the guard that
-    exists to prevent an OOM caused one (issue #78 whole-branch review).
-
-    Args:
-        response: An open streaming ``httpx.Response``.
-        url: Used only in the error message.
-
-    Returns:
-        The complete body bytes.
-
-    Raises:
-        DocumentParseError: As soon as the bytes read exceed
-            ``MAX_DOCUMENT_BYTES``; the rest of the body is never read.
-    """
-    chunks: list[bytes] = []
-    total = 0
-    async for chunk in response.aiter_bytes():
-        total += len(chunk)
-        if total > MAX_DOCUMENT_BYTES:
-            raise DocumentParseError(
-                f"{url} is too large (over {MAX_DOCUMENT_BYTES} bytes; the "
-                "transfer was aborted)",
-                hint="download it and add the relevant extract",
-            )
-        chunks.append(chunk)
-    return b"".join(chunks)
+_FETCH_HINTS: dict[type[FetchError], str] = {
+    FetchRejected: "check the address, or whether it needs a login",
+    FetchTooLarge: "download it and add the relevant extract",
+    FetchUnavailable: "check the address and that the host is reachable",
+}
 
 
 async def fetch_url_content(url: str) -> tuple[bytes, str, str]:
     """Fetch a document from a URL.
 
-    Retries transient failures — timeouts, connection errors and 5xx — up
-    to ``URL_FETCH_MAX_RETRIES`` times with exponential backoff (golden
-    rule 5).  A 4xx is permanent and raises immediately.
+    The retry, backoff and streaming size-cap policy lives in
+    :func:`consensus.http_fetch.fetch_capped` (shared with image
+    ingestion, issue #88); this wrapper supplies the document limits and
+    turns its failures into :class:`DocumentParseError` with a hint.
 
     Args:
         url: The document location to fetch.
@@ -375,62 +350,17 @@ async def fetch_url_content(url: str) -> tuple[bytes, str, str]:
 
     Raises:
         DocumentParseError: If the fetch fails after all retries, a 4xx is
-            returned, or the body exceeds ``MAX_DOCUMENT_BYTES`` — either by
-            its declared ``content-length`` or by the bytes actually
-            streamed, whichever announces itself first.
+            returned, or the body exceeds ``MAX_DOCUMENT_BYTES``.
     """
-    last_exc: Exception | None = None
-    async with httpx.AsyncClient(
-        timeout=URL_FETCH_TIMEOUT, follow_redirects=True,
-    ) as client:
-        for attempt in range(URL_FETCH_MAX_RETRIES):
-            try:
-                # Streamed, not buffered: the body is measured as it
-                # arrives so an oversized one is abandoned mid-transfer.
-                async with client.stream("GET", url) as response:
-                    if 400 <= response.status_code < 500:
-                        raise DocumentParseError(
-                            f"{url} returned HTTP {response.status_code}",
-                            hint=("check the address, or whether it needs "
-                                  "a login"),
-                        )
-                    response.raise_for_status()
-
-                    declared = response.headers.get("content-length")
-                    if declared and int(declared) > MAX_DOCUMENT_BYTES:
-                        raise DocumentParseError(
-                            f"{url} is too large ({int(declared)} bytes; the "
-                            f"limit is {MAX_DOCUMENT_BYTES})",
-                            hint="download it and add the relevant extract",
-                        )
-
-                    content = await _read_capped(response, url)
-                    content_type = response.headers.get(
-                        "content-type", "text/html")
-
-                mime_type = content_type.split(";")[0].strip()
-                return content, _filename_for(url, mime_type), mime_type
-
-            except DocumentParseError:
-                raise
-            except (httpx.TimeoutException, httpx.HTTPStatusError,
-                    httpx.TransportError) as e:
-                last_exc = e
-                if attempt == URL_FETCH_MAX_RETRIES - 1:
-                    break
-                delay = URL_FETCH_BASE_DELAY * (2 ** attempt)
-                logger.warning(
-                    "Fetch of %s failed (attempt %d/%d: %s), retrying in "
-                    "%.1fs", url, attempt + 1, URL_FETCH_MAX_RETRIES, e,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-
-    raise DocumentParseError(
-        f"Could not fetch {url} after {URL_FETCH_MAX_RETRIES} attempts: "
-        f"{last_exc}",
-        hint="check the address and that the host is reachable",
-    )
+    try:
+        content, content_type = await fetch_capped(
+            url, max_bytes=MAX_DOCUMENT_BYTES, timeout=URL_FETCH_TIMEOUT,
+            max_retries=URL_FETCH_MAX_RETRIES, base_delay=URL_FETCH_BASE_DELAY,
+        )
+    except FetchError as e:
+        raise DocumentParseError(str(e), hint=_FETCH_HINTS[type(e)]) from e
+    mime_type = (content_type or "text/html").split(";")[0].strip()
+    return content, _filename_for(url, mime_type), mime_type
 
 
 # ---------------------------------------------------------------------------
