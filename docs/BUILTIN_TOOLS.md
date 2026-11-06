@@ -282,7 +282,7 @@ text/Markdown, with three deliberate rejections:
 
 ## Image Tools
 
-**Provider:** `images` · **Module:** `tools_image.py` · **Optional:** Pillow (`[images]` extra)
+**Provider:** `images` · **Module:** `tools_image/` · **Uses:** Pillow (default dependency) for resizing
 
 Tools for working with images in discussions. Vision-capable models receive images as multimodal content blocks automatically; non-vision models use `describe_image` to get text descriptions.
 
@@ -292,7 +292,7 @@ Tools for working with images in discussions. Vision-capable models receive imag
 | `list_images` | List all images attached to the discussion | — |
 | `add_image_url` | Add an image from a URL to the discussion | `url`, `title?` |
 
-Security: path traversal protection, SSRF protection (blocks private IPs), 20 MB size limit, MIME validation, auto-resize for large images.
+Security: path traversal protection, SSRF protection (blocks non-public addresses on every redirect hop), retry with backoff, 20 MB size limit enforced while streaming, MIME validation, auto-resize for large images. SVGs are stored and listed but never sent to vision models.
 
 ---
 

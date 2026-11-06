@@ -493,9 +493,11 @@ itself without the user re-adding the document.
 
 ## Image Tools
 
-Defined in `tools_image.py`. Created via `create_image_provider(db, app)` and
-registered in `ConsensusApp._init_image_tools()`. Optional dependency: Pillow
-(`[images]` extra) for image dimension detection and resizing.
+Defined in the `tools_image/` package (`constants`, `storage`, `fetch`,
+`vision`, `schemas`, `handlers`, `provider`). Created via
+`create_image_provider(db, app)` and registered in
+`ConsensusApp._init_image_tools()`. Pillow (a default dependency) is used for
+image dimension detection and resizing; without it images are stored as-is.
 
 ### Tools
 
@@ -507,8 +509,10 @@ registered in `ConsensusApp._init_image_tools()`. Optional dependency: Pillow
 
 ### Vision model detection
 
-`is_vision_capable(model)` checks the model name against known patterns
-(GPT-4o, Claude 3, Gemini, LLaVA, Pixtral, Qwen-VL, etc.). This determines
+`is_vision_capable(model, pricing_cache, base_url)` first asks the
+OpenRouter-backed pricing cache whether the model accepts image input, and
+falls back to matching the name against known patterns (GPT-4o, Claude 3,
+Gemini, LLaVA, Pixtral, Qwen-VL, etc.) when the model is unknown. This determines
 whether the moderator injects images as multimodal content blocks or whether
 the `describe_image` tool should be used instead.
 
@@ -516,7 +520,9 @@ the `describe_image` tool should be used instead.
 
 When a discussion has attached images and the current entity's model is
 vision-capable, `Moderator._build_multimodal_context()` injects images as
-base64 `image_url` content blocks in the message context. Non-vision models
+base64 `image_url` content blocks in the message context. Only PNG, JPEG,
+GIF and WebP are sent (`VISION_IMAGE_TYPES`); an SVG is listed by title but
+never sent, because providers reject it and would fail the whole turn. Non-vision models
 can use the `describe_image` tool to get a text description via a
 vision-capable model (falling back to the moderator's model).
 
@@ -524,12 +530,23 @@ vision-capable model (falling back to the moderator's model).
 
 - **Path traversal protection:** `_safe_image_path()` validates that resolved
   paths stay within the images directory using `os.path.realpath()`
-- **SSRF protection:** `_is_private_ip()` blocks fetching from private,
-  loopback, link-local, and reserved IP ranges
+- **SSRF protection:** `fetch._require_public_host()` refuses any host that
+  does not resolve to a public address (private, loopback, link-local,
+  reserved, CGNAT, multicast). It runs on **every request, redirect hops
+  included**, as an httpx request hook. DNS rebinding between the check and
+  the connection is not prevented. Document and `fetch_webpage` fetches have
+  no guard yet (#98)
+- **Retry and size cap:** URL fetches go through the shared
+  `consensus/http_fetch.py` (`fetch_capped`, also used by document
+  ingestion). Timeouts, transport errors and 5xx are retried with backoff;
+  a 4xx is permanent; the body is capped while it streams. URLs in its
+  messages and logs are passed through `redact_url()`
 - **Size limits:** 20 MB maximum for both uploads and URL fetches
 - **MIME validation:** Only PNG, JPEG, GIF, WebP, SVG accepted
 - **Auto-resize:** Images larger than 2048px in either dimension are
-  thumbnailed down (requires Pillow)
+  thumbnailed down and re-encoded in their own format (requires Pillow)
+- **Failures are errors:** a failed vision call returns an error result and is
+  never cached as the image's description
 
 ---
 

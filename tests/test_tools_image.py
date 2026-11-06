@@ -16,6 +16,7 @@ import httpx
 import pytest
 
 import consensus.tools_image as ti
+from consensus.tools_image.constants import MAX_IMAGE_DIMENSION
 from consensus.http_fetch import FetchError
 from consensus.tools import ToolContext
 from tests.image_helpers import (
@@ -103,19 +104,19 @@ def test_save_truncates_long_filename(images_dir):
 
 
 def test_save_resizes_oversized_png(images_dir):
-    big = make_image(ti.MAX_IMAGE_DIMENSION * 2, 10)
+    big = make_image(MAX_IMAGE_DIMENSION * 2, 10)
     path, width, height, size = ti.save_image_file(big, "big.png", "image/png")
     stored = (images_dir / path).read_bytes()
-    assert width == ti.MAX_IMAGE_DIMENSION
+    assert width == MAX_IMAGE_DIMENSION
     assert image_size(stored) == (width, height)
     assert size == len(stored)
 
 
 def test_save_resizes_oversized_webp(images_dir):
     from tests.image_helpers import image_format
-    big = make_image(ti.MAX_IMAGE_DIMENSION + 10, 10, "WEBP")
+    big = make_image(MAX_IMAGE_DIMENSION + 10, 10, "WEBP")
     path, width, _h, _s = ti.save_image_file(big, "big.webp", "image/webp")
-    assert width == ti.MAX_IMAGE_DIMENSION
+    assert width == MAX_IMAGE_DIMENSION
     assert image_format((images_dir / path).read_bytes()) == "WEBP"
 
 

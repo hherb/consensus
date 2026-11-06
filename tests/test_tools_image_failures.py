@@ -24,6 +24,7 @@ import httpx
 import pytest
 
 import consensus.tools_image as ti
+from consensus.tools_image.constants import MAX_IMAGE_DIMENSION
 from consensus.http_fetch import FetchError
 from consensus.tools import ToolContext
 from tests.image_helpers import (
@@ -105,13 +106,13 @@ async def test_cache_write_failure_is_logged_not_swallowed(
 # --- resize keeps format and honest dimensions ---------------------------------
 
 def test_oversized_gif_stays_gif(images_dir):
-    big = make_image(ti.MAX_IMAGE_DIMENSION + 50, 10, "GIF", mode="P")
+    big = make_image(MAX_IMAGE_DIMENSION + 50, 10, "GIF", mode="P")
     path, width, height, size = ti.save_image_file(big, "big.gif",
                                                    "image/gif")
     stored = (images_dir / path).read_bytes()
     assert image_format(stored) == "GIF"
     assert image_size(stored) == (width, height)
-    assert width == ti.MAX_IMAGE_DIMENSION
+    assert width == MAX_IMAGE_DIMENSION
 
 
 def test_failed_resize_records_original_dimensions(images_dir, monkeypatch,
@@ -121,13 +122,13 @@ def test_failed_resize_records_original_dimensions(images_dir, monkeypatch,
     def broken_save(self, *args, **kwargs):
         raise OSError("encoder missing")
 
-    big = make_image(ti.MAX_IMAGE_DIMENSION + 50, 10)
+    big = make_image(MAX_IMAGE_DIMENSION + 50, 10)
     monkeypatch.setattr(Image.Image, "save", broken_save)
     with caplog.at_level(logging.WARNING, logger="consensus.tools_image"):
         path, width, height, size = ti.save_image_file(big, "big.png",
                                                        "image/png")
     assert (images_dir / path).read_bytes() == big
-    assert (width, height) == (ti.MAX_IMAGE_DIMENSION + 50, 10)
+    assert (width, height) == (MAX_IMAGE_DIMENSION + 50, 10)
     assert size == len(big)
     assert "encoder missing" in caplog.text
 
@@ -228,3 +229,20 @@ async def test_oversized_stream_is_aborted(monkeypatch):
     with pytest.raises(FetchError, match="too large"):
         await ti.fetch_image_from_url("https://img.test/a.png")
     assert len(produced) < 100
+
+
+# --- app start-up ---------------------------------------------------------------
+
+def test_image_tools_load_failure_is_a_warning_with_traceback(
+        app, monkeypatch, caplog):
+    """No optional deps load at import, so a failure is a fault, not INFO."""
+    def boom(db, app=None):
+        raise ImportError("broken facade")
+
+    monkeypatch.setattr("consensus.tools_image.create_image_provider", boom)
+    with caplog.at_level(logging.WARNING, logger="consensus.app"):
+        app._init_image_tools()
+    assert app.images_available is False
+    assert any(r.levelno == logging.WARNING
+               and "Image tools failed to load" in r.getMessage()
+               and r.exc_info for r in caplog.records)

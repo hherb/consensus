@@ -153,9 +153,12 @@ class ConsensusApp(
             self.db.add_tool_provider("images", "python")
             self.images_available = True
             logger.debug("Image tools registered")
-        except ImportError as e:
+        except Exception:
+            # Pillow is imported lazily per call, so nothing optional can
+            # fail here: a load failure is a real fault (e.g. a broken
+            # facade after the #61 split), not INFO.
             self.images_available = False
-            logger.info("Image tools not available: %s", e)
+            logger.warning("Image tools failed to load", exc_info=True)
 
     def _init_python_tools(self) -> None:
         """Register Python code execution tool provider."""
