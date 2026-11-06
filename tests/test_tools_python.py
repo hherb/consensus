@@ -269,6 +269,14 @@ avg
         assert result["error"] is not None
         assert "TypeError" in result["error"]
 
+    @pytest.mark.parametrize("raise_stmt", ["raise SystemExit(0)", "raise SystemExit(3)",
+                                            "raise KeyboardInterrupt"])
+    def test_base_exception_keeps_output(self, raise_stmt):
+        """SystemExit/KeyboardInterrupt must not skip the JSON result and lose output."""
+        result = execute_code(f"print('before')\n{raise_stmt}")
+        assert result["stdout"] == "before\n"
+        assert result["error"] is not None
+
     def test_class_definition(self):
         """Class definitions should work."""
         code = """
@@ -650,6 +658,21 @@ class TestMacosSandboxCmd:
 class TestInstallPackageHandler:
     """Tests for the install_python_package tool handler."""
 
+    @pytest.fixture(autouse=True)
+    def no_real_install(self, monkeypatch):
+        """Keep every test off the network and fail fast instead of hanging.
+
+        The default fake process reports "not installed"; tests that need a
+        specific subprocess result patch ``create_subprocess_exec`` themselves.
+        A regression reaching the approval wait fails in seconds, not 300.
+        """
+        not_installed = AsyncMock()
+        not_installed.returncode = 1
+        not_installed.wait.return_value = 1
+        monkeypatch.setattr("consensus.tools_python.install.asyncio.create_subprocess_exec",
+                            AsyncMock(return_value=not_installed))
+        monkeypatch.setattr("consensus.tools_python.install.INSTALL_APPROVAL_TIMEOUT", 5.0)
+
     @pytest.fixture
     def mock_app(self):
         """Create a mock ConsensusApp with the required interface."""
@@ -768,7 +791,7 @@ class TestInstallPackageHandler:
             # Verify the prompt content
             assert "fancy-lib" in request_data["question"]
             assert "matrix operations" in request_data["question"]
-            assert "uv pip install" in request_data["question"]
+            assert f"uv pip install --python {sys.executable} fancy-lib" in request_data["question"]
             # Deny to end the flow
             future = mock_app._pending_user_inputs[request_id][0]
             future.set_result("no")

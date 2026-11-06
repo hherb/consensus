@@ -658,7 +658,7 @@ ConsensusApp._init_python_tools()
 | **5. File I/O sandbox** | `_make_sandboxed_open()` restricts `open()` to temp dir; `io.open`/`io.FileIO` patched | No filesystem access outside the per-execution temp directory |
 | **6. Resource limits** | `RLIMIT_AS` (memory) and `RLIMIT_CPU` (CPU time) via `resource.setrlimit()` | Dynamic: 70% of free RAM, 70% of CPU cores × 30s base. Floors: 256 MB, 10s |
 | **7. Wall-clock timeout** | `asyncio.wait_for()` with `CPU_limit × 1.5` (min 30s) | Kills runaway processes even if RLIMIT_CPU isn't reached |
-| **8. macOS sandbox-exec** | Optional Seatbelt profile denying network and non-sandbox writes | OS-level enforcement on macOS; graceful fallback on other platforms |
+| **8. macOS sandbox-exec** | Optional Seatbelt profile denying network; writes allowed only under the sandbox dir and `/private/tmp`, reads everywhere (tightening: #97) | OS-level enforcement on macOS; graceful fallback on other platforms |
 
 ### Tools
 

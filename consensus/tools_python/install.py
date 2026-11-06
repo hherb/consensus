@@ -7,7 +7,12 @@ import uuid
 
 from ..frozen import is_frozen
 from ..tools import ToolContext, ToolResult
-from .constants import INSTALL_APPROVAL_TIMEOUT, INSTALL_EXEC_TIMEOUT, PACKAGE_NAME_RE
+from .constants import (
+    INSTALL_APPROVAL_TIMEOUT, INSTALL_APPROVAL_WORDS, INSTALL_CHECK_TIMEOUT,
+    INSTALL_DENIAL_WORDS, INSTALL_ERROR_MAX_CHARS, INSTALL_EXEC_TIMEOUT,
+    PACKAGE_NAME_RE, REQUEST_ID_HEX_CHARS,
+)
+from .execution import kill_if_running
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +31,10 @@ async def _install_package_handler(
 
     Returns:
         ToolResult indicating success or failure of installation.
+
+    Raises:
+        asyncio.CancelledError: When the calling task itself is cancelled
+            (as opposed to the user's approval request being withdrawn).
     """
     if is_frozen():
         return ToolResult(
@@ -57,14 +66,15 @@ async def _install_package_handler(
     # for many packages (pillow→PIL, scikit-learn→sklearn, opencv-python→cv2).
     # package_name is already validated to bare [A-Za-z0-9._-], so embedding
     # it as a repr literal is safe.
+    check_proc = None
     try:
         check_proc = await asyncio.create_subprocess_exec(
             sys.executable, "-c",
             f"import importlib.metadata as m; m.version({package_name!r})",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
-        await check_proc.wait()
+        await asyncio.wait_for(check_proc.wait(), timeout=INSTALL_CHECK_TIMEOUT)
         if check_proc.returncode == 0:
             return ToolResult(
                 content=f"Package '{package_name}' is already installed.",
@@ -72,10 +82,14 @@ async def _install_package_handler(
             )
     except Exception as e:
         # Not fatal: the user is still asked, and uv reports an existing install.
-        logger.warning("Could not check whether '%s' is installed: %s", package_name, e)
+        logger.warning("Could not check whether '%s' is installed: %r", package_name, e)
+    finally:
+        await kill_if_running(check_proc)
 
     # Request user approval via the ask_user event pattern
-    request_id = f"pkg_{context.discussion_id}_{uuid.uuid4().hex[:8]}"
+    request_id = (
+        f"pkg_{context.discussion_id}_{uuid.uuid4().hex[:REQUEST_ID_HEX_CHARS]}"
+    )
     loop = asyncio.get_running_loop()
     future = loop.create_future()
 
@@ -117,23 +131,40 @@ async def _install_package_handler(
             is_error=True,
         )
     except asyncio.CancelledError:
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise  # the whole turn is being cancelled, not just this request
+        logger.info("Package install request withdrawn (request_id=%s)", request_id)
         return ToolResult(content="Installation request was cancelled.", is_error=True)
     finally:
         app._pending_user_inputs.pop(request_id, None)
 
     # Check approval
     answer = user_answer.strip().lower()
-    if answer not in ("yes", "y", "approve", "ok"):
+    if answer in INSTALL_DENIAL_WORDS:
+        logger.info("User denied installing '%s'", package_name)
         return ToolResult(
             content=f"The user denied installation of '{package_name}'.",
             is_error=True,
             metadata={"package": package_name, "status": "denied"},
+        )
+    if answer not in INSTALL_APPROVAL_WORDS:
+        logger.info("Install of '%s' not approved: unrecognised reply %r",
+                    package_name, user_answer)
+        return ToolResult(
+            content=(
+                f"The user's reply {user_answer.strip()!r} was not a clear approval, "
+                f"so '{package_name}' was not installed. Ask again if it is needed."
+            ),
+            is_error=True,
+            metadata={"package": package_name, "status": "not_approved"},
         )
 
     # Run uv pip install into the interpreter the sandbox worker and the
     # already-installed check use — without --python, uv picks whatever venv
     # VIRTUAL_ENV or the working directory resolves to.
     logger.info("Installing package '%s' (approved by user)", package_name)
+    install_proc = None
     try:
         install_proc = await asyncio.create_subprocess_exec(
             "uv", "pip", "install", "--python", sys.executable, package_name,
@@ -145,8 +176,6 @@ async def _install_package_handler(
             timeout=INSTALL_EXEC_TIMEOUT,
         )
     except asyncio.TimeoutError:
-        install_proc.kill()
-        await install_proc.wait()
         logger.warning("uv pip install '%s' timed out", package_name)
         return ToolResult(
             content=f"Installation of '{package_name}' timed out after "
@@ -154,8 +183,13 @@ async def _install_package_handler(
             is_error=True,
         )
     except FileNotFoundError:
+        logger.warning("Cannot install '%s': 'uv' is not on PATH", package_name)
         return ToolResult(
-            content="'uv' is not available. Cannot install packages.",
+            content=(
+                "'uv' is not available, so packages cannot be installed. "
+                "Ask the operator to install uv (https://docs.astral.sh/uv/) "
+                "and make sure it is on PATH."
+            ),
             is_error=True,
         )
     except Exception as e:
@@ -164,6 +198,9 @@ async def _install_package_handler(
             content=f"Installation failed: {e}",
             is_error=True,
         )
+    finally:
+        # Covers timeout and cancellation alike: never leave uv running.
+        await kill_if_running(install_proc)
 
     stdout_str = stdout_bytes.decode("utf-8", errors="replace")
     stderr_str = stderr_bytes.decode("utf-8", errors="replace")
@@ -172,7 +209,10 @@ async def _install_package_handler(
         error_output = stderr_str.strip() or stdout_str.strip()
         logger.warning("uv pip install '%s' failed: %s", package_name, error_output)
         return ToolResult(
-            content=f"Installation of '{package_name}' failed:\n{error_output[:2000]}",
+            content=(
+                f"Installation of '{package_name}' failed:\n"
+                f"{error_output[:INSTALL_ERROR_MAX_CHARS]}"
+            ),
             is_error=True,
             metadata={"package": package_name, "status": "failed"},
         )

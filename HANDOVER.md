@@ -1,7 +1,7 @@
 # HANDOVER
 
 _Last updated: 2026-11-06. `main` is at **v2.0.0** (released 2026-07-20); the
-`refactor/tools-python-split-61` branch has the suite at **3093 passing**. The
+`refactor/tools-python-split-61` branch has the suite at **3111 passing**. The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
@@ -26,7 +26,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3093 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3111 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -215,17 +215,25 @@ as `async def`, never `get_event_loop().run_until_complete`.
    `--python sys.executable`); a timed-out install was left running; the
    already-installed check and the CPU-limit fallback failed silently;
    `_init_python_tools` logged load failures at INFO (now WARNING +
-   traceback; the missing UI flag is **#96**).
+   traceback; the missing UI flag is **#96**). The PR review then found
+   the cancellation gap: a cancelled turn left the sandbox worker and `uv`
+   running and the approval wait swallowed the task's own cancellation
+   (defeating outer `wait_for` caps) — all now kill/re-raise. Also: worker
+   catches `SystemExit` so output survives, unclear approval replies are no
+   longer reported as denials, silent failure paths log. The Seatbelt
+   profile's write confinement is looser than documented — docs corrected,
+   tightening is **#97**.
 
 Smaller slices came out of the error-visibility work: `ai_response.py` (from
 `ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).
 
 **Facade guards.** A dropped re-export fails *late*: every consumer imports
 lazily inside function bodies, and `app._init_memory_tools` /
-`_init_document_tools` turn an `ImportError` into "feature unavailable" (now
+`_init_document_tools` / `_init_python_tools` turn an `ImportError` into "feature unavailable" (now
 logged at WARNING; it was INFO before the tools_memory slice, so a broken facade quietly
 disabled the feature). `tests/test_app_discussion_flow_facade.py`,
-`test_tools_document_facade.py` and `test_tools_memory_facade.py` pin
+`test_tools_document_facade.py`, `test_tools_memory_facade.py` and
+`test_tools_python_facade.py` pin
 `__all__` by identity and AST-scan **every module under `consensus/`** for
 call sites. Keep them in step when the public API changes.
 

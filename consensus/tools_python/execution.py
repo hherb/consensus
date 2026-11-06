@@ -15,9 +15,24 @@ from ..tools import ToolContext, ToolResult
 from .constants import (
     BLOCKED_ATTRS, BLOCKED_BUILTINS, BLOCKED_MODULES, FALLBACK_CPU_LIMIT_SECONDS,
     MIN_WALL_TIMEOUT_SECONDS, PYTHON_MAX_OUTPUT, WALL_TIMEOUT_MULTIPLIER,
+    WORKER_DIAGNOSTIC_MAX_CHARS,
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def kill_if_running(proc: Optional[asyncio.subprocess.Process]) -> None:
+    """Kill and reap *proc* unless it has already exited (or never started).
+
+    Called from ``finally`` blocks so timeouts *and* task cancellation both
+    leave no child process running.
+
+    Args:
+        proc: The subprocess, or None if launching it failed.
+    """
+    if proc is not None and proc.returncode is None:
+        proc.kill()
+        await proc.wait()
 
 
 def _compute_wall_timeout() -> float:
@@ -114,7 +129,9 @@ def _build_macos_sandbox_cmd(
     if not os.path.exists(sandbox_exec):
         return None
 
-    # Seatbelt profile: deny most operations, allow reads + sandbox writes
+    # Seatbelt profile: deny network; allow all reads, writes only under
+    # sandbox_dir and /private/tmp (the worker's scratch dir lands in the
+    # latter, not in sandbox_dir — tightening tracked in issue #97).
     profile = f"""
 (version 1)
 (deny default)
@@ -168,9 +185,11 @@ async def execute_python_handler(
     # Compute wall-clock timeout that scales with the dynamic CPU limit
     wall_timeout = _compute_wall_timeout()
 
-    # Create a temp dir for macOS sandbox profile (worker creates its own internally too)
+    # Writable path named in the macOS Seatbelt profile. The worker does not
+    # use it — it makes its own scratch dir (issue #97).
     sandbox_dir = tempfile.mkdtemp(prefix="consensus-sandbox-")
 
+    process = None
     try:
         # Try macOS sandbox-exec wrapper
         sandbox_cmd = _build_macos_sandbox_cmd(python_exe, worker_args, sandbox_dir)
@@ -204,8 +223,7 @@ async def execute_python_handler(
                 timeout=wall_timeout,
             )
         except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
+            logger.warning("Sandboxed code timed out after %.0fs", wall_timeout)
             return ToolResult(
                 content=(
                     f"Code execution timed out after {wall_timeout:.0f} seconds. "
@@ -220,9 +238,20 @@ async def execute_python_handler(
 
         if process.returncode != 0 and not stdout_str.strip():
             # Worker crashed without producing output
+            logger.warning(
+                "Sandbox worker exited with code %s and no output: %s",
+                process.returncode, stderr_str[:WORKER_DIAGNOSTIC_MAX_CHARS],
+            )
             error_msg = stderr_str.strip() or f"Process exited with code {process.returncode}"
-            if "MemoryError" in error_msg or process.returncode == -9:
+            if "MemoryError" in error_msg:
                 error_msg = "Code execution exceeded the memory limit."
+            elif process.returncode == -9:
+                # RLIMIT_AS raises MemoryError; a bare SIGKILL is usually the OS
+                # OOM killer, but could be any external kill.
+                error_msg = (
+                    "Code execution was killed by signal 9 (SIGKILL), most "
+                    "likely for running out of memory."
+                )
             elif process.returncode == -24 or "SIGXCPU" in error_msg:
                 error_msg = "Code execution exceeded the CPU time limit."
             return ToolResult(content=f"Execution error: {error_msg}", is_error=True)
@@ -232,8 +261,16 @@ async def execute_python_handler(
             result_data = json.loads(stdout_str)
         except json.JSONDecodeError:
             # Worker produced non-JSON output (crash or unexpected behavior)
+            logger.warning(
+                "Sandbox worker returned non-JSON output (exit code %s)",
+                process.returncode,
+            )
             return ToolResult(
-                content=f"Execution error: unexpected worker output\n{stderr_str[:1000]}",
+                content=(
+                    "Execution error: unexpected worker output\n"
+                    f"{stdout_str[:WORKER_DIAGNOSTIC_MAX_CHARS]}\n"
+                    f"{stderr_str[:WORKER_DIAGNOSTIC_MAX_CHARS]}"
+                ).rstrip(),
                 is_error=True,
             )
 
@@ -241,6 +278,8 @@ async def execute_python_handler(
         return _format_result(result_data, description)
 
     finally:
+        # Covers timeout and cancellation alike: never leave the worker running.
+        await kill_if_running(process)
         shutil.rmtree(sandbox_dir, ignore_errors=True)
 
 

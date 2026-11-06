@@ -105,12 +105,13 @@ Execute Python code in a secure, sandboxed subprocess. Designed for calculations
 
 ### Output format
 
-The result includes up to four sections:
+The result contains these parts, in this order, each only when it has content (or `(no output)` if none do):
 
-1. **Output** — anything written to stdout via `print()`
-2. **Result** — the `repr()` of the last expression value (REPL-like behavior, similar to a Jupyter cell)
-3. **Error** — full traceback if the code raises an exception
-4. **Warnings** — anything written to stderr, shown only when there is no error
+1. **`[description]`** — the `description` argument, if given
+2. **Error** — full traceback if the code raises (including `SystemExit`; output printed before it is kept)
+3. **Output** — anything written to stdout via `print()`
+4. **Result** — the `repr()` of the last expression value (REPL-like behavior, similar to a Jupyter cell)
+5. **Warnings** — anything written to stderr, shown only when there is no error
 
 ### Security sandbox
 
@@ -125,8 +126,8 @@ Code is executed in an isolated subprocess with multiple defense layers:
 | **Sandboxed file I/O** | `open()` only allows paths inside a per-execution temp directory; `io.open` and `io.FileIO` are patched to enforce the same restriction |
 | **Memory limit** | `RLIMIT_AS` set to 70% of available (free) system RAM (minimum 256 MB) |
 | **CPU time limit** | `RLIMIT_CPU` set to `num_cores × 30s × 0.70` (minimum 10s) |
-| **Wall-clock timeout** | Process killed after `CPU_limit × 1.5` seconds (minimum 30s) |
-| **macOS sandbox-exec** | On macOS, wraps the subprocess with a Seatbelt profile that denies network access and restricts filesystem writes to the sandbox directory |
+| **Wall-clock timeout** | Process killed after `CPU_limit × 1.5` seconds (minimum 30s); also killed if the turn is cancelled |
+| **macOS sandbox-exec** | On macOS, wraps the subprocess with a Seatbelt profile that denies network access. It allows reads everywhere and writes under `/private/tmp`, so per-execution write confinement comes from the sandboxed `open()` above, not from the OS ([#97](https://github.com/hherb/consensus/issues/97)) |
 
 ### Allowed modules
 
@@ -222,12 +223,14 @@ Request installation of a Python package from PyPI. The user is prompted to appr
 1. **Validation** — package name is checked against a strict regex (`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`) to prevent command injection
 2. **Already-installed check** — looks up the distribution with `importlib.metadata.version(<package>)` in a subprocess (so `pillow`, `scikit-learn` etc. are found despite differing import names); returns immediately if it succeeds
 3. **User approval** — emits a `user_input_request` event (same mechanism as `ask_user`); the frontend shows a prompt with the package name, reason, and the exact `uv pip install` command that will run
-4. **Installation** — on user approval ("yes"/"y"/"approve"/"ok"), runs `uv pip install --python <interpreter> <package>` — targeting the interpreter Consensus runs on, which is the one the sandbox worker imports from — with a 2-minute timeout (a timed-out install is killed)
+4. **Installation** — on user approval ("yes"/"y"/"approve"/"ok"), runs `uv pip install --python <interpreter> <package>` — targeting the interpreter Consensus runs on, which is the one the sandbox worker imports from — with a 2-minute timeout (a timed-out or cancelled install is killed). "no"/"n"/"deny" is a denial; any other reply is reported to the participant as *not a clear approval* and nothing is installed
 5. **Result** — returns success or failure as a ToolResult
+
+Not available in the bundled desktop app (DMG): there the tool returns an error pointing to the PyPI install (`uv tool install consensus-app`).
 
 ### Security
 
-- Package names with shell metacharacters (`;`, `&&`, `$()`, backticks, spaces, slashes) are rejected before reaching the shell
+- Package names with shell metacharacters (`;`, `&&`, `$()`, backticks, spaces, slashes) are rejected. No shell is involved anyway: `uv` is launched with an argument list (`create_subprocess_exec`)
 - The user must explicitly approve each installation — AI participants cannot install packages silently
 - Installation uses `uv pip install` (never `pip` directly, per project convention)
 

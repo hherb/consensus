@@ -4,7 +4,8 @@ Splitting the former single module into a package (issue #61) put the public
 name behind a re-export in ``__init__.py``. The production consumer imports it
 lazily, inside a function body (``app._init_python_tools``), so a dropped
 re-export would raise ``ImportError`` only when the app starts — and that is
-caught there and reported as "Python tools unavailable". These tests pin the
+caught there and logged as a WARNING ("Python execution tools failed to
+load"), leaving the app running without them. These tests pin the
 re-export against every call site under ``consensus/``.
 """
 

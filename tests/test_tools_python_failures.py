@@ -25,29 +25,42 @@ from .document_helpers import patch_where_defined
 
 
 class FakeProc:
-    """Stand-in for an ``asyncio.subprocess.Process``."""
+    """Stand-in for an ``asyncio.subprocess.Process``.
+
+    Like the real thing, ``returncode`` is None until the process has exited
+    (``communicate``/``wait`` returned, or ``kill`` was called).
+    """
 
     def __init__(self, returncode: int = 0, stdout: bytes = b"",
                  stderr: bytes = b"", hang: bool = False) -> None:
-        self.returncode = returncode
+        self.returncode: int | None = None
+        self._final_returncode = returncode
         self._stdout = stdout
         self._stderr = stderr
         self._hang = hang
         self.killed = False
+        self.waited = False
 
     async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
         """Return the canned output, or block until cancelled when hanging."""
         if self._hang:
             await asyncio.sleep(3600)
+        self.returncode = self._final_returncode
         return self._stdout, self._stderr
 
     async def wait(self) -> int:
-        """Return the canned return code."""
+        """Return the canned return code (blocking while hanging and not killed)."""
+        if self._hang and not self.killed:
+            await asyncio.sleep(3600)
+        self.waited = True
+        if self.returncode is None:
+            self.returncode = self._final_returncode
         return self.returncode
 
     def kill(self) -> None:
         """Record that the process was killed."""
         self.killed = True
+        self.returncode = -9
 
 
 class FakeSpawner:
@@ -164,7 +177,7 @@ async def test_execute_launch_failure_is_error(monkeypatch):
 
 
 @pytest.mark.parametrize("returncode,stderr,expected", [
-    (-9, b"", "exceeded the memory limit"),
+    (-9, b"", "killed by signal 9"),
     (1, b"MemoryError", "exceeded the memory limit"),
     (-24, b"", "exceeded the CPU time limit"),
     (1, b"SIGXCPU", "exceeded the CPU time limit"),
@@ -179,13 +192,77 @@ async def test_execute_crash_without_output(monkeypatch, returncode, stderr, exp
     assert expected in result.content
 
 
-async def test_execute_non_json_worker_output(monkeypatch):
+async def test_execute_non_json_worker_output(monkeypatch, caplog):
     monkeypatch.setattr(asyncio, "create_subprocess_exec",
                         FakeSpawner(FakeProc(stdout=b"not json", stderr=b"trace")))
-    result = await _execute({"code": "1"})
+    with caplog.at_level(logging.WARNING, logger="consensus.tools_python"):
+        result = await _execute({"code": "1"})
     assert result.is_error
     assert "unexpected worker output" in result.content
+    assert "not json" in result.content, "the worker's stdout must not be dropped"
     assert "trace" in result.content
+    assert any("non-JSON" in r.getMessage() for r in caplog.records)
+
+
+async def test_execute_crash_is_logged(monkeypatch, caplog):
+    monkeypatch.setattr(asyncio, "create_subprocess_exec",
+                        FakeSpawner(FakeProc(returncode=3, stderr=b"profile rejected")))
+    with caplog.at_level(logging.WARNING, logger="consensus.tools_python"):
+        await _execute({"code": "1"})
+    assert any(r.levelno == logging.WARNING and "profile rejected" in r.getMessage()
+               for r in caplog.records)
+
+
+def _darwin_with_sandbox_exec(monkeypatch) -> None:
+    real_exists = os.path.exists
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(os.path, "exists",
+                        lambda p: p == "/usr/bin/sandbox-exec" or real_exists(p))
+
+
+async def test_execute_wraps_worker_in_sandbox_exec_on_macos(monkeypatch):
+    _darwin_with_sandbox_exec(monkeypatch)
+    spawner = FakeSpawner(FakeProc(stdout=b'{"stdout": "x"}'))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawner)
+    await _execute({"code": "1"})
+    assert spawner.calls[0][:2] == ("/usr/bin/sandbox-exec", "-p")
+    assert "(deny network*)" in spawner.calls[0][2]
+
+
+async def test_execute_runs_worker_directly_off_macos(monkeypatch):
+    from consensus.frozen import worker_command
+
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    spawner = FakeSpawner(FakeProc(stdout=b'{"stdout": "x"}'))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawner)
+    await _execute({"code": "1"})
+    assert spawner.calls[0][0] == worker_command()[0]
+
+
+async def test_execute_timeout_kills_worker(monkeypatch, caplog):
+    from consensus.tools_python.execution import execute_python_handler
+
+    worker = FakeProc(hang=True)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", FakeSpawner(worker))
+    patch_where_defined(monkeypatch, execute_python_handler, "_compute_wall_timeout",
+                        lambda: 0.01)
+    with caplog.at_level(logging.WARNING, logger="consensus.tools_python"):
+        result = await _execute({"code": "1"})
+    assert result.is_error
+    assert "timed out" in result.content
+    assert worker.killed and worker.waited, "a timed-out worker must be killed and reaped"
+    assert any("timed out" in r.getMessage() for r in caplog.records)
+
+
+async def test_execute_cancellation_kills_worker(monkeypatch):
+    worker = FakeProc(hang=True)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", FakeSpawner(worker))
+    task = asyncio.create_task(_execute({"code": "1"}))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert worker.killed and worker.waited, "a cancelled turn must not leave the worker running"
 
 
 async def test_execute_removes_sandbox_dir(monkeypatch):
@@ -279,6 +356,24 @@ async def test_install_approval_timeout(monkeypatch):
     assert app._pending_user_inputs == {}
 
 
+async def test_install_task_cancelled_during_approval_propagates(monkeypatch):
+    """Cancelling the turn (e.g. an outer wait_for cap) must not be swallowed."""
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", FakeSpawner(FakeProc(returncode=1)))
+    app = FakeApp(answer=None)
+    task = asyncio.create_task(_install(app))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert app._pending_user_inputs == {}
+
+
+async def test_install_outer_wait_for_still_times_out(monkeypatch):
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", FakeSpawner(FakeProc(returncode=1)))
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(_install(FakeApp(answer=None)), timeout=0.01)
+
+
 async def test_install_approval_cancelled(monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", FakeSpawner(FakeProc(returncode=1)))
     app = FakeApp(cancel=True)
@@ -286,6 +381,30 @@ async def test_install_approval_cancelled(monkeypatch):
     assert result.is_error
     assert "cancelled" in result.content
     assert app._pending_user_inputs == {}
+
+
+@pytest.mark.parametrize("answer", ["no", " N ", "deny"])
+async def test_install_denial_words(monkeypatch, answer):
+    spawner = FakeSpawner(FakeProc(returncode=1))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawner)
+    result = await _install(FakeApp(answer))
+    assert result.is_error
+    assert result.metadata["status"] == "denied"
+    assert len(spawner.calls) == 1, "uv must not run on denial"
+
+
+@pytest.mark.parametrize("answer", ["Yes.", "sure", "yes please"])
+async def test_install_unrecognised_reply_is_not_reported_as_denial(monkeypatch, caplog, answer):
+    spawner = FakeSpawner(FakeProc(returncode=1))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawner)
+    with caplog.at_level(logging.INFO, logger="consensus.tools_python"):
+        result = await _install(FakeApp(answer))
+    assert result.is_error
+    assert result.metadata["status"] == "not_approved"
+    assert "denied" not in result.content
+    assert answer.strip() in result.content
+    assert len(spawner.calls) == 1, "uv must not run without a clear approval"
+    assert any(answer in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.parametrize("answer", ["Yes", " y ", "approve", "OK"])
@@ -303,15 +422,41 @@ async def test_install_timeout_kills_uv(monkeypatch):
     result = await _install(FakeApp("yes"))
     assert result.is_error
     assert "timed out" in result.content
-    assert uv.killed, "a timed-out install must not be left running"
+    assert uv.killed and uv.waited, "a timed-out install must be killed and reaped"
 
 
-async def test_install_uv_missing(monkeypatch):
+async def test_install_cancellation_kills_uv(monkeypatch):
+    uv = FakeProc(hang=True)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", FakeSpawner(FakeProc(returncode=1), uv))
+    task = asyncio.create_task(_install(FakeApp("yes")))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert uv.killed and uv.waited, "a cancelled install must not be left running"
+
+
+async def test_install_check_timeout_kills_probe_and_still_asks(monkeypatch):
+    probe = FakeProc(hang=True)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec",
+                        FakeSpawner(probe, FakeProc(returncode=0)))
+    patch_where_defined(monkeypatch, _install_package_handler, "INSTALL_CHECK_TIMEOUT", 0.01)
+    app = FakeApp("yes")
+    result = await _install(app)
+    assert not result.is_error
+    assert probe.killed and probe.waited
+    assert app.emitted, "the user must still be asked"
+
+
+async def test_install_uv_missing(monkeypatch, caplog):
     monkeypatch.setattr(asyncio, "create_subprocess_exec",
                         FakeSpawner(FakeProc(returncode=1), FileNotFoundError("uv")))
-    result = await _install(FakeApp("yes"))
+    with caplog.at_level(logging.WARNING, logger="consensus.tools_python"):
+        result = await _install(FakeApp("yes"))
     assert result.is_error
     assert "'uv' is not available" in result.content
+    assert "on PATH" in result.content
+    assert any("not on PATH" in r.getMessage() for r in caplog.records)
 
 
 async def test_install_unexpected_launch_error(monkeypatch):
