@@ -215,7 +215,7 @@ as `async def`, never `get_event_loop().run_until_complete`.
    `--python sys.executable`); a timed-out install was left running; the
    already-installed check and the CPU-limit fallback failed silently;
    `_init_python_tools` logged load failures at INFO (now WARNING +
-   traceback — there is still no UI flag for "Python tools failed to load").
+   traceback; the missing UI flag is **#96**).
 
 Smaller slices came out of the error-visibility work: `ai_response.py` (from
 `ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).
@@ -357,7 +357,8 @@ likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
-#92 tool error results echo raw exception text to the model and UI; #88
+#96 no UI flag when Python tools fail to load; #92 tool error results echo
+raw exception text to the model and UI; #88
 image URL fetch lacks retry/backoff; #89 redact URLs in fetch-failure logs;
 #81 persist parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents.
 
