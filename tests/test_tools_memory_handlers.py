@@ -4,8 +4,9 @@ Written before ``tools_memory`` was split into a package (issue #61). Every
 handler is driven through the public path production uses —
 ``create_memory_provider(db).execute(name, arguments, context)`` — against a
 real database, with the embedding client (the network edge) replaced where
-the provider factory looks it up. That keeps these tests valid across the
-split without naming submodules that do not exist yet.
+the provider factory looks it up, so the tests stayed valid across the
+split. The one private helper they drive directly, ``_index_messages``, is
+imported from its submodule.
 """
 
 import asyncio
@@ -193,6 +194,19 @@ class TestMemoryRecall:
         assert result.content == "Memory service unavailable: down"
         # An expected outage logs without a traceback.
         assert not _failure_record(caplog, "Memory service unavailable").exc_info
+
+    async def test_memory_stored_during_outage_is_backfilled_on_recall(
+        self, run, tmp_db, sample_ai_entity, embedder,
+    ):
+        embedder.error = MemoryUnavailableError("down")
+        await run("memory_store", content="saved while down")
+        await drain_background()
+        embedder.error = None
+
+        result = await run("memory_recall", query="q")
+
+        assert "saved while down" in result.content
+        assert tmp_db.get_unembedded_entity_memories(sample_ai_entity) == []
 
     async def test_db_failure_is_an_error(self, run, tmp_db, monkeypatch):
         monkeypatch.setattr(tmp_db, "get_entity_memories_with_embeddings", _boom)
@@ -484,6 +498,19 @@ class TestKgQuerySearch:
         result = await run("kg_query", query=" ", mode="search")
         assert result.is_error
 
+    async def test_node_asserted_during_outage_is_backfilled_on_search(
+        self, run, tmp_db, embedder,
+    ):
+        embedder.error = MemoryUnavailableError("down")
+        await run("kg_assert", subject="cats", relation="chase", object="mice")
+        await drain_background()
+        embedder.error = None
+
+        result = await run("kg_query", query="q", mode="search")
+
+        assert "cats" in result.content and "mice" in result.content
+        assert tmp_db.get_unembedded_kg_nodes() == []
+
     async def test_neighbors_of_an_unconnected_node(self, run, tmp_db):
         tmp_db.upsert_kg_node("a", "lonely", "concept")
         result = await run("kg_query", query="lonely", mode="neighbors")
@@ -517,6 +544,21 @@ class TestLazyIndexingMarker:
         await drain_background()
         assert tmp_db.get_unindexed_message_ids(discussion) == []
 
+    async def test_outage_mid_pass_releases_the_marker(
+        self, tmp_db, discussion, sample_ai_entity,
+    ):
+        from consensus.tools_memory import ensure_discussion_indexed
+
+        tmp_db.add_message(discussion, sample_ai_entity, "a", "participant")
+        down = FakeEmbedClient(error=MemoryUnavailableError("down"))
+        assert ensure_discussion_indexed(tmp_db, down, discussion)
+        await drain_background()
+
+        # A leaked marker would make this False for the life of the process.
+        assert ensure_discussion_indexed(tmp_db, FakeEmbedClient(), discussion)
+        await drain_background()
+        assert tmp_db.get_unindexed_message_ids(discussion) == []
+
     async def test_same_discussion_id_in_another_database_is_not_blocked(
         self, tmp_db, tmp_path, discussion, sample_ai_entity,
     ):
@@ -544,3 +586,25 @@ class TestLazyIndexingMarker:
             assert not ensure_discussion_indexed(tmp_db, client, discussion)
         finally:
             other_db.conn.close()
+
+
+class TestBackfillEmbeddings:
+    async def test_skips_a_bad_row_and_stops_on_outage(self, caplog):
+        from consensus.tools_memory import backfill_embeddings
+
+        stored: list[str] = []
+        client = FakeEmbedClient(errors_by_text={
+            "bad": RuntimeError("bad vector"),
+            "down": MemoryUnavailableError("down"),
+        })
+        pending = [("1", "ok"), ("2", "bad"), ("3", "ok2"), ("4", "down"), ("5", "never")]
+
+        with caplog.at_level(logging.WARNING, logger=LOGGER):
+            done = await backfill_embeddings(
+                pending, client, lambda row_id, blob: stored.append(row_id), "memory",
+            )
+
+        assert done == 2 and stored == ["1", "3"]
+        assert client.calls == ["ok", "bad", "ok2", "down"]  # stops at the outage
+        assert _failure_record(caplog, "Could not backfill memory 2").exc_info
+        assert any("stopped after 2" in r.getMessage() for r in caplog.records)

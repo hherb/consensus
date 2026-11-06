@@ -337,7 +337,7 @@ class ConsensusMCPServer:
         return "\n".join(lines)
 
     async def _handle_search_memories(self, args: dict) -> str:
-        from .tools_memory import _rank_by_similarity
+        from .tools_memory import _rank_by_similarity, backfill_embeddings
         entity_id = self._resolve_entity_id(int(args.get("entity_id", 0)))
         query = args.get("query", "").strip()
         if not query:
@@ -348,6 +348,8 @@ class ConsensusMCPServer:
             query_vec = await embed.embed(query)
         except Exception as e:
             return f"Embedding service unavailable: {e}"
+        await backfill_embeddings(self._db.get_unembedded_entity_memories(entity_id),
+                                  embed, self._db.set_entity_memory_embedding, "memory")
         rows = self._db.get_entity_memories_with_embeddings(entity_id)
         if not rows:
             return "No memories found for this entity."
@@ -379,7 +381,7 @@ class ConsensusMCPServer:
         return "\n".join(lines)
 
     async def _handle_query_knowledge_graph(self, args: dict) -> str:
-        from .tools_memory import _rank_by_similarity
+        from .tools_memory import _rank_by_similarity, backfill_embeddings
         query = args.get("query", "").strip()
         if not query:
             return "Error: No query provided."
@@ -407,6 +409,8 @@ class ConsensusMCPServer:
             query_vec = await embed.embed(query)
         except Exception as e:
             return f"Embedding service unavailable: {e}"
+        await backfill_embeddings(self._db.get_unembedded_kg_nodes(), embed,
+                                  self._db.set_kg_node_embedding, "kg node")
         rows = self._db.get_kg_nodes_with_embeddings()
         if not rows:
             return "Knowledge graph is empty."

@@ -86,6 +86,15 @@ class MemoryMixin:
         ).fetchall()
         return [{"id": r[0], "content": r[1], "embedding": r[2]} for r in rows]
 
+    def get_unembedded_entity_memories(self, entity_id: int) -> list[tuple[str, str]]:
+        """Return (id, content) for an entity's memories that still lack an embedding."""
+        return [tuple(r) for r in self.conn.execute(
+            "SELECT m.id, m.content FROM entity_memories m "
+            "LEFT JOIN entity_memory_embeddings e ON e.memory_id = m.id "
+            "WHERE m.entity_id = ? AND e.memory_id IS NULL",
+            (entity_id,),
+        ).fetchall()]
+
     def get_messages_with_embeddings_for_discussion(
         self, discussion_id: int,
     ) -> list[dict]:
@@ -201,6 +210,14 @@ class MemoryMixin:
         ).fetchall()
         return [{"id": r[0], "label": r[1], "description": r[2], "embedding": r[3]}
                 for r in rows]
+
+    def get_unembedded_kg_nodes(self) -> list[tuple[str, str]]:
+        """Return (id, label) for kg nodes that still lack an embedding."""
+        return [tuple(r) for r in self.conn.execute(
+            "SELECT n.id, n.label FROM kg_nodes n "
+            "LEFT JOIN kg_node_embeddings e ON e.node_id = n.id "
+            "WHERE e.node_id IS NULL",
+        ).fetchall()]
 
     def get_kg_neighbors(self, node_id: str) -> list[dict]:
         """Return neighboring nodes and their edge relations."""

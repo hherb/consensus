@@ -7,7 +7,7 @@ Provides AI participants with tools to interrogate reference documents:
 - Ask questions with RAG-based retrieval
 - Summarize documents or sections
 
-Requires: sqlite-vec, numpy, pdfplumber, trafilatura — all default
+Requires: sqlite-vec, pdfplumber, trafilatura — all default
 dependencies since the alpha releases; ``[memory]`` is an empty alias extra
 kept for backwards compatibility (see ``pyproject.toml``).
 Requires: ollama or a cloud API for embeddings

@@ -260,6 +260,7 @@ async def _load_semantic(
     # Local imports to avoid circular dependencies
     from .tools_memory import (
         _rank_by_similarity, ensure_discussion_indexed, MemoryUnavailableError,
+        EmbeddingContextLengthError,
     )
 
     # -- 1. Budget split ------------------------------------------------
@@ -297,9 +298,9 @@ async def _load_semantic(
     # -- 5. Embed the query ---------------------------------------------
     try:
         query_vec = await embed_client.embed(query_text)
-    except MemoryUnavailableError:
+    except (MemoryUnavailableError, EmbeddingContextLengthError) as exc:
         logger.warning(
-            "Embedding service unavailable; falling back to sliding_window")
+            "Could not embed the context query (%s); falling back to sliding_window", exc)
         return _load_sliding_window(db, discussion_id, window_size)
 
     # -- 6. Retrieve embedded messages for this discussion --------------

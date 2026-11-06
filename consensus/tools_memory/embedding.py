@@ -34,7 +34,9 @@ class EmbeddingClient:
         """Return the stored embedding config, or the defaults if it is unreadable."""
         try:
             return self._db.get_memory_config()
-        except Exception:
+        except Exception as e:
+            # Visible, or the user's endpoint silently becomes the default one.
+            logger.error("Could not read embedding config; using defaults: %s", e, exc_info=e)
             return {
                 "embedding_endpoint": DEFAULT_EMBEDDING_ENDPOINT,
                 "embedding_model": DEFAULT_EMBEDDING_MODEL,
@@ -43,8 +45,9 @@ class EmbeddingClient:
     async def embed(self, text: str) -> list[float]:
         """Return a float embedding vector for the given text.
 
-        Retries up to EMBED_MAX_RETRIES times with exponential backoff on
-        transient failures (timeouts, server errors, connection resets).
+        Makes up to EMBED_MAX_RETRIES attempts, with exponential backoff
+        between them, on timeouts and 5xx responses; connection and other
+        transport errors fail immediately.
         """
         config = self._get_config()
         endpoint = config.get("embedding_endpoint", DEFAULT_EMBEDDING_ENDPOINT)
@@ -76,13 +79,13 @@ class EmbeddingClient:
                 if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 500:
                     try:
                         body = e.response.json()
-                        if "context length" in body.get("error", ""):
-                            raise EmbeddingContextLengthError(
-                                f"Input exceeds embedding model context: "
-                                f"{body['error']}"
-                            ) from e
-                    except (ValueError, KeyError):
-                        pass  # not JSON or no error field — treat as transient
+                    except ValueError:
+                        body = None  # not JSON — treat as transient
+                    error = body.get("error") if isinstance(body, dict) else None
+                    if isinstance(error, str) and "context length" in error:
+                        raise EmbeddingContextLengthError(
+                            f"Input exceeds embedding model context: {error}"
+                        ) from e
                 if attempt == EMBED_MAX_RETRIES - 1:
                     break  # sleeping now would only delay the raise below
                 delay = EMBED_BASE_DELAY * (2 ** attempt)

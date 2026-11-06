@@ -200,11 +200,11 @@ expert_definitions (
 The `entities.entity_type` CHECK constraint is expanded to include `'expert'`
 in addition to `'human'` and `'ai'`.
 
-## Memory Tables (Optional)
+## Memory Tables
 
-These tables support the institutional memory system. They are created by
-the baseline migration (`001_baseline.sql`) and work with or without the
-`sqlite-vec` extension.
+These tables support the institutional memory system. The baseline migration
+(`001_baseline.sql`) always creates them, and they need no extension; the
+memory and document *tools* are registered only when `sqlite_vec` imports.
 
 ```sql
 -- Per-entity long-term memories (observations, positions, reflections)

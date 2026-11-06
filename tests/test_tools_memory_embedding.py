@@ -95,13 +95,18 @@ class TestEmbed:
         assert transport.timeouts == [constants.EMBED_TIMEOUT]
 
     async def test_unreadable_config_falls_back_to_defaults(
-        self, tmp_db, transport, monkeypatch,
+        self, tmp_db, transport, monkeypatch, caplog,
     ):
         def boom():
             raise RuntimeError("no such table")
 
         monkeypatch.setattr(tmp_db, "get_memory_config", boom)
-        await EmbeddingClient(tmp_db).embed("x")
+        with caplog.at_level(logging.ERROR, logger=LOGGER):
+            await EmbeddingClient(tmp_db).embed("x")
+
+        # Logged, or a db fault would masquerade as "cannot reach <default URL>".
+        [rec] = [r for r in caplog.records if "embedding config" in r.getMessage()]
+        assert rec.exc_info is not None
 
         [request] = transport.requests
         assert str(request.url) == (
@@ -144,9 +149,12 @@ class TestEmbed:
     @pytest.mark.parametrize("failure", [
         httpx.Response(500, text="not json"),
         httpx.Response(500, json={"detail": "no error field"}),
+        httpx.Response(500, json=["not", "a", "dict"]),
+        httpx.Response(500, json={"error": None}),
         httpx.Response(503, json={"error": "overloaded"}),
         httpx.ReadTimeout("slow"),
-    ], ids=["500-text", "500-json-no-error", "503", "timeout"])
+    ], ids=["500-text", "500-json-no-error", "500-json-list", "500-null-error",
+            "503", "timeout"])
     async def test_transient_failure_is_retried_then_succeeds(
         self, tmp_db, transport, sleeps, failure, caplog,
     ):

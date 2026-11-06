@@ -249,7 +249,7 @@ class TestAddDocumentFromURL:
     @pytest.mark.asyncio
     async def test_unavailable(self, app):
         app.documents_available = False
-        assert "unavailable" in (await app.add_document_from_url("http://x"))["error"]
+        assert "failed to load" in (await app.add_document_from_url("http://x"))["error"]
 
     @pytest.mark.asyncio
     async def test_fetch_failures_become_errors(self, app, caplog):
@@ -391,7 +391,7 @@ class TestCaughtErrorsAreLogged:
 
         Every default install has the dependencies, so an ImportError here is
         a broken install or a broken import inside the package (e.g. after a
-        split) — and the UI only says "see the server log".
+        split) — and the UI only says "see the application log".
         """
         import sys
         monkeypatch.setitem(sys.modules, module, None)  # import now raises
