@@ -202,6 +202,7 @@ def fake_httpx(monkeypatch):
             HTTPStatusError=httpx.HTTPStatusError,
             TransportError=httpx.TransportError,
             TooManyRedirects=httpx.TooManyRedirects,
+            Request=httpx.Request,
         )
         # The fetch loop lives in the shared consensus.http_fetch (#88).
         patch_where_defined(monkeypatch, http_fetch.fetch_capped, "httpx", module)

@@ -523,24 +523,37 @@ vision-capable, `Moderator._build_multimodal_context()` injects images as
 base64 `image_url` content blocks in the message context. Only PNG, JPEG,
 GIF and WebP are sent (`VISION_IMAGE_TYPES`); an SVG is listed by title but
 never sent, because providers reject it and would fail the whole turn. Non-vision models
-can use the `describe_image` tool to get a text description via a
-vision-capable model (falling back to the moderator's model).
+can use the `describe_image` tool to get a text description: it uses the
+caller's model if vision-capable, else the moderator's if that one is, else
+still tries the caller's (capability detection can miss a model); SVGs are
+refused.
 
 ### Security
 
 - **Path traversal protection:** `_safe_image_path()` validates that resolved
   paths stay within the images directory using `os.path.realpath()`
-- **SSRF protection:** `fetch._require_public_host()` refuses any host that
-  does not resolve to a public address (private, loopback, link-local,
-  reserved, CGNAT, multicast). It runs on **every request, redirect hops
-  included**, as an httpx request hook. DNS rebinding between the check and
-  the connection is not prevented. Document and `fetch_webpage` fetches have
-  no guard yet (#98)
+- **SSRF protection:** `http_fetch.require_public_host()` refuses any host
+  with an address that is not public (private, loopback, link-local,
+  reserved, CGNAT, multicast, and IPv4 hidden in NAT64 or IPv4-compatible
+  IPv6); a host with several records is refused if any one is internal. It
+  runs on **every request, redirect hops included**, as an httpx request
+  hook, and guards document and `fetch_webpage` fetches too, in every mode
+  (#98). DNS rebinding between the check and the connection is not
+  prevented
 - **Retry and size cap:** URL fetches go through the shared
   `consensus/http_fetch.py` (`fetch_capped`, also used by document
-  ingestion). Timeouts, transport errors and 5xx are retried with backoff;
-  a 4xx is permanent; the body is capped while it streams. URLs in its
-  messages and logs are passed through `redact_url()`
+  ingestion and `fetch_webpage`). Timeouts, transport errors, DNS failures,
+  408/425/429 and 5xx other than 501/505 are retried with backoff; any
+  other non-2xx is permanent; the body is capped while it streams. Tool
+  calls pass `deadline=TOOL_FETCH_DEADLINE`, so the fetch's own error
+  arrives before the generic tool timeout. URLs in its messages and logs
+  are passed through `redact_url()`
+- **Content validation:** raster bytes Pillow cannot decode are refused at
+  ingestion rather than stored (a response without Content-Type is assumed
+  PNG and must prove it)
+- **Serving:** `/api/images/file/<id>` sends `IMAGE_SERVE_CSP`
+  (`default-src 'none'; style-src 'unsafe-inline'; sandbox`), so an SVG
+  opened directly cannot run script in the app's origin (#99)
 - **Size limits:** 20 MB maximum for both uploads and URL fetches
 - **MIME validation:** Only PNG, JPEG, GIF, WebP, SVG accepted
 - **Auto-resize:** Images larger than 2048px in either dimension are

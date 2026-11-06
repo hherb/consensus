@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from ..http_fetch import (
     FetchError, FetchRejected, FetchTooLarge, FetchUnavailable, fetch_capped,
+    require_public_host,
 )
 from .constants import (
     FIDELITY_DEGRADED, FIDELITY_FULL, MAX_DOCUMENT_BYTES,
@@ -328,37 +329,50 @@ def _filename_for(url: str, mime_type: str) -> str:
 
 
 _FETCH_HINTS: dict[type[FetchError], str] = {
-    FetchRejected: "check the address, or whether it needs a login",
+    FetchRejected: ("check the address: it must be a public http(s) URL "
+                    "that serves the document without a login"),
     FetchTooLarge: "download it and add the relevant extract",
     FetchUnavailable: "check the address and that the host is reachable",
 }
 
+#: Hint for a :class:`FetchError` subclass not listed in ``_FETCH_HINTS``.
+_FETCH_HINT_DEFAULT = "check the address and try again"
 
-async def fetch_url_content(url: str) -> tuple[bytes, str, str]:
+
+async def fetch_url_content(
+    url: str, deadline: float | None = None,
+) -> tuple[bytes, str, str]:
     """Fetch a document from a URL.
 
-    The retry, backoff and streaming size-cap policy lives in
+    The retry, backoff, streaming size-cap and SSRF policy lives in
     :func:`consensus.http_fetch.fetch_capped` (shared with image
     ingestion, issue #88); this wrapper supplies the document limits and
     turns its failures into :class:`DocumentParseError` with a hint.
 
     Args:
         url: The document location to fetch.
+        deadline: Seconds the whole fetch may take, retries included
+            (``None`` for no overall limit).
 
     Returns:
         ``(content_bytes, filename, mime_type)``.
 
     Raises:
-        DocumentParseError: If the fetch fails after all retries, a 4xx is
-            returned, or the body exceeds ``MAX_DOCUMENT_BYTES``.
+        DocumentParseError: If the fetch fails after all retries or the
+            deadline, the URL resolves to a private/internal address, the
+            status is not retryable (e.g. 404), the body exceeds
+            ``MAX_DOCUMENT_BYTES``, or the fault is one no retry can cure
+            (invalid URL, non-http scheme, undecodable body).
     """
     try:
         content, content_type = await fetch_capped(
             url, max_bytes=MAX_DOCUMENT_BYTES, timeout=URL_FETCH_TIMEOUT,
             max_retries=URL_FETCH_MAX_RETRIES, base_delay=URL_FETCH_BASE_DELAY,
+            guard=require_public_host, deadline=deadline,
         )
     except FetchError as e:
-        raise DocumentParseError(str(e), hint=_FETCH_HINTS[type(e)]) from e
+        hint = _FETCH_HINTS.get(type(e), _FETCH_HINT_DEFAULT)
+        raise DocumentParseError(str(e), hint=hint) from e
     mime_type = (content_type or "text/html").split(";")[0].strip()
     return content, _filename_for(url, mime_type), mime_type
 

@@ -53,6 +53,8 @@ Fetch a URL and extract its readable text content. Use after `web_search` to rea
 
 **Output:** Extracted readable text from the page, truncated to `max_chars`.
 
+The fetch goes through `consensus/http_fetch.py`: transient faults are retried with backoff, the HTML is capped at 10 MB while it streams, the whole fetch is bounded below the tool timeout, and hosts that resolve to private, loopback, link-local or other non-public addresses are refused on every redirect hop (in every mode, desktop included).
+
 ---
 
 ## Consult Expert
@@ -267,6 +269,10 @@ affected it still answers, but flags the retrieval as incomplete. If indexing
 failed outright it instead reports the embedding service's own error message
 and retries in the background once the service recovers.
 
+URL documents are fetched with the same policy as images and `fetch_webpage`:
+retry with backoff, a 50 MB cap enforced while streaming, and refusal of
+non-public addresses (localhost and intranet included) on every redirect hop.
+
 Supports PDF (via pdfplumber), HTML (via trafilatura), and plain
 text/Markdown, with three deliberate rejections:
 
@@ -292,7 +298,7 @@ Tools for working with images in discussions. Vision-capable models receive imag
 | `list_images` | List all images attached to the discussion | — |
 | `add_image_url` | Add an image from a URL to the discussion | `url`, `title?` |
 
-Security: path traversal protection, SSRF protection (blocks non-public addresses on every redirect hop), retry with backoff, 20 MB size limit enforced while streaming, MIME validation, auto-resize for large images. SVGs are stored and listed but never sent to vision models.
+Security: path traversal protection, SSRF protection (blocks non-public addresses on every redirect hop), retry with backoff, 20 MB size limit enforced while streaming, MIME validation (raster bytes must decode with Pillow), auto-resize for large images. SVGs are stored and listed but never sent to vision models (`describe_image` refuses them). Served images carry a CSP that blocks script.
 
 ---
 

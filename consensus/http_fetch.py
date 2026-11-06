@@ -4,13 +4,19 @@ Document and image ingestion both fetch user- or AI-supplied URLs. Each
 used to carry its own loop and the image one had no retry at all (issue
 #88), so the policy lives here once:
 
-* transient faults (timeouts, transport errors, 5xx) are retried up to
-  ``max_retries`` times with exponential backoff (golden rule 5); a 4xx,
-  a guard refusal or a redirect loop is permanent;
+* transient faults (timeouts, transport errors, DNS failures, 408/425/429
+  and 5xx other than 501/505) are attempted up to ``max_retries`` times in
+  total, with exponential backoff (golden rule 5); any other non-2xx, a
+  guard refusal, a redirect loop or a fault no retry can cure (invalid
+  URL, unsupported scheme, undecodable body) is permanent;
+* an optional ``deadline`` bounds the whole fetch, retries included, so a
+  tool call's fetch fails with its own message before the tool timeout;
 * the body is measured *while* it streams, so an oversized response is
   abandoned rather than buffered into memory first;
-* an optional ``guard`` runs on every request, redirect hops included, so
-  a public URL cannot redirect the server to an internal address;
+* an optional ``guard`` runs on every request, redirect hops included;
+  :func:`require_public_host` is the SSRF guard every caller fetching a
+  user- or AI-supplied URL passes, so a public URL cannot redirect the
+  server to an internal address;
 * URLs in messages and logs pass through :func:`redact_url`, because a
   signed URL's query string is a credential (issue #89).
 
@@ -19,7 +25,9 @@ show the user.
 """
 
 import asyncio
+import ipaddress
 import logging
+import socket
 from collections.abc import Awaitable, Callable
 from urllib.parse import urlsplit, urlunsplit
 
@@ -36,13 +44,28 @@ FETCH_BASE_DELAY = 1.0
 #: What :func:`redact_url` shows for a string ``urlsplit`` rejects.
 UNPARSEABLE_URL = "<unparseable URL>"
 
+#: 4xx statuses that mean "try again later" rather than "never".
+RETRYABLE_CLIENT_STATUSES = frozenset({408, 425, 429})
+
+#: 5xx statuses that no retry can cure (not implemented, bad HTTP version).
+PERMANENT_SERVER_STATUSES = frozenset({501, 505})
+
+# NAT64 (RFC 6052) embeds an IPv4 address in the low 32 bits; Python
+# reports the IPv6 form as global even when the IPv4 one is loopback.
+_NAT64_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+
+# IPv4-compatible IPv6 (::a.b.c.d, deprecated): first 96 bits all zero.
+_IPV4_COMPAT_PREFIX_BYTES = bytes(12)
+
 
 class FetchError(Exception):
     """A URL could not be fetched. ``str()`` is user-facing and redacted."""
 
 
 class FetchRejected(FetchError):
-    """Permanent refusal: a 4xx, a guard veto or a redirect loop."""
+    """Permanent refusal: a non-retryable status, a guard veto, a redirect
+    loop, or a fault no retry can cure (invalid URL, unsupported scheme,
+    undecodable body)."""
 
 
 class FetchTooLarge(FetchError):
@@ -50,7 +73,11 @@ class FetchTooLarge(FetchError):
 
 
 class FetchUnavailable(FetchError):
-    """Transient faults outlasted every retry."""
+    """Transient faults outlasted every retry or the deadline.
+
+    A guard raises it for a host that does not resolve, which is retried
+    like any other transient fault.
+    """
 
 
 def redact_url(url: str) -> str:
@@ -73,6 +100,81 @@ def redact_url(url: str) -> str:
         return UNPARSEABLE_URL
     netloc = parts.netloc.rpartition("@")[2]
     return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+
+
+def is_retryable_status(status: int) -> bool:
+    """Whether a non-2xx HTTP *status* is worth retrying.
+
+    Args:
+        status: The response status code.
+
+    Returns:
+        ``True`` for 408/425/429 and for 5xx other than 501/505.
+    """
+    if status in RETRYABLE_CLIENT_STATUSES:
+        return True
+    return 500 <= status < 600 and status not in PERMANENT_SERVER_STATUSES
+
+
+def is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Whether *ip* is a public unicast address a fetch may reach.
+
+    ``is_global`` excludes private, loopback, link-local, reserved and
+    CGNAT space; multicast is "global" but never a content host. An IPv4
+    address embedded in NAT64 or IPv4-compatible IPv6 is judged as IPv4.
+
+    Args:
+        ip: The address to classify.
+
+    Returns:
+        ``True`` only for a public unicast address.
+    """
+    if ip.version == 6 and (ip in _NAT64_PREFIX
+                            or ip.packed[:12] == _IPV4_COMPAT_PREFIX_BYTES):
+        ip = ipaddress.IPv4Address(ip.packed[12:])
+    return ip.is_global and not ip.is_multicast
+
+
+def require_public_host(url: str) -> None:
+    """SSRF guard: refuse a URL whose host is not a public address.
+
+    Pass it as ``fetch_capped(guard=...)``; it runs on every request of a
+    fetch, redirect hops included. A host with several addresses is
+    refused if any one of them is internal.
+
+    shortcut: the host is resolved here and again by httpx, so DNS
+    rebinding between the two lookups is not prevented; pin the resolved
+    address in a custom transport if multi-user deployments need that.
+
+    Args:
+        url: The request URL about to be sent.
+
+    Raises:
+        FetchRejected: The host resolves to a non-public address, or the
+            URL has no host.
+        FetchUnavailable: The host does not resolve (retried, since DNS
+            failures are often transient).
+    """
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError as e:
+        raise FetchRejected(f"{redact_url(url)} is not a valid URL") from e
+    if not host:
+        raise FetchRejected(f"{redact_url(url)} has no host")
+    try:
+        infos = socket.getaddrinfo(host, None, socket.AF_UNSPEC,
+                                   socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise FetchUnavailable(f"could not resolve {host}") from e
+    for _family, _type, _proto, _canon, sockaddr in infos:
+        try:
+            ip = ipaddress.ip_address(sockaddr[0])
+        except ValueError:
+            ip = None  # unparseable (e.g. scoped) address: fail closed
+        if ip is None or not is_public_ip(ip):
+            raise FetchRejected(
+                f"Refusing to fetch {host}: it resolves to a "
+                "private/internal address")
 
 
 # Faults no retry can cure. UnsupportedProtocol subclasses TransportError,
@@ -143,6 +245,8 @@ async def fetch_capped(
     max_retries: int = FETCH_MAX_RETRIES,
     base_delay: float = FETCH_BASE_DELAY,
     guard: Callable[[str], None] | None = None,
+    deadline: float | None = None,
+    headers: dict[str, str] | None = None,
 ) -> tuple[bytes, str]:
     """GET *url* with retry, a streaming size cap and an optional guard.
 
@@ -153,30 +257,59 @@ async def fetch_capped(
         max_retries: Attempts in total, the first included.
         base_delay: Seconds before the first retry; doubled each time.
         guard: Called with each request URL, redirect hops included; raises
-            :class:`FetchRejected` to veto the request.
+            :class:`FetchRejected` to veto the request (or
+            :class:`FetchUnavailable` for a transient refusal, which is
+            retried). Usually :func:`require_public_host`.
+        deadline: Seconds the whole fetch may take, retries and backoff
+            included; ``None`` for no overall limit.
+        headers: Extra request headers (e.g. a User-Agent).
 
     Returns:
         ``(body, content_type)``; ``content_type`` is the raw header value,
         or ``""`` when the server sent none.
 
     Raises:
-        FetchRejected: On a 4xx, a guard veto or too many redirects.
+        FetchRejected: On a non-retryable status, a guard veto, too many
+            redirects, or a fault no retry can cure.
         FetchTooLarge: When the body exceeds *max_bytes*.
-        FetchUnavailable: When every attempt failed transiently.
+        FetchUnavailable: When every attempt failed transiently, or the
+            deadline passed.
     """
     shown = redact_url(url)
+    try:
+        async with asyncio.timeout(deadline):
+            return await _fetch_with_retries(
+                url, shown, max_bytes=max_bytes, timeout=timeout,
+                max_retries=max_retries, base_delay=base_delay, guard=guard,
+                headers=headers)
+    except TimeoutError:
+        if deadline is None:
+            raise
+        raise FetchUnavailable(
+            f"Could not fetch {shown} within {deadline:g}s") from None
+
+
+async def _fetch_with_retries(
+    url: str, shown: str, *, max_bytes: int, timeout: float,
+    max_retries: int, base_delay: float,
+    guard: Callable[[str], None] | None, headers: dict[str, str] | None,
+) -> tuple[bytes, str]:
+    """The retry loop of :func:`fetch_capped`, without the deadline."""
     hooks = {"request": [_guard_hook(guard)]} if guard else {}
     last_fault = ""
     async with httpx.AsyncClient(
         timeout=timeout, follow_redirects=True, event_hooks=hooks,
+        headers=headers,
     ) as client:
         for attempt in range(max_retries):
             try:
                 async with client.stream("GET", url) as response:
-                    if 400 <= response.status_code < 500:
-                        raise FetchRejected(
-                            f"{shown} returned HTTP {response.status_code}")
-                    response.raise_for_status()
+                    status = response.status_code
+                    if not response.is_success:
+                        if not is_retryable_status(status):
+                            raise FetchRejected(
+                                f"{shown} returned HTTP {status}")
+                        response.raise_for_status()
                     declared = _declared_length(response)
                     if declared is not None and declared > max_bytes:
                         raise FetchTooLarge(
@@ -194,7 +327,7 @@ async def fetch_capped(
                     f"{shown} could not be fetched ({type(e).__name__})"
                 ) from e
             except (httpx.TimeoutException, httpx.HTTPStatusError,
-                    httpx.TransportError) as e:
+                    httpx.TransportError, FetchUnavailable) as e:
                 last_fault = _describe_fault(e)
                 if attempt == max_retries - 1:
                     break
@@ -205,5 +338,7 @@ async def fetch_capped(
                     delay)
                 await asyncio.sleep(delay)
 
+    # Not chained: HTTPStatusError's text embeds the unredacted URL, and
+    # last_fault already carries the redacted summary.
     raise FetchUnavailable(
         f"Could not fetch {shown} after {max_retries} attempts: {last_fault}")

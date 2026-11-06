@@ -6,6 +6,7 @@ and ``create_image_provider(...).execute``), so they need no edits when the
 code moves. Fakes sit at the network edges; see ``tests/image_helpers.py``.
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -17,7 +18,7 @@ import pytest
 
 import consensus.tools_image as ti
 from consensus.tools_image.constants import MAX_IMAGE_DIMENSION
-from consensus.http_fetch import FetchError
+from consensus.http_fetch import FETCH_MAX_RETRIES, FetchError, FetchUnavailable
 from consensus.tools import ToolContext
 from tests.image_helpers import (
     FakeApp, FakePricing, FakeVisionClient, fake_dns, image_size,
@@ -128,13 +129,11 @@ def test_save_without_pillow_keeps_raw_bytes(images_dir, monkeypatch):
     assert (images_dir / path).read_bytes() == PNG_1PX
 
 
-def test_save_undecodable_bytes_is_logged_and_kept(images_dir, caplog):
-    with caplog.at_level(logging.WARNING, logger="consensus.tools_image"):
-        path, width, height, _ = ti.save_image_file(b"not an image",
-                                                    "a.png", "image/png")
-    assert (width, height) == (None, None)
-    assert (images_dir / path).read_bytes() == b"not an image"
-    assert "Pillow processing failed" in caplog.text
+def test_save_refuses_undecodable_raster_bytes(images_dir):
+    """Stored, they would reach a vision model and sink the whole turn."""
+    with pytest.raises(ValueError, match="Not a valid image/png image"):
+        ti.save_image_file(b"not an image", "a.png", "image/png")
+    assert list(images_dir.iterdir()) == []
 
 
 def test_load_and_base64_round_trip(images_dir):
@@ -246,12 +245,19 @@ async def test_fetch_rejects_private_addresses(monkeypatch, ip):
     assert seen == []
 
 
-async def test_fetch_rejects_unresolvable_host(monkeypatch):
-    fake_dns(monkeypatch, fail={"nowhere.test"})
+async def test_fetch_retries_then_reports_an_unresolvable_host(monkeypatch):
+    """A DNS failure is often transient and is not an SSRF refusal."""
+    looked_up = fake_dns(monkeypatch, fail={"nowhere.test"})
     seen = install_transport(monkeypatch, _png_response)
-    with pytest.raises(FetchError, match="private/internal"):
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
+    with pytest.raises(FetchUnavailable, match="could not resolve nowhere.test"):
         await ti.fetch_image_from_url("http://nowhere.test/a.png")
     assert seen == []
+    assert looked_up == ["nowhere.test"] * FETCH_MAX_RETRIES
 
 
 async def test_fetch_rejects_oversized_body(monkeypatch):
@@ -298,13 +304,15 @@ def test_blocks_skip_unloadable_image_and_log(images_dir, caplog):
     with caplog.at_level(logging.WARNING, logger="consensus.tools_image"):
         blocks = ti.build_image_content_blocks([missing, good])
     assert len(blocks) == 2
-    assert "[Image 2]" not in blocks[0]["text"]
+    # Labelled, so the model knows the image exists but was not sent.
+    assert "[Image 2] Image 2 (could not be loaded)" in blocks[0]["text"]
     assert "Failed to load image 2" in caplog.text
 
 
-def test_blocks_empty_when_nothing_loads(images_dir):
+def test_blocks_label_an_image_that_cannot_load(images_dir):
     missing = {"id": 2, "storage_path": "gone.png", "mime_type": "image/png"}
-    assert ti.build_image_content_blocks([missing]) == []
+    blocks = ti.build_image_content_blocks([missing])
+    assert len(blocks) == 1 and blocks[0]["type"] == "text"
     assert ti.build_image_content_blocks([]) == []
 
 
@@ -386,7 +394,7 @@ async def test_add_image_url_reports_fetch_failure(tmp_db, images_dir,
 
 async def test_add_image_url_reports_ingest_error(tmp_db, images_dir,
                                                   monkeypatch):
-    async def fake_fetch(url):
+    async def fake_fetch(url, deadline=None):
         return b"x", "a.bmp", "image/bmp"
 
     patch_image_module(monkeypatch, "fetch_image_from_url", fake_fetch)

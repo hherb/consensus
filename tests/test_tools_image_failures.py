@@ -246,3 +246,97 @@ def test_image_tools_load_failure_is_a_warning_with_traceback(
     assert any(r.levelno == logging.WARNING
                and "Image tools failed to load" in r.getMessage()
                and r.exc_info for r in caplog.records)
+
+
+# --- PR #100 review fixes -------------------------------------------------------
+
+async def test_describe_image_refuses_svg_without_calling_a_model(
+        tmp_db, images_dir, sample_ai_entity, vision_client):
+    """Providers reject an SVG image block, so it must never be sent."""
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"/>'
+    path, w, h, size = ti.save_image_file(svg, "d.svg", "image/svg+xml")
+    image_id = tmp_db.add_image(
+        filename=path, original_filename="d.svg", title="D", description="",
+        mime_type="image/svg+xml", width=w, height=h, file_size=size,
+        storage_path=path, source_type="upload",
+    )
+    tmp_db.pricing = FakePricing({"test-model": True})
+    result = await _describe(tmp_db, FakeApp(tmp_db), image_id,
+                             sample_ai_entity)
+    assert result.is_error and "image/svg+xml" in result.content
+    assert vision_client.instances == []
+
+
+async def test_vision_failure_keeps_its_traceback(
+        tmp_db, stored_image, sample_ai_entity, vision_client, caplog):
+    tmp_db.pricing = FakePricing({"test-model": True})
+    vision_client.error = AttributeError("bug, not a provider fault")
+    with caplog.at_level(logging.WARNING, logger="consensus.tools_image"):
+        await _describe(tmp_db, FakeApp(tmp_db), stored_image,
+                        sample_ai_entity)
+    assert any(r.exc_info for r in caplog.records
+               if "Vision LLM call failed" in r.getMessage())
+
+
+async def test_malformed_url_is_a_fetch_error():
+    """``urlparse`` raises ValueError; callers only expect FetchError."""
+    with pytest.raises(FetchError, match="not a valid URL"):
+        await ti.fetch_image_from_url("http://[::1/a.png?token=SECRET")
+
+
+async def _add_url(db, url):
+    provider = ti.create_image_provider(db)
+    return await provider.execute("add_image_url", {"url": url},
+                                  ToolContext(caller_entity_id=0,
+                                              discussion_id=0))
+
+
+async def test_add_image_url_logs_an_expected_failure_redacted(
+        tmp_db, images_dir, monkeypatch, caplog):
+    fake_dns(monkeypatch, {"internal.test": "10.0.0.1"})
+    install_transport(monkeypatch, lambda r: httpx.Response(200))
+    with caplog.at_level(logging.WARNING, logger="consensus.tools_image"):
+        result = await _add_url(tmp_db, "http://internal.test/a.png?token=SECRET")
+    assert result.is_error
+    assert "Image fetch failed for http://internal.test/a.png" in caplog.text
+    assert "SECRET" not in caplog.text
+
+
+async def test_add_image_url_logs_an_unexpected_failure_with_traceback(
+        tmp_db, images_dir, monkeypatch, caplog):
+    async def buggy(url, deadline=None):
+        raise KeyError("bug")
+
+    patch_image_module(monkeypatch, "fetch_image_from_url", buggy)
+    with caplog.at_level(logging.WARNING, logger="consensus.tools_image"):
+        result = await _add_url(tmp_db, "https://img.test/a.png")
+    assert result.is_error
+    assert any(r.levelno == logging.ERROR and r.exc_info
+               for r in caplog.records)
+
+
+async def test_add_image_url_fetch_is_bounded_below_the_tool_timeout(
+        tmp_db, images_dir, monkeypatch):
+    from consensus.tools import TOOL_EXECUTION_TIMEOUT, TOOL_FETCH_DEADLINE
+
+    seen = {}
+
+    async def fake_fetch(url, deadline=None):
+        seen["deadline"] = deadline
+        return PNG_1PX, "a.png", "image/png"
+
+    patch_image_module(monkeypatch, "fetch_image_from_url", fake_fetch)
+    result = await _add_url(tmp_db, "https://img.test/a.png")
+    assert not result.is_error
+    assert seen["deadline"] == TOOL_FETCH_DEADLINE < TOOL_EXECUTION_TIMEOUT
+
+
+async def test_ingest_refuses_a_non_image_body(tmp_db, images_dir, caplog):
+    """A body without Content-Type is assumed PNG; Pillow must confirm it."""
+    with caplog.at_level(logging.WARNING, logger="consensus.tools_image"):
+        result = await ti.ingest_image(tmp_db, b"<html>login</html>",
+                                       "a.png", "image/png")
+    assert "Not a valid image/png image" in result["error"]
+    assert tmp_db.get_image(1) is None
+    assert list(images_dir.iterdir()) == []
+    assert "Refused image" in caplog.text

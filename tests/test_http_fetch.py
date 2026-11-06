@@ -178,12 +178,12 @@ async def test_redirect_loop_is_permanent(monkeypatch, no_sleep):
 
 async def test_messages_and_logs_redact_secrets(monkeypatch, no_sleep, caplog):
     install_transport(monkeypatch, lambda r: httpx.Response(503))
-    secret = "https://u:pw@files.test/a?token=SECRET"
+    secret = "https://u:PWSECRET@files.test/a?token=SECRET"
     with caplog.at_level(logging.WARNING, logger="consensus.http_fetch"), \
             pytest.raises(FetchError) as info:
         await _fetch(secret, max_retries=2)
     for text in (caplog.text, str(info.value)):
-        assert "SECRET" not in text and "pw" not in text
+        assert "SECRET" not in text and "PWSECRET" not in text
     assert "https://files.test/a" in caplog.text
 
 
@@ -214,3 +214,85 @@ async def test_garbage_content_length_falls_back_to_streamed_cap(monkeypatch):
     install_transport(monkeypatch, lambda r: httpx.Response(
         200, content=b"ok", headers={"content-length": "lots"}))
     assert (await _fetch())[0] == b"ok"
+
+
+# --- status policy (PR #100 review) ---------------------------------------------
+
+@pytest.mark.parametrize("status, retryable", [
+    (408, True), (425, True), (429, True), (500, True), (502, True),
+    (503, True), (504, True), (520, True),
+    (400, False), (401, False), (403, False), (404, False), (410, False),
+    (501, False), (505, False), (302, False), (304, False), (600, False),
+])
+def test_is_retryable_status(status, retryable):
+    assert http_fetch.is_retryable_status(status) is retryable
+
+
+async def test_429_is_retried(monkeypatch, no_sleep):
+    answers = iter([httpx.Response(429), httpx.Response(200, content=b"ok")])
+    seen = install_transport(monkeypatch, lambda r: next(answers))
+    assert (await _fetch())[0] == b"ok"
+    assert len(seen) == 2
+
+
+@pytest.mark.parametrize("status", [304, 501])
+async def test_unfollowed_3xx_and_501_are_permanent(monkeypatch, no_sleep,
+                                                    status):
+    seen = install_transport(monkeypatch, lambda r: httpx.Response(status))
+    with pytest.raises(FetchRejected, match=f"HTTP {status}"):
+        await _fetch()
+    assert len(seen) == 1 and no_sleep == []
+
+
+# --- streaming edge cases --------------------------------------------------------
+
+class _StallingStream(httpx.AsyncByteStream):
+    """A body that sends one chunk, then times out."""
+
+    async def __aiter__(self):
+        yield b"partial"
+        raise httpx.ReadTimeout("stalled")
+
+
+async def test_mid_stream_fault_is_retried_from_scratch(monkeypatch, no_sleep):
+    answers = iter([httpx.Response(200, stream=_StallingStream()),
+                    httpx.Response(200, content=b"whole")])
+    install_transport(monkeypatch, lambda r: next(answers))
+    # The partial chunk of the failed attempt must not leak into the result.
+    assert (await _fetch())[0] == b"whole"
+    assert no_sleep == [http_fetch.FETCH_BASE_DELAY]
+
+
+async def test_body_of_exactly_max_bytes_is_accepted(monkeypatch):
+    async def body():
+        yield b"x" * 600
+        yield b"x" * 400
+
+    install_transport(monkeypatch, lambda r: httpx.Response(200, content=body()))
+    assert len((await _fetch(max_bytes=1000))[0]) == 1000
+
+
+async def test_understated_content_length_is_caught_by_the_stream_cap(
+        monkeypatch):
+    install_transport(monkeypatch, lambda r: httpx.Response(
+        200, stream=httpx.ByteStream(b"x" * 500),
+        headers={"content-length": "2"}))
+    with pytest.raises(FetchTooLarge, match="transfer was aborted"):
+        await _fetch(max_bytes=100)
+
+
+# --- deadline and headers --------------------------------------------------------
+
+async def test_deadline_bounds_the_whole_fetch(monkeypatch):
+    async def hang(request):
+        await asyncio.sleep(30)
+
+    install_transport(monkeypatch, hang)
+    with pytest.raises(FetchUnavailable, match="within 0.05s"):
+        await _fetch(deadline=0.05)
+
+
+async def test_extra_headers_are_sent(monkeypatch):
+    seen = install_transport(monkeypatch, lambda r: httpx.Response(200))
+    await _fetch(headers={"User-Agent": "TestBot/1"})
+    assert seen[0].headers["user-agent"] == "TestBot/1"

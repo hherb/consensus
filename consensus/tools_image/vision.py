@@ -51,8 +51,14 @@ def build_image_content_blocks(
 ) -> list[dict]:
     """Build OpenAI-format multimodal content blocks for a list of images.
 
-    Each image dict must have 'storage_path', 'mime_type', and optionally 'title'.
-    Returns a list of content blocks suitable for the 'content' field of a message.
+    Each image dict must have 'id', 'storage_path' and 'mime_type', and may
+    have 'title' or 'original_filename' for its label. Every image is
+    labelled in a leading text block; only vision-viewable ones that load
+    get an image block, and the label says why the others have none.
+
+    Returns:
+        Content blocks for the 'content' field of a message, or ``[]`` when
+        *images* is empty.
     """
     blocks: list[dict] = []
     labels = []
@@ -73,6 +79,7 @@ def build_image_content_blocks(
             labels.append(f"[Image {img['id']}] {label}")
         except Exception as e:
             logger.warning("Failed to load image %s: %s", img.get("id"), e)
+            labels.append(f"[Image {img['id']}] {label} (could not be loaded)")
 
     if not labels:
         return []
@@ -93,11 +100,15 @@ async def _call_vision_llm(
 ) -> str:
     """Call a vision-capable LLM to describe or answer questions about an image.
 
+    Uses the caller's model if it is vision-capable, else the moderator's
+    if that one is. When neither is, the caller's model is still tried:
+    capability detection can miss a model that does accept images, and a
+    provider refusal is reported to the caller as an error.
+
     Raises:
         LookupError: The calling entity is not in the database.
         Exception: Whatever the AI client raises; the caller reports it.
     """
-    # Find a vision-capable model to use
     entity = app.db.get_entity(context.caller_entity_id)
     if not entity:
         raise LookupError("could not resolve the caller entity")

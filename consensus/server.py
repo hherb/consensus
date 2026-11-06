@@ -46,6 +46,10 @@ SESSION_COOKIE = "consensus_sid"
 AUTH_COOKIE = "consensus_auth"
 AUTH_HEADER = "Authorization"
 
+# Served images get no script and an opaque origin (sandbox); inline
+# styles stay so an SVG still renders as drawn.
+IMAGE_SERVE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+
 
 
 def _generate_session_id() -> str:
@@ -1044,6 +1048,9 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             headers={
                 "Cache-Control": "private, max-age=3600",
                 "Content-Disposition": f'inline; filename="{filename}"',
+                # An uploaded or AI-fetched SVG can carry script; opened
+                # directly it would run in the app's origin.
+                "Content-Security-Policy": IMAGE_SERVE_CSP,
             },
         )
 

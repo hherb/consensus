@@ -17,6 +17,8 @@ from consensus.http_fetch import FetchRejected
 from consensus.tools import ToolContext, ToolDefinition, ToolResult
 from consensus.tools_document.errors import DocumentParseError
 
+from .image_helpers import make_image
+
 
 # The ``app`` and ``images_dir`` fixtures live in conftest.py.
 
@@ -283,7 +285,8 @@ class TestAddDocumentFromURL:
 
 # --- Images ------------------------------------------------------------------
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
+# A real image: ingestion refuses raster bytes Pillow cannot decode.
+PNG = make_image(1, 1)
 
 
 class TestImages:

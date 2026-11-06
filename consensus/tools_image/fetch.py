@@ -2,60 +2,43 @@
 
 from urllib.parse import urlparse
 
-from ..http_fetch import FetchRejected, fetch_capped
+from ..http_fetch import (
+    FetchRejected, fetch_capped, redact_url, require_public_host,
+)
 from .constants import MAX_IMAGE_BYTES, SUPPORTED_IMAGE_TYPES, URL_FETCH_TIMEOUT
 
 
-def _is_private_ip(hostname: str) -> bool:
-    """Check if a hostname resolves to a private/internal IP address."""
-    import ipaddress
-    import socket
-    try:
-        addr = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        for _family, _, _, _, sockaddr in addr:
-            ip = ipaddress.ip_address(sockaddr[0])
-            # is_global excludes private, loopback, link-local, reserved and
-            # CGNAT space; multicast is "global" but never an image host.
-            if not ip.is_global or ip.is_multicast:
-                return True
-    except (socket.gaierror, ValueError):
-        return True  # treat unresolvable as blocked
-    return False
-
-
-def _require_public_host(url: str) -> None:
-    """SSRF guard: refuse a URL whose host is not a public address.
-
-    Runs on every request of a fetch, redirect hops included.
-
-    shortcut: the host is resolved here and again by httpx, so DNS
-    rebinding between the two lookups is not prevented; pin the resolved
-    address in a custom transport if multi-user deployments need that.
-    """
-    if _is_private_ip(urlparse(url).hostname or ""):
-        raise FetchRejected(
-            "Cannot fetch images from private/internal addresses")
-
-
-async def fetch_image_from_url(url: str) -> tuple[bytes, str, str]:
+async def fetch_image_from_url(
+    url: str, deadline: float | None = None,
+) -> tuple[bytes, str, str]:
     """Fetch an image from a URL.
 
     Transient faults are retried with backoff and the body is size-capped
     while it streams (``consensus.http_fetch``); every hop is SSRF-checked.
+    A response without a ``Content-Type`` is assumed to be PNG; ingestion
+    then refuses it if Pillow cannot decode it.
+
+    Args:
+        url: The image location.
+        deadline: Seconds the whole fetch may take, retries included
+            (``None`` for no overall limit).
 
     Returns:
         ``(content_bytes, filename, mime_type)``.
 
     Raises:
-        FetchError: The URL was refused, unreachable, too large or not a
-            supported image. ``str()`` is safe to show the user.
+        FetchError: The URL was malformed, refused, unreachable, too large
+            or not a supported image. ``str()`` is safe to show the user.
     """
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+    except ValueError as e:  # e.g. an unclosed IPv6 bracket
+        raise FetchRejected(f"{redact_url(url)} is not a valid URL") from e
     if parsed.scheme not in ("http", "https"):
         raise FetchRejected(f"Unsupported URL scheme: {parsed.scheme}")
     content, content_type = await fetch_capped(
         url, max_bytes=MAX_IMAGE_BYTES, timeout=URL_FETCH_TIMEOUT,
-        guard=_require_public_host,
+        guard=require_public_host, deadline=deadline,
     )
     mime_type = (content_type or "image/png").split(";")[0].strip()
     if mime_type not in SUPPORTED_IMAGE_TYPES:

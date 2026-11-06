@@ -9,10 +9,6 @@ from .schemas import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Provider factory
-# ---------------------------------------------------------------------------
-
 def create_image_provider(db, app=None) -> PythonToolProvider:
     """Create and return the image tool provider.
 

@@ -11,14 +11,18 @@ from typing import Optional
 
 import httpx
 
-from .http_fetch import redact_url
-from .tools import PythonToolProvider, ToolContext, ToolDefinition, ToolResult
+from .http_fetch import FetchError, fetch_capped, redact_url, require_public_host
+from .tools import (
+    TOOL_FETCH_DEADLINE, PythonToolProvider, ToolContext, ToolDefinition,
+    ToolResult,
+)
 
 logger = logging.getLogger(__name__)
 
 # Web fetch configuration
 WEB_FETCH_TIMEOUT = 15.0
 WEB_FETCH_MAX_CHARS = 8000
+WEB_FETCH_MAX_BYTES = 10 * 1024 * 1024  # HTML read before extraction
 WEB_FETCH_USER_AGENT = "Mozilla/5.0 (compatible; ConsensusBot/1.0)"
 
 WEB_FETCH_SCHEMA = {
@@ -195,14 +199,15 @@ async def fetch_webpage_handler(arguments: dict,
         )
 
     try:
-        async with httpx.AsyncClient(
-            timeout=WEB_FETCH_TIMEOUT,
-            follow_redirects=True,
+        content, content_type = await fetch_capped(
+            url, max_bytes=WEB_FETCH_MAX_BYTES, timeout=WEB_FETCH_TIMEOUT,
+            guard=require_public_host, deadline=TOOL_FETCH_DEADLINE,
             headers={"User-Agent": WEB_FETCH_USER_AGENT},
-        ) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            html = response.text
+        )
+        # httpx's charset detection, as response.text applied before.
+        html = httpx.Response(
+            200, content=content, headers={"content-type": content_type},
+        ).text
 
         text = trafilatura.extract(
             html, include_comments=False, include_tables=True,
@@ -228,13 +233,13 @@ async def fetch_webpage_handler(arguments: dict,
             metadata={"url": url, "length": len(text)},
         )
 
-    except httpx.HTTPStatusError as e:
-        return ToolResult(
-            content=f"HTTP {e.response.status_code} error fetching {url}",
-            is_error=True,
-        )
+    except FetchError as e:
+        # Expected: refused URL, HTTP fault, oversize body; str() is redacted.
+        logger.warning("fetch_webpage failed: %s", e)
+        return ToolResult(content=f"Failed to fetch page: {e}", is_error=True)
     except Exception as e:
-        logger.warning("fetch_webpage failed for %s: %s", redact_url(url), e)
+        logger.exception("fetch_webpage failed unexpectedly for %s",
+                         redact_url(url))
         return ToolResult(content=f"Failed to fetch {url}: {e}", is_error=True)
 
 

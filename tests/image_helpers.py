@@ -64,12 +64,13 @@ def image_format(content: bytes) -> str:
     return Image.open(io.BytesIO(content)).format
 
 
-def fake_dns(monkeypatch, addresses: dict[str, str] | None = None,
+def fake_dns(monkeypatch, addresses: dict[str, str | list[str]] | None = None,
              fail: set[str] | None = None) -> list[str]:
     """Replace ``socket.getaddrinfo`` with a scripted resolver.
 
     Args:
-        addresses: hostname -> IP. Unlisted hosts resolve to ``PUBLIC_IP``.
+        addresses: hostname -> IP, or a list of IPs for a host with several
+            records. Unlisted hosts resolve to ``PUBLIC_IP``.
         fail: hostnames that raise ``socket.gaierror``.
 
     Returns:
@@ -83,9 +84,12 @@ def fake_dns(monkeypatch, addresses: dict[str, str] | None = None,
         looked_up.append(host)
         if host in fail:
             raise socket.gaierror("no such host")
-        ip = addresses.get(host, PUBLIC_IP)
-        family = socket.AF_INET6 if ":" in ip else socket.AF_INET
-        return [(family, socket.SOCK_STREAM, 6, "", (ip, 0))]
+        ips = addresses.get(host, PUBLIC_IP)
+        return [
+            (socket.AF_INET6 if ":" in ip else socket.AF_INET,
+             socket.SOCK_STREAM, 6, "", (ip, 0))
+            for ip in ([ips] if isinstance(ips, str) else ips)
+        ]
 
     monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
     return looked_up

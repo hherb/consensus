@@ -414,6 +414,7 @@ class _ChunkedResponse:
     """
 
     status_code = 200
+    is_success = True
     headers = {"content-type": "text/plain"}
 
     def __init__(self, chunk: bytes, chunks: int) -> None:

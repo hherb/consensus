@@ -26,6 +26,10 @@ def save_image_file(
 
     Returns (storage_path, width, height, file_size).
     storage_path is relative to the images directory.
+
+    Raises:
+        ValueError: A raster type whose bytes Pillow cannot decode; nothing
+            is written.
     """
     # Generate unique filename
     ext = _extension_for_mime(mime_type)
@@ -54,7 +58,13 @@ def _measure_and_shrink(
     An image larger than ``MAX_IMAGE_DIMENSION`` is shrunk and re-encoded in
     its own format. The dimensions returned always describe the bytes
     returned: when the re-encode fails the original is kept with its
-    original size. Vector (SVG) or unmeasurable input yields ``None`` sizes.
+    original size. Vector (SVG) input yields ``None`` sizes.
+
+    Raises:
+        ValueError: A raster type whose bytes Pillow cannot decode (not an
+            image, or a decompression bomb). Stored anyway, it
+            would be sent to vision models, and one bad block makes the
+            provider reject the whole turn.
     """
     fmt = _PIL_FORMATS.get(mime_type)
     if fmt is None:
@@ -65,12 +75,15 @@ def _measure_and_shrink(
         logger.debug("Pillow not available; saving image without resize")
         return content_bytes, None, None
 
-    width = height = None
     try:
         img = PILImage.open(io.BytesIO(content_bytes))
         width, height = img.size
-        if max(width, height) <= MAX_IMAGE_DIMENSION:
-            return content_bytes, width, height
+    except Exception as e:  # UnidentifiedImageError, DecompressionBombError
+        raise ValueError(
+            f"Not a valid {mime_type} image ({type(e).__name__})") from e
+    if max(width, height) <= MAX_IMAGE_DIMENSION:
+        return content_bytes, width, height
+    try:
         img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION))
         buf = io.BytesIO()
         img.save(buf, format=fmt)
@@ -147,16 +160,24 @@ async def ingest_image(
 ) -> dict:
     """Save an image to disk, store metadata in DB, associate with discussion.
 
-    Returns image metadata dict.
+    Returns:
+        The image metadata (``image_id``, ``title``, ``filename``, ``width``,
+        ``height``, ``file_size``, ``mime_type``), or ``{"error": message}``
+        when the image is too large, of an unsupported type, or not
+        decodable; callers branch on the ``"error"`` key.
     """
     if len(content_bytes) > MAX_IMAGE_BYTES:
         return {"error": f"Image too large ({len(content_bytes)} bytes). Maximum is {MAX_IMAGE_BYTES} bytes."}
     if mime_type not in SUPPORTED_IMAGE_TYPES:
         return {"error": f"Unsupported image type: {mime_type}"}
 
-    storage_path, width, height, file_size = save_image_file(
-        content_bytes, filename, mime_type,
-    )
+    try:
+        storage_path, width, height, file_size = save_image_file(
+            content_bytes, filename, mime_type,
+        )
+    except ValueError as e:
+        logger.warning("Refused image %r: %s", filename, e)
+        return {"error": str(e)}
 
     if not title:
         title = os.path.splitext(os.path.basename(filename))[0]

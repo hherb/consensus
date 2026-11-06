@@ -2,7 +2,7 @@
 
 _Last updated: 2026-11-06. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices; the `refactor/tools-image-split-61` branch has the
-suite at **3231 passing**. The
+suite at **3288 passing**. The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
@@ -27,7 +27,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3231 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3288 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -230,8 +230,11 @@ as `async def`, never `get_event_loop().run_until_complete`.
    `tests/image_helpers.py` — `patch_image_module` rebinds a name in every
    `consensus.tools_image*` module, so patches survive any split). **URL
    fetching is now one policy in `consensus/http_fetch.py`**
-   (`fetch_capped`: retry/backoff, 4xx permanent, streaming cap, optional
-   `guard` run as an httpx request hook on *every redirect hop*;
+   (`fetch_capped`: retry/backoff — 408/425/429, 5xx other than 501/505 and
+   DNS failures are transient, any other non-2xx permanent — optional total
+   `deadline` (tool calls pass `TOOL_FETCH_DEADLINE`, below the 30 s tool
+   timeout), streaming cap, and a `guard` run as an httpx request hook on
+   *every redirect hop*;
    `redact_url` for logs/messages; `InvalidURL` / `UnsupportedProtocol` /
    `DecodingError` are permanent, never retried) — `tools_document.fetch_url_content`
    wraps it, closing #88 and #89. Image fetch failures are typed
@@ -240,18 +243,27 @@ as `async def`, never `get_event_loop().run_until_complete`.
    CGNAT/multicast; a failed vision call was returned as a description
    **and persisted** as one; SVGs were sent to vision models (providers
    reject them, failing every vision turn); GIF resize re-encoded as JPEG;
-   `_init_image_tools` logged load failures at INFO. Found, filed: **#98**
-   (document and `fetch_webpage` fetches have no SSRF guard — needs a
-   policy decision for desktop/intranet use), **#99** (SVG served
-   same-origin can run script). Lesson: a fetch test that installs no fake
+   `_init_image_tools` logged load failures at INFO. The PR review then
+   closed **#98**: `require_public_host` moved into `http_fetch` and now
+   guards document and `fetch_webpage` fetches too, **in every mode**
+   (decided: desktop/intranet URLs are refused like images; NAT64 and
+   IPv4-compatible IPv6 are unwrapped). `fetch_webpage` moved onto
+   `fetch_capped` (retry, 10 MB cap). Also fixed: `describe_image` sent
+   SVGs to vision models; undecodable raster bytes were stored as images;
+   a DNS failure was reported as an SSRF refusal; a malformed URL escaped
+   the `FetchError` contract; `add_image_url` swallowed errors unlogged.
+   **#99**'s CSP (`IMAGE_SERVE_CSP`) is on the image-serve route; the issue
+   stays open for its route test (needs the `server.py` harness). Lesson: a fetch test that installs no fake
    transport passes while the guard works and hits the real network the
    moment it breaks — every fetch test installs one.
 
 Smaller slices came out of the error-visibility work: `ai_response.py` (from
 `ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).
 
-**Facade guards.** A dropped re-export fails *late*: every consumer imports
-lazily inside function bodies, and `app._init_memory_tools` /
+**Facade guards.** A dropped re-export fails *late*: almost every consumer
+imports lazily inside function bodies (exception: `moderator.py` imports
+`is_vision_capable` / `build_image_content_blocks` at module level, so a
+dropped one of those fails at app import), and `app._init_memory_tools` /
 `_init_document_tools` / `_init_python_tools` / `_init_image_tools` turn an `ImportError` into "feature unavailable" (now
 logged at WARNING; it was INFO before the tools_memory slice, so a broken facade quietly
 disabled the feature). `tests/test_app_discussion_flow_facade.py`,
@@ -383,12 +395,12 @@ likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
-#99 SVG images served same-origin can run script (needs a `server.py`
-route-test harness); #98 no SSRF guard on document / `fetch_webpage`
-fetches; #97 Seatbelt profile does not confine writes; #96 no UI flag when
+#102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
+budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #99 route test for the image-serve CSP (fix landed in PR #100; needs a
+`server.py` route-test harness); #97 Seatbelt profile does not confine writes; #96 no UI flag when
 Python or image tools fail to load; #92 tool error results echo raw
 exception text to the model and UI; #81 persist parse fidelity/notes; #80
-pre-#78 `'(Empty PDF)'` documents. (#88/#89 close with the tools_image PR.)
+pre-#78 `'(Empty PDF)'` documents. (#88/#89/#98 close with the tools_image PR #100.)
 
 ### Roadmap
 

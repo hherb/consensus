@@ -10,7 +10,7 @@ import logging
 from typing import Optional
 
 from ..http_fetch import redact_url
-from ..tools import ToolContext, ToolResult
+from ..tools import TOOL_FETCH_DEADLINE, ToolContext, ToolResult
 from .constants import (
     AVAILABLE_HEADERS_HINT, LIBRARY_SEARCH_LIMIT, MIN_SIMILARITY_THRESHOLD,
     SUMMARY_SNIPPET_CHARS, SUMMARY_STATUS_FAILED, SUMMARY_STATUS_OK,
@@ -77,7 +77,8 @@ async def _doc_add_handler(
 
     try:
         if url:
-            content_bytes, auto_filename, mime_type = await fetch_url_content(url)
+            content_bytes, auto_filename, mime_type = await fetch_url_content(
+                url, deadline=TOOL_FETCH_DEADLINE)
             filename = filename or auto_filename
             source_type = "url"
         else:

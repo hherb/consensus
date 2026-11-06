@@ -14,7 +14,7 @@ from consensus.tools_document import (
     chunking, constants, embedding, handlers, handlers_rag, parsing,
 )
 from consensus.tools_document.provider import create_document_provider
-from consensus.tools import ToolContext
+from consensus.tools import TOOL_FETCH_DEADLINE, ToolContext
 
 from .document_helpers import (
     FakeApp, FakeEmbedClient, embed_all, patch_where_defined,
@@ -127,7 +127,10 @@ class TestDocAddHandler:
     async def test_url_is_fetched_and_recorded_as_the_source(
         self, tmp_db, ctx, monkeypatch,
     ):
-        async def fake_fetch(url):
+        seen = {}
+
+        async def fake_fetch(url, deadline=None):
+            seen["deadline"] = deadline
             return b"# Fetched\n\nbody", "page.html", "text/html"
 
         patch_where_defined(
@@ -139,12 +142,14 @@ class TestDocAddHandler:
         stored = tmp_db.get_document(result.metadata["document_id"])
         assert stored["source_type"] == "url"
         assert stored["source_url"] == "http://x.test/page.html"
+        # Bounded below the tool timeout, so the fetch's own error is seen.
+        assert seen["deadline"] == TOOL_FETCH_DEADLINE
 
     @pytest.mark.asyncio
     async def test_fetch_failure_is_surfaced_as_a_tool_error(
         self, tmp_db, ctx, monkeypatch,
     ):
-        async def boom(url):
+        async def boom(url, deadline=None):
             raise RuntimeError("404 not found")
 
         patch_where_defined(
@@ -161,7 +166,7 @@ class TestDocAddHandler:
         self, tmp_db, ctx, monkeypatch,
     ):
         """Inline text is stripped first, so only a fetched body can be blank."""
-        async def fake_fetch(url):
+        async def fake_fetch(url, deadline=None):
             return b"   \n  ", "blank.txt", "text/plain"
 
         patch_where_defined(

@@ -163,6 +163,7 @@ class FakeHttpResponse:
         self.content = content
         self.headers = {"content-type": content_type, **(headers or {})}
         self.status_code = status_code
+        self.is_success = 200 <= status_code < 300
 
     def raise_for_status(self) -> None:
         """No-op: these tests only exercise successful fetches."""

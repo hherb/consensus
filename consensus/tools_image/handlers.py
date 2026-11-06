@@ -3,17 +3,15 @@
 import json
 import logging
 
-from ..tools import ToolContext, ToolResult
+from ..http_fetch import FetchError, redact_url
+from ..tools import TOOL_FETCH_DEADLINE, ToolContext, ToolResult
+from .constants import VISION_IMAGE_TYPES
 from .fetch import fetch_image_from_url
 from .storage import image_to_base64_url, ingest_image
 from .vision import _call_vision_llm
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Tool handlers
-# ---------------------------------------------------------------------------
 
 async def _describe_image_handler(
     arguments: dict, context: ToolContext,
@@ -31,10 +29,17 @@ async def _describe_image_handler(
     image = db.get_image(int(image_id))
     if not image:
         return ToolResult(content=f"Image {image_id} not found.", is_error=True)
+    if image["mime_type"] not in VISION_IMAGE_TYPES:
+        # Vision providers reject the whole request for such a block.
+        return ToolResult(
+            content=(f"Image {image_id} is {image['mime_type']}, which vision "
+                     "models cannot view."),
+            is_error=True)
 
     try:
         data_url = image_to_base64_url(image["storage_path"], image["mime_type"])
     except Exception as e:
+        logger.warning("Could not load image %s: %s", image_id, e)
         return ToolResult(content=f"Failed to load image: {e}", is_error=True)
 
     try:
@@ -42,7 +47,10 @@ async def _describe_image_handler(
     except Exception as e:
         # Never returned as a description: the AI would read it as fact and
         # the cache below would persist it as the image's description.
-        logger.warning("Vision LLM call failed for image %s: %s", image_id, e)
+        # exc_info: a bug here (not just a provider fault) must keep its
+        # traceback, which the registry would otherwise have logged.
+        logger.warning("Vision LLM call failed for image %s: %s", image_id, e,
+                       exc_info=True)
         return ToolResult(content=f"Vision LLM call failed: {e}",
                           is_error=True)
 
@@ -103,8 +111,16 @@ async def _add_image_url_handler(
         return ToolResult(content="url is required.", is_error=True)
 
     try:
-        content_bytes, filename, mime_type = await fetch_image_from_url(url)
+        content_bytes, filename, mime_type = await fetch_image_from_url(
+            url, deadline=TOOL_FETCH_DEADLINE)
+    except FetchError as e:
+        # Expected: rejected URL, oversize or non-image body, HTTP fault.
+        logger.warning("Image fetch failed for %s: %s", redact_url(url), e)
+        return ToolResult(content=f"Failed to fetch image: {e}", is_error=True)
     except Exception as e:
+        # A bug in the fetch path, not a bad URL: keep the traceback.
+        logger.exception("Image fetch failed unexpectedly for %s",
+                         redact_url(url))
         return ToolResult(content=f"Failed to fetch image: {e}", is_error=True)
 
     result = await ingest_image(

@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 TOOL_EXECUTION_TIMEOUT = 30.0  # seconds
 MAX_TOOL_ITERATIONS = 5
 
+# Budget for a tool's URL fetch, retries and backoff included. Below
+# TOOL_EXECUTION_TIMEOUT so the fetch's own error (what failed, after how
+# many attempts) reaches the model instead of the generic tool timeout.
+TOOL_FETCH_DEADLINE = 20.0  # seconds
+
 # Tools that block on user interaction and bypass the standard execution
 # timeout (e.g. they wait on an approval/answer Future).  Capping these with
 # the generic timeout would cancel the handler mid-wait and orphan the
