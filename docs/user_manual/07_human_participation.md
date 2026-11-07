@@ -84,9 +84,11 @@ After a discussion is concluded, a chat input area remains available. You can ty
 Participants can join or leave mid-discussion:
 
 - **Pause** the discussion first
-- **Add** new participants from the sidebar (they join the turn rotation)
+- **Add** new participants from the sidebar. They join the turn rotation ahead of any devil's advocate, who always speaks last. If the current phase is limited to some participants (for example a moderator-only extraction step), newcomers start speaking at the next phase.
 - **Remove** participants by clicking the remove button on their card in the sidebar
 - **Resume** to continue
+
+Changes are saved with the discussion, so they survive closing and reloading it. A concluded discussion's members cannot be changed — reopen it first.
 
 ## Tips for Effective Human Participation
 

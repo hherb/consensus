@@ -1,9 +1,8 @@
 """Characterization tests for participant roles (devil's advocate handling).
 
-Covers ``set_participant_role``, ``auto_assign_da_tools``,
-``reorder_da_in_turn_order`` and the devil's-advocate branch of
-``add_to_discussion`` — the net built before these moved out of
-``app_discussion_setup`` (issue #61).
+Covers ``set_participant_role``, ``auto_assign_da_tools`` and the
+devil's-advocate branch of ``add_to_discussion`` — the net built before
+these moved out of ``app_discussion_setup`` (issue #61).
 """
 
 import pytest
@@ -11,7 +10,6 @@ import pytest
 from consensus.app_discussion_roles import (
     _DA_TOOL_NAMES,
     auto_assign_da_tools,
-    reorder_da_in_turn_order,
     set_participant_role,
 )
 from consensus.app_discussion_setup import add_to_discussion
@@ -127,33 +125,6 @@ class TestAutoAssignDaTools:
         auto_assign_da_tools(tmp_db, sample_human_entity)
         assert tmp_db.get_entity_tool(
             sample_human_entity, "web_search")["access_mode"] == "shared"
-
-
-class TestReorderDaTurnOrder:
-    def test_da_moved_to_end(self):
-        disc = Discussion(turn_order=[1, 2, 3], current_turn_index=0)
-        disc.member_roles = {1: "standard", 2: "devils_advocate", 3: "standard"}
-        reorder_da_in_turn_order(disc)
-        assert disc.turn_order[-1] == 2
-
-    def test_no_da_is_noop(self):
-        disc = Discussion(turn_order=[1, 2, 3], current_turn_index=0)
-        disc.member_roles = {1: "standard", 2: "standard", 3: "standard"}
-        reorder_da_in_turn_order(disc)
-        assert disc.turn_order == [1, 2, 3]
-
-    def test_turn_index_kept_in_range(self):
-        disc = Discussion(turn_order=[1, 2, 3], current_turn_index=2)
-        disc.member_roles = {1: DA, 2: "standard", 3: "standard"}
-        reorder_da_in_turn_order(disc)
-        assert disc.turn_order == [2, 3, 1]
-        assert 0 <= disc.current_turn_index < len(disc.turn_order)
-
-    def test_da_outside_turn_order_is_noop(self):
-        disc = Discussion(turn_order=[2, 3], current_turn_index=0)
-        disc.member_roles = {1: DA, 2: "standard", 3: "standard"}
-        reorder_da_in_turn_order(disc)
-        assert disc.turn_order == [2, 3]
 
 
 class TestAddToDiscussionDevilsAdvocate:

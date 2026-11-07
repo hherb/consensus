@@ -13,6 +13,7 @@ from .app_discussion_roles import (
     auto_assign_da_tools,
     revert_other_devils_advocates,
 )
+from .app_discussion_rotation import LIVE_STATUSES, update_rotation
 from .database import Database
 from .methods import get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole
@@ -52,16 +53,14 @@ def add_to_discussion(
         auto_assign_da_tools(db, entity_id)
 
     # Persist to DB if discussion is already started
-    if discussion.id and discussion.status in ("active", "paused"):
-        next_pos = len(discussion.turn_order)
+    if discussion.id and discussion.status in LIVE_STATUSES:
         db.add_discussion_member(
             discussion.id, entity_id,
             is_moderator=is_moderator,
             also_participant=True,
-            turn_position=next_pos,
             participant_role=participant_role,
         )
-        discussion.turn_order.append(entity_id)
+        update_rotation(discussion, db, add=entity_id)
 
         sys_msg = Message(
             entity_id=entity_id, entity_name=entity.name,
@@ -88,7 +87,7 @@ def remove_from_discussion(
     Returns ``True`` on success, or a dict with an ``"error"`` key.
     """
     # Guard: cannot remove moderator or current speaker mid-discussion
-    if discussion.id and discussion.status in ("active", "paused"):
+    if discussion.id and discussion.status in LIVE_STATUSES:
         if entity_id == discussion.moderator_id:
             return {"error": "Cannot remove the moderator"}
         current = discussion.current_speaker
@@ -97,27 +96,9 @@ def remove_from_discussion(
             return {"error": "Cannot remove the current speaker"}
 
     entity = discussion.get_entity(entity_id)
-    entity_name = entity.name if entity else str(entity_id)
-
-    # Adjust current_turn_index before removing from turn_order
-    if entity_id in discussion.turn_order:
-        removed_pos = discussion.turn_order.index(entity_id)
-        discussion.turn_order.remove(entity_id)
-        if removed_pos < discussion.current_turn_index:
-            discussion.current_turn_index -= 1
-        if discussion.turn_order:
-            discussion.current_turn_index = (
-                discussion.current_turn_index
-                % len(discussion.turn_order)
-            )
-        else:
-            discussion.current_turn_index = 0
-        # The stamped turn index (see ``stamp_turn_index``) is a position
-        # in the order it was recorded against — a shrunken order makes
-        # it stale.  Drop it so a reload falls back to the id-based
-        # last-speaker heuristic.
-        discussion.method_state.pop("_turn_index", None)
-        discussion.method_state.pop("_turn_index_turn", None)
+    if not entity:
+        return {"error": "Entity not in discussion"}
+    entity_name = entity.name
 
     discussion.entities = [
         e for e in discussion.entities if e.id != entity_id
@@ -127,12 +108,9 @@ def remove_from_discussion(
         discussion.moderator_id = None
 
     # Persist to DB if discussion is already started
-    if discussion.id and discussion.status in ("active", "paused"):
+    if discussion.id and discussion.status in LIVE_STATUSES:
         db.remove_discussion_member(discussion.id, entity_id)
-        db.update_discussion(
-            discussion.id,
-            method_state=serialize_method_state(discussion.method_state),
-        )
+        update_rotation(discussion, db, remove=entity_id)
 
         sys_msg = Message(
             entity_id=entity_id, entity_name=entity_name,

@@ -448,19 +448,22 @@ class TestLiveDiscussionManagement:
 
 class TestTurnIndexAdjustment:
     def test_removal_adjusts_turn_index(self, app):
-        """Removing entity before current index should decrement the index."""
+        """Removing an entity before the current index keeps the speaker."""
+        mod = app.db.add_entity("M", "human", "#333")
         e1 = app.db.add_entity("A", "human", "#000")
         e2 = app.db.add_entity("B", "human", "#111")
         e3 = app.db.add_entity("C", "human", "#222")
-        app.add_to_discussion(e1, is_moderator=True)
-        app.add_to_discussion(e2)
-        app.add_to_discussion(e3)
-        app.discussion.turn_order = [e1, e2, e3]
+        app.set_topic("t")
+        app.add_to_discussion(mod, is_moderator=True)
+        for eid in (e1, e2, e3):
+            app.add_to_discussion(eid)
+        app.start_discussion()
+        assert app.discussion.turn_order == [e1, e2, e3]
         app.discussion.current_turn_index = 2  # pointing to e3
 
         app.remove_from_discussion(e1)  # remove before current index
-        # current_turn_index should have decremented
         assert app.discussion.current_turn_index == 1
+        assert app.discussion.current_speaker.id == e3
 
 
 # --- BYOK key resolution ---

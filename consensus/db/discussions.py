@@ -155,6 +155,21 @@ class DiscussionsMixin:
             (role, discussion_id, entity_id),
         )
 
+    def set_member_turn_positions(self, discussion_id: int,
+                                  order: list[int]) -> None:
+        """Set each member's ``turn_position`` to its index in ``order``.
+
+        Written in one transaction so a reload never sees a half-applied
+        rotation.  Members not in ``order`` are left untouched.
+        """
+        with self._lock:
+            self.conn.executemany(
+                "UPDATE discussion_members SET turn_position=? "
+                "WHERE discussion_id=? AND entity_id=?",
+                [(pos, discussion_id, eid) for pos, eid in enumerate(order)],
+            )
+            self.conn.commit()
+
     def remove_discussion_member(self, discussion_id: int,
                                  entity_id: int) -> None:
         """Remove a member from a discussion."""
