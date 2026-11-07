@@ -18,6 +18,11 @@ from .models import Discussion
 
 DEVILS_ADVOCATE = "devils_advocate"
 
+# Only a live discussion persists rotation changes.  Before start there is
+# no record; a concluded one's record is history, and edits made to it on
+# the setup screen are input for the next ``start_discussion``.
+LIVE_STATUSES = ("active", "paused")
+
 
 def devils_advocate_last(
     order: list[int], member_roles: dict[int, str],
@@ -55,12 +60,14 @@ def update_rotation(
     ``remove`` leaves both orders; ``add`` joins the roster at once but the
     current phase only when that phase runs the whole roster — a narrowed
     phase (moderator-only, red team, ...) was chosen by the method, so the
-    joiner waits for the next phase transition.  The devil's advocate is
-    kept last, whose turn it is does not change, and the result is
-    persisted.  No-op before the discussion starts: ``start_discussion``
+    joiner waits until the method next derives the order (normally the
+    next phase transition).  The devil's advocate is kept last, the turn
+    stays with its holder (or passes on if the holder is removed, see
+    :func:`carry_turn_index`), and the result is persisted.  No-op unless
+    the discussion is live (``LIVE_STATUSES``): ``start_discussion``
     builds the rotation from scratch.
     """
-    if not discussion.id:
+    if not discussion.id or discussion.status not in LIVE_STATUSES:
         return
     roster = method_roster(discussion)
     old_order = list(discussion.turn_order)
@@ -73,15 +80,19 @@ def update_rotation(
         return devils_advocate_last(order, discussion.member_roles)
 
     discussion.base_turn_order = changed(roster, True)
-    discussion.turn_order = changed(old_order, joins_phase)
+    # Removing a narrowed phase's only speaker (possible while paused) must
+    # not leave it without one; fall back to the roster as
+    # ``apply_method_turn_order`` does for an empty method order.
+    discussion.turn_order = (changed(old_order, joins_phase)
+                             or list(discussion.base_turn_order))
     discussion.current_turn_index = carry_turn_index(
         old_order, discussion.turn_order, discussion.current_turn_index)
 
     state = discussion.method_state
     if "_turn_order" in state:
         state["_turn_order"] = list(discussion.turn_order)
-    # The stamp is a position in the order; keep it pointing at the same
-    # member so a reload still restores the live index (issue #19).
+    # The stamp is a position in the order; re-point it at the live index
+    # in the new order so a reload still restores it (issue #19).
     if "_turn_index" in state:
         state["_turn_index"] = discussion.current_turn_index
 

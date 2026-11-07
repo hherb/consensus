@@ -1,8 +1,8 @@
 """Characterization tests for participant roles (devil's advocate handling).
 
 Covers ``set_participant_role``, ``auto_assign_da_tools`` and the
-devil's-advocate branch of ``add_to_discussion`` — the net built before these moved out of
-``app_discussion_setup`` (issue #61).
+devil's-advocate branch of ``add_to_discussion`` — the net built before
+these moved out of ``app_discussion_setup`` (issue #61).
 """
 
 import pytest

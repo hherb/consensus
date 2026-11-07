@@ -13,18 +13,12 @@ from .app_discussion_roles import (
     auto_assign_da_tools,
     revert_other_devils_advocates,
 )
-from .app_discussion_rotation import update_rotation
+from .app_discussion_rotation import LIVE_STATUSES, update_rotation
 from .database import Database
 from .methods import get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole
 from .moderator import Moderator
 from .structured_output import _validate_structured_output_support
-
-# A concluded discussion's roster is part of its record; changing it must go
-# through reopen, which restores a live status that persists the change.
-_CONCLUDED_MEMBERSHIP_ERROR = (
-    "This discussion has concluded. Reopen it to change its members."
-)
 
 
 def add_to_discussion(
@@ -39,8 +33,6 @@ def add_to_discussion(
 
     Returns the entity dict on success, or a dict with an ``"error"`` key.
     """
-    if discussion.status == "concluded":
-        return {"error": _CONCLUDED_MEMBERSHIP_ERROR}
     row = db.get_entity(entity_id)
     if not row:
         return {"error": "Entity not found"}
@@ -61,7 +53,7 @@ def add_to_discussion(
         auto_assign_da_tools(db, entity_id)
 
     # Persist to DB if discussion is already started
-    if discussion.id and discussion.status in ("active", "paused"):
+    if discussion.id and discussion.status in LIVE_STATUSES:
         db.add_discussion_member(
             discussion.id, entity_id,
             is_moderator=is_moderator,
@@ -94,10 +86,8 @@ def remove_from_discussion(
 
     Returns ``True`` on success, or a dict with an ``"error"`` key.
     """
-    if discussion.status == "concluded":
-        return {"error": _CONCLUDED_MEMBERSHIP_ERROR}
     # Guard: cannot remove moderator or current speaker mid-discussion
-    if discussion.id and discussion.status in ("active", "paused"):
+    if discussion.id and discussion.status in LIVE_STATUSES:
         if entity_id == discussion.moderator_id:
             return {"error": "Cannot remove the moderator"}
         current = discussion.current_speaker
@@ -106,7 +96,9 @@ def remove_from_discussion(
             return {"error": "Cannot remove the current speaker"}
 
     entity = discussion.get_entity(entity_id)
-    entity_name = entity.name if entity else str(entity_id)
+    if not entity:
+        return {"error": "Entity not in discussion"}
+    entity_name = entity.name
 
     discussion.entities = [
         e for e in discussion.entities if e.id != entity_id
@@ -116,7 +108,7 @@ def remove_from_discussion(
         discussion.moderator_id = None
 
     # Persist to DB if discussion is already started
-    if discussion.id and discussion.status in ("active", "paused"):
+    if discussion.id and discussion.status in LIVE_STATUSES:
         db.remove_discussion_member(discussion.id, entity_id)
         update_rotation(discussion, db, remove=entity_id)
 

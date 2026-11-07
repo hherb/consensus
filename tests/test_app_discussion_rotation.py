@@ -141,7 +141,61 @@ class TestMembershipChanges:
 
         add_to_discussion(disc, tmp_db, c)
         assert disc.turn_order == [mod]
-        assert _reload(tmp_db, disc).turn_order == [mod]
+        restored = _reload(tmp_db, disc)
+        assert restored.turn_order == [mod]
+        # The joiner is on the roster, so the next phase seats them.
+        assert restored.base_turn_order == [*parts, c]
+
+    def test_leaver_drops_out_of_a_narrowed_phase(self, tmp_db):
+        """The recorded phase order must lose the leaver, or a reload
+        discards it and widens the phase to the whole roster."""
+        disc, _mod, (a, b, c) = _start(tmp_db, n=3)
+        disc.turn_order = [a, b]
+        disc.method_state["_turn_order"] = [a, b]
+        disc.current_turn_index = 0
+
+        remove_from_discussion(disc, tmp_db, b)
+
+        restored = _reload(tmp_db, disc)
+        assert restored.turn_order == [a]
+        assert restored.base_turn_order == [a, c]
+
+    def test_emptied_phase_falls_back_to_roster(self, tmp_db):
+        """Removing a narrowed phase's only speaker (while paused) must not
+        leave the discussion without one."""
+        disc, _mod, (a, b) = _start(tmp_db)
+        disc.status = "paused"
+        disc.turn_order = [a]
+        disc.method_state["_turn_order"] = [a]
+        disc.current_turn_index = 0
+
+        assert remove_from_discussion(disc, tmp_db, a) is True
+
+        assert disc.turn_order == [b]
+        assert disc.current_speaker.id == b
+        assert disc.method_state["_turn_order"] == [b]
+        assert _reload(tmp_db, disc).turn_order == [b]
+
+    def test_removing_a_non_member_is_an_error(self, tmp_db):
+        disc, _mod, (a, b) = _start(tmp_db)
+        stranger = tmp_db.add_entity("S", "human", "#333333")
+        n_messages = len(disc.messages)
+
+        assert "error" in remove_from_discussion(disc, tmp_db, stranger)
+        assert len(disc.messages) == n_messages
+        assert disc.turn_order == [a, b]
+
+    def test_removal_keeps_fresh_stamp_on_its_member(self, tmp_db):
+        """A fresh ``_turn_index`` stamp (issue #19) survives a removal."""
+        disc, _mod, (a, b, c) = _start(tmp_db, n=3)
+        disc.current_turn_index = 1  # b's turn
+        disc.method_state["_turn_index"] = 1
+        disc.method_state["_turn_index_turn"] = disc.turn_number
+
+        remove_from_discussion(disc, tmp_db, a)
+
+        assert disc.current_speaker.id == b
+        assert _reload(tmp_db, disc).current_speaker.id == b
 
     @pytest.mark.asyncio
     async def test_next_phase_uses_changed_roster(self, tmp_db):
@@ -163,15 +217,22 @@ class TestMembershipChanges:
         assert disc.method_state["current_phase"] == "stress_test"
         assert disc.turn_order == [a, c]
 
-    def test_concluded_discussion_rejects_membership_changes(self, tmp_db):
-        disc, _mod, (a, _b) = _start(tmp_db)
+    def test_concluded_record_is_not_rewritten(self, tmp_db):
+        """Setup-screen edits to a concluded discussion still held in memory
+        are input for the next start; they must not touch its record."""
+        disc, _mod, (a, b) = _start(tmp_db)
         disc.status = "concluded"
+        tmp_db.update_discussion(disc.id, status="concluded")
         c = tmp_db.add_entity("C", "human", "#222222")
 
-        assert "error" in add_to_discussion(disc, tmp_db, c)
-        assert "error" in remove_from_discussion(disc, tmp_db, a)
-        assert disc.get_entity(c) is None
-        assert disc.get_entity(a) is not None
+        assert "error" not in set_participant_role(disc, tmp_db, a, DA)
+        assert "error" not in add_to_discussion(disc, tmp_db, c)
+        assert remove_from_discussion(disc, tmp_db, b) is True
+
+        assert {e.id for e in disc.entities} >= {a, c}
+        restored = _reload(tmp_db, disc)
+        assert restored.base_turn_order == [a, b]
+        assert restored.member_roles[a] != DA
 
 
 class TestRoleChanges:
@@ -185,7 +246,7 @@ class TestRoleChanges:
         assert _reload(tmp_db, disc).turn_order == [b, a]
 
     def test_turn_index_stamp_follows_reorder(self, tmp_db):
-        """The stamp is a position: it must move with the member it names."""
+        """The stamp is re-pointed at the live index in the new order."""
         disc, _mod, (a, b) = _start(tmp_db)
         disc.current_turn_index = 1  # b's turn
         disc.method_state["_turn_index"] = 1

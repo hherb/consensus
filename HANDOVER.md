@@ -2,7 +2,7 @@
 
 _Last updated: 2026-11-07. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices and the #104 rotation fix (`fix/rotation-sync-104`,
-suite at **3316 passing**). The
+suite at **3320 passing**). The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
@@ -27,7 +27,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3316 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3320 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -188,15 +188,22 @@ the only code that changes the rotation of a started discussion;
 `add_to_discussion`, `remove_from_discussion` and `set_participant_role` all
 route through it (`reorder_da_in_turn_order` is gone). It keeps four copies in
 step — `turn_order`, `base_turn_order`, `method_state` `_turn_order` /
-`_turn_index`, and `discussion_members.turn_position` (one transaction via
-`db.set_member_turn_positions`). Rules: the devil's advocate is last in both
-orders; a reorder never changes whose turn it is (`carry_turn_index`; a
-departed holder passes the turn to the next remaining member); the
-`_turn_index` stamp is *translated*, not dropped, so a reload still restores
-a #19 mid-round reset; a joiner enters the current phase only when that phase
-runs the whole roster — a narrowed phase (moderator-only, red team) is left
-alone and the joiner speaks from the next transition. Add/remove on a
-**concluded** discussion is rejected (reopen first). Tests:
+`_turn_index`, and `discussion_members.turn_position` (the positions in one
+transaction via `db.set_member_turn_positions`; the member row and
+`method_state` are separate commits — #107). Rules: the
+devil's advocate is last in both orders; a reorder never changes whose turn
+it is (`carry_turn_index`; a departed holder passes the turn to the next
+remaining member); the `_turn_index` stamp is re-pointed at the carried live
+index, not dropped, so a reload still restores a #19 mid-round reset; a
+joiner enters the current phase only when that phase runs the whole roster —
+a narrowed phase (moderator-only, red team) is left alone until the method
+next derives the order (normally the next transition); a removal that would
+empty the current phase falls back to the roster, as
+`apply_method_turn_order` does. Only a **live** (active/paused) discussion
+persists any of this (`LIVE_STATUSES`): edits to a concluded discussion still
+in memory come from the setup screen after a refresh and are input for the
+next `start_discussion`, so they stay in memory and never rewrite the
+concluded record. Removing a non-member is an error. Tests:
 `tests/test_app_discussion_rotation.py` (each rule mutation-checked).
 
 ## Open work
