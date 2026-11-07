@@ -15,11 +15,11 @@ import pytest
 from consensus.ai_client import AIClient, AIResponse
 from consensus.evaluation import scorer
 from consensus.evaluation.eval_db import EvalDatabase
+from consensus.evaluation.report import print_report
 from consensus.evaluation.scorer import (
     llm_judge_run_from_db,
     llm_judge_score,
     normalise,
-    print_report,
     score_all,
     score_diagnostic_accuracy,
     score_differential_quality,

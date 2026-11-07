@@ -382,7 +382,7 @@ ConsensusApp — orchestrator, state management, event emitter
     ├── PythonExec (tools_python/) — sandboxed Python code execution + package install
     ├── AuthManager (auth.py) — password + OAuth authentication (multi-user mode)
     ├── Migrator — file-based SQL migration runner
-    └── Evaluation — ablation study framework (cases, runner, scorer)
+    └── Evaluation — ablation study framework (cases, runner, scorer, report)
 
 MCP server (consensus-mcp):
     ConsensusMCPServer (mcp_server.py)
