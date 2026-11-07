@@ -262,9 +262,10 @@ as `async def`, never `get_event_loop().run_until_complete`.
    none of the 124 importing modules changed; guard is
    `tests/test_methods_base_facade.py`. Import new code from either.
 8. `app_discussion_setup.py` (509 → 426) → participant-role code
-   (`set_participant_role`, `revert_other_devils_advocates`,
-   `auto_assign_da_tools`, `reorder_da_in_turn_order`, `_DA_TOOL_NAMES`)
-   moved verbatim to `app_discussion_roles.py` (102, 100% covered by
+   (`set_participant_role`, `auto_assign_da_tools`,
+   `reorder_da_in_turn_order`, `_DA_TOOL_NAMES`) moved verbatim to
+   `app_discussion_roles.py`, plus `revert_other_devils_advocates`, newly
+   extracted from the demotion loop both callers shared (102, 100% covered by
    `tests/test_app_discussion_roles.py`; it was 0%). No re-export — callers
    import the defining module. Defect fixed: a devil's advocate added
    mid-discussion demoted the old one in memory only, so a reload restored
