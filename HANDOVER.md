@@ -1,8 +1,8 @@
 # HANDOVER
 
 _Last updated: 2026-11-07. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices; the `refactor/discussion-setup-split-61` branch has the
-suite at **3305 passing**. The
+the merged #61 slices and the #104 rotation fix (`fix/rotation-sync-104`,
+suite at **3316 passing**). The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
@@ -27,7 +27,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3305 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3316 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -181,6 +181,24 @@ global Python. The `dev` group (`pytest`, `pytest-asyncio` 1.x, `ruff`) fixes
 that. pytest-asyncio 1.x leaves no current event loop, so write async tests
 as `async def`, never `get_event_loop().run_until_complete`.
 
+## Speaking rotation after start (#104 — keep this contract)
+
+`app_discussion_rotation.update_rotation(discussion, db, add=, remove=)` is
+the only code that changes the rotation of a started discussion;
+`add_to_discussion`, `remove_from_discussion` and `set_participant_role` all
+route through it (`reorder_da_in_turn_order` is gone). It keeps four copies in
+step — `turn_order`, `base_turn_order`, `method_state` `_turn_order` /
+`_turn_index`, and `discussion_members.turn_position` (one transaction via
+`db.set_member_turn_positions`). Rules: the devil's advocate is last in both
+orders; a reorder never changes whose turn it is (`carry_turn_index`; a
+departed holder passes the turn to the next remaining member); the
+`_turn_index` stamp is *translated*, not dropped, so a reload still restores
+a #19 mid-round reset; a joiner enters the current phase only when that phase
+runs the whole roster — a narrowed phase (moderator-only, red team) is left
+alone and the joiner speaks from the next transition. Add/remove on a
+**concluded** discussion is rejected (reopen first). Tests:
+`tests/test_app_discussion_rotation.py` (each rule mutation-checked).
+
 ## Open work
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
@@ -226,36 +244,18 @@ as `async def`, never `get_event_loop().run_until_complete`.
    tightening is **#97**.
 6. `tools_image.py` (643 after fixes) → `tools_image/` (constants, storage,
    fetch, vision, schemas, handlers, provider; largest 190). Coverage 38% →
-   100% first (`tests/test_tools_image.py`, fakes in
-   `tests/image_helpers.py` — `patch_image_module` rebinds a name in every
-   `consensus.tools_image*` module, so patches survive any split). **URL
-   fetching is now one policy in `consensus/http_fetch.py`**
-   (`fetch_capped`: retry/backoff — 408/425/429, 5xx other than 501/505 and
-   DNS failures are transient, any other non-2xx permanent — optional total
-   `deadline` (tool calls pass `TOOL_FETCH_DEADLINE`, below the 30 s tool
-   timeout), streaming cap, and a `guard` run as an httpx request hook on
-   *every redirect hop*;
-   `redact_url` for logs/messages; `InvalidURL` / `UnsupportedProtocol` /
-   `DecodingError` are permanent, never retried) — `tools_document.fetch_url_content`
-   wraps it, closing #88 and #89. Image fetch failures are typed
-   `FetchError`, not `ValueError`. Defects fixed: the SSRF guard checked
-   only the first URL (a redirect reached 169.254.169.254) and passed
-   CGNAT/multicast; a failed vision call was returned as a description
-   **and persisted** as one; SVGs were sent to vision models (providers
-   reject them, failing every vision turn); GIF resize re-encoded as JPEG;
-   `_init_image_tools` logged load failures at INFO. The PR review then
-   closed **#98**: `require_public_host` moved into `http_fetch` and now
-   guards document and `fetch_webpage` fetches too, **in every mode**
-   (decided: desktop/intranet URLs are refused like images; NAT64 and
-   IPv4-compatible IPv6 are unwrapped). `fetch_webpage` moved onto
-   `fetch_capped` (retry, 10 MB cap). Also fixed: `describe_image` sent
-   SVGs to vision models; undecodable raster bytes were stored as images;
-   a DNS failure was reported as an SSRF refusal; a malformed URL escaped
-   the `FetchError` contract; `add_image_url` swallowed errors unlogged.
-   **#99**'s CSP (`IMAGE_SERVE_CSP`) is on the image-serve route; the issue
-   stays open for its route test (needs the `server.py` harness). Lesson: a fetch test that installs no fake
-   transport passes while the guard works and hits the real network the
-   moment it breaks — every fetch test installs one.
+   100% first (`tests/test_tools_image.py`; `tests/image_helpers.py`
+   `patch_image_module` rebinds a name in every `consensus.tools_image*`
+   module). **URL fetching is one policy in `consensus/http_fetch.py`**
+   (`fetch_capped`: retry/backoff on transient faults, optional `deadline`,
+   streaming cap, a `guard` on *every redirect hop*; `redact_url` for logs)
+   shared by document, image and `fetch_webpage` fetches — closed #88/#89.
+   `require_public_host` (SSRF guard) runs **in every mode**, desktop too
+   (#98). Defects fixed: redirect-hop SSRF, failed vision calls persisted as
+   descriptions, SVGs sent to vision models, GIF→JPEG resize, INFO-level load
+   failures. **#99**'s CSP is live; the issue stays open for its route test.
+   Lesson: every fetch test installs a fake transport — without one it passes
+   while the guard works and hits the real network the moment it breaks.
 7. `methods/base.py` (517 → 469) → `LINEAR_NEXT`, `Phase`,
    `ProcessedResponse`, `OutputToolSpec` moved verbatim to
    `methods/phase_types.py`. `base.py` **re-exports them** (`__all__`), so
@@ -269,7 +269,8 @@ as `async def`, never `get_event_loop().run_until_complete`.
    `tests/test_app_discussion_roles.py`; it was 0%). No re-export — callers
    import the defining module. Defect fixed: a devil's advocate added
    mid-discussion demoted the old one in memory only, so a reload restored
-   two. Turn-order desync on mid-discussion roster/role changes is **#104**.
+   two. Turn-order desync on mid-discussion roster/role changes was **#104**
+   (fixed — contract below).
 
 Smaller slices came out of the error-visibility work: `ai_response.py` (from
 `ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).
@@ -407,9 +408,7 @@ likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
-#104 mid-discussion add/remove/role changes desync `base_turn_order` and
-persisted `turn_position` (a removed member returns at the next phase; a
-late joiner is skipped) — a behaviour fix, worth doing before more #61; #102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
+#102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
 budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #99 route test for the image-serve CSP (fix landed in PR #100; needs a
 `server.py` route-test harness); #97 Seatbelt profile does not confine writes; #96 no UI flag when
 Python or image tools fail to load; #92 tool error results echo raw

@@ -5,6 +5,7 @@ functions mutate a Discussion in-place and write to the database directly;
 the ConsensusApp wrapper methods handle notification.
 """
 
+from .app_discussion_rotation import update_rotation
 from .database import Database
 from .models import Discussion
 
@@ -47,9 +48,8 @@ def set_participant_role(
     if participant_role == "devils_advocate":
         auto_assign_da_tools(db, entity_id)
 
-    # Move DA to end of turn order (or restore normal position)
-    if entity_id in discussion.turn_order:
-        reorder_da_in_turn_order(discussion)
+    # Keep the DA last in every copy of the rotation (issue #104)
+    update_rotation(discussion, db)
 
     # Persist role to DB if discussion is active
     if discussion.id:
@@ -81,22 +81,3 @@ def auto_assign_da_tools(db: Database, entity_id: int) -> None:
         if not existing:
             db.add_entity_tool(entity_id, tool_name, "private")
 
-
-def reorder_da_in_turn_order(discussion: Discussion) -> None:
-    """Ensure devil's advocate entity is last in turn order."""
-    da_id = None
-    for eid, role in discussion.member_roles.items():
-        if role == "devils_advocate" and eid in discussion.turn_order:
-            da_id = eid
-            break
-    if da_id is None:
-        return
-    if da_id in discussion.turn_order:
-        discussion.turn_order.remove(da_id)
-        discussion.turn_order.append(da_id)
-        # Keep current_turn_index valid
-        if discussion.turn_order:
-            discussion.current_turn_index = (
-                discussion.current_turn_index
-                % len(discussion.turn_order)
-            )

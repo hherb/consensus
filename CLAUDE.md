@@ -46,6 +46,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
     ├── app_entities.py — entity CRUD
     ├── app_discussion_setup.py — discussion creation & configuration
     ├── app_discussion_roles.py — participant roles (devil's advocate)
+    ├── app_discussion_rotation.py — post-start speaking rotation (#104)
     ├── app_discussion_flow/ — turn flow package (submissions, turns,
     │     method_switch, conclusion, helpers)
     ├── app_discussion_state.py — discussion state management
