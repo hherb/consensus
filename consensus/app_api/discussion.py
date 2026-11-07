@@ -7,7 +7,7 @@ is ``ConsensusApp``, which owns all state.
 import logging
 
 from ..models import EntityType
-from .. import app_discussion_flow, app_discussion_setup
+from .. import app_discussion_flow, app_discussion_roles, app_discussion_setup
 
 
 logger = logging.getLogger(__name__)
@@ -62,19 +62,11 @@ class DiscussionMixin:
     def set_participant_role(self, entity_id: int,
                              participant_role: str = "standard") -> dict:
         """Set or change a participant's role (e.g. devils_advocate)."""
-        result = app_discussion_setup.set_participant_role(
+        result = app_discussion_roles.set_participant_role(
             self.discussion, self.db, entity_id, participant_role,
         )
         self._notify()
         return result
-
-    def _auto_assign_da_tools(self, entity_id: int) -> None:
-        """Assign web search and memory tools to a devil's advocate entity."""
-        app_discussion_setup.auto_assign_da_tools(self.db, entity_id)
-
-    def _reorder_da_in_turn_order(self) -> None:
-        """Ensure devil's advocate entity is last in turn order."""
-        app_discussion_setup.reorder_da_in_turn_order(self.discussion)
 
     def set_discussion_method(self, method_name: str) -> dict:
         """Set the discussion method (e.g. 'ach', 'belief_diffusion').

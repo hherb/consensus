@@ -15,6 +15,8 @@ to keep file sizes manageable:
 - `app_providers.py` — provider management
 - `app_entities.py` — entity CRUD
 - `app_discussion_setup.py` — discussion creation & configuration
+- `app_discussion_roles.py` — participant roles: single devil's advocate,
+  its auto-assigned tools and last place in the turn order
 - `app_discussion_flow/` — turn flow package: `submissions.py` (human and
   moderator message submission), `turns.py` (AI generation, turn
   completion, reassignment), `method_switch.py` (the Triage handoff and

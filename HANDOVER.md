@@ -1,8 +1,8 @@
 # HANDOVER
 
-_Last updated: 2026-11-06. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices; the `refactor/methods-base-split-61` branch has the
-suite at **3290 passing**. The
+_Last updated: 2026-11-07. `main` is at **v2.0.0** (released 2026-07-20) plus
+the merged #61 slices; the `refactor/discussion-setup-split-61` branch has the
+suite at **3305 passing**. The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
@@ -10,7 +10,7 @@ the tools_document failure-visibility work (#78) — contracts for both
 summarised below. The one open structural issue is **#61** (modules over the
 ~500-line golden rule): `app_discussion_flow`, `tools_document`, `app.py`
 (→ `app_api/` mixins), `tools_memory`, `tools_python`, `tools_image` and
-`methods/base.py` are split; nine modules remain over the limit. **#86** (lint gate) is done: zero `ruff --select F` findings in
+`methods/base.py` and `app_discussion_setup.py` are split; eight modules remain over the limit. **#86** (lint gate) is done: zero `ruff --select F` findings in
 `consensus/`, enforced by `tests/test_lint.py`._
 
 This file briefs the next session on what is done, what is still open, and the
@@ -27,7 +27,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3290 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3305 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -185,7 +185,7 @@ as `async def`, never `get_event_loop().run_until_complete`.
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-**Done — seven slices** (detail in git history; one PR each):
+**Done — eight slices** (detail in git history; one PR each):
 
 1. `app_discussion_flow.py` (1254) → `app_discussion_flow/`. **Watch
    `turns.py` (499)**: the next addition crosses the limit — split then.
@@ -261,6 +261,15 @@ as `async def`, never `get_event_loop().run_until_complete`.
    `methods/phase_types.py`. `base.py` **re-exports them** (`__all__`), so
    none of the 124 importing modules changed; guard is
    `tests/test_methods_base_facade.py`. Import new code from either.
+8. `app_discussion_setup.py` (509 → 426) → participant-role code
+   (`set_participant_role`, `auto_assign_da_tools`,
+   `reorder_da_in_turn_order`, `_DA_TOOL_NAMES`) moved verbatim to
+   `app_discussion_roles.py`, plus `revert_other_devils_advocates`, newly
+   extracted from the demotion loop both callers shared (102, 100% covered by
+   `tests/test_app_discussion_roles.py`; it was 0%). No re-export — callers
+   import the defining module. Defect fixed: a devil's advocate added
+   mid-discussion demoted the old one in memory only, so a reload restored
+   two. Turn-order desync on mid-discussion roster/role changes is **#104**.
 
 Smaller slices came out of the error-visibility work: `ai_response.py` (from
 `ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).
@@ -290,17 +299,17 @@ call sites. Keep them in step when the public API changes.
 | 636 | 35% | `consensus/desktop.py` |
 | 589 | **0%** | `consensus/evaluation/eval_db.py` |
 | 529 | **0%** | `consensus/evaluation/scorer.py` |
-| 509 | 78% | `consensus/app_discussion_setup.py` |
 
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next-best target: `consensus/app_discussion_setup.py`** (509, 78%) —
-only 9 lines over; lift coverage of the moved part first, then move one
-cohesive helper group out verbatim.
+**Next-best target: `consensus/evaluation/scorer.py`** (529, 0%) — only
+29 over, and it splits cleanly: pure scoring functions (`normalise`,
+`score_diagnostic_accuracy`, `score_differential_quality`, `score_run`)
+plus a ~200-line CLI report (`print_report`, `main`) that can move to its
+own module. Characterize the pure functions first (cheap — no I/O).
 `moderator.py` and `auth.py` are bigger payoffs but are a single class and a
 security-critical module at ~50–60% — build their nets before moving a line.
-`evaluation/` is entirely untested.
 
 **`server.py` is the awkward one — read this before picking it.** It is a
 single 1170-line `launch_web()` whose middleware and ~35 handlers are all
@@ -398,7 +407,9 @@ likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
-#102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
+#104 mid-discussion add/remove/role changes desync `base_turn_order` and
+persisted `turn_position` (a removed member returns at the next phase; a
+late joiner is skipped) — a behaviour fix, worth doing before more #61; #102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
 budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #99 route test for the image-serve CSP (fix landed in PR #100; needs a
 `server.py` route-test harness); #97 Seatbelt profile does not confine writes; #96 no UI flag when
 Python or image tools fail to load; #92 tool error results echo raw
