@@ -20,7 +20,10 @@ from pathlib import Path
 from consensus.evaluation.constants import (
     DEFAULT_MODEL,
     DEFAULT_PROVIDER_URL,
+    JUDGE_DIMENSIONS,
+    JUDGE_MAX_SCORE,
     JUDGE_MAX_TOKENS,
+    JUDGE_MIN_SCORE,
     JUDGE_TEMPERATURE,
     MIN_PARTIAL_MATCH_CHARS,
     MIN_PARTIAL_MATCH_WORDS,
@@ -193,6 +196,24 @@ Respond in JSON format only:
 """
 
 
+def judge_reply_problem(scores: object) -> str:
+    """Why a parsed judge reply is unusable, or "" if it is valid.
+
+    Valid means a JSON object with every ``JUDGE_DIMENSIONS`` key holding a
+    number (not a bool) in ``JUDGE_MIN_SCORE..JUDGE_MAX_SCORE``.
+    """
+    if not isinstance(scores, dict):
+        return "judge reply is not a JSON object"
+    bad = [d for d in JUDGE_DIMENSIONS
+           if isinstance(scores.get(d), bool)
+           or not isinstance(scores.get(d), (int, float))
+           or not JUDGE_MIN_SCORE <= scores[d] <= JUDGE_MAX_SCORE]
+    if bad:
+        return ("judge reply has missing or out-of-range scores for: "
+                + ", ".join(bad))
+    return ""
+
+
 async def llm_judge_score(
     case_presentation: str,
     gold_diagnosis: str,
@@ -203,7 +224,9 @@ async def llm_judge_score(
 ) -> dict:
     """Use an LLM to score the conclusion on a rubric.
 
-    Returns dict with scores (1-5) for each dimension, or error.
+    Returns ``{"scores": {...}, "error": ""}`` on success. On any failure
+    (transport, unparseable or invalid reply) returns empty scores and a
+    non-empty ``error``.
     """
     try:
         from consensus.ai_client import AIClient
@@ -232,11 +255,15 @@ async def llm_judge_score(
             content = content.strip()
 
         scores = json.loads(content)
+        problem = judge_reply_problem(scores)
+        if problem:
+            raise ValueError(problem)
         return {"scores": scores, "error": ""}
 
     except Exception as e:
-        logger.warning("LLM judge failed: %s", e)
-        return {"scores": {}, "error": str(e)}
+        logger.warning("LLM judge failed: %r", e)
+        # Timeouts stringify to "", and callers treat a blank error as success.
+        return {"scores": {}, "error": str(e) or type(e).__name__}
 
 
 # ---------------------------------------------------------------------------

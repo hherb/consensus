@@ -68,7 +68,7 @@ class TestDiagnosticAccuracy:
         assert r == {"correct": True, "matched_term": GOLD.lower(),
                      "confidence": "partial"}
 
-    def test_partial_match_needs_two_words(self):
+    def test_truncated_word_does_not_match(self):
         r = score_diagnostic_accuracy("lupu", "lupus", [])
         assert r == {"correct": False, "matched_term": "", "confidence": "none"}
 

@@ -465,9 +465,11 @@ class EvalDatabase:
                   score_data: dict) -> int:
         """Store a run's score of one type, replacing any earlier one.
 
-        Re-scoring (``POST /runs/{id}/score``) must not leave duplicate rows.
+        Re-scoring or re-judging a run (``POST /runs/{id}/score`` or
+        ``/judge``) must not leave duplicate rows.
         """
-        with self._lock:
+        # ``with self.conn`` commits both or rolls both back.
+        with self._lock, self.conn:
             self.conn.execute(
                 "DELETE FROM eval_run_scores WHERE run_id=? AND score_type=?",
                 (run_id, score_type),
@@ -477,7 +479,6 @@ class EvalDatabase:
                 "(run_id, score_type, score_json, scored_at) VALUES (?,?,?,?)",
                 (run_id, score_type, json.dumps(score_data), time.time()),
             )
-            self.conn.commit()
         return cur.lastrowid
 
     def get_scores(self, run_id: int) -> list[dict]:

@@ -211,7 +211,7 @@ This is deliberately soft: an ungrounded turn is annotated and logged, never rej
 - **5 ablation conditions** — progressively complex setups from baseline single-agent to full multi-agent with Devil's Advocate, memory, and tools
 - **Batch runner** with automated scoring (string-match + optional LLM-judge)
 - **Per-participant provider/model overrides** — mix different AI backends within a single evaluation run
-- **Web UI** at `/eval/` for case management, condition editing, batch execution, and results analysis
+- **Web UI** at `/eval/` for case management, condition editing, batch execution, and results analysis (desktop and single-user web mode; not mounted with `--multi-user`)
 - Accessible from both desktop mode (opens in browser) and web mode
 
 ### Multi-User Deployment

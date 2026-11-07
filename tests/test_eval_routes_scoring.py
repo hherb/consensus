@@ -94,9 +94,9 @@ class TestJudgeRoute:
 class TestRescoreRoute:
     async def test_rescoring_replaces_string_scores(self, client, eval_db):
         run_id = make_run(eval_db, conclusion="gout")
-        await client.post(f"/eval/api/runs/{run_id}/score")
+        await client.post(f"/eval/api/runs/{run_id}/score", json={})
         eval_db.update_run(run_id, conclusion="SLE")
-        resp = await client.post(f"/eval/api/runs/{run_id}/score")
+        resp = await client.post(f"/eval/api/runs/{run_id}/score", json={})
         assert resp.status == 200
         scores = await resp.json()
         assert _types(scores) == ["diagnostic_accuracy", "differential_quality"]
@@ -107,7 +107,7 @@ class TestRescoreRoute:
 class TestBatchScores:
     async def test_batch_includes_its_runs_scores(self, client, eval_db):
         run_id = make_run(eval_db, conclusion="SLE")
-        await client.post(f"/eval/api/runs/{run_id}/score")
+        await client.post(f"/eval/api/runs/{run_id}/score", json={})
         batch_id = eval_db.get_run(run_id)["batch_id"]
         resp = await client.get(f"/eval/api/batches/{batch_id}")
         batch = await resp.json()
@@ -124,3 +124,46 @@ async def test_judge_route_reports_a_missing_case(client, eval_db, judge_calls,
     resp = await client.post(f"/eval/api/runs/{run_id}/judge", json=JUDGE_BODY)
     assert resp.status == 404
     assert (await resp.json())["error"] == "Case not found"
+
+
+class TestRequestHardening:
+    """Cross-site form posts are refused; malformed bodies are a 400."""
+
+    @pytest.mark.parametrize("path", ["/eval/api/runs/1/score",
+                                      "/eval/api/runs/1/judge",
+                                      "/eval/api/batches/1/cancel"])
+    async def test_post_without_json_content_type_is_refused(
+            self, client, eval_db, judge_calls, path):
+        make_run(eval_db, conclusion="SLE")
+        resp = await client.post(path, data='{"provider_url": "http://x"}',
+                                 headers={"Content-Type": "text/plain"})
+        assert resp.status == 415
+        assert judge_calls == []
+
+    @pytest.mark.parametrize("body", [
+        {**JUDGE_BODY, "provider_url": None},
+        {**JUDGE_BODY, "model": 7},
+        {**JUDGE_BODY, "api_key": ["k"]},
+    ])
+    async def test_non_string_fields_are_400(self, client, eval_db,
+                                             judge_calls, body):
+        run_id = make_run(eval_db, conclusion="SLE")
+        resp = await client.post(f"/eval/api/runs/{run_id}/judge", json=body)
+        assert resp.status == 400
+        assert judge_calls == []
+
+    @pytest.mark.parametrize("raw", ["[1, 2]", "not json"])
+    async def test_non_object_body_is_400(self, client, eval_db, judge_calls,
+                                          raw):
+        run_id = make_run(eval_db, conclusion="SLE")
+        resp = await client.post(f"/eval/api/runs/{run_id}/judge", data=raw,
+                                 headers={"Content-Type": "application/json"})
+        assert resp.status == 400
+        assert judge_calls == []
+
+    async def test_non_numeric_run_id_is_not_a_server_error(self, client,
+                                                            judge_calls):
+        resp = await client.post("/eval/api/runs/abc/judge", json=JUDGE_BODY)
+        # No API route matches; the GET-only static catch-all answers 405.
+        assert resp.status in (404, 405)
+        assert judge_calls == []

@@ -2,7 +2,7 @@
 
 _Last updated: 2026-11-07. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices and the #104 rotation fix; the `evaluation/scorer.py`
-slice is on `refactor/eval-scorer-split-61` (suite at **3381 passing**). The
+slice is on `refactor/eval-scorer-split-61` (suite at **3410 passing**). The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
@@ -259,8 +259,9 @@ concluded record. Removing a non-member is an error. Tests:
    mid-discussion demoted the old one in memory only, so a reload restored
    two. Turn-order desync on mid-discussion roster/role changes was **#104**
    (fixed — contract below).
-9. `evaluation/scorer.py` (538 → 419) → `print_report` moved verbatim to
-   `evaluation/report.py` (123); `scorer.main` still calls it, so both CLI
+9. `evaluation/scorer.py` (538 → 462) → `print_report` moved to
+   `evaluation/report.py` (127; verbatim in the move commit, its literals
+   later named in `constants.py`); `scorer.main` still calls it, so both CLI
    spellings are unchanged. Coverage 0% → 99/100% first
    (`tests/test_evaluation_scorer.py`, real `EvalDatabase`, stubbed
    `AIClient.complete`). Defects fixed: a gold diagnosis/alias normalising to
@@ -270,11 +271,23 @@ concluded record. Removing a non-member is an error. Tests:
    LLM-judges (Results tab, per batch or per run; `POST /eval/api/runs/{id}/judge`,
    BYOK key) and its summary shows correct / in-differential / judge mean; a
    failed judgement returns 502 and **never overwrites an earlier score**.
+   "Failed" includes a timeout whose exception text is blank and a reply
+   missing a `JUDGE_DIMENSIONS` key or scoring outside 1–5
+   (`scorer.judge_reply_problem`); `llm_judge_score` always returns a
+   non-empty `error` on failure. `/eval/api/` writes must be
+   `application/json` (415 otherwise — CSRF guard, `eval_routes.py`
+   middleware, covers desktop's bare eval app too), bodies must be JSON
+   objects (400), and ids are `\d+` in the routes. **`/eval/` is not
+   mounted in `--multi-user` mode** (no auth, one shared `EvalDatabase`, and
+   the judge/batch routes call a caller-chosen URL); the main page hides
+   its Evaluation link there.
    The UI code is `static/eval_scoring.js` (loaded after `eval.js`, which is
    647 lines and pre-existing over the limit). Evaluation literals live in
    `evaluation/constants.py` (`JUDGE_DIMENSIONS` is mirrored in
-   `eval_scoring.js` — keep both in step). First route tests:
-   `tests/test_eval_routes_scoring.py` (aiohttp `TestClient`, no plugin).
+   `eval_scoring.js` and the prompt's JSON keys —
+   `tests/test_eval_judge_robustness.py` fails if they drift). First route
+   tests: `tests/test_eval_routes_scoring.py` (aiohttp `TestClient`, no
+   plugin).
 
 Smaller slices came out of the error-visibility work: `ai_response.py` (from
 `ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).
@@ -296,18 +309,18 @@ call sites. Keep them in step when the public API changes.
 
 | Lines | Cover | File |
 |------:|------:|------|
-| 1229 | **0%** | `consensus/server.py` |
+| 1241 | **0%** | `consensus/server.py` |
 | 787 | 49% | `consensus/auth.py` |
 | 775 | 59% | `consensus/moderator.py` (one `Moderator` class) |
 | 714 | 51% | `consensus/mcp_server.py` |
-| 676 | **0%** | `consensus/evaluation/runner.py` |
+| 677 | **0%** | `consensus/evaluation/runner.py` |
 | 636 | 35% | `consensus/desktop.py` |
-| 599 | 55% | `consensus/evaluation/eval_db.py` |
+| 600 | 62% | `consensus/evaluation/eval_db.py` |
 
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next-best target: `consensus/evaluation/eval_db.py`** (599) — plain
+**Next-best target: `consensus/evaluation/eval_db.py`** (600) — plain
 SQLite CRUD on one class, so it splits like `db/` does: domain mixins
 (cases + conditions / batches + runs + messages + scores / seeding)
 composed into `EvalDatabase`. Characterize against a real temp DB first

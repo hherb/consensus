@@ -59,6 +59,8 @@ function init() {
 
     // Evaluation link — in desktop mode, use bridge to launch eval server
     const evalLink = $('#eval-link');
+    // The server does not mount /eval/ in multi-user (auth) mode.
+    if (evalLink && authRequired) evalLink.hidden = true;
     if (evalLink && window.pywebview) {
         evalLink.addEventListener('click', async (e) => {
             e.preventDefault();

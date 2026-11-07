@@ -1,10 +1,12 @@
 /* === Consensus Evaluation UI — scoring (re-score + LLM judge) ===
  * Loaded after eval.js; shares its globals ($, $$, API, showToast,
- * renderBatchResults, viewRun). eval.js calls scoresByRunId /
- * summariseScores and reads JUDGE_KEY_STORAGE only at call time. */
+ * renderBatchResults, viewRun). eval.js calls scoresByRunId,
+ * summariseScores, fmtRatio, scoreBatch and scoreSingleRun, and reads
+ * JUDGE_KEY_STORAGE, only at call time. */
 
 // LLM-judge rubric dimensions (1-5); keep in step with JUDGE_DIMENSIONS in
-// consensus/evaluation/constants.py.
+// consensus/evaluation/constants.py (tests/test_eval_judge_robustness.py
+// checks this exact line).
 const JUDGE_DIMENSIONS = ['accuracy', 'reasoning', 'evidence', 'differential', 'critical_analysis'];
 const JUDGE_KEY_STORAGE = 'eval_judge_api_key';
 

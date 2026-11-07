@@ -428,7 +428,7 @@ async function renderBatchResults(batchId) {
         const runs = batch.runs || [];
         const scoresByRun = scoresByRunId(batch.scores);
 
-        // The judge defaults to the batch's own provider and model.
+        // Prefill empty judge fields from this batch; never overwrite them.
         if (!$('#judge-provider-url').value.trim()) $('#judge-provider-url').value = batch.provider_url || '';
         if (!$('#judge-model').value.trim()) $('#judge-model').value = batch.model || '';
 

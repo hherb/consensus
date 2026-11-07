@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
@@ -27,9 +28,42 @@ def _error(msg: str, status: int = 400) -> web.Response:
     return web.json_response({"error": msg}, status=status)
 
 
+#: Methods that change state; each must carry a JSON body type.
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+@web.middleware
+async def _require_json_writes(
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+) -> web.StreamResponse:
+    """Refuse non-JSON writes to /eval/api/ (CSRF guard).
+
+    A cross-site page can send a form or ``text/plain`` POST without a
+    preflight, but not ``application/json``. The main app's CSRF middleware
+    only covers ``/api/``, and desktop mode serves these routes on a bare
+    app with no middleware at all.
+    """
+    if (request.method in _WRITE_METHODS
+            and request.path.startswith("/eval/api/")
+            and request.content_type != "application/json"):
+        return _error("Content-Type must be application/json", 415)
+    return await handler(request)
+
+
+async def _read_object(request: web.Request) -> dict | None:
+    """The request's JSON body if it is an object, else None."""
+    try:
+        data = await request.json()
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def register_eval_routes(webapp: web.Application,
                          eval_db: EvalDatabase) -> None:
-    """Register all /eval/ routes on the aiohttp application."""
+    """Register all /eval/ routes (and their CSRF guard) on the app."""
+    webapp.middlewares.append(_require_json_writes)
 
     eval_static_dir = os.path.realpath(
         os.path.join(os.path.dirname(__file__), "static")
@@ -43,7 +77,9 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.list_cases())
 
     async def add_case(request: web.Request) -> web.Response:
-        data = await request.json()
+        data = await _read_object(request)
+        if data is None:
+            return _error("Request body must be a JSON object")
         required = ("case_key", "title", "presentation", "gold_diagnosis")
         for field in required:
             if not data.get(field, "").strip():
@@ -65,7 +101,9 @@ def register_eval_routes(webapp: web.Application,
         case_id = int(request.match_info["id"])
         if not eval_db.get_case(case_id):
             return _error("Case not found", 404)
-        data = await request.json()
+        data = await _read_object(request)
+        if data is None:
+            return _error("Request body must be a JSON object")
         kwargs = {}
         for field in ("case_key", "title", "presentation", "gold_diagnosis",
                        "difficulty", "source"):
@@ -95,7 +133,9 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.list_conditions())
 
     async def add_condition(request: web.Request) -> web.Response:
-        data = await request.json()
+        data = await _read_object(request)
+        if data is None:
+            return _error("Request body must be a JSON object")
         if not data.get("name", "").strip():
             return _error("Missing required field: name")
         cond_id = eval_db.add_condition(
@@ -113,7 +153,9 @@ def register_eval_routes(webapp: web.Application,
         cond_id = int(request.match_info["id"])
         if not eval_db.get_condition(cond_id):
             return _error("Condition not found", 404)
-        data = await request.json()
+        data = await _read_object(request)
+        if data is None:
+            return _error("Request body must be a JSON object")
         kwargs = {}
         for field in ("name", "description", "enable_da", "enable_memory",
                        "enable_tools", "num_rounds"):
@@ -151,7 +193,9 @@ def register_eval_routes(webapp: web.Application,
         return _json(batch)
 
     async def start_batch(request: web.Request) -> web.Response:
-        data = await request.json()
+        data = await _read_object(request)
+        if data is None:
+            return _error("Request body must be a JSON object")
         case_ids = data.get("case_ids", [])
         condition_ids = data.get("condition_ids", [])
         provider_url = data.get("provider_url", "").strip()
@@ -237,9 +281,15 @@ def register_eval_routes(webapp: web.Application,
             return _error("Run not found", 404)
         if run["status"] != "done":
             return _error("Run is not complete")
-        data = await request.json()
-        provider_url = data.get("provider_url", "").strip()
-        model = data.get("model", "").strip()
+        data = await _read_object(request)
+        if data is None:
+            return _error("Request body must be a JSON object")
+        provider_url = data.get("provider_url", "")
+        model = data.get("model", "")
+        api_key = data.get("api_key", "")
+        if not all(isinstance(v, str) for v in (provider_url, model, api_key)):
+            return _error("provider_url, model and api_key must be strings")
+        provider_url, model = provider_url.strip(), model.strip()
         if not provider_url:
             return _error("Judge provider URL is required")
         if not model:
@@ -247,7 +297,7 @@ def register_eval_routes(webapp: web.Application,
 
         from consensus.evaluation.scorer import llm_judge_run_from_db
         result = await llm_judge_run_from_db(
-            eval_db, run_id, provider_url, model, data.get("api_key", ""),
+            eval_db, run_id, provider_url, model, api_key,
         )
         if result is None:
             return _error("Case not found", 404)
@@ -279,22 +329,22 @@ def register_eval_routes(webapp: web.Application,
 
     webapp.router.add_get("/eval/api/cases", list_cases)
     webapp.router.add_post("/eval/api/cases", add_case)
-    webapp.router.add_put("/eval/api/cases/{id}", update_case)
-    webapp.router.add_delete("/eval/api/cases/{id}", delete_case)
+    webapp.router.add_put(r"/eval/api/cases/{id:\d+}", update_case)
+    webapp.router.add_delete(r"/eval/api/cases/{id:\d+}", delete_case)
 
     webapp.router.add_get("/eval/api/conditions", list_conditions)
     webapp.router.add_post("/eval/api/conditions", add_condition)
-    webapp.router.add_put("/eval/api/conditions/{id}", update_condition)
-    webapp.router.add_delete("/eval/api/conditions/{id}", delete_condition)
+    webapp.router.add_put(r"/eval/api/conditions/{id:\d+}", update_condition)
+    webapp.router.add_delete(r"/eval/api/conditions/{id:\d+}", delete_condition)
 
     webapp.router.add_get("/eval/api/batches", list_batches)
-    webapp.router.add_get("/eval/api/batches/{id}", get_batch)
+    webapp.router.add_get(r"/eval/api/batches/{id:\d+}", get_batch)
     webapp.router.add_post("/eval/api/batches/run", start_batch)
-    webapp.router.add_post("/eval/api/batches/{id}/cancel", cancel_batch)
+    webapp.router.add_post(r"/eval/api/batches/{id:\d+}/cancel", cancel_batch)
 
-    webapp.router.add_get("/eval/api/runs/{id}", get_run)
-    webapp.router.add_post("/eval/api/runs/{id}/score", score_run)
-    webapp.router.add_post("/eval/api/runs/{id}/judge", judge_run)
+    webapp.router.add_get(r"/eval/api/runs/{id:\d+}", get_run)
+    webapp.router.add_post(r"/eval/api/runs/{id:\d+}/score", score_run)
+    webapp.router.add_post(r"/eval/api/runs/{id:\d+}/judge", judge_run)
 
     async def redirect_eval(request: web.Request) -> web.Response:
         raise web.HTTPFound("/eval/")
