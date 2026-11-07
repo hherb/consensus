@@ -269,7 +269,8 @@ concluded record. Removing a non-member is an error. Tests:
    so re-scoring a run duplicated its rows (now replaces per `score_type`).
    Same PR, at the owner's request: the eval web UI now re-scores and
    LLM-judges (Results tab, per batch or per run; `POST /eval/api/runs/{id}/judge`,
-   BYOK key) and its summary shows correct / in-differential / judge mean; a
+   BYOK key held only in the input field, not `sessionStorage`, which CodeQL
+   flags) and its summary shows correct / in-differential / judge mean; a
    failed judgement returns 502 and **never overwrites an earlier score**.
    "Failed" includes a timeout whose exception text is blank and a reply
    missing a `JUDGE_DIMENSIONS` key or scoring outside 1–5

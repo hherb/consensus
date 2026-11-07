@@ -406,8 +406,6 @@ async function loadBatches() {
 
 async function renderResults() {
     await loadBatches();
-    const savedKey = sessionStorage.getItem(JUDGE_KEY_STORAGE);
-    if (savedKey) $('#judge-api-key').value = savedKey;
 
     const sel = $('#results-batch-select');
     sel.innerHTML = state.batches.length

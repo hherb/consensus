@@ -1,14 +1,13 @@
 /* === Consensus Evaluation UI — scoring (re-score + LLM judge) ===
  * Loaded after eval.js; shares its globals ($, $$, API, showToast,
  * renderBatchResults, viewRun). eval.js calls scoresByRunId,
- * summariseScores, fmtRatio, scoreBatch and scoreSingleRun, and reads
- * JUDGE_KEY_STORAGE, only at call time. */
+ * summariseScores, fmtRatio, scoreBatch and scoreSingleRun only at call
+ * time. */
 
 // LLM-judge rubric dimensions (1-5); keep in step with JUDGE_DIMENSIONS in
 // consensus/evaluation/constants.py (tests/test_eval_judge_robustness.py
 // checks this exact line).
 const JUDGE_DIMENSIONS = ['accuracy', 'reasoning', 'evidence', 'differential', 'critical_analysis'];
-const JUDGE_KEY_STORAGE = 'eval_judge_api_key';
 
 // ---------------------------------------------------------------------------
 // Scoring (re-score + LLM judge)
@@ -58,9 +57,8 @@ function judgeConfig() {
         showToast('Judge provider URL and model are required');
         return null;
     }
-    // BYOK: kept in this browser session only, sent per request.
-    if (cfg.api_key) sessionStorage.setItem(JUDGE_KEY_STORAGE, cfg.api_key);
-    else sessionStorage.removeItem(JUDGE_KEY_STORAGE);
+    // BYOK: the key lives only in the input field (never saved to browser
+    // storage, which CodeQL flags as clear-text) and is sent per request.
     return cfg;
 }
 
