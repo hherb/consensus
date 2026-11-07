@@ -12,7 +12,6 @@ import sys
 
 import pytest
 
-from consensus.ai_client import AIClient, AIResponse
 from consensus.evaluation import scorer
 from consensus.evaluation.eval_db import EvalDatabase
 from consensus.evaluation.report import print_report
@@ -26,67 +25,14 @@ from consensus.evaluation.scorer import (
     score_run,
     score_run_from_db,
 )
-
-#: A seeded case (``consensus/evaluation/cases.py``) — gold is Systemic Lupus
-#: Erythematosus with aliases SLE / lupus / systemic lupus.
-CASE_KEY = "eval-001"
-GOLD = "Systemic Lupus Erythematosus"
-
-JUDGE_SCORES = {"accuracy": 5, "reasoning": 4, "evidence": 3,
-                "differential": 2, "critical_analysis": 1, "comments": "ok"}
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def eval_db(tmp_path):
-    """A real EvalDatabase (with seeded cases/conditions) on a temp file."""
-    db = EvalDatabase(str(tmp_path / "eval.db"))
-    yield db
-    db.conn.close()
-
-
-def _make_run(db: EvalDatabase, *, status: str = "done",
-              conclusion: str = "", messages: tuple = ()) -> int:
-    """Create a run against the seeded CASE_KEY case and return its id."""
-    case = db.get_case_by_key(CASE_KEY)
-    assert case is not None
-    condition = db.list_conditions()[0]
-    batch_id = db.create_batch("b", "http://x/v1", "m")
-    run_id = db.create_run(batch_id, case["id"], condition["id"],
-                           "http://x/v1", "m")
-    db.update_run(run_id, status=status, conclusion=conclusion)
-    for i, (speaker, content) in enumerate(messages):
-        db.add_run_message(run_id, i, speaker, "participant", content)
-    return run_id
-
-
-@pytest.fixture
-def judge_calls(monkeypatch):
-    """Stub AIClient.complete; returns the list of recorded call kwargs.
-
-    Set ``judge_calls.reply`` (str) or ``judge_calls.error`` (Exception)
-    to control the outcome.
-    """
-    class Recorder(list):
-        reply = json.dumps(JUDGE_SCORES)
-        error: Exception | None = None
-
-    rec = Recorder()
-
-    async def fake_complete(self, messages, model, temperature=0.7,
-                            max_tokens=1024):
-        rec.append({"base_url": self.base_url, "api_key": self.api_key,
-                    "messages": messages, "model": model,
-                    "temperature": temperature, "max_tokens": max_tokens})
-        if rec.error is not None:
-            raise rec.error
-        return AIResponse(content=rec.reply)
-
-    monkeypatch.setattr(AIClient, "complete", fake_complete)
-    return rec
+from tests.eval_helpers import (  # noqa: F401 — fixtures used by name
+    CASE_KEY,
+    GOLD,
+    JUDGE_SCORES,
+    eval_db,
+    judge_calls,
+    make_run,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +174,7 @@ def _scores_by_type(db: EvalDatabase, run_id: int) -> dict:
 
 class TestScoreRunFromDb:
     def test_writes_both_string_scores(self, eval_db):
-        run_id = _make_run(eval_db, conclusion="Diagnosis: lupus",
+        run_id = make_run(eval_db, conclusion="Diagnosis: lupus",
                            messages=(("Alice", "gout"), ("Bob", "SLE")))
         score_run_from_db(eval_db, run_id)
         scores = _scores_by_type(eval_db, run_id)
@@ -238,7 +184,7 @@ class TestScoreRunFromDb:
             "first_mention_speaker": "Bob"}
 
     def test_skips_run_that_is_not_done(self, eval_db):
-        run_id = _make_run(eval_db, status="running", conclusion="SLE")
+        run_id = make_run(eval_db, status="running", conclusion="SLE")
         score_run_from_db(eval_db, run_id)
         assert eval_db.get_scores(run_id) == []
 
@@ -246,7 +192,7 @@ class TestScoreRunFromDb:
         score_run_from_db(eval_db, 9999)
 
     def test_missing_case_is_a_no_op(self, eval_db, monkeypatch):
-        run_id = _make_run(eval_db, conclusion="SLE")
+        run_id = make_run(eval_db, conclusion="SLE")
         monkeypatch.setattr(eval_db, "get_case", lambda _id: None)
         score_run_from_db(eval_db, run_id)
         assert eval_db.get_scores(run_id) == []
@@ -292,7 +238,7 @@ class TestLlmJudgeScore:
 
 class TestLlmJudgeRunFromDb:
     async def test_writes_llm_judge_score(self, eval_db, judge_calls):
-        run_id = _make_run(eval_db, conclusion="SLE")
+        run_id = make_run(eval_db, conclusion="SLE")
         await llm_judge_run_from_db(eval_db, run_id, "http://j/v1", "m", "k")
         assert _scores_by_type(eval_db, run_id)["llm_judge"] == {
             "scores": JUDGE_SCORES, "error": ""}
@@ -301,13 +247,13 @@ class TestLlmJudgeRunFromDb:
         assert case["presentation"] in prompt
 
     async def test_skips_run_that_is_not_done(self, eval_db, judge_calls):
-        run_id = _make_run(eval_db, status="error")
+        run_id = make_run(eval_db, status="error")
         await llm_judge_run_from_db(eval_db, run_id, "http://j/v1", "m")
         assert judge_calls == [] and eval_db.get_scores(run_id) == []
 
     async def test_missing_case_is_a_no_op(self, eval_db, judge_calls,
                                            monkeypatch):
-        run_id = _make_run(eval_db, conclusion="SLE")
+        run_id = make_run(eval_db, conclusion="SLE")
         monkeypatch.setattr(eval_db, "get_case", lambda _id: None)
         await llm_judge_run_from_db(eval_db, run_id, "http://j/v1", "m")
         assert judge_calls == []
@@ -464,7 +410,7 @@ class TestBlankDiagnosisTerms:
 
 class TestRescoringReplacesScores:
     def test_scoring_twice_keeps_one_row_per_type(self, eval_db):
-        run_id = _make_run(eval_db, conclusion="gout")
+        run_id = make_run(eval_db, conclusion="gout")
         score_run_from_db(eval_db, run_id)
         eval_db.update_run(run_id, conclusion="SLE")
         score_run_from_db(eval_db, run_id)
@@ -476,9 +422,33 @@ class TestRescoringReplacesScores:
 
     async def test_llm_judge_does_not_replace_string_scores(self, eval_db,
                                                             judge_calls):
-        run_id = _make_run(eval_db, conclusion="SLE")
+        run_id = make_run(eval_db, conclusion="SLE")
         score_run_from_db(eval_db, run_id)
         await llm_judge_run_from_db(eval_db, run_id, "http://j/v1", "m")
         await llm_judge_run_from_db(eval_db, run_id, "http://j/v1", "m")
         assert sorted(s["score_type"] for s in eval_db.get_scores(run_id)) == [
             "diagnostic_accuracy", "differential_quality", "llm_judge"]
+
+
+class TestLlmJudgeRunFromDbResult:
+    """The web UI needs the judge's outcome, and a failure must not
+    overwrite an earlier good score (``add_score`` replaces per type)."""
+
+    async def test_returns_the_stored_result(self, eval_db, judge_calls):
+        run_id = make_run(eval_db, conclusion="SLE")
+        result = await llm_judge_run_from_db(eval_db, run_id, "http://j/v1", "m")
+        assert result == {"scores": JUDGE_SCORES, "error": ""}
+
+    async def test_skipped_run_returns_none(self, eval_db, judge_calls):
+        run_id = make_run(eval_db, status="running")
+        assert await llm_judge_run_from_db(
+            eval_db, run_id, "http://j/v1", "m") is None
+
+    async def test_failure_is_returned_not_stored(self, eval_db, judge_calls):
+        run_id = make_run(eval_db, conclusion="SLE")
+        await llm_judge_run_from_db(eval_db, run_id, "http://j/v1", "m")
+        judge_calls.error = ConnectionError("judge down")
+        result = await llm_judge_run_from_db(eval_db, run_id, "http://j/v1", "m")
+        assert result == {"scores": {}, "error": "judge down"}
+        assert _scores_by_type(eval_db, run_id)["llm_judge"] == {
+            "scores": JUDGE_SCORES, "error": ""}

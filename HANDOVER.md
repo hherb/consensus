@@ -2,7 +2,7 @@
 
 _Last updated: 2026-11-07. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices and the #104 rotation fix; the `evaluation/scorer.py`
-slice is on `refactor/eval-scorer-split-61` (suite at **3368 passing**). The
+slice is on `refactor/eval-scorer-split-61` (suite at **3381 passing**). The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
@@ -28,7 +28,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3368 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3381 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -266,6 +266,15 @@ concluded record. Removing a non-member is an error. Tests:
    `AIClient.complete`). Defects fixed: a gold diagnosis/alias normalising to
    `""` matched every text (scored correct); `EvalDatabase.add_score` appended,
    so re-scoring a run duplicated its rows (now replaces per `score_type`).
+   Same PR, at the owner's request: the eval web UI now re-scores and
+   LLM-judges (Results tab, per batch or per run; `POST /eval/api/runs/{id}/judge`,
+   BYOK key) and its summary shows correct / in-differential / judge mean; a
+   failed judgement returns 502 and **never overwrites an earlier score**.
+   The UI code is `static/eval_scoring.js` (loaded after `eval.js`, which is
+   647 lines and pre-existing over the limit). Evaluation literals live in
+   `evaluation/constants.py` (`JUDGE_DIMENSIONS` is mirrored in
+   `eval_scoring.js` — keep both in step). First route tests:
+   `tests/test_eval_routes_scoring.py` (aiohttp `TestClient`, no plugin).
 
 Smaller slices came out of the error-visibility work: `ai_response.py` (from
 `ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).
@@ -302,8 +311,8 @@ and after.
 SQLite CRUD on one class, so it splits like `db/` does: domain mixins
 (cases + conditions / batches + runs + messages + scores / seeding)
 composed into `EvalDatabase`. Characterize against a real temp DB first
-(cheap — the `eval_db` fixture in `tests/test_evaluation_scorer.py` is a
-start). `moderator.py` and `auth.py` are bigger payoffs but are a single
+(cheap — `tests/eval_helpers.py` has the `eval_db` fixture and a run
+factory). `moderator.py` and `auth.py` are bigger payoffs but are a single
 class and a security-critical module at ~50–60% — build their nets before
 moving a line.
 
@@ -394,10 +403,6 @@ likeliest pre-existing bug.
   `gather_evidence` and ACH `present_evidence`; a richer source-picker UI; a
   live browser click-through of the Attach-evidence button (verified statically
   only — there is no JS test harness in this repo).
-- **Eval web UI never LLM-judges or re-scores.** `scorer.llm_judge_run_from_db`,
-  `EvalDatabase.get_scores_by_batch` and `eval.js` `API.scoreRun` have no
-  callers; only the CLI (`score --llm-judge`) runs the judge. Wire them up
-  or delete them.
 - **Packaging** — `consensus/evaluation/runner.py`'s default results dir lands
   in site-packages for wheel installs; `packaging/macos/make_icns.sh`
   regeneration needs Pillow on system python3; icon bubbles blur at 16–32 px.

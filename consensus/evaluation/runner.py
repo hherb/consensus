@@ -32,6 +32,7 @@ from consensus.models import EntityType
 
 from consensus.evaluation.cases import CASES, CaseVignette
 from consensus.evaluation.conditions import CONDITIONS, Condition
+from consensus.evaluation.constants import DEFAULT_MODEL, DEFAULT_PROVIDER_URL
 
 logger = logging.getLogger(__name__)
 
@@ -562,12 +563,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--provider-url", type=str,
-        default=os.environ.get("EVAL_PROVIDER_URL", "http://localhost:11434/v1"),
+        default=os.environ.get("EVAL_PROVIDER_URL", DEFAULT_PROVIDER_URL),
         help="OpenAI-compatible API base URL",
     )
     parser.add_argument(
         "--model", type=str,
-        default=os.environ.get("EVAL_MODEL", "llama3"),
+        default=os.environ.get("EVAL_MODEL", DEFAULT_MODEL),
         help="Model name for all participants",
     )
     parser.add_argument(

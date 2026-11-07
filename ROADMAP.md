@@ -57,7 +57,7 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | ✅ Done | Notarized DMG releases | Notarization gate cleared at v1.99.1 (2026-07-19): both .app and .dmg notarize Accepted and staple, `spctl` reports `source=Notarized Developer ID`, and the in-app `execute_python` acceptance test passed on the notarized build. v2.0.0 (first stable, 2026-07-20) shipped through the same playbook — see `memory/alpha-distribution-release-process.md` |
 | ✅ Done | Project website | `website/` — responsive static site (project branding, product screenshot, Cloudflare Pages headers, sitemap, robots policy, favicon), deployed at https://consensus-ai.org/; discussion-methods catalogue page (`methods.html`) |
 | **Evaluation & Benchmarking** | | |
-| ✅ Done | Evaluation framework | Ablation study platform with 10 medical cases, 5 conditions, batch runner, string-match + LLM-judge scoring, per-participant provider/model overrides, web UI at `/eval/` |
+| ✅ Done | Evaluation framework | Ablation study platform with 10 medical cases, 5 conditions, batch runner, string-match + LLM-judge scoring, per-participant provider/model overrides, web UI at `/eval/` (re-score and LLM-judge per batch or per run; summary shows accuracy, differential mention and mean judge score) |
 | ✅ Done | Max rounds limit | Discussions auto-conclude after N rounds (configurable, 0 = unlimited) |
 | **Reliability** | | |
 | ✅ Done | Retry with exponential backoff | API calls retry up to 3× for transient errors (429, 5xx, timeouts); failed participants skipped gracefully |

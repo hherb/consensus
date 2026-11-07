@@ -17,6 +17,14 @@ import os
 import re
 from pathlib import Path
 
+from consensus.evaluation.constants import (
+    DEFAULT_MODEL,
+    DEFAULT_PROVIDER_URL,
+    JUDGE_MAX_TOKENS,
+    JUDGE_TEMPERATURE,
+    MIN_PARTIAL_MATCH_CHARS,
+    MIN_PARTIAL_MATCH_WORDS,
+)
 from consensus.evaluation.report import print_report
 
 logger = logging.getLogger(__name__)
@@ -72,10 +80,10 @@ def score_diagnostic_accuracy(
     # (e.g. "lupus" matches "systemic lupus erythematosus")
     for diag in all_acceptable:
         words = normalise(diag).split()
-        if len(words) >= 2:
+        if len(words) >= MIN_PARTIAL_MATCH_WORDS:
             # Check if the most distinctive word (longest) appears
             longest_word = max(words, key=len)
-            if len(longest_word) >= 4 and longest_word in norm_conclusion:
+            if len(longest_word) >= MIN_PARTIAL_MATCH_CHARS and longest_word in norm_conclusion:
                 return {
                     "correct": True,
                     "matched_term": diag,
@@ -116,7 +124,7 @@ def score_differential_quality(
         for diag in all_acceptable:
             words = normalise(diag).split()
             longest = max(words, key=len) if words else ""
-            if len(longest) >= 4 and longest in content:
+            if len(longest) >= MIN_PARTIAL_MATCH_CHARS and longest in content:
                 return {
                     "mentioned": True,
                     "first_mention_turn": i,
@@ -210,8 +218,8 @@ async def llm_judge_score(
             resp = await client.complete(
                 messages=[{"role": "user", "content": prompt}],
                 model=model,
-                temperature=0.1,  # Low temperature for consistent scoring
-                max_tokens=512,
+                temperature=JUDGE_TEMPERATURE,
+                max_tokens=JUDGE_MAX_TOKENS,
             )
 
         # Parse JSON from response
@@ -310,15 +318,21 @@ def score_run_from_db(eval_db, run_id: int) -> None:
 
 
 async def llm_judge_run_from_db(eval_db, run_id: int, provider_url: str,
-                                 model: str, api_key: str = "") -> None:
-    """Run LLM judge on a completed run and write scores to eval DB."""
+                                model: str, api_key: str = "") -> dict | None:
+    """Run the LLM judge on a completed run and store its scores.
+
+    Returns the judge result (``{"scores", "error"}``), or None when the run
+    is missing, not done, or its case is gone. A failed judgement is
+    returned but not stored: storing replaces the run's previous
+    ``llm_judge`` score, and an outage must not wipe a good one.
+    """
     run = eval_db.get_run(run_id)
     if not run or run["status"] != "done":
-        return
+        return None
 
     case = eval_db.get_case(run["case_id"])
     if not case:
-        return
+        return None
 
     result = await llm_judge_score(
         case_presentation=case["presentation"],
@@ -328,7 +342,9 @@ async def llm_judge_run_from_db(eval_db, run_id: int, provider_url: str,
         model=model,
         api_key=api_key,
     )
-    eval_db.add_score(run_id, "llm_judge", result)
+    if not result["error"]:
+        eval_db.add_score(run_id, "llm_judge", result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +363,7 @@ def main():
     )
     parser.add_argument(
         "--judge-provider-url", type=str,
-        default=os.environ.get("EVAL_PROVIDER_URL", "http://localhost:11434/v1"),
+        default=os.environ.get("EVAL_PROVIDER_URL", DEFAULT_PROVIDER_URL),
         help="Provider URL for the LLM judge",
     )
     parser.add_argument(
@@ -380,7 +396,7 @@ def main():
         import asyncio
         from consensus.evaluation.cases import get_case
 
-        judge_model = args.judge_model or os.environ.get("EVAL_MODEL", "llama3")
+        judge_model = args.judge_model or os.environ.get("EVAL_MODEL", DEFAULT_MODEL)
         api_key = os.environ.get(args.judge_api_key_env, "") if args.judge_api_key_env else ""
 
         async def judge_all():

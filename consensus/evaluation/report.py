@@ -5,8 +5,15 @@ scoring. Pure presentation — it reads the ``scores`` dicts the scorer adds
 and writes to stdout.
 """
 
+from consensus.evaluation.conditions import CONDITIONS
+from consensus.evaluation.constants import (
+    JUDGE_DIMENSIONS,
+    REPORT_ERROR_PREVIEW_CHARS,
+    REPORT_WIDTH,
+)
 
-def print_report(scored_results: list[dict]):
+
+def print_report(scored_results: list[dict]) -> None:
     """Print a summary table of evaluation results."""
     # Group by condition
     by_condition: dict[str, list[dict]] = {}
@@ -14,17 +21,16 @@ def print_report(scored_results: list[dict]):
         cond = r.get("condition", "unknown")
         by_condition.setdefault(cond, []).append(r)
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * REPORT_WIDTH}")
     print("EVALUATION RESULTS SUMMARY")
-    print(f"{'='*80}\n")
+    print(f"{'=' * REPORT_WIDTH}\n")
 
     # Header
     print(f"{'Condition':<25} {'N':>4} {'Accuracy':>10} {'In Diff':>10} "
           f"{'Tokens':>10} {'Errors':>8}")
-    print("-" * 80)
+    print("-" * REPORT_WIDTH)
 
-    for cond_name in ["baseline", "multi_agent", "multi_agent_da",
-                       "multi_agent_da_memory", "full"]:
+    for cond_name in CONDITIONS:
         runs = by_condition.get(cond_name, [])
         if not runs:
             continue
@@ -50,9 +56,9 @@ def print_report(scored_results: list[dict]):
     print()
 
     # Per-case breakdown
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * REPORT_WIDTH}")
     print("PER-CASE BREAKDOWN")
-    print(f"{'='*80}\n")
+    print(f"{'=' * REPORT_WIDTH}\n")
 
     # Group by case
     by_case: dict[str, list[dict]] = {}
@@ -79,7 +85,7 @@ def print_report(scored_results: list[dict]):
             if matched:
                 status += f" ({conf}: '{matched}')"
             if err:
-                status = f"ERROR: {err[:50]}"
+                status = f"ERROR: {err[:REPORT_ERROR_PREVIEW_CHARS]}"
 
             print(f"  {cond:<25} {status:<40} [{tokens:,} tokens]")
 
@@ -89,19 +95,17 @@ def print_report(scored_results: list[dict]):
         for r in scored_results
     )
     if has_llm_scores:
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * REPORT_WIDTH}")
         print("LLM JUDGE SCORES (1-5 scale)")
-        print(f"{'='*80}\n")
+        print(f"{'=' * REPORT_WIDTH}\n")
 
-        dims = ["accuracy", "reasoning", "evidence", "differential", "critical_analysis"]
         print(f"{'Condition':<25}", end="")
-        for d in dims:
+        for d in JUDGE_DIMENSIONS:
             print(f" {d[:10]:>10}", end="")
         print()
-        print("-" * 80)
+        print("-" * REPORT_WIDTH)
 
-        for cond_name in ["baseline", "multi_agent", "multi_agent_da",
-                           "multi_agent_da_memory", "full"]:
+        for cond_name in CONDITIONS:
             runs = by_condition.get(cond_name, [])
             judged = [
                 r for r in runs
@@ -111,7 +115,7 @@ def print_report(scored_results: list[dict]):
                 continue
 
             print(f"{cond_name:<25}", end="")
-            for d in dims:
+            for d in JUDGE_DIMENSIONS:
                 vals = [
                     r["scores"]["llm_judge"]["scores"].get(d, 0)
                     for r in judged

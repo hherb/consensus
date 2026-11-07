@@ -37,6 +37,7 @@ const API = {
 
     getRun(id) { return this._fetch('GET', `/runs/${id}`); },
     scoreRun(id) { return this._fetch('POST', `/runs/${id}/score`); },
+    judgeRun(id, cfg) { return this._fetch('POST', `/runs/${id}/judge`, cfg); },
 };
 
 // ---------------------------------------------------------------------------
@@ -405,6 +406,8 @@ async function loadBatches() {
 
 async function renderResults() {
     await loadBatches();
+    const savedKey = sessionStorage.getItem(JUDGE_KEY_STORAGE);
+    if (savedKey) $('#judge-api-key').value = savedKey;
 
     const sel = $('#results-batch-select');
     sel.innerHTML = state.batches.length
@@ -423,6 +426,11 @@ async function renderBatchResults(batchId) {
     try {
         const batch = await API.getBatch(batchId);
         const runs = batch.runs || [];
+        const scoresByRun = scoresByRunId(batch.scores);
+
+        // The judge defaults to the batch's own provider and model.
+        if (!$('#judge-provider-url').value.trim()) $('#judge-provider-url').value = batch.provider_url || '';
+        if (!$('#judge-model').value.trim()) $('#judge-model').value = batch.model || '';
 
         // Summary table: group by condition
         const byCondition = {};
@@ -435,18 +443,23 @@ async function renderBatchResults(batchId) {
         let summaryHTML = `<table class="results-table">
             <thead><tr>
                 <th>Condition</th><th>N</th><th>Done</th><th>Errors</th><th>Tokens</th>
+                <th>Correct</th><th>In differential</th><th>Judge (1–5)</th>
             </tr></thead><tbody>`;
 
         for (const [cond, cRuns] of Object.entries(byCondition)) {
             const done = cRuns.filter(r => r.status === 'done').length;
             const errors = cRuns.filter(r => r.status === 'error').length;
             const tokens = cRuns.reduce((s, r) => s + (r.total_tokens || 0), 0);
+            const sc = summariseScores(cRuns, scoresByRun);
             summaryHTML += `<tr>
                 <td>${esc(cond)}</td>
                 <td>${cRuns.length}</td>
                 <td>${done}</td>
                 <td>${errors || '—'}</td>
                 <td>${tokens.toLocaleString()}</td>
+                <td>${fmtRatio(sc.correct, sc.scored)}</td>
+                <td>${fmtRatio(sc.inDiff, sc.scored)}</td>
+                <td>${sc.judged ? `${sc.judgeMean.toFixed(1)} (n=${sc.judged})` : '—'}</td>
             </tr>`;
         }
         summaryHTML += '</tbody></table>';
@@ -513,6 +526,11 @@ async function viewRun(runId) {
         if (run.error_text) {
             html += `<div style="color: var(--error); margin-top: 0.75rem;">Error: ${esc(run.error_text)}</div>`;
         }
+
+        $$('#run-rescore-btn, #run-judge-btn').forEach(b => {
+            b.dataset.id = run.id;
+            b.classList.toggle('hidden', run.status !== 'done');
+        });
 
         $('#run-dialog-title').textContent = `Run #${run.id}`;
         $('#run-dialog-content').innerHTML = html;
@@ -587,6 +605,10 @@ document.addEventListener('click', async (e) => {
 
         // Results
         case 'view-run': viewRun(id); break;
+        case 'rescore-batch': scoreBatch('score'); break;
+        case 'judge-batch': scoreBatch('judge'); break;
+        case 'rescore-run': scoreSingleRun('score', id); break;
+        case 'judge-run': scoreSingleRun('judge', id); break;
         case 'close-run-dialog': hide('#run-dialog'); break;
     }
 });

@@ -145,8 +145,9 @@ def register_eval_routes(webapp: web.Application,
         batch = eval_db.get_batch(batch_id)
         if not batch:
             return _error("Batch not found", 404)
-        # Include runs for this batch
+        # Include runs and their scores for this batch
         batch["runs"] = eval_db.list_runs(batch_id)
+        batch["scores"] = eval_db.get_scores_by_batch(batch_id)
         return _json(batch)
 
     async def start_batch(request: web.Request) -> web.Response:
@@ -223,6 +224,37 @@ def register_eval_routes(webapp: web.Application,
         score_run_from_db(eval_db, run_id)
         return _json(eval_db.get_scores(run_id))
 
+    async def judge_run(request: web.Request) -> web.Response:
+        """LLM-judge one completed run; body: provider_url, model, api_key.
+
+        The API key is BYOK — used for this call only, never stored. A
+        failed judgement returns 502 with the reason and leaves any earlier
+        ``llm_judge`` score in place.
+        """
+        run_id = int(request.match_info["id"])
+        run = eval_db.get_run(run_id)
+        if not run:
+            return _error("Run not found", 404)
+        if run["status"] != "done":
+            return _error("Run is not complete")
+        data = await request.json()
+        provider_url = data.get("provider_url", "").strip()
+        model = data.get("model", "").strip()
+        if not provider_url:
+            return _error("Judge provider URL is required")
+        if not model:
+            return _error("Judge model is required")
+
+        from consensus.evaluation.scorer import llm_judge_run_from_db
+        result = await llm_judge_run_from_db(
+            eval_db, run_id, provider_url, model, data.get("api_key", ""),
+        )
+        if result is None:
+            return _error("Case not found", 404)
+        if result["error"]:
+            return _error(f"LLM judge failed: {result['error']}", 502)
+        return _json(eval_db.get_scores(run_id))
+
     # ------------------------------------------------------------------
     # Static files
     # ------------------------------------------------------------------
@@ -262,6 +294,7 @@ def register_eval_routes(webapp: web.Application,
 
     webapp.router.add_get("/eval/api/runs/{id}", get_run)
     webapp.router.add_post("/eval/api/runs/{id}/score", score_run)
+    webapp.router.add_post("/eval/api/runs/{id}/judge", judge_run)
 
     async def redirect_eval(request: web.Request) -> web.Response:
         raise web.HTTPFound("/eval/")
