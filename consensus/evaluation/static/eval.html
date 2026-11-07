@@ -59,7 +59,7 @@
             </div>
             <div class="form-group">
                 <label for="dash-api-key">API Key</label>
-                <input type="password" id="dash-api-key" placeholder="Optional — stored in session only, never persisted">
+                <input type="password" id="dash-api-key" placeholder="Optional — kept on this page only, never stored">
                 <div class="hint">Stored in browser sessionStorage only. Never sent to the server for storage.</div>
             </div>
         </div>
@@ -106,6 +106,30 @@
             <div style="display: flex; align-items: center; gap: 0.75rem;">
                 <label for="results-batch-select" class="text-secondary" style="font-size: 0.85rem;">Batch:</label>
                 <select id="results-batch-select" style="width: auto; min-width: 15rem;"></select>
+            </div>
+        </div>
+        <div class="card" style="margin-bottom: 1rem;">
+            <h3>Scoring</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="judge-provider-url">Judge Provider URL</label>
+                    <input type="text" id="judge-provider-url"
+                           placeholder="Prefilled from the first batch you view">
+                </div>
+                <div class="form-group">
+                    <label for="judge-model">Judge Model</label>
+                    <input type="text" id="judge-model" placeholder="Prefilled from the first batch you view">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="judge-api-key">Judge API Key</label>
+                <input type="password" id="judge-api-key" placeholder="Optional — kept on this page only, never stored">
+                <div class="hint">Re-scoring repeats the string match against the case's current gold diagnosis and aliases. The LLM judge rates each completed run 1–5 on five rubric dimensions.</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                <button class="btn btn-outline scoring-btn" data-action="rescore-batch">Re-score all</button>
+                <button class="btn btn-primary scoring-btn" data-action="judge-batch">LLM-judge all</button>
+                <span id="scoring-status" class="text-muted"></span>
             </div>
         </div>
         <div id="results-summary"></div>
@@ -218,6 +242,8 @@
         <h3 id="run-dialog-title">Run Detail</h3>
         <div id="run-dialog-content"></div>
         <div class="dialog-actions">
+            <button id="run-rescore-btn" class="btn btn-outline scoring-btn hidden" data-action="rescore-run">Re-score</button>
+            <button id="run-judge-btn" class="btn btn-outline scoring-btn hidden" data-action="judge-run">LLM judge</button>
             <button class="btn btn-ghost" data-action="close-run-dialog">Close</button>
         </div>
     </div>
@@ -226,5 +252,6 @@
 <div id="toast" class="toast hidden"></div>
 
 <script src="eval.js"></script>
+<script src="eval_scoring.js"></script>
 </body>
 </html>

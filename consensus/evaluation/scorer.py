@@ -17,6 +17,19 @@ import os
 import re
 from pathlib import Path
 
+from consensus.evaluation.constants import (
+    DEFAULT_MODEL,
+    DEFAULT_PROVIDER_URL,
+    JUDGE_DIMENSIONS,
+    JUDGE_MAX_SCORE,
+    JUDGE_MAX_TOKENS,
+    JUDGE_MIN_SCORE,
+    JUDGE_TEMPERATURE,
+    MIN_PARTIAL_MATCH_CHARS,
+    MIN_PARTIAL_MATCH_WORDS,
+)
+from consensus.evaluation.report import print_report
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +43,15 @@ def normalise(text: str) -> str:
     text = re.sub(r"[^\w\s]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def _acceptable_terms(gold_diagnosis: str, gold_aliases: list[str]) -> list[str]:
+    """Lowercased gold diagnosis and aliases, minus any that normalise to "".
+
+    A blank term is a substring of every text, so it would match anything.
+    """
+    terms = [gold_diagnosis.lower()] + [a.lower() for a in gold_aliases]
+    return [t for t in terms if normalise(t)]
 
 
 def score_diagnostic_accuracy(
@@ -46,7 +68,7 @@ def score_diagnostic_accuracy(
         - confidence: str — "exact" or "partial" or "none"
     """
     norm_conclusion = normalise(conclusion)
-    all_acceptable = [gold_diagnosis.lower()] + [a.lower() for a in gold_aliases]
+    all_acceptable = _acceptable_terms(gold_diagnosis, gold_aliases)
 
     for diag in all_acceptable:
         norm_diag = normalise(diag)
@@ -61,10 +83,10 @@ def score_diagnostic_accuracy(
     # (e.g. "lupus" matches "systemic lupus erythematosus")
     for diag in all_acceptable:
         words = normalise(diag).split()
-        if len(words) >= 2:
+        if len(words) >= MIN_PARTIAL_MATCH_WORDS:
             # Check if the most distinctive word (longest) appears
             longest_word = max(words, key=len)
-            if len(longest_word) >= 4 and longest_word in norm_conclusion:
+            if len(longest_word) >= MIN_PARTIAL_MATCH_CHARS and longest_word in norm_conclusion:
                 return {
                     "correct": True,
                     "matched_term": diag,
@@ -90,7 +112,7 @@ def score_differential_quality(
         - first_mention_turn: int or -1
         - first_mention_speaker: str or ""
     """
-    all_acceptable = [gold_diagnosis.lower()] + [a.lower() for a in gold_aliases]
+    all_acceptable = _acceptable_terms(gold_diagnosis, gold_aliases)
 
     for i, msg in enumerate(messages):
         content = normalise(msg.get("content", ""))
@@ -105,7 +127,7 @@ def score_differential_quality(
         for diag in all_acceptable:
             words = normalise(diag).split()
             longest = max(words, key=len) if words else ""
-            if len(longest) >= 4 and longest in content:
+            if len(longest) >= MIN_PARTIAL_MATCH_CHARS and longest in content:
                 return {
                     "mentioned": True,
                     "first_mention_turn": i,
@@ -174,6 +196,24 @@ Respond in JSON format only:
 """
 
 
+def judge_reply_problem(scores: object) -> str:
+    """Why a parsed judge reply is unusable, or "" if it is valid.
+
+    Valid means a JSON object with every ``JUDGE_DIMENSIONS`` key holding a
+    number (not a bool) in ``JUDGE_MIN_SCORE..JUDGE_MAX_SCORE``.
+    """
+    if not isinstance(scores, dict):
+        return "judge reply is not a JSON object"
+    bad = [d for d in JUDGE_DIMENSIONS
+           if isinstance(scores.get(d), bool)
+           or not isinstance(scores.get(d), (int, float))
+           or not JUDGE_MIN_SCORE <= scores[d] <= JUDGE_MAX_SCORE]
+    if bad:
+        return ("judge reply has missing or out-of-range scores for: "
+                + ", ".join(bad))
+    return ""
+
+
 async def llm_judge_score(
     case_presentation: str,
     gold_diagnosis: str,
@@ -184,7 +224,9 @@ async def llm_judge_score(
 ) -> dict:
     """Use an LLM to score the conclusion on a rubric.
 
-    Returns dict with scores (1-5) for each dimension, or error.
+    Returns ``{"scores": {...}, "error": ""}`` on success. On any failure
+    (transport, unparseable or invalid reply) returns empty scores and a
+    non-empty ``error``.
     """
     try:
         from consensus.ai_client import AIClient
@@ -199,8 +241,8 @@ async def llm_judge_score(
             resp = await client.complete(
                 messages=[{"role": "user", "content": prompt}],
                 model=model,
-                temperature=0.1,  # Low temperature for consistent scoring
-                max_tokens=512,
+                temperature=JUDGE_TEMPERATURE,
+                max_tokens=JUDGE_MAX_TOKENS,
             )
 
         # Parse JSON from response
@@ -213,11 +255,15 @@ async def llm_judge_score(
             content = content.strip()
 
         scores = json.loads(content)
+        problem = judge_reply_problem(scores)
+        if problem:
+            raise ValueError(problem)
         return {"scores": scores, "error": ""}
 
     except Exception as e:
-        logger.warning("LLM judge failed: %s", e)
-        return {"scores": {}, "error": str(e)}
+        logger.warning("LLM judge failed: %r", e)
+        # Timeouts stringify to "", and callers treat a blank error as success.
+        return {"scores": {}, "error": str(e) or type(e).__name__}
 
 
 # ---------------------------------------------------------------------------
@@ -299,15 +345,21 @@ def score_run_from_db(eval_db, run_id: int) -> None:
 
 
 async def llm_judge_run_from_db(eval_db, run_id: int, provider_url: str,
-                                 model: str, api_key: str = "") -> None:
-    """Run LLM judge on a completed run and write scores to eval DB."""
+                                model: str, api_key: str = "") -> dict | None:
+    """Run the LLM judge on a completed run and store its scores.
+
+    Returns the judge result (``{"scores", "error"}``), or None when the run
+    is missing, not done, or its case is gone. A failed judgement is
+    returned but not stored: storing replaces the run's previous
+    ``llm_judge`` score, and an outage must not wipe a good one.
+    """
     run = eval_db.get_run(run_id)
     if not run or run["status"] != "done":
-        return
+        return None
 
     case = eval_db.get_case(run["case_id"])
     if not case:
-        return
+        return None
 
     result = await llm_judge_score(
         case_presentation=case["presentation"],
@@ -317,128 +369,9 @@ async def llm_judge_run_from_db(eval_db, run_id: int, provider_url: str,
         model=model,
         api_key=api_key,
     )
-    eval_db.add_score(run_id, "llm_judge", result)
-
-
-# ---------------------------------------------------------------------------
-# Reporting
-# ---------------------------------------------------------------------------
-
-def print_report(scored_results: list[dict]):
-    """Print a summary table of evaluation results."""
-    # Group by condition
-    by_condition: dict[str, list[dict]] = {}
-    for r in scored_results:
-        cond = r.get("condition", "unknown")
-        by_condition.setdefault(cond, []).append(r)
-
-    print(f"\n{'='*80}")
-    print("EVALUATION RESULTS SUMMARY")
-    print(f"{'='*80}\n")
-
-    # Header
-    print(f"{'Condition':<25} {'N':>4} {'Accuracy':>10} {'In Diff':>10} "
-          f"{'Tokens':>10} {'Errors':>8}")
-    print("-" * 80)
-
-    for cond_name in ["baseline", "multi_agent", "multi_agent_da",
-                       "multi_agent_da_memory", "full"]:
-        runs = by_condition.get(cond_name, [])
-        if not runs:
-            continue
-
-        n = len(runs)
-        correct = sum(
-            1 for r in runs
-            if r.get("scores", {}).get("diagnostic_accuracy", {}).get("correct", False)
-        )
-        in_diff = sum(
-            1 for r in runs
-            if r.get("scores", {}).get("differential_quality", {}).get("mentioned", False)
-        )
-        total_tokens = sum(r.get("total_tokens", 0) for r in runs)
-        errors = sum(1 for r in runs if r.get("error"))
-
-        acc_pct = f"{correct}/{n} ({100*correct/n:.0f}%)" if n else "—"
-        diff_pct = f"{in_diff}/{n} ({100*in_diff/n:.0f}%)" if n else "—"
-
-        print(f"{cond_name:<25} {n:>4} {acc_pct:>10} {diff_pct:>10} "
-              f"{total_tokens:>10,} {errors:>8}")
-
-    print()
-
-    # Per-case breakdown
-    print(f"\n{'='*80}")
-    print("PER-CASE BREAKDOWN")
-    print(f"{'='*80}\n")
-
-    # Group by case
-    by_case: dict[str, list[dict]] = {}
-    for r in scored_results:
-        by_case.setdefault(r["case_id"], []).append(r)
-
-    for case_id in sorted(by_case.keys()):
-        runs = by_case[case_id]
-        case_title = runs[0].get("case_title", case_id)
-        gold = runs[0].get("gold_diagnosis", "")
-        print(f"\n{case_id}: {case_title}")
-        print(f"  Gold: {gold}")
-
-        for r in runs:
-            cond = r["condition"]
-            acc = r.get("scores", {}).get("diagnostic_accuracy", {})
-            correct = "CORRECT" if acc.get("correct") else "WRONG"
-            matched = acc.get("matched_term", "")
-            conf = acc.get("confidence", "")
-            tokens = r.get("total_tokens", 0)
-            err = r.get("error", "")
-
-            status = f"{correct}"
-            if matched:
-                status += f" ({conf}: '{matched}')"
-            if err:
-                status = f"ERROR: {err[:50]}"
-
-            print(f"  {cond:<25} {status:<40} [{tokens:,} tokens]")
-
-    # LLM judge scores if present
-    has_llm_scores = any(
-        r.get("scores", {}).get("llm_judge")
-        for r in scored_results
-    )
-    if has_llm_scores:
-        print(f"\n{'='*80}")
-        print("LLM JUDGE SCORES (1-5 scale)")
-        print(f"{'='*80}\n")
-
-        dims = ["accuracy", "reasoning", "evidence", "differential", "critical_analysis"]
-        print(f"{'Condition':<25}", end="")
-        for d in dims:
-            print(f" {d[:10]:>10}", end="")
-        print()
-        print("-" * 80)
-
-        for cond_name in ["baseline", "multi_agent", "multi_agent_da",
-                           "multi_agent_da_memory", "full"]:
-            runs = by_condition.get(cond_name, [])
-            judged = [
-                r for r in runs
-                if r.get("scores", {}).get("llm_judge", {}).get("scores")
-            ]
-            if not judged:
-                continue
-
-            print(f"{cond_name:<25}", end="")
-            for d in dims:
-                vals = [
-                    r["scores"]["llm_judge"]["scores"].get(d, 0)
-                    for r in judged
-                ]
-                avg = sum(vals) / len(vals) if vals else 0
-                print(f" {avg:>10.1f}", end="")
-            print(f"  (n={len(judged)})")
-
-    print()
+    if not result["error"]:
+        eval_db.add_score(run_id, "llm_judge", result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +390,7 @@ def main():
     )
     parser.add_argument(
         "--judge-provider-url", type=str,
-        default=os.environ.get("EVAL_PROVIDER_URL", "http://localhost:11434/v1"),
+        default=os.environ.get("EVAL_PROVIDER_URL", DEFAULT_PROVIDER_URL),
         help="Provider URL for the LLM judge",
     )
     parser.add_argument(
@@ -490,7 +423,7 @@ def main():
         import asyncio
         from consensus.evaluation.cases import get_case
 
-        judge_model = args.judge_model or os.environ.get("EVAL_MODEL", "llama3")
+        judge_model = args.judge_model or os.environ.get("EVAL_MODEL", DEFAULT_MODEL)
         api_key = os.environ.get(args.judge_api_key_env, "") if args.judge_api_key_env else ""
 
         async def judge_all():

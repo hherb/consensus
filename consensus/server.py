@@ -1198,15 +1198,20 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     # API
     webapp.router.add_post("/api/{method}", handle_api)
 
-    # Evaluation UI routes (before catch-all)
-    try:
-        from .evaluation.eval_db import EvalDatabase
-        from .evaluation.eval_routes import register_eval_routes
-        eval_db = EvalDatabase()
-        register_eval_routes(webapp, eval_db)
-        logger.info("Evaluation UI available at /eval/")
-    except Exception:
-        logger.exception("Failed to load evaluation module")
+    # Evaluation UI routes (before catch-all). Single-user only: /eval/api/
+    # has no auth and one shared EvalDatabase, and its judge/batch routes
+    # make the server call a caller-chosen provider URL.
+    if multi_user:
+        logger.info("Evaluation UI disabled in multi-user mode")
+    else:
+        try:
+            from .evaluation.eval_db import EvalDatabase
+            from .evaluation.eval_routes import register_eval_routes
+            eval_db = EvalDatabase()
+            register_eval_routes(webapp, eval_db)
+            logger.info("Evaluation UI available at /eval/")
+        except Exception:
+            logger.exception("Failed to load evaluation module")
 
     # Static / SPA
     async def serve_index(request: web.Request) -> web.StreamResponse:
