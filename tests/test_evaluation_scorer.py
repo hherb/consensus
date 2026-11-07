@@ -437,3 +437,48 @@ class TestMain:
         scorer.main()
         assert judge_calls[0]["model"] == "fallback-model"
         assert judge_calls[0]["api_key"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Defects found while characterizing (fixed in the same PR)
+# ---------------------------------------------------------------------------
+
+class TestBlankDiagnosisTerms:
+    """A term that normalises to "" is a substring of every text."""
+
+    @pytest.mark.parametrize("gold,aliases", [("", []), ("-", []),
+                                              ("", ["  "]), ("", ["?!"])])
+    def test_blank_terms_never_match_a_conclusion(self, gold, aliases):
+        r = score_diagnostic_accuracy("rheumatoid arthritis", gold, aliases)
+        assert r == {"correct": False, "matched_term": "", "confidence": "none"}
+
+    @pytest.mark.parametrize("gold,aliases", [("", []), ("", ["--"])])
+    def test_blank_terms_never_count_as_mentioned(self, gold, aliases):
+        msgs = [{"content": "gout", "speaker": "A"}]
+        assert not score_differential_quality(msgs, gold, aliases)["mentioned"]
+
+    def test_real_alias_still_matches_beside_a_blank_one(self):
+        r = score_diagnostic_accuracy("SLE", GOLD, ["-", "SLE"])
+        assert r["matched_term"] == "sle"
+
+
+class TestRescoringReplacesScores:
+    def test_scoring_twice_keeps_one_row_per_type(self, eval_db):
+        run_id = _make_run(eval_db, conclusion="gout")
+        score_run_from_db(eval_db, run_id)
+        eval_db.update_run(run_id, conclusion="SLE")
+        score_run_from_db(eval_db, run_id)
+        scores = eval_db.get_scores(run_id)
+        assert sorted(s["score_type"] for s in scores) == [
+            "diagnostic_accuracy", "differential_quality"]
+        assert _scores_by_type(eval_db, run_id)[
+            "diagnostic_accuracy"]["correct"] is True
+
+    async def test_llm_judge_does_not_replace_string_scores(self, eval_db,
+                                                            judge_calls):
+        run_id = _make_run(eval_db, conclusion="SLE")
+        score_run_from_db(eval_db, run_id)
+        await llm_judge_run_from_db(eval_db, run_id, "http://j/v1", "m")
+        await llm_judge_run_from_db(eval_db, run_id, "http://j/v1", "m")
+        assert sorted(s["score_type"] for s in eval_db.get_scores(run_id)) == [
+            "diagnostic_accuracy", "differential_quality", "llm_judge"]

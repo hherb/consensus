@@ -32,6 +32,15 @@ def normalise(text: str) -> str:
     return text
 
 
+def _acceptable_terms(gold_diagnosis: str, gold_aliases: list[str]) -> list[str]:
+    """Lowercased gold diagnosis and aliases, minus any that normalise to "".
+
+    A blank term is a substring of every text, so it would match anything.
+    """
+    terms = [gold_diagnosis.lower()] + [a.lower() for a in gold_aliases]
+    return [t for t in terms if normalise(t)]
+
+
 def score_diagnostic_accuracy(
     conclusion: str,
     gold_diagnosis: str,
@@ -46,7 +55,7 @@ def score_diagnostic_accuracy(
         - confidence: str — "exact" or "partial" or "none"
     """
     norm_conclusion = normalise(conclusion)
-    all_acceptable = [gold_diagnosis.lower()] + [a.lower() for a in gold_aliases]
+    all_acceptable = _acceptable_terms(gold_diagnosis, gold_aliases)
 
     for diag in all_acceptable:
         norm_diag = normalise(diag)
@@ -90,7 +99,7 @@ def score_differential_quality(
         - first_mention_turn: int or -1
         - first_mention_speaker: str or ""
     """
-    all_acceptable = [gold_diagnosis.lower()] + [a.lower() for a in gold_aliases]
+    all_acceptable = _acceptable_terms(gold_diagnosis, gold_aliases)
 
     for i, msg in enumerate(messages):
         content = normalise(msg.get("content", ""))

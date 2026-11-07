@@ -463,11 +463,21 @@ class EvalDatabase:
 
     def add_score(self, run_id: int, score_type: str,
                   score_data: dict) -> int:
-        cur = self._execute_write(
-            "INSERT INTO eval_run_scores "
-            "(run_id, score_type, score_json, scored_at) VALUES (?,?,?,?)",
-            (run_id, score_type, json.dumps(score_data), time.time()),
-        )
+        """Store a run's score of one type, replacing any earlier one.
+
+        Re-scoring (``POST /runs/{id}/score``) must not leave duplicate rows.
+        """
+        with self._lock:
+            self.conn.execute(
+                "DELETE FROM eval_run_scores WHERE run_id=? AND score_type=?",
+                (run_id, score_type),
+            )
+            cur = self.conn.execute(
+                "INSERT INTO eval_run_scores "
+                "(run_id, score_type, score_json, scored_at) VALUES (?,?,?,?)",
+                (run_id, score_type, json.dumps(score_data), time.time()),
+            )
+            self.conn.commit()
         return cur.lastrowid
 
     def get_scores(self, run_id: int) -> list[dict]:
