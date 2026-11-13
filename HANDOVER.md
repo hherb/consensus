@@ -1,8 +1,9 @@
 # HANDOVER
 
-_Last updated: 2026-11-07. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices and the #104 rotation fix; the `evaluation/scorer.py`
-slice is on `refactor/eval-scorer-split-61` (suite at **3410 passing**). The
+_Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
+the merged #61 slices and the #104 rotation fix; the `evaluation/eval_db.py`
+slice and the #109 fix are on `refactor/eval-db-split-61` (suite at **3490
+passing**). The
 discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
 merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
@@ -10,8 +11,8 @@ the tools_document failure-visibility work (#78) — contracts for both
 summarised below. The one open structural issue is **#61** (modules over the
 ~500-line golden rule): `app_discussion_flow`, `tools_document`, `app.py`
 (→ `app_api/` mixins), `tools_memory`, `tools_python`, `tools_image` and
-`methods/base.py`, `app_discussion_setup.py` and `evaluation/scorer.py` are
-split; seven modules remain over the limit. **#86** (lint gate) is done: zero `ruff --select F` findings in
+`methods/base.py`, `app_discussion_setup.py`, `evaluation/scorer.py` and
+`evaluation/eval_db.py` are split; six modules remain over the limit. **#86** (lint gate) is done: zero `ruff --select F` findings in
 `consensus/`, enforced by `tests/test_lint.py`._
 
 This file briefs the next session on what is done, what is still open, and the
@@ -28,7 +29,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3381 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3490 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -211,84 +212,54 @@ concluded record. Removing a non-member is an error. Tests:
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-**Done — nine slices** (detail in git history; one PR each):
+**Done — ten slices** (detail in git history; one PR each):
 
-1. `app_discussion_flow.py` (1254) → `app_discussion_flow/`. **Watch
-   `turns.py` (499)**: the next addition crosses the limit — split then.
-2. `tools_document.py` (1277) → `tools_document/`. Its review's
-   pre-existing defects became #78.
-3. `app.py` (1284) → `app.py` (344 at the time; 346 now) + `app_api/` mixins, composed like
-   `Database` composes `db/` (chosen with the repo owner: ~500 lines were
-   already one-line delegators, so moving logic alone could not get it under
-   the limit). **Moved code logs under `consensus.app_api.*`, not a child of
-   `consensus.app`** — `caplog` on the old name sees nothing. Image-fetch
-   retry is #88; URL redaction in fetch-failure logs is #89.
-4. `tools_memory.py` (698) → `tools_memory/` (largest 288). Coverage 45% →
-   100% first. Fixed: semantic-context lazy indexing ran once per discussion
-   per process (now one shared `ensure_discussion_indexed()`), embed retry
-   slept after its last attempt, `kg_assert`'s background embed failed
-   silently. Submodule loggers are children of `consensus.tools_memory`.
-5. `tools_python.py` (622) → `tools_python/` (largest 295). Coverage 82% →
-   100% first; facade exports only `create_python_provider`. Fixed: `uv pip
-   install` lacked `--python sys.executable` (installed into the wrong venv);
-   timed-out installs and cancelled turns left the worker/`uv` running and
-   the approval wait swallowed cancellation (all now kill/re-raise); load
-   failures logged at INFO (now WARNING; missing UI flag is **#96**).
-   Seatbelt write confinement is looser than documented — **#97**.
-6. `tools_image.py` (643) → `tools_image/` (largest 190). Coverage 38% →
-   100% first (`tests/image_helpers.py` `patch_image_module`). **URL fetching
-   is one policy in `consensus/http_fetch.py`** (`fetch_capped`, `guard` on
-   every redirect hop, `redact_url`), shared by document, image and
-   `fetch_webpage`; `require_public_host` (SSRF guard) runs in every mode
-   (#98). Fixed: redirect-hop SSRF, failed vision calls persisted as
-   descriptions, SVGs sent to vision models, GIF→JPEG resize. Lesson: every
-   fetch test installs a fake transport, or it hits the real network the
-   moment the guard breaks.
-7. `methods/base.py` (517 → 469) → `LINEAR_NEXT`, `Phase`,
-   `ProcessedResponse`, `OutputToolSpec` moved verbatim to
-   `methods/phase_types.py`. `base.py` **re-exports them** (`__all__`), so
-   none of the 124 importing modules changed; guard is
-   `tests/test_methods_base_facade.py`. Import new code from either.
-8. `app_discussion_setup.py` (509 → 426) → participant-role code
-   (`set_participant_role`, `auto_assign_da_tools`,
-   `reorder_da_in_turn_order`, `_DA_TOOL_NAMES`) moved verbatim to
-   `app_discussion_roles.py`, plus `revert_other_devils_advocates`, newly
-   extracted from the demotion loop both callers shared (102, 100% covered by
-   `tests/test_app_discussion_roles.py`; it was 0%). No re-export — callers
-   import the defining module. Defect fixed: a devil's advocate added
-   mid-discussion demoted the old one in memory only, so a reload restored
-   two. Turn-order desync on mid-discussion roster/role changes was **#104**
-   (fixed — contract below).
-9. `evaluation/scorer.py` (538 → 462) → `print_report` moved to
-   `evaluation/report.py` (127; verbatim in the move commit, its literals
-   later named in `constants.py`); `scorer.main` still calls it, so both CLI
-   spellings are unchanged. Coverage 0% → 99/100% first
-   (`tests/test_evaluation_scorer.py`, real `EvalDatabase`, stubbed
-   `AIClient.complete`). Defects fixed: a gold diagnosis/alias normalising to
-   `""` matched every text (scored correct); `EvalDatabase.add_score` appended,
-   so re-scoring a run duplicated its rows (now replaces per `score_type`).
-   Same PR, at the owner's request: the eval web UI now re-scores and
-   LLM-judges (Results tab, per batch or per run; `POST /eval/api/runs/{id}/judge`,
-   BYOK key held only in the input field, not `sessionStorage`, which CodeQL
-   flags) and its summary shows correct / in-differential / judge mean; a
-   failed judgement returns 502 and **never overwrites an earlier score**.
-   "Failed" includes a timeout whose exception text is blank and a reply
-   missing a `JUDGE_DIMENSIONS` key or scoring outside 1–5
-   (`scorer.judge_reply_problem`); `llm_judge_score` always returns a
-   non-empty `error` on failure. `/eval/api/` writes must be
-   `application/json` (415 otherwise — CSRF guard, `eval_routes.py`
-   middleware, covers desktop's bare eval app too), bodies must be JSON
-   objects (400), and ids are `\d+` in the routes. **`/eval/` is not
-   mounted in `--multi-user` mode** (no auth, one shared `EvalDatabase`, and
-   the judge/batch routes call a caller-chosen URL); the main page hides
-   its Evaluation link there.
-   The UI code is `static/eval_scoring.js` (loaded after `eval.js`, which is
-   647 lines and pre-existing over the limit). Evaluation literals live in
-   `evaluation/constants.py` (`JUDGE_DIMENSIONS` is mirrored in
-   `eval_scoring.js` and the prompt's JSON keys —
-   `tests/test_eval_judge_robustness.py` fails if they drift). First route
-   tests: `tests/test_eval_routes_scoring.py` (aiohttp `TestClient`, no
-   plugin).
+1. `app_discussion_flow.py` → `app_discussion_flow/`. **Watch `turns.py`
+   (499)**: the next addition crosses the limit — split then.
+2. `tools_document.py` → `tools_document/` (its pre-existing defects → #78).
+3. `app.py` → `app.py` + `app_api/` mixins (chosen with the owner). **Moved
+   code logs under `consensus.app_api.*`** — `caplog` on `consensus.app`
+   sees nothing.
+4. `tools_memory.py` → `tools_memory/`; one shared
+   `ensure_discussion_indexed()`. Loggers are children of the package.
+5. `tools_python.py` → `tools_python/`; facade exports only
+   `create_python_provider`; `uv pip install --python sys.executable`;
+   timed-out/cancelled installs kill and re-raise. #96, #97 open.
+6. `tools_image.py` → `tools_image/`. **URL fetching is one policy in
+   `consensus/http_fetch.py`** (`fetch_capped`, per-hop `guard`,
+   `redact_url`); `require_public_host` runs in every mode (#98). Every
+   fetch test installs a fake transport.
+7. `methods/base.py` → dataclasses in `methods/phase_types.py`, re-exported
+   by `base.py` (`__all__`; guard `tests/test_methods_base_facade.py`).
+8. `app_discussion_setup.py` → role code in `app_discussion_roles.py` (no
+   re-export; callers import the defining module).
+9. `evaluation/scorer.py` → `print_report` in `evaluation/report.py`. Eval
+   contracts kept from that PR: a failed LLM judgement returns 502 and
+   **never overwrites an earlier score** (`scorer.judge_reply_problem`);
+   `/eval/api/` writes must be `application/json` (415 — CSRF guard,
+   covers desktop's bare eval app too) with a JSON-object body (400);
+   **`/eval/` is not mounted in `--multi-user` mode**; the judge's BYOK key
+   is held only in the input field, never `sessionStorage` (CodeQL).
+   `JUDGE_DIMENSIONS` is mirrored in `static/eval_scoring.js` and the
+   judge prompt (`tests/test_eval_judge_robustness.py` checks the drift).
+   `static/eval.js` (647) is pre-existing over the limit.
+10. `evaluation/eval_db.py` (600 → 81) → `EvalDatabase` composes
+   `CatalogMixin` (`eval_db_catalog.py`, cases + conditions),
+   `RunsMixin` (`eval_db_runs.py`, batches/runs/messages/scores) and
+   `SeedingMixin` (`eval_db_seed.py`), like `db/`. Sibling modules, not a
+   package, because `_get_migrations_dir` resolves from `__file__`.
+   Verbatim move; no caller changed. Coverage 82% → 100% first
+   (`tests/test_eval_db.py`). Defects fixed: `update_condition` dropped
+   each participant's `provider_url`/`model` (saving a condition in the UI
+   wiped its overrides); multi-statement writes committed explicitly, so a
+   failing later insert left earlier rows for the next unrelated write to
+   commit (now `with self.conn`). Same PR: **#109** — eval routes check
+   field types in `evaluation/request_checks.py` (pure, table-driven) and
+   answer 400; a SQLite `IntegrityError` (duplicate key/name, deleting a
+   case runs still use) is a 409 via the `_constraint_conflicts`
+   middleware; `start_batch` checks ids before creating anything. Route
+   tests: `tests/test_eval_routes_crud.py`. Enum sets mirroring the
+   schema's `CHECK`s live in `evaluation/constants.py`.
 
 Smaller slices came out of the error-visibility work: `ai_response.py` (from
 `ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).
@@ -316,19 +287,21 @@ call sites. Keep them in step when the public API changes.
 | 714 | 51% | `consensus/mcp_server.py` |
 | 677 | **0%** | `consensus/evaluation/runner.py` |
 | 636 | 35% | `consensus/desktop.py` |
-| 600 | 62% | `consensus/evaluation/eval_db.py` |
 
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next-best target: `consensus/evaluation/eval_db.py`** (600) — plain
-SQLite CRUD on one class, so it splits like `db/` does: domain mixins
-(cases + conditions / batches + runs + messages + scores / seeding)
-composed into `EvalDatabase`. Characterize against a real temp DB first
-(cheap — `tests/eval_helpers.py` has the `eval_db` fixture and a run
-factory). `moderator.py` and `auth.py` are bigger payoffs but are a single
-class and a security-critical module at ~50–60% — build their nets before
-moving a line.
+**Next-best target: `consensus/evaluation/runner.py`** (677, **0%**) — free
+functions, so it splits without glue: the in-memory CLI path
+(`RunResult`, `run_case_condition`, `run_evaluation`, `parse_args`,
+`main`) vs the DB-backed web path (`run_case_condition_db`,
+`_run_single_chat`, `_run_multi_party`). It drives a real `ConsensusApp`,
+so the net needs a stubbed `AIClient` (as `tests/flow_e2e_helpers.py`
+does) plus the `eval_db` fixture in `tests/eval_helpers.py`. Also fix the
+known packaging gap there (default results dir lands in site-packages).
+`moderator.py` and `auth.py` are bigger payoffs but are a single class and
+a security-critical module at ~50–60% — build their nets before moving a
+line.
 
 **`server.py` is the awkward one — read this before picking it.** It is a
 single 1170-line `launch_web()` whose middleware and ~35 handlers are all
