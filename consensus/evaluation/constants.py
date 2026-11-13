@@ -35,3 +35,11 @@ REPORT_WIDTH = 80
 
 #: How much of a run's error text the per-case breakdown shows.
 REPORT_ERROR_PREVIEW_CHARS = 50
+
+#: Allowed ``cases.difficulty`` values — mirrors the ``CHECK`` constraint in
+#: ``migrations/001_baseline.sql``.
+CASE_DIFFICULTIES = frozenset({"easy", "moderate", "hard"})
+
+#: Allowed ``condition_participants.role`` values — mirrors the ``CHECK``
+#: constraint in ``migrations/001_baseline.sql``.
+PARTICIPANT_ROLES = frozenset({"standard", "devils_advocate"})

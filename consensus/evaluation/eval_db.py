@@ -90,7 +90,8 @@ class EvalDatabase:
                  findings: list[str] | None = None,
                  differentials: list[str] | None = None) -> int:
         now = time.time()
-        with self._lock:
+        # ``with self.conn`` commits every insert or rolls them all back.
+        with self._lock, self.conn:
             cur = self.conn.execute(
                 "INSERT INTO cases "
                 "(case_key, title, presentation, gold_diagnosis, difficulty, "
@@ -114,7 +115,6 @@ class EvalDatabase:
                     "INSERT INTO case_differentials (case_id, diagnosis_text) VALUES (?,?)",
                     (case_id, diff),
                 )
-            self.conn.commit()
         return case_id
 
     def get_case(self, case_id: int) -> Optional[dict]:
@@ -193,7 +193,7 @@ class EvalDatabase:
             **kwargs,
         )
         # Replace child lists atomically if provided
-        with self._lock:
+        with self._lock, self.conn:
             if aliases is not None:
                 self.conn.execute(
                     "DELETE FROM case_aliases WHERE case_id=?", (case_id,))
@@ -218,7 +218,6 @@ class EvalDatabase:
                         "INSERT INTO case_differentials (case_id, diagnosis_text) VALUES (?,?)",
                         (case_id, diff),
                     )
-            self.conn.commit()
 
     def delete_case(self, case_id: int) -> None:
         self._execute_write("DELETE FROM cases WHERE id=?", (case_id,))
@@ -232,7 +231,7 @@ class EvalDatabase:
                       enable_tools: bool = False, num_rounds: int = 2,
                       participants: list[dict] | None = None) -> int:
         now = time.time()
-        with self._lock:
+        with self._lock, self.conn:
             cur = self.conn.execute(
                 "INSERT INTO conditions "
                 "(name, description, enable_da, enable_memory, enable_tools, "
@@ -250,7 +249,6 @@ class EvalDatabase:
                      p.get("role", "standard"), p.get("provider_url", ""),
                      p.get("model", "")),
                 )
-            self.conn.commit()
         return cond_id
 
     def get_condition(self, condition_id: int) -> Optional[dict]:
@@ -301,7 +299,7 @@ class EvalDatabase:
             **kwargs,
         )
         if participants is not None:
-            with self._lock:
+            with self._lock, self.conn:
                 self.conn.execute(
                     "DELETE FROM condition_participants WHERE condition_id=?",
                     (condition_id,),
@@ -309,11 +307,12 @@ class EvalDatabase:
                 for p in participants:
                     self.conn.execute(
                         "INSERT INTO condition_participants "
-                        "(condition_id, name, system_prompt, role) VALUES (?,?,?,?)",
+                        "(condition_id, name, system_prompt, role, "
+                        "provider_url, model) VALUES (?,?,?,?,?,?)",
                         (condition_id, p["name"], p.get("system_prompt", ""),
-                         p.get("role", "standard")),
+                         p.get("role", "standard"),
+                         p.get("provider_url", ""), p.get("model", "")),
                     )
-                self.conn.commit()
 
     def delete_condition(self, condition_id: int) -> None:
         self._execute_write("DELETE FROM conditions WHERE id=?", (condition_id,))

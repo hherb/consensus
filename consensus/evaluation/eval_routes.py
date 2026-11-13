@@ -7,12 +7,21 @@ by calling register_eval_routes(webapp, eval_db).
 import asyncio
 import logging
 import os
+import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
 from consensus.evaluation.eval_db import EvalDatabase
+from consensus.evaluation.request_checks import (
+    BATCH_FIELDS,
+    CASE_FIELDS,
+    CASE_REQUIRED,
+    CONDITION_FIELDS,
+    CONDITION_REQUIRED,
+    body_problem,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +60,27 @@ async def _require_json_writes(
     return await handler(request)
 
 
+@web.middleware
+async def _constraint_conflicts(
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+) -> web.StreamResponse:
+    """Answer a SQLite constraint failure with 409, not 500.
+
+    A duplicate case key or condition name, or deleting a case or
+    condition that runs still reference, is the caller's conflict with
+    stored data rather than a server fault.
+    """
+    try:
+        return await handler(request)
+    except sqlite3.IntegrityError as e:
+        logger.warning("%s %s conflicts with stored data: %s",
+                       request.method, request.path, e)
+        return _error(
+            f"Conflicts with stored data ({e}) — a duplicate key or name, "
+            "or a case/condition that runs still use", 409)
+
+
 async def _read_object(request: web.Request) -> dict | None:
     """The request's JSON body if it is an object, else None."""
     try:
@@ -64,6 +94,7 @@ def register_eval_routes(webapp: web.Application,
                          eval_db: EvalDatabase) -> None:
     """Register all /eval/ routes (and their CSRF guard) on the app."""
     webapp.middlewares.append(_require_json_writes)
+    webapp.middlewares.append(_constraint_conflicts)
 
     eval_static_dir = os.path.realpath(
         os.path.join(os.path.dirname(__file__), "static")
@@ -80,10 +111,9 @@ def register_eval_routes(webapp: web.Application,
         data = await _read_object(request)
         if data is None:
             return _error("Request body must be a JSON object")
-        required = ("case_key", "title", "presentation", "gold_diagnosis")
-        for field in required:
-            if not data.get(field, "").strip():
-                return _error(f"Missing required field: {field}")
+        problem = body_problem(data, CASE_FIELDS, CASE_REQUIRED)
+        if problem:
+            return _error(problem)
         case_id = eval_db.add_case(
             case_key=data["case_key"].strip(),
             title=data["title"].strip(),
@@ -104,6 +134,10 @@ def register_eval_routes(webapp: web.Application,
         data = await _read_object(request)
         if data is None:
             return _error("Request body must be a JSON object")
+        problem = body_problem(data, CASE_FIELDS, CASE_REQUIRED,
+                               partial=True)
+        if problem:
+            return _error(problem)
         kwargs = {}
         for field in ("case_key", "title", "presentation", "gold_diagnosis",
                        "difficulty", "source"):
@@ -136,15 +170,16 @@ def register_eval_routes(webapp: web.Application,
         data = await _read_object(request)
         if data is None:
             return _error("Request body must be a JSON object")
-        if not data.get("name", "").strip():
-            return _error("Missing required field: name")
+        problem = body_problem(data, CONDITION_FIELDS, CONDITION_REQUIRED)
+        if problem:
+            return _error(problem)
         cond_id = eval_db.add_condition(
             name=data["name"].strip(),
             description=data.get("description", ""),
-            enable_da=bool(data.get("enable_da", False)),
-            enable_memory=bool(data.get("enable_memory", False)),
-            enable_tools=bool(data.get("enable_tools", False)),
-            num_rounds=int(data.get("num_rounds", 2)),
+            enable_da=data.get("enable_da", False),
+            enable_memory=data.get("enable_memory", False),
+            enable_tools=data.get("enable_tools", False),
+            num_rounds=data.get("num_rounds", 2),
             participants=data.get("participants", []),
         )
         return _json(eval_db.get_condition(cond_id), status=201)
@@ -156,6 +191,10 @@ def register_eval_routes(webapp: web.Application,
         data = await _read_object(request)
         if data is None:
             return _error("Request body must be a JSON object")
+        problem = body_problem(data, CONDITION_FIELDS, CONDITION_REQUIRED,
+                               partial=True)
+        if problem:
+            return _error(problem)
         kwargs = {}
         for field in ("name", "description", "enable_da", "enable_memory",
                        "enable_tools", "num_rounds"):
@@ -196,6 +235,9 @@ def register_eval_routes(webapp: web.Application,
         data = await _read_object(request)
         if data is None:
             return _error("Request body must be a JSON object")
+        problem = body_problem(data, BATCH_FIELDS)
+        if problem:
+            return _error(problem)
         case_ids = data.get("case_ids", [])
         condition_ids = data.get("condition_ids", [])
         provider_url = data.get("provider_url", "").strip()
@@ -210,6 +252,12 @@ def register_eval_routes(webapp: web.Application,
             return _error("Provider URL is required")
         if not model:
             return _error("Model name is required")
+        # Checked up front: a bad id met mid-loop left a half-created batch.
+        unknown = ([f"case {i}" for i in case_ids if not eval_db.get_case(i)]
+                   + [f"condition {i}" for i in condition_ids
+                      if not eval_db.get_condition(i)])
+        if unknown:
+            return _error("Unknown " + ", ".join(unknown))
 
         # Create batch
         batch_name = f"eval-{time.strftime('%Y%m%d-%H%M%S')}"
