@@ -81,6 +81,7 @@ class TestPromptSelection:
             topic=disc.topic, participants=moderator._participant_names())
         assert payload["model"] == ai.ai_config.model
         assert payload["temperature"] == ai.ai_config.temperature
+        assert payload["max_tokens"] == ai.ai_config.max_tokens
         assert "tools" not in payload
 
     async def test_devils_advocate_uses_its_db_prompts(self, mod, scripted_llm):
@@ -212,7 +213,14 @@ class TestToolLoop:
         assert "tools: web_search, calc" in system_of(first)
         assert [c.kwargs["arguments"] for c in
                 registry.execute.call_args_list] == [{"query": "x"}, {}]
-        assert registry.execute.call_args.kwargs["caller_entity_id"] == ai.id
+        registry.get_tools_for_entity.assert_awaited_once_with(
+            ai.id, disc.id, moderator_id=disc.moderator_id)
+        for call in registry.execute.call_args_list:
+            assert call.kwargs["caller_entity_id"] == ai.id
+            assert call.kwargs["discussion_id"] == disc.id
+            assert call.kwargs["moderator_id"] == disc.moderator_id
+        assert first["max_tokens"] == second["max_tokens"] == (
+            ai.ai_config.max_tokens)
         assert second["messages"][-3]["tool_calls"][0]["id"] == "c1"
         assert second["messages"][-2:] == [
             {"role": "tool", "tool_call_id": "c1", "content": "results"},
@@ -271,6 +279,16 @@ class TestToolLoop:
         assert tail[1]["role"] == "user"
         assert "[Tool: web_search] (OK)\nresults" in tail[1]["content"]
         assert resp.content == "done"
+
+    async def test_dsml_failed_call_reports_error(self, mod, scripted_llm):
+        moderator, disc, ai, human = mod
+        install_registry(moderator, "web_search",
+                         result=ToolResult(content="bad", is_error=True))
+        scripted_llm.replies = [
+            {"content": dsml_call("web_search", query="x")}, {"content": "done"}]
+        await moderator.generate_turn(ai)
+        assert "[Tool: web_search] (ERROR)\nbad" in (
+            scripted_llm.payloads[1]["messages"][-1]["content"])
 
     async def test_exhaustion_forces_final_plain_response(self, mod, scripted_llm):
         moderator, disc, ai, human = mod

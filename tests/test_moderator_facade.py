@@ -84,10 +84,18 @@ class TestSubmodules:
     def test_no_submodule_imports_the_package_facade(self):
         """A submodule importing ``__init__`` would close an import cycle."""
         for name in SUBMODULES:
-            tree = ast.parse((PACKAGE_ROOT / f"{name}.py").read_text())
+            tree = ast.parse(
+                (PACKAGE_ROOT / f"{name}.py").read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom):
-                    assert not (node.level == 1 and not node.module), name
+                    assert not (node.level and not node.module), name
+                    assert not (node.level == 2
+                                and node.module == "moderator"), name
+                    assert not (node.level == 0
+                                and node.module == "consensus.moderator"), name
+                elif isinstance(node, ast.Import):
+                    assert "consensus.moderator" not in {
+                        alias.name for alias in node.names}, name
 
     def test_moderator_composes_every_mixin(self):
         from consensus.moderator import context, synthesis, turn

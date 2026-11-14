@@ -11,7 +11,11 @@ from .constants import (
 
 
 class SynthesisMixin:
-    """Summary, conclusion and mediation calls made as the moderator."""
+    """Summary, conclusion and mediation calls made as the moderator.
+
+    Expects the host (``Moderator``) to provide ``discussion``,
+    ``_get_client``, ``resolve_prompt`` and the ``ContextMixin`` methods.
+    """
 
     async def generate_summary(self,
                                next_speaker_name: str = "") -> AIResponse:

@@ -242,7 +242,8 @@ all generation currently uses `complete()` or `complete_with_tools()`.
 ### `moderator/` -- Discussion Logic
 
 `Moderator` (`moderator/core.py`) manages everything related to
-**discussion flow and AI generation**. Its methods come from three mixins:
+**discussion flow and AI generation**. It defines prompt resolution, AI
+client caching and turn bookkeeping itself, and composes three mixins:
 `context.py` (context building), `turn.py` (`generate_turn` and the tool
 execution loop) and `synthesis.py` (summary, conclusion, mediation). It
 holds a reference to the current `Discussion`, the `Database`, and

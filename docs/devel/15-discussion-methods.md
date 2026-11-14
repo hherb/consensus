@@ -99,7 +99,7 @@ class DiscussionMethod(ABC):
 |------|-----------|---------|
 | `get_system_prompt(entity, discussion)` | `moderator/turn.py` | System prompt for the current phase |
 | `get_turn_prompt(entity, discussion)` | `moderator/turn.py` | Turn instruction for the current phase |
-| `get_output_tool(entity, discussion)` | `moderator/turn.py` | Forced output tool for a structured phase (issue #23) |
+| `get_output_tool(entity, discussion)` | `moderator/turn.py`, `app_discussion_flow/submissions.py`, `structured_input.py` | Forced output tool for a structured phase (issue #23) |
 | `get_summary_prompt(discussion, speaker, next_speaker)` | `moderator/synthesis.py` | Summary prompt override |
 | `get_conclusion_prompt(discussion)` | `moderator/synthesis.py` | Final conclusion prompt |
 | `filter_context_message(name, content, role, discussion)` | `moderator/context.py` | Transform context messages (e.g. anonymise for Delphi) |

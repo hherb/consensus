@@ -16,7 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 class TurnMixin:
-    """Generates an AI participant's contribution."""
+    """Generates an AI participant's contribution.
+
+    Expects the host (``Moderator``) to provide ``discussion``, ``db``,
+    ``_tool_registry``, ``_get_client``, ``_emit_progress``,
+    ``resolve_prompt`` and the ``ContextMixin`` methods.
+    """
 
     async def generate_turn(self, entity: Entity,
                             participant_role: str = "standard") -> AIResponse:

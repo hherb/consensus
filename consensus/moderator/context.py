@@ -13,7 +13,10 @@ from ..tools_image import build_image_content_blocks
 
 
 class ContextMixin:
-    """Builds the message context for participant and moderator calls."""
+    """Builds the message context for participant and moderator calls.
+
+    Expects the host (``Moderator``) to provide ``discussion`` and ``db``.
+    """
 
     def _participant_names(self) -> str:
         """Return a formatted comma-separated list of participant names and types."""

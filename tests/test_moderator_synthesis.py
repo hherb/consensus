@@ -101,6 +101,13 @@ class TestMediate:
         assert payload["temperature"] == MODERATOR_TEMPERATURE
         assert payload["max_tokens"] == MEDIATION_MAX_TOKENS
 
+    async def test_db_prompt_default_context(self, mod, scripted_llm):
+        moderator, disc, ai, human = mod
+        await moderator.mediate()
+        assert task_of(scripted_llm.payloads[0]) == moderator.resolve_prompt(
+            "moderator", "ai", "mediate", context="A disagreement has arisen.",
+            topic=disc.topic, participants=moderator._participant_names())
+
     async def test_fallback_task_default_context(self, mod, scripted_llm, tmp_db):
         moderator, disc, ai, human = mod
         tmp_db.conn.execute("DELETE FROM prompts")
@@ -118,6 +125,20 @@ async def test_non_ai_moderator_makes_no_call(mod, scripted_llm, call):
     resp = await getattr(moderator, call)()
     assert resp.content == ""
     assert scripted_llm.payloads == []
+
+
+@pytest.mark.parametrize("call", ["generate_summary", "generate_conclusion",
+                                  "mediate"])
+async def test_moderator_history_is_its_own_voice(mod, scripted_llm, tmp_db,
+                                                  call):
+    """The moderator's earlier messages come back as assistant turns."""
+    moderator, disc, ai, human = mod
+    tmp_db.add_message(disc.id, ai.id, "earlier summary", "moderator")
+    tmp_db.add_message(disc.id, human.id, "a point", "participant")
+    await getattr(moderator, call)()
+    messages = scripted_llm.payloads[0]["messages"]
+    assert {"role": "assistant", "content": "earlier summary"} in messages
+    assert {"role": "user", "content": f"[{human.name}]: a point"} in messages
 
 
 class TestClients:
@@ -186,6 +207,14 @@ class TestContextConfig:
         assert moderator._get_context_config(None) == ContextConfig()
         assert moderator._get_context_config(999) == ContextConfig()
 
+    def test_discussion_defaults_fill_unset_member_columns(self, mod):
+        moderator, disc, ai, human = mod
+        disc.default_context_strategy = "full"
+        disc.default_context_window_size = 3
+        config = moderator._get_context_config(ai.id)
+        assert (config.strategy, config.window_size) == (
+            ContextStrategy.FULL, 3)
+
     def test_token_window_reads_model_limits(self, mod, tmp_db, monkeypatch):
         moderator, disc, ai, human = mod
         tmp_db.update_member_context_strategy(disc.id, ai.id, "token_window")
@@ -197,10 +226,18 @@ class TestContextConfig:
         assert config.model_context_length == 8000
         assert config.reserved_output_tokens == ai.ai_config.max_tokens
 
+    @pytest.mark.parametrize("vision", [False, True])
     async def test_token_window_counts_overhead(self, mod, scripted_llm, tmp_db,
-                                                monkeypatch):
+                                                monkeypatch, vision):
         from consensus.token_utils import estimate_tokens
         moderator, disc, ai, human = mod
+        if vision:  # take the multimodal context path
+            monkeypatch.setattr(tmp_db, "get_discussion_images",
+                                lambda did: [{"id": 1}])
+            patch_where_defined(monkeypatch, Moderator.generate_turn,
+                                "is_vision_capable", lambda *a, **k: True)
+            patch_where_defined(monkeypatch, Moderator._format_messages,
+                                "build_image_content_blocks", lambda imgs: [])
         tmp_db.update_member_context_strategy(disc.id, ai.id, "token_window")
         seen: list = []
         patch_where_defined(

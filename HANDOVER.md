@@ -5,10 +5,9 @@ the merged #61 slices (through `desktop.py` → `desktop/`, PR #123), the #121
 fix (MCP tool failures are `isError` results, PR #122), the #104 rotation
 fix, and the #115/#118 pricing fixes (PRs #117/#119). The fourteenth #61
 slice (`moderator.py` → `moderator/`) is on `refactor/split-moderator-61`
-(suite at **3914 passing**). The discussion-method review & repair campaign
+(suite at **3921 passing**). The discussion-method review & repair campaign
 (#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
-(PyPI
-`consensus-app` + notarized macOS DMG), the public website, the
+(PyPI `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
 failure-visibility work (#78) — contracts for both summarised below. The one
 open structural issue is **#61** (modules over the ~500-line golden rule):
@@ -34,7 +33,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3914 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 3921 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -291,12 +290,14 @@ interpreter).
    `ScriptedLLM` (`tests/moderator_helpers.py`: a reply queue of message
    dicts or HTTP statuses at `_post_with_retry`; `dsml_call` for DSML
    markup); `use_method` patches `get_active_method` in every mixin module.
-   Guard `tests/test_moderator_facade.py`. Only edits: the class line names
-   the mixins; in-body `tools_memory` / `token_utils` imports gained a dot.
+   Guard `tests/test_moderator_facade.py`. Only non-verbatim edits: class
+   lines naming the mixins, new docstrings and import blocks, and an extra
+   dot on every relative import.
 
 **Facade guards.** A dropped re-export fails *late*: consumers mostly import
-lazily inside function bodies (`moderator/turn.py` and `moderator/context.py`
-import `is_vision_capable` / `build_image_content_blocks` at module level), and the `app._init_*_tools`
+lazily inside function bodies (exceptions: `moderator/turn.py` imports
+`is_vision_capable` and `moderator/context.py` imports
+`build_image_content_blocks` at module level), and the `app._init_*_tools`
 methods turn an `ImportError` into "feature unavailable" (logged at
 WARNING). Each re-exporting facade has a `tests/test_<name>_facade.py` that
 pins `__all__` by identity and AST-scans every module under `consensus/` for
