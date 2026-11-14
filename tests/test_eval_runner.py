@@ -113,7 +113,7 @@ class TestRunCaseCondition:
             raise RuntimeError("kaput")
         monkeypatch.setattr(runner.ConsensusApp, "set_topic", boom)
         result = await run_case_condition(CASE, PAIR, URL, "m1")
-        assert result.error == "kaput"
+        assert result.error == "RuntimeError: kaput"
 
     def test_to_dict(self):
         result = RunResult(CASE, PAIR)
@@ -188,8 +188,10 @@ class TestMain:
             return [bad, good]
 
         monkeypatch.setattr(runner, "run_evaluation", fake_run_evaluation)
-        self.run_main(monkeypatch, "--cases", CASE.id, "--output",
-                      str(tmp_path))
+        with pytest.raises(SystemExit) as exc:  # a failed run fails the CLI
+            self.run_main(monkeypatch, "--cases", CASE.id, "--output",
+                          str(tmp_path))
+        assert exc.value.code == 1
         out = capsys.readouterr().out
         assert seen["cases"] == [CASE]
         assert seen["conditions"] == list(CONDITIONS.values())
@@ -372,5 +374,18 @@ class TestRunCaseConditionDb:
         run_id = make_db_run(eval_db, participants=TWO)
         await run_case_condition_db(eval_db, run_id)
         run = eval_db.get_run(run_id)
-        assert run["status"] == "error" and run["error_text"] == "kaput"
+        assert run["status"] == "error" and run["error_text"] == "RuntimeError: kaput"
 
+
+
+class TestDriveTurns:
+    async def test_running_out_of_ai_speakers_is_an_error(self):
+        """Every eval participant is an AI, so no speaker due is a fault,
+        not a finished run."""
+        from types import SimpleNamespace
+
+        from consensus.evaluation.runner_common import drive_turns
+        app = SimpleNamespace(discussion=SimpleNamespace(current_speaker=None))
+        done, error = await drive_turns(app, 4, lambda s, r: None)
+        assert done == 0
+        assert "0 of 4" in error

@@ -3,7 +3,7 @@
 _Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices (through `eval_db.py`, PR #110) and the #104 rotation
 fix; the `evaluation/runner.py` slice plus #112/#113/#114 and a pricing fix are
-on `refactor/eval-runner-split-61` (suite at **3597 passing**). The
+on `refactor/eval-runner-split-61` (suite at **3604 passing**). The
 discussion-method review & repair campaign (#12–#48,
 #56–#60) is finished and merged; so is alpha/stable distribution (PyPI
 `consensus-app` + notarized macOS DMG), the public website, the
@@ -13,9 +13,9 @@ open structural issue is **#61** (modules over the ~500-line golden rule):
 `app_discussion_flow`, `tools_document`, `app.py` (→ `app_api/` mixins),
 `tools_memory`, `tools_python`, `tools_image`, `methods/base.py`,
 `app_discussion_setup.py`, `evaluation/scorer.py`, `evaluation/eval_db.py` and
-`evaluation/runner.py` are split; five modules remain over the limit. **#86** (lint gate) is done:
-zero `ruff --select F` findings in `consensus/`, enforced by
-`tests/test_lint.py`._
+`evaluation/runner.py` are split; five modules remain over the limit. **#86**
+(lint gate) is done: zero `ruff --select F` findings in `consensus/`, enforced
+by `tests/test_lint.py`._
 
 This file briefs the next session on what is done, what is still open, and the
 conventions to keep. Update it whenever a session materially changes the plan;
@@ -31,7 +31,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3597 passing (`uv run pytest`, ~35–45 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 3604 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -257,10 +257,11 @@ concluded record. Removing a non-member is an error. Tests:
    `IntegrityError` is still a 500. An in-use case or condition cannot be
    deleted (there is no run/batch delete route). Route tests:
    `tests/test_eval_routes_crud.py`.
-11. `evaluation/runner.py` (677 → 372): web path verbatim → `runner_db.py`
-   (+ `execute_batch`, ex-`eval_routes._execute_batch`); both paths share
-   `runner_common.py` (`drive_turns`, `conclude`, prompt, constants), since
-   the copies had drifted. Net: `tests/test_eval_runner.py` (0% → 95%,
+11. `evaluation/runner.py` (677 → 372): web path → `runner_db.py` (moved
+   verbatim, then fixed below; + `execute_batch`, formerly
+   `eval_routes._execute_batch`); both paths share `runner_common.py`
+   (`drive_turns`, `conclude`, prompt, constants), since the copies had
+   drifted. Net: `tests/test_eval_runner.py` (0% → 95%,
    only `AIClient._post_with_retry` faked) and
    `tests/test_eval_batch_execution.py`. Fixed: the web path stored runs
    with a failed turn/summary/synthesis as `done` (now `error`); its BYOK
@@ -271,12 +272,19 @@ concluded record. Removing a non-member is an error. Tests:
    `<data dir>/eval_results`. #114: a scoring failure leaves the run `done`,
    noting `AUTO_SCORE_FAILED_PREFIX` in `error_text`; a rescore clears it.
    #113: cancel stamps the interrupted run and closes the unstarted ones
-   (`error`; runs have no `cancelled` status). #112: `MAX_NUM_ROUNDS = 20`
-   (owner's choice, mirrored in `eval.html`), `MAX_BATCH_RUNS = 1000`.
-   Also: `PricingCache` re-downloaded OpenRouter's catalogue on every
-   lookup for an unknown model (each turn on a local model, blocking the
-   event loop); now once per model per process. The blocking itself
-   remains as #115.
+   (`error`; runs have no `cancelled` status); a batch task stopped any
+   other way (server shutdown, a failed DB write) closes its unstarted runs
+   too, and `register_eval_routes` closes whatever a crash or restart left
+   unfinished (`close_interrupted_batches`). A run error names the
+   exception type, so a text-less timeout is not blank; a discussion that
+   runs out of AI speakers early is an error, not `done`. The CLI exits 1
+   if any run failed. #112: `MAX_NUM_ROUNDS =
+   20` (owner's choice, mirrored in `eval.html`); a batch is capped at
+   `MAX_BATCH_RUNS = 1000` runs. Also: `PricingCache` re-downloaded
+   OpenRouter's catalogue on every lookup for an unknown model (each turn
+   on a local model, blocking the event loop); now once per model per
+   cache, i.e. per `ConsensusApp` — so once per eval run, whose temp app
+   is new. The blocking itself remains as #115.
 
 **Facade guards.** A dropped re-export fails *late*: almost every consumer
 imports lazily inside function bodies (exception: `moderator.py` imports

@@ -294,7 +294,7 @@ class TestStartBatch:
         assert eval_db.list_batches() == []
 
     async def test_oversized_batch_is_400(self, client, eval_db):
-        """#114: every run is created in one synchronous loop."""
+        """#112 follow-up: every run is created in one synchronous loop."""
         cond_ids = [c["id"] for c in eval_db.list_conditions()]
         case_id = eval_db.get_case_by_key(CASE_KEY)["id"]
         too_many = MAX_BATCH_RUNS // len(cond_ids) + 1

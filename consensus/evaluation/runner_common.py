@@ -70,8 +70,9 @@ async def drive_turns(app, total_turns: int,
     """Run up to ``total_turns`` AI turns of a started discussion.
 
     ``on_turn(speaker, turn_result)`` records each generated contribution
-    before the turn is completed. The loop stops early when no AI is due
-    to speak, or at the first failure.
+    before the turn is completed. The loop stops at the first failure, or
+    when no AI is due to speak — an error too, since every eval
+    participant is an AI.
 
     Returns:
         ``(turns completed, error message or "")``.
@@ -79,7 +80,8 @@ async def drive_turns(app, total_turns: int,
     for turn_idx in range(total_turns):
         current = app.discussion.current_speaker
         if not current or current.entity_type != EntityType.AI:
-            return turn_idx, ""
+            return turn_idx, (f"Discussion stopped after {turn_idx} of "
+                              f"{total_turns} turns: no AI speaker due")
 
         logger.info("  Turn %d/%d: %s speaking...",
                     turn_idx + 1, total_turns, current.name)

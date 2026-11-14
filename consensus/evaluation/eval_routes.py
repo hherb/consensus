@@ -141,6 +141,8 @@ def register_eval_routes(webapp: web.Application,
     The middlewares are the CSRF guard (415) and the 409 for known
     constraint conflicts; both act only on ``/eval/api/`` paths.
     """
+    # Called once at start-up, before any batch task exists.
+    eval_db.close_interrupted_batches("Interrupted by a server restart")
     webapp.middlewares.append(_require_json_writes)
     webapp.middlewares.append(_constraint_conflicts)
 

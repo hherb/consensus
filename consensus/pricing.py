@@ -76,14 +76,15 @@ class PricingCache:
         return cur.fetchone() is None
 
     def _refresh_for_unknown_model(self, model_name: str) -> bool:
-        """Refresh once per process for a model the cache does not know.
+        """Refresh at most once per model for this cache (one per
+        ``Database``, so per ``ConsensusApp``) for a model it does not know.
 
         A model OpenRouter does not list (a local model, say) is still
         unknown after the refresh; without this guard every message priced
         for it re-downloaded the whole catalogue, blocking the event loop.
-        shortcut: a model OpenRouter lists only later in the process stays
-        unpriced until restart or the weekly refresh; add a retry interval
-        if that matters.
+        shortcut: a model OpenRouter lists only later, or whose one refresh
+        failed, stays unpriced for this cache's lifetime; add a retry
+        interval if that matters (#115).
 
         Returns True if a refresh succeeded, so the caller should look again.
         """

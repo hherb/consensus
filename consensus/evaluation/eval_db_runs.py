@@ -4,6 +4,8 @@ import json
 import time
 from typing import Optional
 
+from consensus.evaluation.constants import FINISHED_BATCH_STATUSES
+
 
 class RunsMixin:
     """Mixin for executing evaluations: batches, their runs and results.
@@ -115,9 +117,28 @@ class RunsMixin:
         "cancelled" status), so none is left pending forever."""
         with self._lock, self.conn:
             self.conn.execute(
-                "UPDATE eval_runs SET status='error', error_text=? "
-                "WHERE batch_id=? AND status='pending'",
-                (error_text, batch_id),
+                "UPDATE eval_runs SET status='error', error_text=?, "
+                "completed_at=? WHERE batch_id=? AND status='pending'",
+                (error_text, time.time(), batch_id),
+            )
+
+    def close_interrupted_batches(self, error_text: str) -> None:
+        """Mark every unfinished batch, and every pending or running run,
+        as an error. Only for start-up, when no batch task can be live: a
+        server stop or crash mid-batch otherwise leaves them running
+        forever."""
+        now = time.time()
+        with self._lock, self.conn:
+            self.conn.execute(
+                "UPDATE eval_runs SET status='error', error_text=?, "
+                "completed_at=? WHERE status IN ('pending', 'running')",
+                (error_text, now),
+            )
+            finished = sorted(FINISHED_BATCH_STATUSES)
+            self.conn.execute(
+                "UPDATE eval_batches SET status='error', completed_at=? "
+                f"WHERE status NOT IN ({', '.join('?' * len(finished))})",
+                (now, *finished),
             )
 
     def list_runs(self, batch_id: int | None = None) -> list[dict]:

@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from consensus.app import ConsensusApp
+from consensus.app_discussion_flow.helpers import describe_flow_error
 from consensus.config import get_data_dir
 
 from consensus.evaluation.cases import CASES, CaseVignette
@@ -184,7 +185,7 @@ async def run_case_condition(
 
         except Exception as e:
             logger.exception("Run failed for case=%s condition=%s", case.id, condition.name)
-            result.error = str(e)
+            result.error = describe_flow_error(e)
 
     return result
 
@@ -366,6 +367,8 @@ def main():
     total_tokens = sum(r.total_tokens for r in results)
     print(f"  Total tokens: {total_tokens:,}")
     print("\nRun scoring with: python -m consensus.evaluation.scorer --input <results_dir>")
+    if errors:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ import tempfile
 import time
 
 from consensus.app import ConsensusApp
+from consensus.app_discussion_flow.helpers import describe_flow_error
 
 from consensus.evaluation.constants import AUTO_SCORE_FAILED_PREFIX
 from consensus.evaluation.runner_common import (
@@ -52,7 +53,7 @@ async def execute_batch(eval_db, batch_id: int, api_key: str = "") -> None:
             except Exception as e:
                 logger.exception("Run %d failed", run_id)
                 eval_db.update_run(
-                    run_id, status="error", error_text=str(e),
+                    run_id, status="error", error_text=describe_flow_error(e),
                     completed_at=time.time(),
                 )
                 continue
@@ -68,10 +69,13 @@ async def execute_batch(eval_db, batch_id: int, api_key: str = "") -> None:
         eval_db.update_batch_status(batch_id, "done", time.time())
 
     except asyncio.CancelledError:
+        # Not only the cancel route: a server shutdown cancels the task too.
         eval_db.update_batch_status(batch_id, "cancelled", time.time())
+        eval_db.close_pending_runs(batch_id, "Cancelled before it started")
     except Exception:
         logger.exception("Batch %d failed", batch_id)
         eval_db.update_batch_status(batch_id, "error", time.time())
+        eval_db.close_pending_runs(batch_id, "Batch failed before it started")
 
 
 async def run_case_condition_db(
@@ -116,7 +120,7 @@ async def run_case_condition_db(
     except Exception as e:
         logger.exception("DB run failed for run_id=%d", run_id)
         eval_db.update_run(
-            run_id, status="error", error_text=str(e),
+            run_id, status="error", error_text=describe_flow_error(e),
             completed_at=time.time())
 
 
@@ -131,7 +135,6 @@ async def _run_single_chat(
     p_model = participant.get("model", "").strip() or model
     system_prompt = participant.get("system_prompt", "")
 
-    client = AIClient(base_url=p_url, api_key=api_key)
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
@@ -145,11 +148,12 @@ async def _run_single_chat(
         ),
     })
 
-    response = await client.complete(
-        messages=messages, model=p_model,
-        temperature=PARTICIPANT_TEMPERATURE,
-        max_tokens=SINGLE_CHAT_MAX_TOKENS,
-    )
+    async with AIClient(base_url=p_url, api_key=api_key) as client:
+        response = await client.complete(
+            messages=messages, model=p_model,
+            temperature=PARTICIPANT_TEMPERATURE,
+            max_tokens=SINGLE_CHAT_MAX_TOKENS,
+        )
 
     eval_db.add_run_message(
         run_id=run_id, turn_index=0,
