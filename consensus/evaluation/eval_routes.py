@@ -17,6 +17,7 @@ from aiohttp import web
 from consensus.evaluation.constants import (
     AUTO_SCORE_FAILED_PREFIX,
     FINISHED_BATCH_STATUSES,
+    MAX_BATCH_RUNS,
     SQLITE_MAX_INTEGER,
 )
 from consensus.evaluation.eval_db import EvalDatabase
@@ -294,6 +295,9 @@ def register_eval_routes(webapp: web.Application,
             return _error("No cases selected")
         if not condition_ids:
             return _error("No conditions selected")
+        if len(case_ids) * len(condition_ids) > MAX_BATCH_RUNS:
+            return _error(f"Too many runs: a batch may have at most "
+                          f"{MAX_BATCH_RUNS} (cases x conditions)")
         if not provider_url:
             return _error("Provider URL is required")
         if not model:
