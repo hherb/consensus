@@ -20,8 +20,8 @@ EXPECTED_PUBLIC_API = {
     "MCP_PROTOCOL_VERSION", "SERVER_NAME", "SERVER_VERSION", "main",
 }
 
-SUBMODULES = ["constants", "tool_defs", "handlers_read", "handlers_write",
-              "server"]
+SUBMODULES = ["constants", "errors", "tool_defs", "handlers_read",
+              "handlers_write", "server"]
 
 PACKAGE_ROOT = Path(mcp_server.__file__).parent
 REPO_ROOT = PACKAGE_ROOT.parent.parent

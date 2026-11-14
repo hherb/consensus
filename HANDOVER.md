@@ -1,11 +1,10 @@
 # HANDOVER
 
 _Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices (through `evaluation/runner.py`, PR #116, with
-#112/#113/#114), the #104 rotation fix, and the #115/#118 pricing fixes (PRs
-#117/#119). The twelfth #61 slice (`mcp_server.py` → `mcp_server/`, plus the
-defects its net found) is on `refactor/split-mcp-server-61` (suite at **3721
-passing**). The discussion-method review & repair campaign (#12–#48,
+the merged #61 slices (through `mcp_server.py` → `mcp_server/`, PR #120),
+the #104 rotation fix, and the #115/#118 pricing fixes (PRs #117/#119). The
+#121 fix (MCP tool failures are `isError` results) is on
+`fix/mcp-tool-errors-121` (suite at **3733 passing**). The discussion-method review & repair campaign (#12–#48,
 #56–#60) is finished and merged; so is alpha/stable distribution (PyPI
 `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
@@ -33,7 +32,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3721 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 3733 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -269,7 +268,11 @@ interpreter).
    the defects it found in `tests/test_mcp_server_robustness.py` (shared
    fixtures in `tests/mcp_server_helpers.py`), guard in
    `tests/test_mcp_server_facade.py` (also checks the `consensus-mcp` entry
-   point). Contracts: `run_discussion` reports **`turn_errors`** (skipped
+   point). Contracts: **a failed tool call is an `isError` result** — a
+   handler raises `mcp_server/errors.py` `ToolError` (logged at WARNING,
+   no traceback) rather than returning `"Error: ..."` text (#121, pinned
+   per handler in `tests/test_mcp_server_tool_errors.py`); `run_discussion`
+   reports **`turn_errors`** (skipped
    turns), **`error`** (why the loop stopped early — a failed `complete_turn`
    now stops it instead of re-running the turn until the timeout, and an
    exception in the loop is reported and the run still concluded),
@@ -415,8 +418,7 @@ likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
-#121 MCP server tool validation failures come back as successful results
-(no `isError`); #107 a rotation change spans several commits (crash mid-update desyncs
+#107 a rotation change spans several commits (crash mid-update desyncs
 members and `method_state`); #102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
 budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #99 route test for the image-serve CSP (fix landed in PR #100; needs a
 `server.py` route-test harness); #97 Seatbelt profile does not confine writes; #96 no UI flag when
