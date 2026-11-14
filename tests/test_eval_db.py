@@ -34,6 +34,10 @@ class TestConstruction:
         assert len(eval_db.list_conditions()) == len(CONDITIONS)
         sle = eval_db.get_case_by_key(CASE_KEY)
         assert sle["aliases"] and sle["findings"] and sle["differentials"]
+        seeded = {c["name"]: len(c["participants"])
+                  for c in eval_db.list_conditions()}
+        assert seeded == {c.name: len(c.participants)
+                          for c in CONDITIONS.values()}
 
     def test_reopening_does_not_reseed(self, tmp_path):
         path = str(tmp_path / "e.db")
@@ -55,15 +59,12 @@ class TestConstruction:
         assert db.db_path == str(tmp_path / "evaluation.db")
         db.conn.close()
 
-    def test_missing_seed_modules_leave_tables_empty(self, tmp_path,
-                                                     monkeypatch):
+    def test_missing_seed_module_fails_loudly(self, tmp_path, monkeypatch):
+        """A broken install must not open as an unexplained empty DB."""
         import sys
         monkeypatch.setitem(sys.modules, "consensus.evaluation.cases", None)
-        monkeypatch.setitem(sys.modules, "consensus.evaluation.conditions",
-                            None)
-        db = EvalDatabase(str(tmp_path / "e.db"))
-        assert db.list_cases() == [] and db.list_conditions() == []
-        db.conn.close()
+        with pytest.raises(ImportError):
+            EvalDatabase(str(tmp_path / "e.db"))
 
 
 class TestCases:
@@ -94,6 +95,8 @@ class TestCases:
     def test_update_scalar_fields_and_replace_lists(self, eval_db):
         case_id = _case(eval_db, aliases=["old"], findings=["old"],
                         differentials=["old"])
+        eval_db.conn.execute("UPDATE cases SET updated_at=0 WHERE id=?",
+                             (case_id,))
         eval_db.update_case(case_id, title="New", aliases=["n1"],
                             findings=[], differentials=["n2", "n3"],
                             ignored="x")
@@ -101,7 +104,7 @@ class TestCases:
         assert case["title"] == "New"
         assert (case["aliases"], case["findings"], case["differentials"]) \
             == (["n1"], [], ["n2", "n3"])
-        assert case["updated_at"] >= case["created_at"]
+        assert case["updated_at"] > 0
 
     def test_update_without_lists_keeps_them(self, eval_db):
         case_id = _case(eval_db, aliases=["keep"])
@@ -157,10 +160,13 @@ class TestConditions:
 
     def test_update_converts_flags_and_replaces_participants(self, eval_db):
         cond_id = eval_db.add_condition("c", participants=[{"name": "old"}])
+        eval_db.conn.execute("UPDATE conditions SET updated_at=0 WHERE id=?",
+                             (cond_id,))
         eval_db.update_condition(cond_id, enable_memory=True, num_rounds=4,
                                  participants=[PARTICIPANT])
         cond = eval_db.get_condition(cond_id)
         assert (cond["enable_memory"], cond["num_rounds"]) == (1, 4)
+        assert cond["updated_at"] > 0
         (p,) = cond["participants"]
         assert {k: p[k] for k in PARTICIPANT} == PARTICIPANT
 
@@ -191,6 +197,24 @@ class TestConditions:
         cond_id = eval_db.add_condition("c")
         eval_db.delete_condition(cond_id)
         assert eval_db.get_condition(cond_id) is None
+
+
+class TestInUseRows:
+    """A run's case and condition cannot be deleted from under it, and the
+    refused write must not leave a transaction holding the write lock."""
+
+    @pytest.mark.parametrize("kind", ["case", "condition"])
+    def test_delete_is_refused_and_releases_the_lock(self, eval_db, kind):
+        run_id = make_run(eval_db)
+        row_id = eval_db.get_run(run_id)[f"{kind}_id"]
+        with pytest.raises(sqlite3.IntegrityError):
+            getattr(eval_db, f"delete_{kind}")(row_id)
+        assert not eval_db.conn.in_transaction
+        assert eval_db.get_run(run_id) is not None
+        other = sqlite3.connect(eval_db.db_path, timeout=0)
+        other.execute("UPDATE cases SET source='x'")  # not locked out
+        other.commit()
+        other.close()
 
 
 class TestUpdateRow:

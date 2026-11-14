@@ -1,4 +1,4 @@
-"""EvalDatabase mixin: seed default cases and conditions on first open."""
+"""EvalDatabase mixin: seed default cases and conditions into empty tables on open."""
 
 import logging
 import time
@@ -22,14 +22,10 @@ class SeedingMixin:
         count = self.conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0]
         if count > 0:
             return
-        try:
-            from consensus.evaluation.cases import CASES
-        except ImportError:
-            logger.debug("Could not import consensus.evaluation.cases for seeding")
-            return
+        from consensus.evaluation.cases import CASES
 
         now = time.time()
-        with self._lock:
+        with self._lock, self.conn:
             for case in CASES:
                 cur = self.conn.execute(
                     "INSERT INTO cases "
@@ -56,7 +52,6 @@ class SeedingMixin:
                         "INSERT INTO case_differentials (case_id, diagnosis_text) "
                         "VALUES (?,?)", (case_id, diff),
                     )
-            self.conn.commit()
         logger.info("Seeded %d default evaluation cases", len(CASES))
 
     def _seed_default_conditions(self) -> None:
@@ -65,14 +60,10 @@ class SeedingMixin:
         ).fetchone()[0]
         if count > 0:
             return
-        try:
-            from consensus.evaluation.conditions import CONDITIONS
-        except ImportError:
-            logger.debug("Could not import consensus.evaluation.conditions for seeding")
-            return
+        from consensus.evaluation.conditions import CONDITIONS
 
         now = time.time()
-        with self._lock:
+        with self._lock, self.conn:
             for cond in CONDITIONS.values():
                 cur = self.conn.execute(
                     "INSERT INTO conditions "
@@ -93,5 +84,4 @@ class SeedingMixin:
                          getattr(p, 'provider_url', ''),
                          getattr(p, 'model', '')),
                     )
-            self.conn.commit()
         logger.info("Seeded %d default evaluation conditions", len(CONDITIONS))

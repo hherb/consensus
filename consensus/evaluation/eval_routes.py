@@ -21,6 +21,7 @@ from consensus.evaluation.request_checks import (
     CONDITION_FIELDS,
     CONDITION_REQUIRED,
     body_problem,
+    conflict_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,20 +66,25 @@ async def _constraint_conflicts(
         request: web.Request,
         handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
 ) -> web.StreamResponse:
-    """Answer a SQLite constraint failure with 409, not 500.
+    """Answer a known /eval/api/ constraint failure with 409, not 500.
 
     A duplicate case key or condition name, or deleting a case or
     condition that runs still reference, is the caller's conflict with
-    stored data rather than a server fault.
+    stored data rather than a server fault. Any other constraint failure
+    is re-raised (a 500), and so is everything outside /eval/api/: in web
+    mode this middleware sits on the main app.
     """
+    if not request.path.startswith("/eval/api/"):
+        return await handler(request)
     try:
         return await handler(request)
     except sqlite3.IntegrityError as e:
+        message = conflict_message(str(e))
+        if message is None:
+            raise
         logger.warning("%s %s conflicts with stored data: %s",
                        request.method, request.path, e)
-        return _error(
-            f"Conflicts with stored data ({e}) — a duplicate key or name, "
-            "or a case/condition that runs still use", 409)
+        return _error(message, 409)
 
 
 async def _read_object(request: web.Request) -> dict | None:
@@ -92,7 +98,11 @@ async def _read_object(request: web.Request) -> dict | None:
 
 def register_eval_routes(webapp: web.Application,
                          eval_db: EvalDatabase) -> None:
-    """Register all /eval/ routes (and their CSRF guard) on the app."""
+    """Register all /eval/ routes and their middlewares on the app.
+
+    The middlewares are the CSRF guard (415) and the 409 for known
+    constraint conflicts; both act only on ``/eval/api/`` paths.
+    """
     webapp.middlewares.append(_require_json_writes)
     webapp.middlewares.append(_constraint_conflicts)
 

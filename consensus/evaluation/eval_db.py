@@ -2,7 +2,7 @@
 
 ``EvalDatabase`` composes domain mixins the way ``consensus.db.Database``
 does: ``eval_db_catalog`` (cases, conditions), ``eval_db_runs`` (batches,
-runs, run messages, scores) and ``eval_db_seed`` (first-open seeding). This
+runs, run messages, scores) and ``eval_db_seed`` (seeding empty tables). This
 module keeps the connection, migrations and the shared write helpers.
 """
 
@@ -58,10 +58,10 @@ class EvalDatabase(CatalogMixin, RunsMixin, SeedingMixin):
     # ------------------------------------------------------------------
 
     def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
-        with self._lock:
-            cur = self.conn.execute(sql, params)
-            self.conn.commit()
-            return cur
+        # ``with self.conn`` rolls back a failed statement, so a refused
+        # write does not keep the database write-locked.
+        with self._lock, self.conn:
+            return self.conn.execute(sql, params)
 
     def _update_row(self, table: str, row_id: int,
                     allowed: set[str], extra_sets: Optional[dict] = None,

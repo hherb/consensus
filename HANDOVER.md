@@ -2,18 +2,19 @@
 
 _Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices and the #104 rotation fix; the `evaluation/eval_db.py`
-slice and the #109 fix are on `refactor/eval-db-split-61` (suite at **3490
-passing**). The
-discussion-method review & repair campaign (#12–#48, #56–#60) is finished and
-merged; so is alpha/stable distribution (PyPI `consensus-app` + notarized macOS
-DMG), the public website, the flow-error-visibility work (#71–#74, PR #76), and
-the tools_document failure-visibility work (#78) — contracts for both
-summarised below. The one open structural issue is **#61** (modules over the
-~500-line golden rule): `app_discussion_flow`, `tools_document`, `app.py`
-(→ `app_api/` mixins), `tools_memory`, `tools_python`, `tools_image` and
-`methods/base.py`, `app_discussion_setup.py`, `evaluation/scorer.py` and
-`evaluation/eval_db.py` are split; six modules remain over the limit. **#86** (lint gate) is done: zero `ruff --select F` findings in
-`consensus/`, enforced by `tests/test_lint.py`._
+slice and the #109 fix are on `refactor/eval-db-split-61` (suite at **3503
+passing**). The discussion-method review & repair campaign (#12–#48,
+#56–#60) is finished and merged; so is alpha/stable distribution (PyPI
+`consensus-app` + notarized macOS DMG), the public website, the
+flow-error-visibility work (#71–#74, PR #76), and the tools_document
+failure-visibility work (#78) — contracts for both summarised below. The one
+open structural issue is **#61** (modules over the ~500-line golden rule):
+`app_discussion_flow`, `tools_document`, `app.py` (→ `app_api/` mixins),
+`tools_memory`, `tools_python`, `tools_image`, `methods/base.py`,
+`app_discussion_setup.py`, `evaluation/scorer.py` and `evaluation/eval_db.py`
+are split; six modules remain over the limit. **#86** (lint gate) is done:
+zero `ruff --select F` findings in `consensus/`, enforced by
+`tests/test_lint.py`._
 
 This file briefs the next session on what is done, what is still open, and the
 conventions to keep. Update it whenever a session materially changes the plan;
@@ -29,7 +30,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3490 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3503 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -242,24 +243,35 @@ concluded record. Removing a non-member is an error. Tests:
    is held only in the input field, never `sessionStorage` (CodeQL).
    `JUDGE_DIMENSIONS` is mirrored in `static/eval_scoring.js` and the
    judge prompt (`tests/test_eval_judge_robustness.py` checks the drift).
-   `static/eval.js` (647) is pre-existing over the limit.
-10. `evaluation/eval_db.py` (600 → 81) → `EvalDatabase` composes
+   `static/eval.js` (645) is pre-existing over the limit.
+10. `evaluation/eval_db.py` (600 → 86) → `EvalDatabase` composes
    `CatalogMixin` (`eval_db_catalog.py`, cases + conditions),
    `RunsMixin` (`eval_db_runs.py`, batches/runs/messages/scores) and
    `SeedingMixin` (`eval_db_seed.py`), like `db/`. Sibling modules, not a
    package, because `_get_migrations_dir` resolves from `__file__`.
-   Verbatim move; no caller changed. Coverage 82% → 100% first
+   Verbatim move; no caller changed. Coverage 62% → 100% first
    (`tests/test_eval_db.py`). Defects fixed: `update_condition` dropped
    each participant's `provider_url`/`model` (saving a condition in the UI
-   wiped its overrides); multi-statement writes committed explicitly, so a
-   failing later insert left earlier rows for the next unrelated write to
-   commit (now `with self.conn`). Same PR: **#109** — eval routes check
-   field types in `evaluation/request_checks.py` (pure, table-driven) and
-   answer 400; a SQLite `IntegrityError` (duplicate key/name, deleting a
-   case runs still use) is a 409 via the `_constraint_conflicts`
-   middleware; `start_batch` checks ids before creating anything. Route
-   tests: `tests/test_eval_routes_crud.py`. Enum sets mirroring the
-   schema's `CHECK`s live in `evaluation/constants.py`.
+   wiped its overrides); every write committed explicitly with no
+   rollback, so a failed statement left its transaction open — earlier
+   rows waited for the next unrelated write to commit them, and the file
+   stayed write-locked for other processes. Every write now runs in
+   `with self._lock, self.conn` (commit or roll back). Caveat:
+   `update_case`/`update_condition` are still two transactions (scalar
+   row, then child rows); safe today because only the scalar `UPDATE` can
+   fail (a duplicate key/name), and tests pin "409 leaves the row
+   unchanged". Seeding no longer swallows a failed import of the built-in
+   cases/conditions. Same PR: **#109** — eval routes check field types in
+   `evaluation/request_checks.py` (pure, table-driven; ints capped at
+   `SQLITE_MAX_INTEGER`) and answer 400. `_constraint_conflicts` (acts on
+   `/eval/api/` only — in web mode it sits on the main app) maps the
+   *known* conflicts in `request_checks.CONFLICT_MESSAGES` (duplicate case
+   key / condition name, deleting a case or condition runs still use) to a
+   409 and re-raises any other `IntegrityError` as a 500. There is no route
+   to delete a run or batch, so an in-use case/condition cannot be deleted
+   at all. `start_batch` checks ids before creating anything. Route tests:
+   `tests/test_eval_routes_crud.py`. Enum sets mirroring the schema's
+   `CHECK`s live in `evaluation/constants.py`.
 
 Smaller slices came out of the error-visibility work: `ai_response.py` (from
 `ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).

@@ -10,7 +10,11 @@ number or an unknown enum value is refused before it reaches the database.
 
 from collections.abc import Callable, Collection, Mapping
 
-from consensus.evaluation.constants import CASE_DIFFICULTIES, PARTICIPANT_ROLES
+from consensus.evaluation.constants import (
+    CASE_DIFFICULTIES,
+    PARTICIPANT_ROLES,
+    SQLITE_MAX_INTEGER,
+)
 
 #: A field checker: the value's problem, or ``None`` if it is acceptable.
 Checker = Callable[[object], str | None]
@@ -33,17 +37,22 @@ def flag(value: object) -> str | None:
     return None if isinstance(value, bool) else "must be true or false"
 
 
+def _storable_int(value: object) -> bool:
+    """An ``int`` (not ``bool``) of 1 to ``SQLITE_MAX_INTEGER``."""
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and 1 <= value <= SQLITE_MAX_INTEGER)
+
+
 def positive_int(value: object) -> str | None:
-    """An integer of at least 1 (``bool`` is excluded)."""
-    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+    """A whole number of at least 1 that an SQLite INTEGER can hold."""
+    if _storable_int(value):
         return None
     return "must be a whole number of at least 1"
 
 
 def id_list(value: object) -> str | None:
-    """A list of integer row ids (``bool`` is excluded)."""
-    if isinstance(value, list) and all(
-            isinstance(v, int) and not isinstance(v, bool) for v in value):
+    """A list of row ids (whole numbers an SQLite INTEGER can hold)."""
+    if isinstance(value, list) and all(_storable_int(v) for v in value):
         return None
     return "must be a list of whole-number ids"
 
@@ -51,7 +60,8 @@ def id_list(value: object) -> str | None:
 def one_of(choices: Collection[str]) -> Checker:
     """A checker accepting only the given strings."""
     def check(value: object) -> str | None:
-        if value in choices:
+        # ``isinstance`` first: a list or dict is unhashable in a set lookup.
+        if isinstance(value, str) and value in choices:
             return None
         return "must be one of " + ", ".join(sorted(choices))
     return check
@@ -111,6 +121,32 @@ BATCH_FIELDS: Mapping[str, Checker] = {
     "model": text,
     "api_key": text,
 }
+
+
+#: Phrases in a ``sqlite3.IntegrityError`` that are the caller's conflict
+#: with stored data, mapped to the message the caller sees.
+CONFLICT_MESSAGES: Mapping[str, str] = {
+    "UNIQUE constraint failed: cases.case_key":
+        "A case with that case_key already exists",
+    "UNIQUE constraint failed: conditions.name":
+        "A condition with that name already exists",
+    # Only a delete can hit a foreign key: start_batch checks ids first.
+    "FOREIGN KEY constraint failed":
+        "This case or condition is used by evaluation runs, so it cannot "
+        "be deleted",
+}
+
+
+def conflict_message(error: str) -> str | None:
+    """The user-facing message for a known conflict, else ``None``.
+
+    ``None`` means the constraint failure is not one a well-formed request
+    can cause, i.e. a server bug, which must stay a 500.
+    """
+    for phrase, message in CONFLICT_MESSAGES.items():
+        if phrase in error:
+            return message
+    return None
 
 
 def body_problem(data: Mapping[str, object], fields: Mapping[str, Checker],
