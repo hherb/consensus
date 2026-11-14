@@ -20,7 +20,8 @@ import pytest
 from consensus import mcp_server
 from consensus.mcp_server import AGENT_ENTITY_NAME, ConsensusMCPServer
 from consensus.tools_memory import _pack_embedding
-from tests.document_helpers import patch_where_defined
+from consensus.tools_memory.embedding import EmbeddingContextLengthError
+from tests.document_helpers import FakeEmbedClient, patch_where_defined
 from tests.eval_runner_helpers import is_synthesis, llm  # noqa: F401
 from tests.mcp_server_helpers import (  # noqa: F401
     FAR, INIT, NEAR, NOTIFY, _ai_entities, _stdio, broken_embed, call, server,
@@ -82,8 +83,9 @@ class TestDocuments:
         sections = json.dumps([{"header": "Intro", "from_char": 0,
                                 "to_char": 50}])
         doc_id = _add_doc(server._db, sections)
-        text, _ = await call(server, "read_document", {
+        text, is_error = await call(server, "read_document", {
             "document_id": doc_id, "section_header": "Intro"})
+        assert not is_error
         assert text == "Section found but no content."
 
     async def test_unknown_section_lists_the_available_ones(self, server):
@@ -96,12 +98,17 @@ class TestDocuments:
         assert text == ("Error: Section 'Methods' not found. "
                         "Available: ['Intro']")
 
-    async def test_unparseable_sections_json(self, server):
+    async def test_unparseable_sections_json_is_a_data_fault(self, server,
+                                                             caplog):
+        # A corrupt row is not the caller's mistake: no "not found", and a
+        # traceback that points at the data.
         doc_id = _add_doc(server._db, "{not json")
-        text, is_error = await call(server, "read_document", {
-            "document_id": doc_id, "section_header": "Intro"})
+        with caplog.at_level("ERROR"):
+            text, is_error = await call(server, "read_document", {
+                "document_id": doc_id, "section_header": "Intro"})
         assert is_error
-        assert text == "Error: Section 'Intro' not found. Available: []"
+        assert "not found" not in text
+        assert any(r.exc_info for r in caplog.records)
 
     async def test_section_of_missing_document(self, server):
         text, is_error = await call(server, "read_document", {
@@ -131,6 +138,14 @@ class TestSearchCommon:
         assert is_error
         assert text == "Error: Embedding service unavailable: ollama down"
 
+    @pytest.mark.parametrize("tool", SEARCH_TOOLS)
+    async def test_overlong_query_is_reported_as_such(self, server, tool):
+        server._embed_client = FakeEmbedClient(
+            error=EmbeddingContextLengthError("too long"))
+        text, is_error = await call(server, tool, {"query": "q"})
+        assert is_error
+        assert text == "Error: Query too long for the embedding model: too long"
+
 
 class TestSearchDiscussions:
     def _seed(self, db) -> None:
@@ -142,7 +157,8 @@ class TestSearchDiscussions:
             db.set_message_embedding(str(mid), _pack_embedding(vec))
 
     async def test_nothing_indexed(self, server):
-        text, _ = await call(server, "search_discussions", {"query": "q"})
+        text, is_error = await call(server, "search_discussions", {"query": "q"})
+        assert not is_error
         assert text == "No indexed discussion messages found."
 
     async def test_ranks_by_similarity(self, server):
@@ -161,7 +177,8 @@ class TestSearchDiscussions:
 
 class TestSearchMemories:
     async def test_no_memories(self, server):
-        text, _ = await call(server, "search_memories", {"query": "q"})
+        text, is_error = await call(server, "search_memories", {"query": "q"})
+        assert not is_error
         assert text == "No memories found for this entity."
 
     async def test_unembedded_memories_are_backfilled_and_found(self, server):
@@ -183,7 +200,8 @@ class TestSearchMemories:
 
 class TestSearchDocuments:
     async def test_nothing_indexed(self, server):
-        text, _ = await call(server, "search_documents", {"query": "q"})
+        text, is_error = await call(server, "search_documents", {"query": "q"})
+        assert not is_error
         assert text == "No indexed documents found."
 
     async def test_ranks_chunks(self, server):
@@ -201,14 +219,16 @@ class TestSearchDocuments:
 
 class TestKnowledgeGraph:
     async def test_neighbors_of_unknown_node(self, server):
-        text, _ = await call(server, "query_knowledge_graph",
-                             {"query": "X", "mode": "neighbors"})
-        assert text == "No node found with label 'X'. Try mode='search'."
+        text, is_error = await call(server, "query_knowledge_graph",
+                                    {"query": "X", "mode": "neighbors"})
+        assert is_error
+        assert text == "Error: No node found with label 'X'. Try mode='search'."
 
     async def test_isolated_node(self, server):
         server._db.upsert_kg_node("n1", "X", "concept", None)
-        text, _ = await call(server, "query_knowledge_graph",
-                             {"query": "X", "mode": "neighbors"})
+        text, is_error = await call(server, "query_knowledge_graph",
+                                    {"query": "X", "mode": "neighbors"})
+        assert not is_error
         assert text == "Node 'X' has no connections."
 
     async def test_neighbors_in_both_directions(self, server):
@@ -222,7 +242,8 @@ class TestKnowledgeGraph:
         assert "A <--[implies]-- C" in text
 
     async def test_empty_graph(self, server):
-        text, _ = await call(server, "query_knowledge_graph", {"query": "q"})
+        text, is_error = await call(server, "query_knowledge_graph", {"query": "q"})
+        assert not is_error
         assert text == "Knowledge graph is empty."
 
     async def test_semantic_search_backfills_and_describes(self, server):
