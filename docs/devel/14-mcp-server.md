@@ -16,7 +16,7 @@ External AI Agent (e.g. Claude Code)
     | stdio JSON-RPC 2.0 (newline-delimited)
     |
     v
-ConsensusMCPServer (mcp_server.py)
+ConsensusMCPServer (mcp_server/)
     |
     +-- Database (db/) — direct SQLite read/search/write
     |
@@ -24,6 +24,20 @@ ConsensusMCPServer (mcp_server.py)
     |
     +-- ConsensusApp (app.py) — discussion orchestration (run_discussion only)
 ```
+
+## Package layout
+
+`consensus/mcp_server/` is split by concern (issue #61); `__init__.py`
+re-exports `ConsensusMCPServer`, `main` and the protocol constants.
+
+| Module | Holds |
+|--------|-------|
+| `server.py` | `ConsensusMCPServer` (composes the mixins), JSON-RPC dispatch, stdio loop, `main()` |
+| `tool_defs.py` | `ToolRegistrationMixin` — the 13 advertised tool schemas |
+| `handlers_read.py` | `ReadHandlersMixin` — list/read and semantic-search handlers |
+| `handlers_write.py` | `WriteHandlersMixin` — memory/knowledge writes and `run_discussion` |
+| `constants.py` | Protocol version, server name/version, agent entity name |
+| `__main__.py` | `python -m consensus.mcp_server` |
 
 ## Entry Point
 
@@ -164,20 +178,17 @@ The server reuses existing infrastructure:
 
 ## Tests
 
-Tests are in `tests/test_mcp_server.py` (28 tests):
+Tests:
 
-- **Protocol tests:** `initialize`, `notifications/initialized`, `tools/list`,
-  unknown method, unknown tool
-- **List/read tool tests:** Empty and populated discussions, entity listing
-  with type filter, document listing, discussion and document reading,
-  not-found error handling
-- **Write tool tests:** `store_memory` (including agent entity auto-creation),
-  empty content rejection, `delete_memory` own vs other entity (ownership
-  blocked), nonexistent memory, `assert_knowledge` success and missing fields
-- **Agent entity tests:** Created once and reused, `entity_id=0` resolution,
-  non-zero passthrough
-- **`run_discussion` tests:** No entities available, human entity rejection,
-  empty topic
+- `tests/test_mcp_server.py` — protocol (`initialize`, notifications,
+  `tools/list`, unknown method/tool), list/read tools, write tools
+  (`delete_memory` ownership), the agent entity, `run_discussion` validation
+- `tests/test_mcp_server_handlers.py` — every tool through `handle_request`:
+  semantic search with a fake embedding client, document sections, KG
+  neighbours, embedding failures, `run_discussion` end to end on the fake LLM
+  edge (`tests/eval_runner_helpers.py`), the stdio loop and `main()`
+- `tests/test_mcp_server_facade.py` — the package facade, the `consensus-mcp`
+  entry point and `__main__`
 
 ---
 

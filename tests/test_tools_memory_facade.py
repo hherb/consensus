@@ -22,7 +22,7 @@ from consensus import tools_memory
 # The public memory API as of the #61 split. Pinned deliberately: a name
 # disappearing is the regression these tests exist to catch, and a name
 # appearing is a public-API addition that deserves a conscious update here.
-# The two underscored names are imported by mcp_server.py and
+# The two underscored names are imported by mcp_server/ and
 # context_strategies.py; they predate the split and kept their spelling.
 EXPECTED_PUBLIC_API = {
     "EmbeddingClient",
@@ -107,8 +107,10 @@ class TestCallSites:
     """Scans every module under ``consensus/``, not just one known consumer."""
 
     def test_known_consumers_are_found(self):
-        consumers = {path.name for path in _consumer_modules()}
-        assert {"app.py", "context_strategies.py", "mcp_server.py"} <= consumers, consumers
+        consumers = {path.relative_to(PACKAGE_ROOT.parent).as_posix()
+                     for path in _consumer_modules()}
+        assert {"app.py", "context_strategies.py",
+                "mcp_server/handlers_read.py"} <= consumers, consumers
 
     def test_every_consumer_imports_only_names_the_facade_exports(self):
         for path in _consumer_modules():

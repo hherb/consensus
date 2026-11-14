@@ -77,7 +77,7 @@ ConsensusApp (app.py + app_api/ mixins + app_*.py domain modules)
           providers, entities, prompts, discussions, messages, tools,
           MCP/experts, memory, documents, images
 
-ConsensusMCPServer (mcp_server.py)  ← external AI agents connect here
+ConsensusMCPServer (mcp_server/)  ← external AI agents connect here
     |  stdio JSON-RPC 2.0 — invoked as `consensus-mcp`
     |
     +-- Database (db/) — direct read/search/write access
