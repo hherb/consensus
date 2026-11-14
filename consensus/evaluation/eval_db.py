@@ -15,7 +15,7 @@ from consensus.evaluation.eval_db_catalog import CatalogMixin
 from consensus.evaluation.eval_db_runs import RunsMixin
 from consensus.evaluation.eval_db_seed import SeedingMixin
 
-# Whitelist of valid table names for _update_row
+# Whitelist of valid table names for _update_statement
 _VALID_TABLES = frozenset({
     "cases", "conditions", "eval_batches", "eval_runs",
 })
@@ -63,9 +63,14 @@ class EvalDatabase(CatalogMixin, RunsMixin, SeedingMixin):
         with self._lock, self.conn:
             return self.conn.execute(sql, params)
 
-    def _update_row(self, table: str, row_id: int,
-                    allowed: set[str], extra_sets: Optional[dict] = None,
-                    **kwargs: object) -> None:
+    @staticmethod
+    def _update_statement(table: str, row_id: int, allowed: set[str],
+                          extra_sets: Optional[dict] = None,
+                          **kwargs: object) -> Optional[tuple[str, tuple]]:
+        """The ``UPDATE`` (sql, params) for the ``allowed`` kwargs, or None.
+
+        Pure, so a caller can run it inside its own transaction.
+        """
         if table not in _VALID_TABLES:
             raise ValueError(f"Invalid table: {table}")
         sets: list[str] = []
@@ -78,9 +83,16 @@ class EvalDatabase(CatalogMixin, RunsMixin, SeedingMixin):
             for k, v in extra_sets.items():
                 sets.append(f"{k}=?")
                 vals.append(v)
-        if sets:
-            vals.append(row_id)
-            self._execute_write(
-                f"UPDATE {table} SET {','.join(sets)} WHERE id=?",
-                tuple(vals),
-            )
+        if not sets:
+            return None
+        vals.append(row_id)
+        return f"UPDATE {table} SET {','.join(sets)} WHERE id=?", tuple(vals)
+
+    def _update_row(self, table: str, row_id: int,
+                    allowed: set[str], extra_sets: Optional[dict] = None,
+                    **kwargs: object) -> None:
+        """Run ``_update_statement``'s UPDATE in a transaction of its own."""
+        statement = self._update_statement(table, row_id, allowed,
+                                           extra_sets, **kwargs)
+        if statement:
+            self._execute_write(*statement)

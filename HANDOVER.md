@@ -2,7 +2,7 @@
 
 _Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices and the #104 rotation fix; the `evaluation/eval_db.py`
-slice and the #109 fix are on `refactor/eval-db-split-61` (suite at **3523
+slice and the #109 fix are on `refactor/eval-db-split-61` (suite at **3551
 passing**). The discussion-method review & repair campaign (#12–#48,
 #56–#60) is finished and merged; so is alpha/stable distribution (PyPI
 `consensus-app` + notarized macOS DMG), the public website, the
@@ -30,7 +30,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3523 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3551 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -245,7 +245,7 @@ concluded record. Removing a non-member is an error. Tests:
    and the judge prompt (`tests/test_eval_judge_robustness.py` checks the
    drift). `evaluation/static/eval.js` (645) is pre-existing over the
    limit.
-10. `evaluation/eval_db.py` (600 → 86) → `EvalDatabase` composes
+10. `evaluation/eval_db.py` (600 → 98) → `EvalDatabase` composes
    `CatalogMixin` (`eval_db_catalog.py`, cases + conditions),
    `RunsMixin` (`eval_db_runs.py`, batches/runs/messages/scores) and
    `SeedingMixin` (`eval_db_seed.py`), like `db/`. Sibling modules, not a
@@ -257,13 +257,13 @@ concluded record. Removing a non-member is an error. Tests:
    rollback, so a failed statement left its transaction open — earlier
    rows waited for the next unrelated write to commit them, and the file
    stayed write-locked for other processes. Every write now runs in
-   `with self._lock, self.conn` (commit or roll back). Caveat:
-   `update_case`/`update_condition` are still two transactions (scalar
-   row, then child rows); safe today because only the scalar `UPDATE` can
-   fail (a duplicate key/name; the route reads the body before its lookup,
-   so no `await` lets a delete in before the child rows), and tests pin
-   "409 leaves the row unchanged". Seeding no longer swallows a failed
-   import of the built-in cases/conditions. Same PR: **#109** — eval routes check field types in
+   `with self._lock, self.conn` (commit or roll back);
+   `update_case`/`update_condition` change the row and its child rows in
+   one transaction (`_update_statement` builds the `UPDATE` without
+   running it). The update routes read the body before their lookup, so
+   no `await` lets a delete in between (a regression test pins the 404).
+   Seeding no longer swallows a failed import of the built-in
+   cases/conditions. Same PR: **#109** — eval routes check field types in
    `evaluation/request_checks.py` (pure, table-driven; ints capped at
    `SQLITE_MAX_INTEGER`) and answer 400. `_constraint_conflicts` (acts on
    `/eval/api/` only — in web mode it sits on the main app) maps the
@@ -272,8 +272,11 @@ concluded record. Removing a non-member is an error. Tests:
    409 and re-raises any other `IntegrityError` as a 500. There is no route
    to delete a run or batch, so an in-use case/condition cannot be deleted
    at all. `start_batch` checks ids before creating anything. A path id
-   too big for SQLite is a 404 (`_path_id`), an unknown body charset a
-   400. Route tests:
+   too big for SQLite is a 404 (`_path_id`); an unknown body charset, a
+   too-deeply nested body or a lone surrogate (`"\ud800"`, which SQLite
+   cannot encode) a 400. Updates trim text like adds, so padding cannot
+   dodge the `UNIQUE` key/name. Cancelling a finished batch is a 409
+   instead of overwriting its status. Route tests:
    `tests/test_eval_routes_crud.py`. Enum sets mirroring the schema's
    `CHECK`s live in `evaluation/constants.py`.
 
@@ -312,8 +315,10 @@ functions, so it splits without glue: the in-memory CLI path
 (`RunResult`, `run_case_condition`, `run_evaluation`, `parse_args`,
 `main`) vs the DB-backed web path (`run_case_condition_db`,
 `_run_single_chat`, `_run_multi_party`). It drives a real `ConsensusApp`,
-so the net needs a stubbed `AIClient` (as `tests/flow_e2e_helpers.py`
-does) plus the `eval_db` fixture in `tests/eval_helpers.py`. Also fix the
+so the net needs a stubbed `AIClient` (`judge_calls` in
+`tests/eval_helpers.py` patches `AIClient.complete`) plus that module's
+`eval_db` fixture; `tests/flow_e2e_helpers.py` shows how to drive a real
+`ConsensusApp`. Also fix the
 known packaging gap there (default results dir lands in site-packages).
 `moderator.py` and `auth.py` are bigger payoffs but are a single class and
 a security-critical module at ~50–60% — build their nets before moving a

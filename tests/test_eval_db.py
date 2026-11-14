@@ -1,19 +1,25 @@
 """Characterization tests for ``EvalDatabase`` (``consensus/evaluation/``).
 
-Written against a real temp-file SQLite database before the #61 split of
-``eval_db.py``, so they go through the public ``EvalDatabase`` API only and
-stay valid whichever module defines each method.
+Written against a real temp-file SQLite database, mostly through the public
+``EvalDatabase`` API (plus ``_update_row`` and direct ``conn``/``_lock``
+checks of transaction state), so they stay valid whichever module defines
+each method.
 """
 
+import re
 import sqlite3
+from pathlib import Path
 
 import pytest
 
 from consensus.evaluation.cases import CASES
 from consensus.evaluation.conditions import CONDITIONS
+from consensus.evaluation.constants import CASE_DIFFICULTIES, PARTICIPANT_ROLES
 from consensus.evaluation.eval_db import EvalDatabase
 from tests.eval_helpers import CASE_KEY, eval_db, make_run  # noqa: F401
 
+MIGRATIONS = (Path(__file__).parent.parent / "consensus" / "evaluation"
+              / "migrations")
 PARTICIPANT = {"name": "A", "system_prompt": "s", "role": "devils_advocate",
                "provider_url": "http://p/v1", "model": "pm"}
 
@@ -126,14 +132,16 @@ class TestCases:
         eval_db.create_batch("b", "u", "m")  # any later commit
         assert eval_db.get_case_by_key("k-1") is None
 
-    def test_failed_update_leaves_lists_unchanged(self, eval_db):
+    def test_failed_update_changes_nothing(self, eval_db):
+        """Scalar fields and child lists commit together or not at all."""
         case_id = _case(eval_db, aliases=["a"], findings=["f"])
+        before = eval_db.get_case(case_id)
         with pytest.raises(sqlite3.Error):
-            eval_db.update_case(case_id, aliases=["b"],
+            eval_db.update_case(case_id, title="CHANGED", aliases=["b"],
                                 findings=[["not", "text"]])
-        eval_db.create_batch("b", "u", "m")
-        case = eval_db.get_case(case_id)
-        assert (case["aliases"], case["findings"]) == (["a"], ["f"])
+        assert not eval_db._lock.locked()
+        assert not eval_db.conn.in_transaction
+        assert eval_db.get_case(case_id) == before
 
 
 class TestConditions:
@@ -183,15 +191,16 @@ class TestConditions:
         eval_db.create_batch("b", "u", "m")
         assert "c" not in [c["name"] for c in eval_db.list_conditions()]
 
-    def test_failed_update_keeps_old_participants(self, eval_db):
+    def test_failed_update_changes_nothing(self, eval_db):
+        """Scalar fields and participants commit together or not at all."""
         cond_id = eval_db.add_condition("c", participants=[PARTICIPANT])
+        before = eval_db.get_condition(cond_id)
         with pytest.raises(sqlite3.Error):
-            eval_db.update_condition(cond_id, participants=[
+            eval_db.update_condition(cond_id, name="CHANGED", participants=[
                 {"name": "B"}, {"name": "C", "role": "judge"}])
-        eval_db.create_batch("b", "u", "m")
-        names = [p["name"] for p in
-                 eval_db.get_condition(cond_id)["participants"]]
-        assert names == ["A"]
+        assert not eval_db._lock.locked()
+        assert not eval_db.conn.in_transaction
+        assert eval_db.get_condition(cond_id) == before
 
     def test_delete(self, eval_db):
         cond_id = eval_db.add_condition("c")
@@ -215,6 +224,19 @@ class TestInUseRows:
         other.execute("UPDATE cases SET source='x'")  # not locked out
         other.commit()
         other.close()
+
+
+class TestSchemaEnums:
+    """The request checks' enum sets must match the schema's CHECKs: a value
+    only the constants allow would reach SQLite and fail as a 500."""
+
+    @pytest.mark.parametrize("column,allowed", [
+        ("difficulty", CASE_DIFFICULTIES), ("role", PARTICIPANT_ROLES),
+    ])
+    def test_constants_mirror_check_constraint(self, column, allowed):
+        sql = (MIGRATIONS / "001_baseline.sql").read_text()
+        (values,) = re.findall(rf"CHECK\({column} IN \(([^)]*)\)\)", sql)
+        assert set(re.findall(r"'([^']*)'", values)) == allowed
 
 
 class TestUpdateRow:

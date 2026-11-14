@@ -44,6 +44,10 @@ CASE_DIFFICULTIES = frozenset({"easy", "moderate", "hard"})
 #: constraint in ``evaluation/migrations/001_baseline.sql``.
 PARTICIPANT_ROLES = frozenset({"standard", "devils_advocate"})
 
+#: ``eval_batches.status`` values a batch never leaves; cancelling one is a
+#: 409, not a rewrite of its outcome.
+FINISHED_BATCH_STATUSES = frozenset({"done", "error", "cancelled"})
+
 #: Largest value an SQLite INTEGER column holds; a bigger JSON integer
 #: makes ``sqlite3`` raise ``OverflowError``, so request checks reject it.
 SQLITE_MAX_INTEGER = 2**63 - 1

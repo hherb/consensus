@@ -5,6 +5,7 @@ by calling register_eval_routes(webapp, eval_db).
 """
 
 import asyncio
+import json
 import logging
 import os
 import sqlite3
@@ -13,7 +14,10 @@ from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
-from consensus.evaluation.constants import SQLITE_MAX_INTEGER
+from consensus.evaluation.constants import (
+    FINISHED_BATCH_STATUSES,
+    SQLITE_MAX_INTEGER,
+)
 from consensus.evaluation.eval_db import EvalDatabase
 from consensus.evaluation.request_checks import (
     BATCH_FIELDS,
@@ -89,12 +93,28 @@ async def _constraint_conflicts(
 
 
 async def _read_object(request: web.Request) -> dict | None:
-    """The request's JSON body if it is an object, else None."""
+    """The request's JSON body if it is an object, else None.
+
+    Raises ``HTTPBadRequest`` for a body holding a lone surrogate: JSON can
+    spell one (``"\\ud800"``) but SQLite cannot store it.
+    """
     try:
         data = await request.json()
-    except (ValueError, LookupError):  # LookupError: an unknown charset
+        json.dumps(data, ensure_ascii=False).encode()
+    except UnicodeEncodeError:
+        raise web.HTTPBadRequest(
+            text=json.dumps({"error": "Request body must be valid Unicode"}),
+            content_type="application/json") from None
+    # LookupError: an unknown charset; RecursionError: a too-deep body.
+    except (ValueError, LookupError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _stripped(data: dict, fields: tuple[str, ...]) -> dict:
+    """The given ``fields`` present in ``data``; text trimmed as on add."""
+    return {f: data[f].strip() if isinstance(data[f], str) else data[f]
+            for f in fields if f in data}
 
 
 def _path_id(request: web.Request) -> int:
@@ -165,11 +185,8 @@ def register_eval_routes(webapp: web.Application,
                                partial=True)
         if problem:
             return _error(problem)
-        kwargs = {}
-        for field in ("case_key", "title", "presentation", "gold_diagnosis",
-                       "difficulty", "source"):
-            if field in data:
-                kwargs[field] = data[field]
+        kwargs = _stripped(data, ("case_key", "title", "presentation",
+                                  "gold_diagnosis", "difficulty", "source"))
         eval_db.update_case(
             case_id,
             aliases=data.get("aliases"),
@@ -224,11 +241,9 @@ def register_eval_routes(webapp: web.Application,
                                partial=True)
         if problem:
             return _error(problem)
-        kwargs = {}
-        for field in ("name", "description", "enable_da", "enable_memory",
-                       "enable_tools", "num_rounds"):
-            if field in data:
-                kwargs[field] = data[field]
+        kwargs = _stripped(data, ("name", "description", "enable_da",
+                                  "enable_memory", "enable_tools",
+                                  "num_rounds"))
         eval_db.update_condition(
             cond_id,
             participants=data.get("participants"),
@@ -312,6 +327,8 @@ def register_eval_routes(webapp: web.Application,
         batch = eval_db.get_batch(batch_id)
         if not batch:
             return _error("Batch not found", 404)
+        if batch["status"] in FINISHED_BATCH_STATUSES:
+            return _error(f"Batch already finished ({batch['status']})", 409)
 
         task = _active_batch_tasks.get(batch_id)
         if task and not task.done():

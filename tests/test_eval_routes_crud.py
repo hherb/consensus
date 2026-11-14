@@ -3,8 +3,9 @@
 Each write used to assume its fields had the right type, so a ``null``, a
 number or an unknown enum value reached ``.strip()``/``int()``/a SQLite
 ``CHECK`` and came back as a 500. These drive the real aiohttp routes
-against a real ``EvalDatabase`` and expect a 400 naming the bad field or
-id, or a 409 for a clash with stored data.
+against a real ``EvalDatabase`` and expect a 4xx instead: 400 naming the
+bad field or id, 404 for an id no row can have, 409 for a clash with
+stored data. Each also checks a refused write changed nothing.
 """
 
 import sqlite3
@@ -14,6 +15,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from consensus.evaluation.constants import SQLITE_MAX_INTEGER
+from consensus.evaluation import eval_routes
 from consensus.evaluation.eval_routes import register_eval_routes
 from tests.eval_helpers import CASE_KEY, eval_db, make_run  # noqa: F401
 
@@ -49,6 +51,12 @@ async def _rejected(resp, field: str, inner: str = "") -> None:
 async def _conflict(resp, wording: str) -> None:
     assert resp.status == 409, await resp.text()
     assert wording in (await resp.json())["error"]
+
+
+def _released(db) -> None:
+    """A refused write left no open transaction and no held lock."""
+    assert not db.conn.in_transaction
+    assert not db._lock.locked()
 
 
 class TestAddCase:
@@ -115,6 +123,32 @@ class TestUpdateCase:
                                       "aliases": ["z"]})
         await _conflict(resp, "case with that case_key already exists")
         assert eval_db.get_case(other) == before
+        _released(eval_db)
+
+    async def test_padded_duplicate_key_is_409(self, client, eval_db):
+        """Updates trim text like adds, so padding cannot dodge UNIQUE."""
+        other = eval_db.add_case("other", "T", "P", "G")
+        resp = await client.put(f"/eval/api/cases/{other}",
+                                json={"case_key": f" {CASE_KEY} "})
+        await _conflict(resp, "case with that case_key already exists")
+        assert eval_db.get_case(other)["case_key"] == "other"
+
+    async def test_delete_while_reading_body_is_404(self, client, eval_db,
+                                                    monkeypatch):
+        """The body is read before the lookup: a delete that lands while
+        it arrives is a 404, not a foreign-key 409 on the child rows."""
+        other = eval_db.add_case("other", "T", "P", "G")
+        real = eval_routes._read_object
+
+        async def read_then_delete(request):
+            data = await real(request)
+            eval_db.delete_case(other)
+            return data
+
+        monkeypatch.setattr(eval_routes, "_read_object", read_then_delete)
+        resp = await client.put(f"/eval/api/cases/{other}",
+                                json={"aliases": ["x"]})
+        assert resp.status == 404, await resp.text()
 
 
 class TestDeleteInUse:
@@ -187,6 +221,30 @@ class TestConditions:
                                       "participants": [PARTICIPANT]})
         await _conflict(resp, "condition with that name already exists")
         assert eval_db.get_condition(second["id"]) == before
+        _released(eval_db)
+
+    async def test_update_padded_duplicate_name_is_409(self, client,
+                                                       eval_db):
+        first, second = eval_db.list_conditions()[:2]
+        resp = await client.put(f"/eval/api/conditions/{second['id']}",
+                                json={"name": f" {first['name']} "})
+        await _conflict(resp, "condition with that name already exists")
+        assert eval_db.get_condition(second["id"])["name"] == second["name"]
+
+    async def test_delete_while_reading_body_is_404(self, client, eval_db,
+                                                    monkeypatch):
+        cond_id = eval_db.add_condition("doomed")
+        real = eval_routes._read_object
+
+        async def read_then_delete(request):
+            data = await real(request)
+            eval_db.delete_condition(cond_id)
+            return data
+
+        monkeypatch.setattr(eval_routes, "_read_object", read_then_delete)
+        resp = await client.put(f"/eval/api/conditions/{cond_id}",
+                                json={"participants": [PARTICIPANT]})
+        assert resp.status == 404, await resp.text()
 
     async def test_update_keeps_participant_overrides(self, client,
                                                       eval_db):
@@ -319,3 +377,58 @@ class TestUnstorableInput:
             "/eval/api/cases", data=b"{}",
             headers={"Content-Type": "application/json; charset=bogus"})
         assert resp.status == 400, await resp.text()
+
+    async def test_deeply_nested_body_is_400(self, client):
+        resp = await client.post("/eval/api/cases", data="[" * 100_000,
+                                 headers=JSON)
+        assert resp.status == 400, await resp.text()
+
+    @pytest.mark.parametrize("path,body", [
+        ("/eval/api/cases",
+         '{"case_key": "k\\ud800", "title": "t", "presentation": "p",'
+         ' "gold_diagnosis": "g"}'),
+        ("/eval/api/conditions",
+         '{"name": "c", "participants": [{"name": "\\udfff"}]}'),
+    ])
+    async def test_lone_surrogate_is_400(self, client, eval_db, path, body):
+        """JSON can spell a lone surrogate; SQLite cannot store one."""
+        before = (len(eval_db.list_cases()), len(eval_db.list_conditions()))
+        resp = await client.post(path, data=body, headers=JSON)
+        assert resp.status == 400, await resp.text()
+        assert "Unicode" in (await resp.json())["error"]
+        assert (len(eval_db.list_cases()),
+                len(eval_db.list_conditions())) == before
+
+    @pytest.mark.parametrize("method,path", [
+        ("POST", "/eval/api/cases"), ("PUT", "/eval/api/cases/{case}"),
+        ("POST", "/eval/api/conditions"),
+        ("PUT", "/eval/api/conditions/{cond}"),
+        ("POST", "/eval/api/batches/run"),
+    ])
+    @pytest.mark.parametrize("body", [[1], "x", 5])
+    async def test_non_object_body_is_400(self, client, eval_db, method,
+                                          path, body):
+        url = path.format(case=eval_db.get_case_by_key(CASE_KEY)["id"],
+                          cond=eval_db.list_conditions()[0]["id"])
+        resp = await client.request(method, url, json=body)
+        assert resp.status == 400, await resp.text()
+        assert "JSON object" in (await resp.json())["error"]
+
+
+class TestCancelBatch:
+    @pytest.mark.parametrize("status", ["done", "error", "cancelled"])
+    async def test_finished_batch_is_409_and_keeps_its_status(
+            self, client, eval_db, status):
+        batch_id = eval_db.create_batch("b", "http://x/v1", "m")
+        eval_db.update_batch_status(batch_id, status, 1.0)
+        resp = await client.post(f"/eval/api/batches/{batch_id}/cancel",
+                                 json={})
+        await _conflict(resp, "already finished")
+        assert eval_db.get_batch(batch_id)["status"] == status
+
+    async def test_pending_batch_is_cancelled(self, client, eval_db):
+        batch_id = eval_db.create_batch("b", "http://x/v1", "m")
+        resp = await client.post(f"/eval/api/batches/{batch_id}/cancel",
+                                 json={})
+        assert resp.status == 200, await resp.text()
+        assert eval_db.get_batch(batch_id)["status"] == "cancelled"

@@ -11,7 +11,8 @@ class CatalogMixin:
         conn: sqlite3.Connection
         _lock: threading.Lock
         _execute_write(sql, params) -> sqlite3.Cursor
-        _update_row(table, row_id, allowed, extra_sets, **kwargs) -> None
+        _update_statement(table, row_id, allowed, extra_sets, **kwargs)
+            -> (sql, params) | None
     """
 
     # ------------------------------------------------------------------
@@ -119,15 +120,18 @@ class CatalogMixin:
                     findings: list[str] | None = None,
                     differentials: list[str] | None = None,
                     **kwargs: object) -> None:
-        self._update_row(
+        statement = self._update_statement(
             "cases", case_id,
             allowed={"case_key", "title", "presentation", "gold_diagnosis",
                      "difficulty", "source"},
             extra_sets={"updated_at": time.time()},
             **kwargs,
         )
-        # Replace child lists atomically if provided
+        # One transaction: the row and its child lists change together or
+        # not at all.
         with self._lock, self.conn:
+            if statement:
+                self.conn.execute(*statement)
             if aliases is not None:
                 self.conn.execute(
                     "DELETE FROM case_aliases WHERE case_id=?", (case_id,))
@@ -225,15 +229,18 @@ class CatalogMixin:
         for flag in ("enable_da", "enable_memory", "enable_tools"):
             if flag in kwargs:
                 kwargs[flag] = int(kwargs[flag])
-        self._update_row(
+        statement = self._update_statement(
             "conditions", condition_id,
             allowed={"name", "description", "enable_da", "enable_memory",
                      "enable_tools", "num_rounds"},
             extra_sets={"updated_at": time.time()},
             **kwargs,
         )
-        if participants is not None:
-            with self._lock, self.conn:
+        # One transaction: the row and its participants change together.
+        with self._lock, self.conn:
+            if statement:
+                self.conn.execute(*statement)
+            if participants is not None:
                 self.conn.execute(
                     "DELETE FROM condition_participants WHERE condition_id=?",
                     (condition_id,),
