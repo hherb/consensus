@@ -37,6 +37,7 @@ re-exports `ConsensusMCPServer`, `main` and the constants listed in its
 | `tool_defs.py` | `ToolRegistrationMixin` — the 13 advertised tool schemas |
 | `handlers_read.py` | `ReadHandlersMixin` — list/read and semantic-search handlers |
 | `handlers_write.py` | `WriteHandlersMixin` — memory/knowledge writes and `run_discussion` |
+| `errors.py` | `ToolError` — what a handler raises for an expected failure |
 | `constants.py` | Protocol version, server name/version, JSON-RPC error codes, agent entity name, `run_discussion` defaults and limits |
 | `__main__.py` | `python -m consensus.mcp_server` |
 
@@ -78,9 +79,15 @@ The main loop uses `asyncio.get_running_loop().run_in_executor()` to read from
 stdin in a thread, avoiding asyncio pipe transport issues on macOS. Malformed
 input gets a JSON-RPC error reply and the loop keeps serving: an unparseable
 line → `-32700` (also logged), a non-object message → `-32600`, non-object
-`params`, a non-string tool `name` or non-object `arguments` → `-32602`. A tool
-handler that raises returns `isError: true` with the exception type and
-message. Any other exception during dispatch is logged and answered with
+`params`, a non-string tool `name` or non-object `arguments` → `-32602`.
+
+A tool call that fails is an `isError: true` result, never a successful one
+carrying error text (#121). A handler raises `ToolError` (`errors.py`) for an
+expected failure — bad arguments, a missing record, the embedding service
+down — which becomes `Error: <message>`, logged at WARNING without a
+traceback. Any other exception from a handler is a bug: `isError: true` with
+the exception type and message, logged with its traceback. Any other
+exception during dispatch is logged and answered with
 `-32603` (`_dispatch()`), so a bug in the server cannot stop the loop. The
 codes are named in `constants.py`.
 
@@ -110,7 +117,8 @@ codes are named in `constants.py`.
 ### Passive — Semantic Search (4 tools)
 
 All semantic search tools require Ollama running with an embedding model.
-They gracefully return error messages if the embedding service is unavailable.
+If the embedding service is unavailable the call is an `isError` result
+(`Error: Embedding service unavailable: <reason>`).
 
 **`search_discussions`** — Semantically search across all discussion messages.
 - Parameters: `query`, `limit?`, `topic_filter?`
@@ -167,7 +175,8 @@ They gracefully return error messages if the embedding service is unavailable.
   rounds, so a run cut short by its cost limit can be told from a full one.
 - **Validation:** `moderator_id` must be one of `entity_ids`; an entity the
   discussion rejects (a duplicate id, say) fails the call with
-  `Error adding entity <id>: <reason>`. The `ConsensusApp` is shut down after
+  `Error: Could not add entity <id>: <reason>`; every validation failure is
+  an `isError` result. The `ConsensusApp` is shut down after
   every call, so its MCP provider subprocesses do not outlive it.
 - **Constraints:** Only AI entities allowed (humans rejected). 10-minute
   timeout (`RUN_DISCUSSION_TIMEOUT_SECONDS`). Auto-selects the first 3 AI

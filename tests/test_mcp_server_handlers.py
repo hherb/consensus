@@ -90,19 +90,23 @@ class TestDocuments:
         sections = json.dumps([{"header": "Intro", "from_char": 0,
                                 "to_char": 5}])
         doc_id = _add_doc(server._db, sections)
-        text, _ = await call(server, "read_document", {
+        text, is_error = await call(server, "read_document", {
             "document_id": doc_id, "section_header": "Methods"})
-        assert text == "Section 'Methods' not found. Available: ['Intro']"
+        assert is_error
+        assert text == ("Error: Section 'Methods' not found. "
+                        "Available: ['Intro']")
 
     async def test_unparseable_sections_json(self, server):
         doc_id = _add_doc(server._db, "{not json")
-        text, _ = await call(server, "read_document", {
+        text, is_error = await call(server, "read_document", {
             "document_id": doc_id, "section_header": "Intro"})
-        assert text == "Section 'Intro' not found. Available: []"
+        assert is_error
+        assert text == "Error: Section 'Intro' not found. Available: []"
 
     async def test_section_of_missing_document(self, server):
-        text, _ = await call(server, "read_document", {
+        text, is_error = await call(server, "read_document", {
             "document_id": 999, "section_header": "Intro"})
+        assert is_error
         assert text == "Error: Document not found."
 
 
@@ -117,13 +121,15 @@ SEARCH_TOOLS = ["search_discussions", "search_memories", "search_documents",
 class TestSearchCommon:
     @pytest.mark.parametrize("tool", SEARCH_TOOLS)
     async def test_blank_query_is_rejected(self, server, tool):
-        text, _ = await call(server, tool, {"query": "  "})
+        text, is_error = await call(server, tool, {"query": "  "})
+        assert is_error
         assert text == "Error: No query provided."
 
     @pytest.mark.parametrize("tool", SEARCH_TOOLS)
     async def test_embedding_failure_is_reported(self, broken_embed, tool):
-        text, _ = await call(broken_embed, tool, {"query": "q"})
-        assert text == "Embedding service unavailable: ollama down"
+        text, is_error = await call(broken_embed, tool, {"query": "q"})
+        assert is_error
+        assert text == "Error: Embedding service unavailable: ollama down"
 
 
 class TestSearchDiscussions:
@@ -296,8 +302,9 @@ class TestRunDiscussionFlow:
         assert AGENT_ENTITY_NAME not in data["participants"]
 
     async def test_unknown_entity(self, server):
-        text, _ = await call(server, "run_discussion",
-                             {"topic": "T", "entity_ids": [999]})
+        text, is_error = await call(server, "run_discussion",
+                                    {"topic": "T", "entity_ids": [999]})
+        assert is_error
         assert text == "Error: Entity 999 not found."
 
     async def test_failed_synthesis_is_reported(self, server, llm):

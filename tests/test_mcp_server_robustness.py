@@ -135,15 +135,18 @@ class TestRunDiscussionReportsFailures:
 
     async def test_moderator_must_be_a_participant(self, server):
         a, b, c = _ai_entities(server._db, 3)
-        data = (await call(server, "run_discussion", {
-            "topic": "T", "entity_ids": [a, b], "moderator_id": c}))[0]
-        assert data == f"Error: moderator_id {c} is not in entity_ids."
+        text, is_error = await call(server, "run_discussion", {
+            "topic": "T", "entity_ids": [a, b], "moderator_id": c})
+        assert is_error
+        assert text == f"Error: moderator_id {c} is not in entity_ids."
 
     async def test_duplicate_entity_is_reported(self, server):
         a, _ = _ai_entities(server._db)
-        text, _ = await call(server, "run_discussion", {
+        text, is_error = await call(server, "run_discussion", {
             "topic": "T", "entity_ids": [a, a]})
-        assert text == f"Error adding entity {a}: AI0 is already in the discussion"
+        assert is_error
+        assert text == (f"Error: Could not add entity {a}: "
+                        "AI0 is already in the discussion")
 
     async def test_app_is_shut_down(self, server, llm, monkeypatch):
         """Its MCP provider subprocesses used to leak on every call."""
