@@ -48,6 +48,19 @@ PARTICIPANT_ROLES = frozenset({"standard", "devils_advocate"})
 #: 409, not a rewrite of its outcome.
 FINISHED_BATCH_STATUSES = frozenset({"done", "error", "cancelled"})
 
+#: Most discussion rounds a condition may ask for (#112): each round is a
+#: paid LLM turn per participant. Mirrored by ``max`` on the condition
+#: form's rounds field in ``static/eval.html``.
+MAX_NUM_ROUNDS = 20
+
+#: Most runs (cases x conditions) one batch may create: they are inserted
+#: in one synchronous loop on the event loop.
+MAX_BATCH_RUNS = 1000
+
+#: ``eval_runs.error_text`` prefix for a finished run whose auto-scoring
+#: failed: the run stays "done" and a successful rescore clears the text.
+AUTO_SCORE_FAILED_PREFIX = "Auto-scoring failed: "
+
 #: Largest value an SQLite INTEGER column holds; a bigger JSON integer
 #: makes ``sqlite3`` raise ``OverflowError``, so request checks reject it.
 SQLITE_MAX_INTEGER = 2**63 - 1

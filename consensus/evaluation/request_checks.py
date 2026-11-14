@@ -12,6 +12,7 @@ from collections.abc import Callable, Collection, Mapping
 
 from consensus.evaluation.constants import (
     CASE_DIFFICULTIES,
+    MAX_NUM_ROUNDS,
     PARTICIPANT_ROLES,
     SQLITE_MAX_INTEGER,
 )
@@ -43,11 +44,11 @@ def _storable_int(value: object) -> bool:
             and 1 <= value <= SQLITE_MAX_INTEGER)
 
 
-def positive_int(value: object) -> str | None:
-    """A whole number of at least 1 that an SQLite INTEGER can hold."""
-    if _storable_int(value):
+def round_count(value: object) -> str | None:
+    """A number of discussion rounds: 1 to ``MAX_NUM_ROUNDS``."""
+    if _storable_int(value) and value <= MAX_NUM_ROUNDS:
         return None
-    return "must be a whole number of at least 1"
+    return f"must be a whole number from 1 to {MAX_NUM_ROUNDS}"
 
 
 def id_list(value: object) -> str | None:
@@ -109,7 +110,7 @@ CONDITION_FIELDS: Mapping[str, Checker] = {
     "enable_da": flag,
     "enable_memory": flag,
     "enable_tools": flag,
-    "num_rounds": positive_int,
+    "num_rounds": round_count,
     "participants": participants,
 }
 CONDITION_REQUIRED = ("name",)

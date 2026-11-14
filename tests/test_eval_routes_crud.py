@@ -14,7 +14,9 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from consensus.evaluation.constants import SQLITE_MAX_INTEGER
+from consensus.evaluation.constants import (
+    MAX_BATCH_RUNS, MAX_NUM_ROUNDS, SQLITE_MAX_INTEGER,
+)
 from consensus.evaluation import eval_routes
 from consensus.evaluation.eval_routes import register_eval_routes
 from tests.eval_helpers import CASE_KEY, eval_db, make_run  # noqa: F401
@@ -185,6 +187,7 @@ class TestConditions:
         ("name", None), ("name", 7), ("description", 1),
         ("num_rounds", "abc"), ("num_rounds", 0), ("num_rounds", True),
         ("num_rounds", 2.5), ("num_rounds", TOO_BIG),
+        ("num_rounds", MAX_NUM_ROUNDS + 1),
         ("enable_da", "yes"), ("enable_tools", 1),
     ])
     async def test_bad_field_is_400(self, client, field, value):
@@ -259,6 +262,7 @@ class TestConditions:
 
     @pytest.mark.parametrize("field,value", [
         ("name", ""), ("num_rounds", "abc"), ("enable_memory", "no"),
+        ("num_rounds", MAX_NUM_ROUNDS + 1),
         ("participants", [{"name": ""}]),
     ])
     async def test_update_bad_field_is_400_and_nothing_changes(
@@ -289,6 +293,16 @@ class TestStartBatch:
         await _rejected(resp, field)
         assert eval_db.list_batches() == []
 
+    async def test_oversized_batch_is_400(self, client, eval_db):
+        """#112 follow-up: every run is created in one synchronous loop."""
+        cond_ids = [c["id"] for c in eval_db.list_conditions()]
+        case_id = eval_db.get_case_by_key(CASE_KEY)["id"]
+        too_many = MAX_BATCH_RUNS // len(cond_ids) + 1
+        resp = await client.post("/eval/api/batches/run", json=self._body(
+            eval_db, case_ids=[case_id] * too_many, condition_ids=cond_ids))
+        await _rejected(resp, "Too many runs", str(MAX_BATCH_RUNS))
+        assert eval_db.list_batches() == []
+
     @pytest.mark.parametrize("field", ["case_ids", "condition_ids"])
     async def test_unknown_id_is_400_and_no_batch_is_created(
             self, client, eval_db, field):
@@ -302,7 +316,7 @@ class TestStartBatch:
         async def no_execute(*args):
             return None
         monkeypatch.setattr(
-            "consensus.evaluation.eval_routes._execute_batch", no_execute)
+            "consensus.evaluation.eval_routes.execute_batch", no_execute)
         case_ids = [c["id"] for c in eval_db.list_cases()]
         cond_ids = [c["id"] for c in eval_db.list_conditions()][:2]
         # More cases than conditions, so a case id with no matching
@@ -432,3 +446,13 @@ class TestCancelBatch:
                                  json={})
         assert resp.status == 200, await resp.text()
         assert eval_db.get_batch(batch_id)["status"] == "cancelled"
+
+
+def test_ui_round_limit_mirrors_the_server():
+    """The condition form's max must match MAX_NUM_ROUNDS (#112)."""
+    import re
+    from pathlib import Path
+    html = (Path(eval_routes.__file__).parent / "static" / "eval.html"
+            ).read_text()
+    match = re.search(r'id="cond-rounds"[^>]*max="(\d+)"', html)
+    assert match and int(match.group(1)) == MAX_NUM_ROUNDS

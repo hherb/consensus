@@ -15,6 +15,15 @@ from consensus.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def offline_pricing(monkeypatch):
+    """Keep the suite off the network: ``PricingCache.refresh`` downloads
+    OpenRouter's catalogue on every app start and for unknown models.
+    Tests of the refresh itself patch the instance, which still wins."""
+    from consensus.pricing import PricingCache
+    monkeypatch.setattr(PricingCache, "refresh", lambda self: False)
+
+
 @pytest.fixture
 def tmp_db(tmp_path):
     """Create a Database backed by a temporary SQLite file."""

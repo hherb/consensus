@@ -15,10 +15,13 @@ from collections.abc import Awaitable, Callable
 from aiohttp import web
 
 from consensus.evaluation.constants import (
+    AUTO_SCORE_FAILED_PREFIX,
     FINISHED_BATCH_STATUSES,
+    MAX_BATCH_RUNS,
     SQLITE_MAX_INTEGER,
 )
 from consensus.evaluation.eval_db import EvalDatabase
+from consensus.evaluation.runner_db import execute_batch
 from consensus.evaluation.request_checks import (
     BATCH_FIELDS,
     CASE_FIELDS,
@@ -138,6 +141,8 @@ def register_eval_routes(webapp: web.Application,
     The middlewares are the CSRF guard (415) and the 409 for known
     constraint conflicts; both act only on ``/eval/api/`` paths.
     """
+    # Called once at start-up, before any batch task exists.
+    eval_db.close_interrupted_batches("Interrupted by a server restart")
     webapp.middlewares.append(_require_json_writes)
     webapp.middlewares.append(_constraint_conflicts)
 
@@ -292,6 +297,9 @@ def register_eval_routes(webapp: web.Application,
             return _error("No cases selected")
         if not condition_ids:
             return _error("No conditions selected")
+        if len(case_ids) * len(condition_ids) > MAX_BATCH_RUNS:
+            return _error(f"Too many runs: a batch may have at most "
+                          f"{MAX_BATCH_RUNS} (cases x conditions)")
         if not provider_url:
             return _error("Provider URL is required")
         if not model:
@@ -316,9 +324,11 @@ def register_eval_routes(webapp: web.Application,
 
         # Spawn async execution task
         task = asyncio.create_task(
-            _execute_batch(eval_db, batch_id, api_key)
+            execute_batch(eval_db, batch_id, api_key)
         )
         _active_batch_tasks[batch_id] = task
+        task.add_done_callback(
+            lambda _t: _active_batch_tasks.pop(batch_id, None))
 
         return _json(eval_db.get_batch(batch_id), status=201)
 
@@ -332,9 +342,10 @@ def register_eval_routes(webapp: web.Application,
 
         task = _active_batch_tasks.get(batch_id)
         if task and not task.done():
-            task.cancel()
+            task.cancel()  # the task stamps its interrupted run itself
 
         eval_db.update_batch_status(batch_id, "cancelled", time.time())
+        eval_db.close_pending_runs(batch_id, "Cancelled before it started")
         return _json({"cancelled": True})
 
     # ------------------------------------------------------------------
@@ -360,6 +371,8 @@ def register_eval_routes(webapp: web.Application,
 
         from consensus.evaluation.scorer import score_run_from_db
         score_run_from_db(eval_db, run_id)
+        if (run["error_text"] or "").startswith(AUTO_SCORE_FAILED_PREFIX):
+            eval_db.update_run(run_id, error_text="")
         return _json(eval_db.get_scores(run_id))
 
     async def judge_run(request: web.Request) -> web.Response:
@@ -447,49 +460,3 @@ def register_eval_routes(webapp: web.Application,
     webapp.router.add_get("/eval/", serve_eval_index)
     webapp.router.add_get("/eval/{path:.*}", serve_eval_static)
 
-
-# ---------------------------------------------------------------------------
-# Batch execution (runs as asyncio task)
-# ---------------------------------------------------------------------------
-
-async def _execute_batch(eval_db: EvalDatabase, batch_id: int,
-                         api_key: str = "") -> None:
-    """Execute all pending runs in a batch. Runs as a background task."""
-    try:
-        eval_db.update_batch_status(batch_id, "running")
-        runs = eval_db.list_runs(batch_id)
-        pending = [r for r in runs if r["status"] == "pending"]
-
-        for run_data in pending:
-            run_id = run_data["id"]
-            try:
-                from consensus.evaluation.runner import run_case_condition_db
-                await run_case_condition_db(
-                    eval_db=eval_db,
-                    run_id=run_id,
-                    api_key=api_key,
-                )
-                # Auto-score after completion
-                from consensus.evaluation.scorer import score_run_from_db
-                score_run_from_db(eval_db, run_id)
-
-            except asyncio.CancelledError:
-                eval_db.update_run(run_id, status="error",
-                                   error_text="Cancelled")
-                raise
-            except Exception as e:
-                logger.exception("Run %d failed", run_id)
-                eval_db.update_run(
-                    run_id, status="error", error_text=str(e),
-                    completed_at=time.time(),
-                )
-
-        eval_db.update_batch_status(batch_id, "done", time.time())
-
-    except asyncio.CancelledError:
-        eval_db.update_batch_status(batch_id, "cancelled", time.time())
-    except Exception:
-        logger.exception("Batch %d failed", batch_id)
-        eval_db.update_batch_status(batch_id, "error", time.time())
-    finally:
-        _active_batch_tasks.pop(batch_id, None)

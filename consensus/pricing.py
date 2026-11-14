@@ -54,6 +54,8 @@ class PricingCache:
         # One capability refresh per process: a failed attempt (e.g.
         # offline) must not re-block every supports_tools() call.
         self._capability_refresh_attempted = False
+        # Unknown models already refreshed for, so each costs one download.
+        self._unknown_models_refreshed: set[str] = set()
 
     def _needs_refresh(self) -> bool:
         """Check if pricing data is stale (> 1 week old) or empty."""
@@ -72,6 +74,25 @@ class PricingCache:
             (f"%/{model_name}",),
         )
         return cur.fetchone() is None
+
+    def _refresh_for_unknown_model(self, model_name: str) -> bool:
+        """Refresh at most once per model for this cache (one per
+        ``Database``, so per ``ConsensusApp``) for a model it does not know.
+
+        A model OpenRouter does not list (a local model, say) is still
+        unknown after the refresh; without this guard every message priced
+        for it re-downloaded the whole catalogue, blocking the event loop.
+        shortcut: a model OpenRouter lists only later, or whose one refresh
+        failed, stays unpriced for this cache's lifetime; add a retry
+        interval if that matters (#115).
+
+        Returns True if a refresh succeeded, so the caller should look again.
+        """
+        if (model_name in self._unknown_models_refreshed
+                or not self.needs_refresh_for_model(model_name)):
+            return False
+        self._unknown_models_refreshed.add(model_name)
+        return self.refresh()
 
     def refresh(self) -> bool:
         """Fetch pricing from OpenRouter and update cache.
@@ -175,8 +196,7 @@ class PricingCache:
             Cost in USD, or None if pricing is unavailable even after refresh.
         """
         cost = self.calculate_cost(model_name, base_url, prompt_tokens, completion_tokens)
-        if cost is None and self.needs_refresh_for_model(model_name):
-            self.refresh()
+        if cost is None and self._refresh_for_unknown_model(model_name):
             cost = self.calculate_cost(model_name, base_url, prompt_tokens, completion_tokens)
         return cost
 
@@ -189,8 +209,7 @@ class PricingCache:
         Returns True/False if the model is found, None if still unknown.
         """
         row = self._lookup_row(model_name, base_url)
-        if row is None and self.needs_refresh_for_model(model_name):
-            self.refresh()
+        if row is None and self._refresh_for_unknown_model(model_name):
             row = self._lookup_row(model_name, base_url)
         if row is None:
             return None
@@ -205,8 +224,7 @@ class PricingCache:
         Refreshes the cache once if the model is unknown.
         """
         row = self._lookup_row(model_name, base_url)
-        if row is None and self.needs_refresh_for_model(model_name):
-            self.refresh()
+        if row is None and self._refresh_for_unknown_model(model_name):
             row = self._lookup_row(model_name, base_url)
         if row is None:
             return None
@@ -226,8 +244,7 @@ class PricingCache:
         local models).
         """
         row = self._lookup_row(model_name, base_url)
-        if row is None and self.needs_refresh_for_model(model_name):
-            self.refresh()
+        if row is None and self._refresh_for_unknown_model(model_name):
             row = self._lookup_row(model_name, base_url)
         if row is None:
             return None
