@@ -43,7 +43,7 @@ write serialisation).
 
 | Method | Purpose |
 |--------|---------|
-| `refresh()` | Fetch all model pricing from OpenRouter API (via `http_fetch.fetch_capped`, so with retry and backoff), update SQLite cache. Returns `True` on success. Blocks, so never call it on the event loop |
+| `refresh()` | Fetch all model pricing from OpenRouter API (via `http_fetch.fetch_capped`, so with retry and backoff), update SQLite cache. Returns `True` on success. Runs its own event loop (`asyncio.run`), so call it only from a thread with no running loop |
 | `refresh_in_background()` | Run `refresh()` in a daemon thread unless a download is already in flight |
 | `lookup(model_name, base_url)` | Find pricing for a model. Returns `(prompt_cost, completion_cost)` or `None` |
 | `calculate_cost(model_name, base_url, prompt_tokens, completion_tokens)` | Calculate USD cost for a message. Returns `float` or `None` |
@@ -61,7 +61,10 @@ write serialisation).
   not know (or, on a cache from before migration 014, a model with no
   capability data) starts one background refresh. That lookup returns
   `None`; lookups after the download lands see the data. Each unknown model
-  starts at most one refresh per cache
+  starts at most one refresh per cache, counted only once a download starts
+  for it. Malformed catalogue entries are skipped. Until the first download
+  lands on a fresh DB, `supports_tools` returns `None`, so the
+  tool-capability gate lets every model through (issue #118)
 
 ### Model name matching
 

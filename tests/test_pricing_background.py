@@ -1,8 +1,10 @@
-"""PricingCache never downloads on the caller's thread (issue #115).
+"""No PricingCache lookup, and no app start, downloads on the caller's
+thread (issue #115).
 
 Every lookup is reached from the event loop (web handlers, the desktop
-bridge's loop, ``SessionManager`` building a ``ConsensusApp`` per visitor),
-so a download there stalls every request for as long as the network takes.
+bridge's loop), and ``SessionManager`` builds a ``ConsensusApp`` per
+``--multi-user`` visitor inside a request handler, so a download on either
+path stalls every request for as long as the network takes.
 """
 
 import asyncio
@@ -12,6 +14,7 @@ import threading
 import httpx
 import pytest
 
+from consensus.http_fetch import FETCH_MAX_RETRIES
 from consensus.pricing import OPENROUTER_MODELS_URL, PricingCache
 from tests.image_helpers import install_transport
 
@@ -28,6 +31,12 @@ CATALOGUE = {"data": [{
     "context_length": 128000,
     "supported_parameters": ["tools", "temperature"],
 }]}
+
+
+def join(thread: threading.Thread) -> None:
+    """Join ``thread``, failing instead of hanging if it never finishes."""
+    thread.join(BLOCK_SECONDS * 2)
+    assert not thread.is_alive()
 
 
 @pytest.fixture
@@ -86,8 +95,8 @@ def test_unknown_model_lookup_does_not_wait_for_download(
     assert lookup(cache) is None  # returns while the download is held
     assert cache._refresh_thread.is_alive()
     release.set()
-    cache._refresh_thread.join()
-    assert threads and threads[0] is not threading.main_thread()
+    join(cache._refresh_thread)
+    assert threads and threads[0].name == "pricing-refresh"
 
 
 def test_capability_refresh_does_not_wait_for_download(
@@ -100,8 +109,8 @@ def test_capability_refresh_does_not_wait_for_download(
     assert cache.supports_tools("gpt-4o") is None
     assert cache._refresh_thread.is_alive()
     release.set()
-    cache._refresh_thread.join()
-    assert len(threads) == 1 and threads[0] is not threading.main_thread()
+    join(cache._refresh_thread)
+    assert len(threads) == 1 and threads[0].name == "pricing-refresh"
 
 
 def test_one_download_in_flight(cache, blocking_refresh):
@@ -111,7 +120,7 @@ def test_one_download_in_flight(cache, blocking_refresh):
     cache.get_context_length("model-a")
     cache.get_context_length("model-b")
     release.set()
-    cache._refresh_thread.join()
+    join(cache._refresh_thread)
     assert len(threads) == 1
 
 
@@ -119,7 +128,7 @@ def test_landed_refresh_answers_next_lookup(cache, monkeypatch):
     install_transport(monkeypatch, lambda request: httpx.Response(
         200, json=CATALOGUE))
     assert cache.get_context_length("gpt-4o") is None
-    cache._refresh_thread.join()
+    join(cache._refresh_thread)
     assert cache.get_context_length("gpt-4o") == 128000
     assert cache.supports_tools("gpt-4o") is True
     assert cache.calculate_cost("gpt-4o", "", 1000, 1000) == pytest.approx(3.0)
@@ -134,8 +143,8 @@ def no_sleep(monkeypatch):
 
 
 def test_refresh_retries_a_transient_failure(cache, monkeypatch, no_sleep):
-    """Golden rule 5: one 503 must not leave the model unpriced for the
-    whole process."""
+    """Golden rule 5: one 503 must not leave the model unpriced for this
+    cache's lifetime."""
     replies = iter([httpx.Response(503), httpx.Response(200, json=CATALOGUE)])
     seen = install_transport(monkeypatch, lambda request: next(replies))
     assert cache.refresh() is True
@@ -152,6 +161,78 @@ def test_refresh_retries_a_transient_failure(cache, monkeypatch, no_sleep):
 def test_refresh_failure_returns_false(cache, monkeypatch, no_sleep, reply):
     install_transport(monkeypatch, lambda request: reply)
     assert cache.refresh() is False
+
+
+def test_refresh_gives_up_after_its_retries(cache, monkeypatch, no_sleep):
+    """Offline: every attempt fails, so ``refresh`` reports failure."""
+    seen = install_transport(monkeypatch, lambda request: httpx.Response(503))
+    assert cache.refresh() is False
+    assert len(seen) == FETCH_MAX_RETRIES
+
+
+@pytest.mark.parametrize("data", [
+    5, {"a": 1}, [1], [None], [{"id": "x", "pricing": "free"}],
+    [{"id": "x", "architecture": {"input_modalities": [1]}}],
+])
+def test_malformed_catalogue_returns_false(cache, monkeypatch, data):
+    """A catalogue of nothing but bad entries is a failure, not a crash
+    in the background thread (where only ``threading.excepthook`` sees it)."""
+    install_transport(monkeypatch, lambda request: httpx.Response(
+        200, json={"data": data}))
+    assert cache.refresh() is False
+
+
+def test_malformed_entries_skip_without_losing_the_rest(cache, monkeypatch):
+    bad = [None, {"id": "bad", "pricing": "free"},
+           {"id": "odd", "context_length": {"a": 1}}]
+    install_transport(monkeypatch, lambda request: httpx.Response(
+        200, json={"data": bad + CATALOGUE["data"]}))
+    assert cache.refresh() is True
+    assert cache.get_context_length("gpt-4o") == 128000
+    assert cache.get_context_length("odd") is None
+
+
+def test_background_refresh_error_is_logged(cache, monkeypatch, caplog):
+    """An unexpected error in the thread reaches the log, not raw stderr."""
+    def refresh() -> bool:
+        raise RuntimeError("boom")
+    monkeypatch.setattr(cache, "refresh", refresh)
+    join(cache.refresh_in_background())
+    assert "boom" in caplog.text
+
+
+def test_model_asked_for_mid_download_retries_if_it_failed(
+        cache, blocking_refresh):
+    """The in-flight download covers model-b only if it lands; when it
+    fails, model-b's next lookup starts a download of its own."""
+    release, threads = blocking_refresh
+    cache.get_context_length("model-a")
+    cache.get_context_length("model-b")  # mid-download: starts nothing
+    release.set()
+    join(cache._refresh_thread)
+    cache.get_context_length("model-b")
+    join(cache._refresh_thread)
+    assert len(threads) == 2
+
+
+def test_concurrent_callers_start_one_download(cache, blocking_refresh):
+    release, threads = blocking_refresh
+    barrier = threading.Barrier(8)
+    started: list = []
+
+    def call() -> None:
+        barrier.wait()
+        started.append(cache.refresh_in_background())
+
+    callers = [threading.Thread(target=call) for _ in range(8)]
+    for t in callers:
+        t.start()
+    for t in callers:
+        join(t)
+    release.set()
+    join(cache._refresh_thread)
+    assert sum(t is not None for t in started) == 1
+    assert len(threads) == 1
 
 
 def test_refresh_after_db_closed_returns_false(cache, monkeypatch):
@@ -179,9 +260,9 @@ def test_app_start_with_stale_cache_does_not_wait(tmp_path, monkeypatch):
     try:
         assert app.db.pricing._refresh_thread.is_alive()
         release.set()
-        app.db.pricing._refresh_thread.join()
+        join(app.db.pricing._refresh_thread)
         assert len(threads) == 1
-        assert threads[0] is not threading.main_thread()
+        assert threads[0].name == "pricing-refresh"
     finally:
         release.set()
         app.db.close()

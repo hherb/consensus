@@ -94,23 +94,27 @@ class PricingCache:
         not list (a local model, say) is still unknown after the refresh;
         without this guard every message priced for it re-downloaded the
         whole catalogue.
-        shortcut: a model OpenRouter lists only later, or whose one refresh
+        A model asked for while another download is in flight is recorded
+        only once a download starts for it, so if that other download fails
+        the model still gets its own.
+        shortcut: a model OpenRouter lists only later, or whose own refresh
         failed after its retries, stays unpriced for this cache's lifetime;
         add a retry interval if that matters.
         """
         if (model_name in self._unknown_models_refreshed
                 or not self.needs_refresh_for_model(model_name)):
             return
-        self._unknown_models_refreshed.add(model_name)
-        self.refresh_in_background()
+        if self.refresh_in_background() is not None:
+            self._unknown_models_refreshed.add(model_name)
 
     def refresh_in_background(self) -> Optional[threading.Thread]:
         """Run :meth:`refresh` in a daemon thread, unless one is running.
 
         Every lookup is reached from an event loop, and a download there
         stalls every request for as long as the network takes (#115). The
-        running download fetches the whole catalogue, so it also covers any
-        model asked for while it is in flight.
+        running download fetches the whole catalogue, so if it lands it
+        also covers any model asked for while it is in flight. An error the
+        thread raises is logged, not left to ``threading.excepthook``.
 
         Returns:
             The started thread, or ``None`` if a download was in flight.
@@ -119,15 +123,25 @@ class PricingCache:
             if self._refresh_thread and self._refresh_thread.is_alive():
                 return None
             self._refresh_thread = threading.Thread(
-                target=self.refresh, name="pricing-refresh", daemon=True)
+                target=self._refresh_logged, name="pricing-refresh",
+                daemon=True)
             self._refresh_thread.start()
             return self._refresh_thread
+
+    def _refresh_logged(self) -> None:
+        """Thread target: :meth:`refresh`, with any error it raises logged."""
+        try:
+            self.refresh()
+        except Exception:
+            logger.exception("Background pricing refresh failed")
 
     def refresh(self) -> bool:
         """Fetch pricing from OpenRouter and update cache.
 
-        Blocks for the download, retries included, so call it off the event
-        loop: :meth:`refresh_in_background` does.
+        Runs its own event loop (``asyncio.run``) for the download, retries
+        included, so call it from a thread with no running loop:
+        :meth:`refresh_in_background` does. On a running loop it fails at
+        once and returns False.
 
         Returns True if successful, False on failure.
         """
@@ -135,34 +149,38 @@ class PricingCache:
             body, _ = asyncio.run(fetch_capped(
                 OPENROUTER_MODELS_URL, max_bytes=PRICING_MAX_BYTES,
                 timeout=PRICING_FETCH_TIMEOUT))
-            models = json.loads(body).get("data", [])
         except Exception:
             logger.warning("Failed to fetch pricing from OpenRouter",
+                           exc_info=True)
+            return False
+        try:
+            models = json.loads(body).get("data", [])
+        except (ValueError, AttributeError):
+            logger.warning("OpenRouter returned an unreadable catalogue",
                            exc_info=True)
             return False
 
         if not models:
             logger.warning("OpenRouter returned no models")
             return False
+        if not isinstance(models, list):
+            logger.warning("OpenRouter catalogue 'data' is not a list")
+            return False
 
         now = time.time()
         rows = []
+        skipped = 0
         for m in models:
-            model_id = m.get("id", "")
-            pricing = m.get("pricing") or {}
-            prompt_cost = _parse_cost(pricing.get("prompt"))
-            completion_cost = _parse_cost(pricing.get("completion"))
-            arch = m.get("architecture") or {}
-            input_mods = arch.get("input_modalities") or ["text"]
-            input_modalities = ",".join(input_mods)
-            context_length = m.get("context_length")
-            supported_parameters = ",".join(
-                m.get("supported_parameters") or [])
-            if model_id:
-                rows.append((
-                    model_id, prompt_cost, completion_cost, now,
-                    input_modalities, context_length, supported_parameters,
-                ))
+            try:
+                row = _pricing_row(m, now)
+            except (AttributeError, TypeError):
+                skipped += 1
+                continue
+            if row:
+                rows.append(row)
+        if skipped:
+            logger.warning("Skipped %d malformed OpenRouter catalogue "
+                           "entries", skipped)
 
         if not rows:
             return False
@@ -245,7 +263,7 @@ class PricingCache:
 
         Uses the same fuzzy matching logic as ``lookup()``.
         Refreshes the cache in the background once if the model is unknown.
-        Returns True/False if the model is found, None if still unknown.
+        Returns True/False if the model is found, None if not known (yet).
         """
         row = self._lookup_row(model_name, base_url)
         if row is None:
@@ -273,7 +291,7 @@ class PricingCache:
 
         Uses the same fuzzy matching logic as ``lookup()`` and refreshes
         the cache in the background once if the model is unknown, or (at
-        most once per process) when the whole cache predates the
+        most once per cache) when the whole cache predates the
         ``supported_parameters`` column (migration 014) so the setup
         gate works soon after an upgrade.  Returns True/False when
         OpenRouter reports the model's supported parameters, or None
@@ -287,8 +305,9 @@ class PricingCache:
         params = (row.get("supported_parameters") or "").strip()
         if (not params and not self._capability_refresh_attempted
                 and self._capability_data_missing()):
-            self._capability_refresh_attempted = True
-            self.refresh_in_background()
+            # Recorded only once a download starts, like unknown models.
+            if self.refresh_in_background() is not None:
+                self._capability_refresh_attempted = True
         if not params:
             return None
         return "tools" in params.split(",")
@@ -418,6 +437,31 @@ def _parse_cost(value: object) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _pricing_row(m: dict, now: float) -> Optional[tuple]:
+    """Build a ``model_pricing`` row from one catalogue entry.
+
+    Returns None for an entry with no string ``id``; raises AttributeError
+    or TypeError for one of the wrong shape (the caller skips it).
+    """
+    model_id = m.get("id", "")
+    if not model_id or not isinstance(model_id, str):
+        return None
+    pricing = m.get("pricing") or {}
+    arch = m.get("architecture") or {}
+    context_length = m.get("context_length")
+    if isinstance(context_length, bool) or not isinstance(context_length, int):
+        context_length = None  # SQLite cannot bind a dict, say
+    return (
+        model_id,
+        _parse_cost(pricing.get("prompt")),
+        _parse_cost(pricing.get("completion")),
+        now,
+        ",".join(arch.get("input_modalities") or ["text"]),
+        context_length,
+        ",".join(m.get("supported_parameters") or []),
+    )
 
 
 def _provider_from_url(base_url: str) -> str:

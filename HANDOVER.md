@@ -3,7 +3,7 @@
 _Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices (through `evaluation/runner.py`, PR #116, with
 #112/#113/#114) and the #104 rotation fix; the #115 fix (pricing downloads off
-the event loop) is on `fix/pricing-refresh-off-loop-115` (suite at **3618
+the event loop) is on `fix/pricing-refresh-off-loop-115` (suite at **3629
 passing**). The discussion-method review & repair campaign (#12–#48,
 #56–#60) is finished and merged; so is alpha/stable distribution (PyPI
 `consensus-app` + notarized macOS DMG), the public website, the
@@ -31,7 +31,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3618 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 3629 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -204,15 +204,22 @@ concluded record. Removing a non-member is an error. Tests:
 inside a request handler for every new `--multi-user` visitor. So **no lookup
 downloads inline.** Startup with a stale cache, an unknown model, and a cache
 from before migration 014 each call `refresh_in_background()`, which runs at
-most one download thread at a time. The lookup that triggered it returns
-`None`; later lookups see the data. `refresh()` goes through
-`http_fetch.fetch_capped` (retry/backoff) inside `asyncio.run` in that thread,
-and returns `False` on a fetch, parse, or DB failure, which happens when a
-session expires mid-download. Known limit: the setup tool-capability gate
-passes a model whose data has not landed yet (`supports_tools` → `None`). The
-structured turn then fails visibly. Tests: `tests/test_pricing_background.py`.
-The fixtures there restore the real `refresh` over conftest's autouse stub,
-and they join `_refresh_thread` before asserting.
+most one download thread per cache (per `ConsensusApp`). The lookup that
+triggered it returns `None`; later lookups see the data. A model (or the
+capability refresh) counts as tried only once a download starts for it, so a
+lookup made while another download is in flight is retried if that download
+fails. `refresh()` goes through `http_fetch.fetch_capped` (retry/backoff)
+inside `asyncio.run` in that thread. It returns `False` on a fetch failure, an
+unreadable or empty catalogue, or a DB failure (e.g. the session expired and
+closed its DB mid-download); malformed entries are skipped, and anything else
+the thread raises is logged. Known limit (#118): the tool-capability gate
+passes a model whose data has not landed yet (`supports_tools` → `None`) —
+after an upgrade past migration 014, and on any fresh DB (a first run, every
+new `--multi-user` session) until the startup download lands. The structured
+turn then fails visibly. Messages priced before the data lands keep a `NULL`
+cost. Tests: `tests/test_pricing_background.py`. Its `cache` fixture restores
+the real `refresh` over conftest's autouse stub; tests join `_refresh_thread`
+(with a timeout) before asserting.
 
 ## Open work
 
