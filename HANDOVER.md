@@ -5,7 +5,7 @@ the merged #61 slices (through `mcp_server.py` → `mcp_server/`, PR #120),
 the #104 rotation fix, and the #115/#118 pricing fixes (PRs #117/#119). The
 #121 fix (MCP tool failures are `isError` results) is PR #122
 (`fix/mcp-tool-errors-121`); the thirteenth #61 slice (`desktop.py` →
-`desktop/`) is stacked on it as `refactor/split-desktop-61` (suite at **3856
+`desktop/`) is stacked on it as `refactor/split-desktop-61` (suite at **3861
 passing**). The discussion-method review & repair campaign (#12–#48,
 #56–#60) is finished and merged; so is alpha/stable distribution (PyPI
 `consensus-app` + notarized macOS DMG), the public website, the
@@ -34,7 +34,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3856 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 3861 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -269,12 +269,14 @@ interpreter).
    `tests/test_mcp_server_facade.py` (also checks the `consensus-mcp` entry
    point). Contracts: **a failed tool call is an `isError` result** — a
    handler raises `mcp_server/errors.py` `ToolError` (logged at WARNING,
-   no traceback) rather than returning `"Error: ..."` text (#121, pinned
-   per handler in `tests/test_mcp_server_tool_errors.py`); `run_discussion`
-   reports **`turn_errors`** (skipped
-   turns), **`error`** (why the loop stopped early — a failed `complete_turn`
-   now stops it instead of re-running the turn until the timeout, and an
-   exception in the loop is reported and the run still concluded),
+   no traceback) rather than returning `"Error: ..."` text (#121, pinned in
+   `tests/test_mcp_server_tool_errors.py` and, for the search tools,
+   `tests/test_mcp_server_handlers.py`); a wrong-typed or missing argument
+   still takes the bug path (#124); `run_discussion` reports
+   **`turn_errors`** (skipped turns), **`error`** (why the loop stopped
+   early — a failed `complete_turn` now stops it instead of re-running the
+   turn until the timeout, and an exception in the loop is reported and the
+   run still concluded),
    **`stop_reason`** and a corrected `rounds_completed` (whole rounds, was
    one too high); `moderator_id` must be in `entity_ids`. Malformed stdio
    input gets a JSON-RPC error reply (codes named in `constants.py`), a bug
@@ -287,7 +289,8 @@ interpreter).
    loop, pushes, image data URL, eval server) composing `catalog.py` /
    `discussion.py` / `files.py` mixins, `launcher.py`, `constants.py`. Net
    (36% → 99% before the move): `tests/test_desktop_bridge_api.py` pins the
-   pywebview-exposed method set (`BRIDGE_API`) against every
+   top-level bridge methods (`BRIDGE_API`; pywebview also exposes
+   `api.app.*` by recursion, #125) against every
    `pywebview.api.X` call in `static/` and checks each forward to
    `ConsensusApp`, sync or via `_run_async`; `tests/test_desktop_bridge.py`
    covers pushes, gates, file dialogs (a `FakeWindow` in
@@ -301,9 +304,9 @@ interpreter).
 lazily inside function bodies (`moderator.py` imports `is_vision_capable` /
 `build_image_content_blocks` at module level), and the `app._init_*_tools`
 methods turn an `ImportError` into "feature unavailable" (logged at
-WARNING). Each split package has a `tests/test_<package>_facade.py` that pins
-`__all__` by identity and AST-scans every module under `consensus/` for call
-sites. Keep them in step when the public API changes.
+WARNING). Each re-exporting facade has a `tests/test_<name>_facade.py` that
+pins `__all__` by identity and AST-scans every module under `consensus/` for
+call sites. Keep them in step when the public API changes.
 
 **Still over the limit**, with statement coverage from the full suite
 (`uv run --with pytest-cov pytest --cov=consensus`):
@@ -312,7 +315,7 @@ sites. Keep them in step when the public API changes.
 |------:|------:|------|
 | 1241 | **0%** | `consensus/server.py` |
 | 787 | 49% | `consensus/auth.py` |
-| 775 | 71% | `consensus/moderator.py` (one `Moderator` class, 23 methods) |
+| 775 | 71% | `consensus/moderator.py` (one `Moderator` class, 22 methods) |
 
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
@@ -373,8 +376,9 @@ missing route tests first.
    the characterization tests were written against the old shape. On the
    `tools_document` slice three such mutations survived the whole suite at 100% coverage.
    Coverage measures lines executed, not behaviour constrained.
-7. Update the docs that name the old module file (`grep -rn "<name>\.py"
-   --include='*.md'`: `CLAUDE.md`, `README.md`, `docs/devel/*`,
+7. Update the docs and comments that name the old module file
+   (`grep -rn "<name>\.py" --include='*.md' --include='*.py'`: `CLAUDE.md`,
+   `README.md`, `docs/devel/*`, test docstrings,
    `docs/BUILTIN_TOOLS.md`). Check the *content* beside the name too — the
    `doc_*` tables and the desktop bridge method list were both wrong in
    blocks earlier PRs had edited only for the module name.

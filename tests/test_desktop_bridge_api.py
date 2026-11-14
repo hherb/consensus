@@ -3,9 +3,11 @@
 pywebview exposes every public method of the ``js_api`` object
 (``dir()`` + ``inspect.ismethod``, inherited ones included) and the frontend
 calls them by name, so a method lost in a refactor fails only when a user
-clicks something. These tests pin the method set against the frontend's
-calls and check that each forwarding method reaches the right
+clicks something. These tests pin the top-level method set against the
+frontend's calls and check that each forwarding method reaches the right
 ``ConsensusApp`` method with the right arguments, sync or bridged async.
+pywebview also recurses into public non-callable attributes, so
+``api.app.*`` is reachable too and is not pinned here (#125).
 """
 
 import inspect
@@ -48,7 +50,11 @@ BRIDGE_API = {
 
 
 def _exposed(obj) -> set[str]:
-    """The names pywebview's ``get_functions`` would expose for *obj*."""
+    """The top-level names pywebview's ``get_functions`` exposes for *obj*.
+
+    It also recurses into public attributes such as ``app``; that part is
+    not mirrored here (#125).
+    """
     return {n for n in dir(obj)
             if not n.startswith("_") and inspect.ismethod(getattr(obj, n))}
 

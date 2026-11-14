@@ -313,12 +313,13 @@ calls with the async application methods.
 pywebview. Every public method (no leading underscore), inherited ones
 included, becomes callable from JavaScript as
 `window.pywebview.api.<method_name>(...)`. The class holds the event-loop
-plumbing, state pushes, image data URLs and the evaluation server; the rest
-come from one mixin per UI area: `catalog.py` (providers, entities, prompts,
-tools, MCP servers, experts, memory config), `discussion.py` (setup, turn
-lifecycle, history) and `files.py` (documents, images, export, native file
-dialogs). `tests/test_desktop_bridge_api.py` pins the method set against the
-frontend's `pywebview.api` calls.
+plumbing, `get_state` and state pushes, image data URLs and the evaluation
+server; the rest come from one mixin per UI area: `catalog.py` (providers,
+entities, prompts, tools, MCP servers, experts, memory config),
+`discussion.py` (setup, turn lifecycle, history) and `files.py` (documents,
+images, export, native file dialogs). `tests/test_desktop_bridge_api.py`
+pins the top-level method set against the frontend's `pywebview.api` calls;
+pywebview also exposes `api.app.*` by recursion (#125).
 
 **Async bridging:** A background `asyncio` event loop runs in a daemon thread.
 Async methods are submitted with `asyncio.run_coroutine_threadsafe()` and

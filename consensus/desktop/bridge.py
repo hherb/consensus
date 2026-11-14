@@ -1,8 +1,8 @@
 """``DesktopBridge``: the object pywebview exposes to JavaScript.
 
-Its own methods are the event-loop plumbing, state pushes, image
-data URLs and the evaluation server; the rest come from the
-mixins, one per area of the UI."""
+Its own methods are the event-loop plumbing, ``get_state`` and state
+pushes, image data URLs and the evaluation server; the rest come from
+the mixins, one per area of the UI."""
 
 import asyncio
 import json

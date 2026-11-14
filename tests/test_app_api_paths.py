@@ -250,7 +250,7 @@ ASYNC_PUBLIC_API = {
 
 
 def test_public_api_async_shape_is_stable():
-    """desktop.py and server.py await exactly these; a move that drops or adds
+    """desktop/ and server.py await exactly these; a move that drops or adds
     ``async`` breaks the caller at runtime, not at import."""
     assert ASYNC_PUBLIC_API <= PUBLIC_API
     actual = {n for n in PUBLIC_API
