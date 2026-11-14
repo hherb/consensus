@@ -445,9 +445,10 @@ class TestDiscussionSetup:
 
 # --- Public API guard --------------------------------------------------------
 
-# Every public ConsensusApp method. desktop.py, server.py and mcp_server.py
-# reach these by attribute access at call time, so a method lost in a split
-# fails late (AttributeError in production), not at import or collection.
+# Every public ConsensusApp method. desktop.py, server.py and
+# mcp_server/handlers_write.py reach these by attribute access at call time,
+# so a method lost in a split fails late (AttributeError in production), not
+# at import or collection.
 PUBLIC_API = {
     "add_document", "add_document_from_url", "add_image", "add_image_from_url",
     "add_mcp_server", "add_provider", "add_to_discussion",

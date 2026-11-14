@@ -28,7 +28,8 @@ ConsensusMCPServer (mcp_server/)
 ## Package layout
 
 `consensus/mcp_server/` is split by concern (issue #61); `__init__.py`
-re-exports `ConsensusMCPServer`, `main` and the protocol constants.
+re-exports `ConsensusMCPServer`, `main` and the constants listed in its
+`__all__`.
 
 | Module | Holds |
 |--------|-------|
@@ -36,7 +37,7 @@ re-exports `ConsensusMCPServer`, `main` and the protocol constants.
 | `tool_defs.py` | `ToolRegistrationMixin` — the 13 advertised tool schemas |
 | `handlers_read.py` | `ReadHandlersMixin` — list/read and semantic-search handlers |
 | `handlers_write.py` | `WriteHandlersMixin` — memory/knowledge writes and `run_discussion` |
-| `constants.py` | Protocol version, server name/version, agent entity name |
+| `constants.py` | Protocol version, server name/version, JSON-RPC error codes, agent entity name, `run_discussion` defaults and limits |
 | `__main__.py` | `python -m consensus.mcp_server` |
 
 ## Entry Point
@@ -68,8 +69,8 @@ stdout. All logging goes to stderr.
 
 | Method | Response |
 |--------|----------|
+| Any message without an `id` | None — a notification is never answered, even an `initialize` or a malformed one |
 | `initialize` | Protocol version, capabilities `{"tools": {}}`, server info |
-| Any message without an `id` | None — a notification is never answered |
 | `tools/list` | All 13 tool definitions |
 | `tools/call` | Tool execution result |
 
@@ -77,7 +78,11 @@ The main loop uses `asyncio.get_running_loop().run_in_executor()` to read from
 stdin in a thread, avoiding asyncio pipe transport issues on macOS. Malformed
 input gets a JSON-RPC error reply and the loop keeps serving: an unparseable
 line → `-32700` (also logged), a non-object message → `-32600`, non-object
-`params` → `-32602`. A tool handler that raises returns `isError: true`.
+`params`, a non-string tool `name` or non-object `arguments` → `-32602`. A tool
+handler that raises returns `isError: true` with the exception type and
+message. Any other exception during dispatch is logged and answered with
+`-32603` (`_dispatch()`), so a bug in the server cannot stop the loop. The
+codes are named in `constants.py`.
 
 ## Tools
 
@@ -152,10 +157,18 @@ They gracefully return error messages if the embedding service is unavailable.
   returns JSON with conclusion, cost, participants, rounds
 - **Failures are in the result, not only the log.** `turn_errors` lists every
   skipped turn (`"<name>: <detail>"` — the discussion goes on, as in the UI);
-  `error` says why the turn loop stopped early (a failed turn completion, no
-  AI speaker due, or the timeout) and is `""` for a run that finished;
+  `error` says why the turn loop stopped early (a failed turn that was not
+  skipped, a failed turn completion, no AI speaker due, an exception in the
+  loop, or the timeout) and is `""` for a run that finished;
   `conclusion_error` reports a failed synthesis. A caller must check all
-  three before trusting `conclusion`.
+  three before trusting `conclusion`. The run is concluded in every case.
+  `stop_reason` says how a finished run ended (`max_rounds`, `cost_limit` or
+  `method_complete`; `""` otherwise), and `rounds_completed` counts whole
+  rounds, so a run cut short by its cost limit can be told from a full one.
+- **Validation:** `moderator_id` must be one of `entity_ids`; an entity the
+  discussion rejects (a duplicate id, say) fails the call with
+  `Error adding entity <id>: <reason>`. The `ConsensusApp` is shut down after
+  every call, so its MCP provider subprocesses do not outlive it.
 - **Constraints:** Only AI entities allowed (humans rejected). 10-minute
   timeout (`RUN_DISCUSSION_TIMEOUT_SECONDS`). Auto-selects the first 3 AI
   entities (`AUTO_SELECT_ENTITIES`) if none specified. Excludes the

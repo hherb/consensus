@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import uuid
+from typing import TYPE_CHECKING
 
 from ..models import MessageRole
 from .constants import (
@@ -14,7 +15,18 @@ from .constants import (
     DEFAULT_MAX_ROUNDS, RUN_DISCUSSION_TIMEOUT_SECONDS,
 )
 
+if TYPE_CHECKING:
+    from ..app import ConsensusApp
+
 logger = logging.getLogger(__name__)
+
+#: ``complete_turn`` flags that end a run normally, and the ``stop_reason``
+#: ``run_discussion`` reports for each.
+_STOP_REASONS = (
+    ("max_rounds_reached", "max_rounds"),
+    ("cost_limit_reached", "cost_limit"),
+    ("method_complete", "method_complete"),
+)
 
 
 class WriteHandlersMixin:
@@ -34,7 +46,8 @@ class WriteHandlersMixin:
             memory_id=memory_id, entity_id=entity_id,
             content=content, discussion_id=None,
         )
-        # Embed in background
+        # Best effort: on failure the memory is stored but not yet searchable
+        # (``search_memories`` embeds it later).
         try:
             from ..tools_memory import _pack_embedding
             embed = self._get_embed_client()
@@ -82,7 +95,7 @@ class WriteHandlersMixin:
             edge_id=edge_id, source_id=subj_id, target_id=obj_id,
             relation=relation, discussion_id=None,
         )
-        # Embed nodes in background
+        # Best effort: on failure the triple is stored, the nodes unembedded.
         try:
             from ..tools_memory import _pack_embedding
             embed = self._get_embed_client()
@@ -129,13 +142,29 @@ class WriteHandlersMixin:
 
         if not moderator_id:
             moderator_id = entity_ids[0]
+        elif moderator_id not in entity_ids:
+            return f"Error: moderator_id {moderator_id} is not in entity_ids."
 
-        # Create and configure a fresh ConsensusApp
+        # A fresh ConsensusApp, shut down after so that its MCP provider
+        # subprocesses do not outlive the call.
         app = ConsensusApp(self._db.db_path)
+        try:
+            return await self._run_on_app(app, topic, entity_ids,
+                                          moderator_id, max_rounds, cost_limit)
+        finally:
+            await app.shutdown()
+
+    async def _run_on_app(self, app: ConsensusApp, topic: str,
+                          entity_ids: list[int],
+                          moderator_id: int, max_rounds: int,
+                          cost_limit: float) -> str:
+        """Run ``run_discussion`` on a configured ``ConsensusApp``."""
+        from ..app_discussion_flow.helpers import describe_flow_error
 
         for eid in entity_ids:
-            is_mod = (eid == moderator_id)
-            app.add_to_discussion(eid, is_moderator=is_mod)
+            added = app.add_to_discussion(eid, is_moderator=(eid == moderator_id))
+            if "error" in added:
+                return f"Error adding entity {eid}: {added['error']}"
 
         app.set_topic(topic)
 
@@ -152,9 +181,11 @@ class WriteHandlersMixin:
         # is recorded and the discussion goes on, as it does in the UI; any
         # other failure stops it, since retrying would repeat the same turn.
         turn_errors: list[str] = []
+        stop_reason = ""
 
         async def _run_turns() -> str:
             """Run AI turns to the end; return why it stopped early, or ""."""
+            nonlocal stop_reason
             while app.discussion.is_active and app.discussion.status == "active":
                 current = app.discussion.current_speaker
                 if not current or current.entity_type.value == "human":
@@ -169,9 +200,10 @@ class WriteHandlersMixin:
                     if "error" in complete_result:
                         return ("Turn completion failed: "
                                 f"{complete_result['error']}")
-                    if (complete_result.get("max_rounds_reached")
-                            or complete_result.get("cost_limit_reached")
-                            or complete_result.get("method_complete")):
+                    stop_reason = next(
+                        (reason for flag, reason in _STOP_REASONS
+                         if complete_result.get(flag)), "")
+                    if stop_reason:
                         return ""
             return ""
 
@@ -181,6 +213,10 @@ class WriteHandlersMixin:
         except asyncio.TimeoutError:
             run_error = (f"Discussion timed out after "
                          f"{RUN_DISCUSSION_TIMEOUT_SECONDS} s")
+        except Exception as e:
+            # Still conclude below, so the run is ended and reported.
+            logger.exception("run_discussion turn loop failed")
+            run_error = f"Turn loop failed: {describe_flow_error(e)}"
         if run_error:
             logger.warning("run_discussion: %s", run_error)
 
@@ -190,7 +226,7 @@ class WriteHandlersMixin:
             conclude_result = await app.conclude_discussion()
             conclusion_error = conclude_result.get("conclusion_error", "")
         except Exception as e:
-            logger.warning("Conclusion failed: %s", e)
+            logger.warning("Conclusion failed: %s", e, exc_info=True)
             conclusion_error = str(e) or type(e).__name__
 
         # Extract results.  Match on the moderator's own message rather
@@ -213,8 +249,10 @@ class WriteHandlersMixin:
             "conclusion_error": conclusion_error,
             "error": run_error,
             "turn_errors": turn_errors,
+            "stop_reason": stop_reason,
             "total_messages": len(app.discussion.messages),
             "total_cost": round(total_cost, 6),
             "participants": participant_names,
-            "rounds_completed": app.discussion.current_round,
+            # current_round is the 1-based round in progress (or next due).
+            "rounds_completed": max(app.discussion.current_round - 1, 0),
         }, indent=2)

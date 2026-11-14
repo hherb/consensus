@@ -20,8 +20,9 @@ from typing import Any, Optional
 from ..config import get_db_path, load_env
 from ..database import Database
 from .constants import (
-    AGENT_ENTITY_NAME, JSONRPC_VERSION, MCP_PROTOCOL_VERSION, SERVER_NAME,
-    SERVER_VERSION,
+    AGENT_ENTITY_NAME, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
+    JSONRPC_VERSION, MCP_PROTOCOL_VERSION, METHOD_NOT_FOUND, PARSE_ERROR,
+    SERVER_NAME, SERVER_VERSION,
 )
 from .handlers_read import ReadHandlersMixin
 from .handlers_write import WriteHandlersMixin
@@ -81,15 +82,22 @@ class ConsensusMCPServer(ToolRegistrationMixin, ReadHandlersMixin,
             "error": {"code": code, "message": message},
         }
 
-    async def handle_request(self, msg: dict) -> Optional[dict]:
+    async def handle_request(self, msg: Any) -> Optional[dict]:
+        """Answer one decoded JSON-RPC message; ``None`` for a notification."""
         if not isinstance(msg, dict):
-            return self._make_error(None, -32600,
+            return self._make_error(None, INVALID_REQUEST,
                                     "Invalid Request: expected a JSON object")
+        # Checked before anything else: JSON-RPC forbids answering a
+        # notification, even an ``initialize`` or a malformed one.
+        if "id" not in msg:
+            return None
         method = msg.get("method")
-        msg_id = msg.get("id")
-        params = msg.get("params") or {}
+        msg_id = msg["id"]
+        params = msg.get("params")
+        if params is None:
+            params = {}
         if not isinstance(params, dict):
-            return self._make_error(msg_id, -32602,
+            return self._make_error(msg_id, INVALID_PARAMS,
                                     "Invalid params: expected an object")
 
         if method == "initialize":
@@ -99,9 +107,6 @@ class ConsensusMCPServer(ToolRegistrationMixin, ReadHandlersMixin,
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             })
 
-        if "id" not in msg:
-            return None  # a notification: JSON-RPC forbids a response
-
         if method == "tools/list":
             tools = [t["definition"] for t in self._tools.values()]
             return self._make_response(msg_id, {"tools": tools})
@@ -109,23 +114,36 @@ class ConsensusMCPServer(ToolRegistrationMixin, ReadHandlersMixin,
         if method == "tools/call":
             return await self._handle_tool_call(msg_id, params)
 
-        return self._make_error(msg_id, -32601, f"Method not found: {method}")
+        return self._make_error(msg_id, METHOD_NOT_FOUND,
+                                f"Method not found: {method}")
 
     async def _handle_tool_call(self, msg_id: Any, params: dict) -> dict:
+        """Run the named tool; a tool failure is an ``isError`` result."""
         tool_name = params.get("name", "")
-        arguments = params.get("arguments") or {}
+        arguments = params.get("arguments")
+        if arguments is None:
+            arguments = {}
+        if not isinstance(tool_name, str):
+            return self._make_error(msg_id, INVALID_PARAMS,
+                                    "Invalid params: name must be a string")
+        if not isinstance(arguments, dict):
+            return self._make_error(msg_id, INVALID_PARAMS,
+                                    "Invalid params: arguments must be an object")
         tool = self._tools.get(tool_name)
         if not tool:
-            return self._make_error(msg_id, -32602, f"Unknown tool: {tool_name}")
+            return self._make_error(msg_id, INVALID_PARAMS,
+                                    f"Unknown tool: {tool_name}")
         try:
             result_text = await tool["handler"](arguments)
             return self._make_response(msg_id, {
                 "content": [{"type": "text", "text": result_text}],
             })
         except Exception as e:
+            from ..app_discussion_flow.helpers import describe_flow_error
             logger.exception("Tool %s failed", tool_name)
             return self._make_response(msg_id, {
-                "content": [{"type": "text", "text": f"Error: {e}"}],
+                "content": [{"type": "text",
+                             "text": f"Error: {describe_flow_error(e)}"}],
                 "isError": True,
             })
 
@@ -153,15 +171,28 @@ class ConsensusMCPServer(ToolRegistrationMixin, ReadHandlersMixin,
                 msg = json.loads(line)
             except json.JSONDecodeError as e:
                 logger.warning("Unparseable JSON-RPC line: %s", e)
-                response = self._make_error(None, -32700, f"Parse error: {e}")
+                response = self._make_error(None, PARSE_ERROR,
+                                            f"Parse error: {e}")
             else:
-                response = await self.handle_request(msg)
+                response = await self._dispatch(msg)
             if response is not None:
                 out = json.dumps(response) + "\n"
                 sys.stdout.write(out)
                 sys.stdout.flush()
 
+    async def _dispatch(self, msg: Any) -> Optional[dict]:
+        """``handle_request``, with a bug in it answered rather than fatal."""
+        try:
+            return await self.handle_request(msg)
+        except Exception:
+            logger.exception("Unhandled error dispatching a JSON-RPC message")
+            if isinstance(msg, dict) and "id" in msg:
+                return self._make_error(msg["id"], INTERNAL_ERROR,
+                                        "Internal error")
+            return None
+
     def close(self) -> None:
+        """Close the database connection."""
         self._db.close()
 
 

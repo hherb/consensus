@@ -8,59 +8,23 @@ sections, knowledge-graph neighbours, embedding failures, a full
 Every tool is driven through ``handle_request`` — the entry point production
 uses — so the tests survive the handlers moving between modules. The only
 fakes sit at network edges: the embedding client (set on the instance) and
-``AIClient._post_with_retry`` (the ``llm`` fixture).
+``AIClient._post_with_retry`` (the ``llm`` fixture). The defects this net
+found, and the protocol-robustness cases, live in
+``tests/test_mcp_server_robustness.py``.
 """
 
-import asyncio
-import io
 import json
-import sys
 
 import pytest
 
 from consensus import mcp_server
 from consensus.mcp_server import AGENT_ENTITY_NAME, ConsensusMCPServer
 from consensus.tools_memory import _pack_embedding
-from tests.document_helpers import FakeEmbedClient, patch_where_defined
-from tests.eval_runner_helpers import (  # noqa: F401
-    is_summary, is_synthesis, is_turn, llm,
+from tests.document_helpers import patch_where_defined
+from tests.eval_runner_helpers import is_synthesis, llm  # noqa: F401
+from tests.mcp_server_helpers import (  # noqa: F401
+    FAR, INIT, NEAR, NOTIFY, _ai_entities, _stdio, broken_embed, call, server,
 )
-
-#: Two orthogonal unit vectors: the query matches ``NEAR`` and not ``FAR``.
-NEAR = [1.0, 0.0, 0.0]
-FAR = [0.0, 1.0, 0.0]
-
-
-@pytest.fixture
-def server(tmp_path):
-    """A server on a temporary database with a fake embedding client."""
-    srv = ConsensusMCPServer(str(tmp_path / "test.db"))
-    srv._embed_client = FakeEmbedClient(vector=NEAR)
-    yield srv
-    srv.close()
-
-
-@pytest.fixture
-def broken_embed(server):
-    """The embedding service is down."""
-    server._embed_client = FakeEmbedClient(error=ConnectionError("ollama down"))
-    return server
-
-
-async def call(server, name: str, arguments: dict) -> tuple[str, bool]:
-    """Call a tool; return ``(text, is_error)``."""
-    resp = await server.handle_request({
-        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": name, "arguments": arguments},
-    })
-    result = resp["result"]
-    return result["content"][0]["text"], bool(result.get("isError"))
-
-
-def _ai_entities(db, count: int = 2) -> list[int]:
-    prov = db.add_provider("P", "http://localhost:1/v1", "")
-    return [db.add_entity(f"AI{i}", "ai", "#000", prov, "m", 0.5, 512, "")
-            for i in range(count)]
 
 
 # ---------------------------------------------------------------------------
@@ -370,17 +334,6 @@ class TestToolFailure:
         assert text.startswith("Error: ")
 
 
-def _stdio(monkeypatch, lines: list[str]) -> io.StringIO:
-    monkeypatch.setattr(sys, "stdin", io.StringIO("".join(lines)))
-    out = io.StringIO()
-    monkeypatch.setattr(sys, "stdout", out)
-    return out
-
-
-INIT = json.dumps({"jsonrpc": "2.0", "id": 7, "method": "initialize"}) + "\n"
-NOTIFY = json.dumps({"jsonrpc": "2.0",
-                     "method": "notifications/initialized"}) + "\n"
-
 
 class TestStdioLoop:
     async def test_answers_requests_and_skips_noise(self, server,
@@ -403,51 +356,6 @@ class TestStdioLoop:
         assert json.loads(out.getvalue())["id"] == 7
 
 
-# ---------------------------------------------------------------------------
-# Defects found while writing the net (fixed after the #61 split)
-# ---------------------------------------------------------------------------
-
-class TestRunDiscussionReportsFailures:
-    """A failed or stopped run must not read as a clean conclusion."""
-
-    async def test_clean_run_has_no_errors(self, server, llm):
-        _ai_entities(server._db)
-        data = json.loads((await call(server, "run_discussion",
-                                      {"topic": "T", "max_rounds": 1}))[0])
-        assert data["error"] == ""
-        assert data["turn_errors"] == []
-
-    async def test_skipped_turns_are_listed(self, server, llm):
-        _ai_entities(server._db)
-        llm.fail_when = is_turn
-        data = json.loads((await call(server, "run_discussion",
-                                      {"topic": "T", "max_rounds": 1}))[0])
-        assert len(data["turn_errors"]) == 2
-        assert data["turn_errors"][0].startswith("AI0: ")
-        assert "500" in data["turn_errors"][0]
-
-    async def test_failed_completion_stops_the_run(self, server, llm):
-        """It used to retry the same turn until the 10-minute timeout."""
-        _ai_entities(server._db)
-        llm.fail_when = is_summary
-        llm.yield_each_call = True  # lets the guard below fire if it loops
-        text, _ = await asyncio.wait_for(
-            call(server, "run_discussion", {"topic": "T", "max_rounds": 1}),
-            timeout=10)
-        data = json.loads(text)
-        assert data["error"].startswith("Turn completion failed: ")
-        assert sum(is_turn(c) for c in llm.calls) == 1
-
-    async def test_timeout_is_reported(self, server, llm, monkeypatch):
-        _ai_entities(server._db)
-        patch_where_defined(monkeypatch,
-                            ConsensusMCPServer._handle_run_discussion,
-                            "RUN_DISCUSSION_TIMEOUT_SECONDS", 0)
-        data = json.loads((await call(server, "run_discussion",
-                                      {"topic": "T", "max_rounds": 1}))[0])
-        assert data["error"] == "Discussion timed out after 0 s"
-
-
 class TestSearchDocumentsTitle:
     async def test_hit_names_its_document(self, server):
         db = server._db
@@ -456,41 +364,3 @@ class TestSearchDocumentsTitle:
         db.set_chunk_embedding(chunk, _pack_embedding(NEAR))
         text, _ = await call(server, "search_documents", {"query": "q"})
         assert "1. [Document: Doc]\n   near chunk" in text
-
-
-class TestStdioRobustness:
-    """Malformed input gets an error reply; it must not stop the server."""
-
-    async def _replies(self, server, monkeypatch, lines):
-        out = _stdio(monkeypatch, lines + [INIT])
-        await server.run()
-        replies = [json.loads(line) for line in out.getvalue().splitlines()]
-        assert replies[-1]["id"] == 7, "the server stopped answering"
-        return replies[:-1]
-
-    async def test_unparseable_line(self, server, monkeypatch, caplog):
-        replies = await self._replies(server, monkeypatch, ["{oops\n"])
-        assert [r["error"]["code"] for r in replies] == [-32700]
-        assert "Unparseable JSON-RPC line" in caplog.text
-
-    @pytest.mark.parametrize("line", [
-        "[1, 2]\n",
-        json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-                    "params": None}) + "\n",
-        json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-                    "params": [1]}) + "\n",
-    ])
-    async def test_malformed_request(self, server, monkeypatch, line):
-        replies = await self._replies(server, monkeypatch, [line])
-        assert len(replies) == 1 and "error" in replies[0]
-
-    async def test_unknown_notification_gets_no_reply(self, server,
-                                                      monkeypatch):
-        line = json.dumps({"jsonrpc": "2.0",
-                           "method": "notifications/cancelled"}) + "\n"
-        assert await self._replies(server, monkeypatch, [line]) == []
-
-    async def test_server_reports_the_package_version(self, server):
-        import consensus
-        resp = await server.handle_request(json.loads(INIT))
-        assert resp["result"]["serverInfo"]["version"] == consensus.__version__
