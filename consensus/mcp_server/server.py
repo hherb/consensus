@@ -24,6 +24,7 @@ from .constants import (
     JSONRPC_VERSION, MCP_PROTOCOL_VERSION, METHOD_NOT_FOUND, PARSE_ERROR,
     SERVER_NAME, SERVER_VERSION,
 )
+from .errors import ToolError
 from .handlers_read import ReadHandlersMixin
 from .handlers_write import WriteHandlersMixin
 from .tool_defs import ToolRegistrationMixin
@@ -137,6 +138,12 @@ class ConsensusMCPServer(ToolRegistrationMixin, ReadHandlersMixin,
             result_text = await tool["handler"](arguments)
             return self._make_response(msg_id, {
                 "content": [{"type": "text", "text": result_text}],
+            })
+        except ToolError as e:
+            logger.warning("Tool %s rejected the call: %s", tool_name, e)
+            return self._make_response(msg_id, {
+                "content": [{"type": "text", "text": f"Error: {e}"}],
+                "isError": True,
             })
         except Exception as e:
             from ..app_discussion_flow.helpers import describe_flow_error

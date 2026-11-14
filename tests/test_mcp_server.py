@@ -385,8 +385,9 @@ class TestRunDiscussion:
             "params": {"name": "run_discussion",
                        "arguments": {"topic": "Test"}},
         })
+        assert resp["result"]["isError"]
         text = resp["result"]["content"][0]["text"]
-        assert "Error starting discussion: no go" in text
+        assert text == "Error: Could not start the discussion: no go"
 
     @pytest.mark.asyncio
     async def test_run_discussion_empty_topic(self, server):
