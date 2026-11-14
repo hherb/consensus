@@ -385,7 +385,7 @@ ConsensusApp — orchestrator, state management, event emitter
     └── Evaluation — ablation study framework (cases, runner, scorer, report)
 
 MCP server (consensus-mcp):
-    ConsensusMCPServer (mcp_server.py)
+    ConsensusMCPServer (mcp_server/)
         ├── Database — direct SQLite access (read/search/write)
         ├── EmbeddingClient — semantic search via Ollama
         └── ConsensusApp — programmatic discussion orchestration

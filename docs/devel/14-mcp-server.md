@@ -16,7 +16,7 @@ External AI Agent (e.g. Claude Code)
     | stdio JSON-RPC 2.0 (newline-delimited)
     |
     v
-ConsensusMCPServer (mcp_server.py)
+ConsensusMCPServer (mcp_server/)
     |
     +-- Database (db/) — direct SQLite read/search/write
     |
@@ -24,6 +24,21 @@ ConsensusMCPServer (mcp_server.py)
     |
     +-- ConsensusApp (app.py) — discussion orchestration (run_discussion only)
 ```
+
+## Package layout
+
+`consensus/mcp_server/` is split by concern (issue #61); `__init__.py`
+re-exports `ConsensusMCPServer`, `main` and the constants listed in its
+`__all__`.
+
+| Module | Holds |
+|--------|-------|
+| `server.py` | `ConsensusMCPServer` (composes the mixins), JSON-RPC dispatch, stdio loop, `main()` |
+| `tool_defs.py` | `ToolRegistrationMixin` — the 13 advertised tool schemas |
+| `handlers_read.py` | `ReadHandlersMixin` — list/read and semantic-search handlers |
+| `handlers_write.py` | `WriteHandlersMixin` — memory/knowledge writes and `run_discussion` |
+| `constants.py` | Protocol version, server name/version, JSON-RPC error codes, agent entity name, `run_discussion` defaults and limits |
+| `__main__.py` | `python -m consensus.mcp_server` |
 
 ## Entry Point
 
@@ -54,13 +69,20 @@ stdout. All logging goes to stderr.
 
 | Method | Response |
 |--------|----------|
+| Any message without an `id` | None — a notification is never answered, even an `initialize` or a malformed one |
 | `initialize` | Protocol version, capabilities `{"tools": {}}`, server info |
-| `notifications/initialized` | None (notification) |
 | `tools/list` | All 13 tool definitions |
 | `tools/call` | Tool execution result |
 
-The main loop uses `asyncio.get_event_loop().run_in_executor()` to read from
-stdin in a thread, avoiding asyncio pipe transport issues on macOS.
+The main loop uses `asyncio.get_running_loop().run_in_executor()` to read from
+stdin in a thread, avoiding asyncio pipe transport issues on macOS. Malformed
+input gets a JSON-RPC error reply and the loop keeps serving: an unparseable
+line → `-32700` (also logged), a non-object message → `-32600`, non-object
+`params`, a non-string tool `name` or non-object `arguments` → `-32602`. A tool
+handler that raises returns `isError: true` with the exception type and
+message. Any other exception during dispatch is logged and answered with
+`-32603` (`_dispatch()`), so a bug in the server cannot stop the loop. The
+codes are named in `constants.py`.
 
 ## Tools
 
@@ -133,8 +155,23 @@ They gracefully return error messages if the embedding service is unavailable.
 - Implementation: Instantiates a fresh `ConsensusApp`, adds entities, starts
   discussion, runs `generate_ai_turn()` + `complete_turn()` loop, concludes,
   returns JSON with conclusion, cost, participants, rounds
+- **Failures are in the result, not only the log.** `turn_errors` lists every
+  skipped turn (`"<name>: <detail>"` — the discussion goes on, as in the UI);
+  `error` says why the turn loop stopped early (a failed turn that was not
+  skipped, a failed turn completion, no AI speaker due, an exception in the
+  loop, or the timeout) and is `""` for a run that finished;
+  `conclusion_error` reports a failed synthesis. A caller must check all
+  three before trusting `conclusion`. The run is concluded in every case.
+  `stop_reason` says how a finished run ended (`max_rounds`, `cost_limit` or
+  `method_complete`; `""` otherwise), and `rounds_completed` counts whole
+  rounds, so a run cut short by its cost limit can be told from a full one.
+- **Validation:** `moderator_id` must be one of `entity_ids`; an entity the
+  discussion rejects (a duplicate id, say) fails the call with
+  `Error adding entity <id>: <reason>`. The `ConsensusApp` is shut down after
+  every call, so its MCP provider subprocesses do not outlive it.
 - **Constraints:** Only AI entities allowed (humans rejected). 10-minute
-  timeout. Auto-selects first 3 AI entities if none specified. Excludes the
+  timeout (`RUN_DISCUSSION_TIMEOUT_SECONDS`). Auto-selects the first 3 AI
+  entities (`AUTO_SELECT_ENTITIES`) if none specified. Excludes the
   "Claude Code Agent" entity from auto-selection.
 
 ## Agent Entity
@@ -164,20 +201,17 @@ The server reuses existing infrastructure:
 
 ## Tests
 
-Tests are in `tests/test_mcp_server.py` (28 tests):
+Tests:
 
-- **Protocol tests:** `initialize`, `notifications/initialized`, `tools/list`,
-  unknown method, unknown tool
-- **List/read tool tests:** Empty and populated discussions, entity listing
-  with type filter, document listing, discussion and document reading,
-  not-found error handling
-- **Write tool tests:** `store_memory` (including agent entity auto-creation),
-  empty content rejection, `delete_memory` own vs other entity (ownership
-  blocked), nonexistent memory, `assert_knowledge` success and missing fields
-- **Agent entity tests:** Created once and reused, `entity_id=0` resolution,
-  non-zero passthrough
-- **`run_discussion` tests:** No entities available, human entity rejection,
-  empty topic
+- `tests/test_mcp_server.py` — protocol (`initialize`, notifications,
+  `tools/list`, unknown method/tool), list/read tools, write tools
+  (`delete_memory` ownership), the agent entity, `run_discussion` validation
+- `tests/test_mcp_server_handlers.py` — every tool through `handle_request`:
+  semantic search with a fake embedding client, document sections, KG
+  neighbours, embedding failures, `run_discussion` end to end on the fake LLM
+  edge (`tests/eval_runner_helpers.py`), the stdio loop and `main()`
+- `tests/test_mcp_server_facade.py` — the package facade, the `consensus-mcp`
+  entry point and `__main__`
 
 ---
 

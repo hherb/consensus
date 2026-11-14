@@ -2,10 +2,10 @@
 
 _Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices (through `evaluation/runner.py`, PR #116, with
-#112/#113/#114), the #104 rotation fix and the #115 fix (pricing downloads off
-the event loop, PR #117); the #118 fix (the tool-capability gate waits for an
-in-flight download) is on `fix/tool-gate-waits-for-pricing-118` (suite at
-**3641 passing**). The discussion-method review & repair campaign (#12–#48,
+#112/#113/#114), the #104 rotation fix, and the #115/#118 pricing fixes (PRs
+#117/#119). The twelfth #61 slice (`mcp_server.py` → `mcp_server/`, plus the
+defects its net found) is on `refactor/split-mcp-server-61` (suite at **3721
+passing**). The discussion-method review & repair campaign (#12–#48,
 #56–#60) is finished and merged; so is alpha/stable distribution (PyPI
 `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
@@ -13,8 +13,9 @@ failure-visibility work (#78) — contracts for both summarised below. The one
 open structural issue is **#61** (modules over the ~500-line golden rule):
 `app_discussion_flow`, `tools_document`, `app.py` (→ `app_api/` mixins),
 `tools_memory`, `tools_python`, `tools_image`, `methods/base.py`,
-`app_discussion_setup.py`, `evaluation/scorer.py`, `evaluation/eval_db.py` and
-`evaluation/runner.py` are split; five modules remain over the limit. **#86**
+`app_discussion_setup.py`, `evaluation/scorer.py`, `evaluation/eval_db.py`,
+`evaluation/runner.py` and `mcp_server.py` are split; four modules remain over
+the limit. **#86**
 (lint gate) is done: zero `ruff --select F` findings in `consensus/`, enforced
 by `tests/test_lint.py`._
 
@@ -32,7 +33,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3641 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 3721 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -231,7 +232,7 @@ interpreter).
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-**Done — eleven slices** (detail in git history; one PR each):
+**Done — twelve slices** (detail in git history; one PR each):
 
 1. `app_discussion_flow.py` → `app_discussion_flow/`. **Watch `turns.py`
    (499)**: the next addition crosses the limit — split then.
@@ -244,40 +245,42 @@ interpreter).
    `methods/base.py` → `phase_types.py` (re-exported, guarded by
    `tests/test_methods_base_facade.py`); `app_discussion_setup.py` → role
    code in `app_discussion_roles.py` (no re-export).
-9. `evaluation/scorer.py` → `print_report` in `evaluation/report.py`. Eval
-   contracts kept from that PR: a failed LLM judgement returns 502 and
-   **never overwrites an earlier score** (`scorer.judge_reply_problem`);
-   `/eval/api/` writes must be `application/json` (415 — CSRF guard,
-   covers desktop's bare eval app too) with a JSON-object body (400);
-   **`/eval/` is not mounted in `--multi-user` mode**; the judge's BYOK key
-   is held only in the input field, never `sessionStorage` (CodeQL).
-   `JUDGE_DIMENSIONS` is mirrored in `evaluation/static/eval_scoring.js`
-   and the judge prompt (`tests/test_eval_judge_robustness.py` checks the
-   drift). `evaluation/static/eval.js` (645) is pre-existing over the
-   limit.
-10. `evaluation/eval_db.py` (600 → 98) → `CatalogMixin` / `RunsMixin` /
-   `SeedingMixin` sibling modules (not a package: `_get_migrations_dir`
-   resolves from `__file__`). Contracts kept: every write runs in
-   `with self._lock, self.conn` (commit or roll back), and an update
-   changes its row and child rows in one transaction. Eval routes check
-   field types in `evaluation/request_checks.py` (pure, table-driven) →
-   400, and map known constraint conflicts
-   (`request_checks.CONFLICT_MESSAGES`) → 409. Any other
-   `IntegrityError` is still a 500. An in-use case or condition cannot be
-   deleted (there is no run/batch delete route). Route tests:
-   `tests/test_eval_routes_crud.py`.
-11. `evaluation/runner.py` (677 → 372, PR #116): web path → `runner_db.py`
-   (+ `execute_batch`); both paths share `runner_common.py`. Eval contracts:
-   a run with a failed turn/summary/synthesis, or one that runs out of AI
-   speakers, is `error`, not `done`, and its error names the exception type;
-   the BYOK key travels in the request-key ContextVar, **set even when
-   empty** (the temp app's provider ids collide with the main app's); a
-   scoring failure keeps the run `done` with `AUTO_SCORE_FAILED_PREFIX` in
-   `error_text` (#114); cancel, shutdown or a crash closes unstarted runs
-   (`close_interrupted_batches` on startup, #113); `MAX_NUM_ROUNDS = 20`
-   (mirrored in `eval.html`) and `MAX_BATCH_RUNS = 1000` (#112); the CLI
-   writes to `<data dir>/eval_results` and exits 1 if any run failed.
-   `PricingCache` tries each unknown model once per cache.
+9–11. `evaluation/`: `scorer.py` → `report.py`; `eval_db.py` →
+   `CatalogMixin`/`RunsMixin`/`SeedingMixin` siblings (not a package:
+   `_get_migrations_dir` resolves from `__file__`); `runner.py` → web path in
+   `runner_db.py`, shared `runner_common.py` (PR #116). Eval contracts: a
+   failed LLM judgement returns 502 and **never overwrites an earlier score**;
+   `/eval/api/` writes must be `application/json` (415, CSRF) with an object
+   body (400), field types checked in `request_checks.py` (400), known
+   constraint conflicts → 409; **`/eval/` is not mounted in `--multi-user`**;
+   the judge's BYOK key stays in the input field, never `sessionStorage`;
+   every eval-DB write runs in `with self._lock, self.conn`. A run with a
+   failed turn/summary/synthesis, or no AI speaker due, is `error`, not
+   `done`; the BYOK ContextVar is **set even when empty**; a scoring failure
+   keeps the run `done` with `AUTO_SCORE_FAILED_PREFIX` (#114); unstarted runs
+   are closed on cancel/shutdown/crash (#113); `MAX_NUM_ROUNDS = 20` (mirrored
+   in `eval.html`), `MAX_BATCH_RUNS = 1000` (#112). `JUDGE_DIMENSIONS` is
+   mirrored in `eval_scoring.js` and the judge prompt (drift-tested);
+   `evaluation/static/eval.js` (645) is pre-existing over the limit.
+12. `mcp_server.py` (714) → `mcp_server/` package of mixins (`server.py`
+   class + JSON-RPC + stdio loop, `tool_defs.py`, `handlers_read.py`,
+   `handlers_write.py`, `constants.py`, `__main__.py` for `python -m`);
+   net in `tests/test_mcp_server_handlers.py` (54% → 97% before the move),
+   the defects it found in `tests/test_mcp_server_robustness.py` (shared
+   fixtures in `tests/mcp_server_helpers.py`), guard in
+   `tests/test_mcp_server_facade.py` (also checks the `consensus-mcp` entry
+   point). Contracts: `run_discussion` reports **`turn_errors`** (skipped
+   turns), **`error`** (why the loop stopped early — a failed `complete_turn`
+   now stops it instead of re-running the turn until the timeout, and an
+   exception in the loop is reported and the run still concluded),
+   **`stop_reason`** and a corrected `rounds_completed` (whole rounds, was
+   one too high); `moderator_id` must be in `entity_ids`. Malformed stdio
+   input gets a JSON-RPC error reply (codes named in `constants.py`), a bug
+   in dispatch is answered with `-32603` by `_dispatch()`, so nothing kills
+   the loop, and no notification is answered, even a malformed one. The
+   temporary `ConsensusApp` is `shutdown()` after each call (MCP providers
+   only); its DB connection is still never closed (it goes with GC; closing
+   it under the pricing thread would segfault — join that first).
 
 **Facade guards.** A dropped re-export fails *late*: almost every consumer
 imports lazily inside function bodies (exception: `moderator.py` imports
@@ -299,21 +302,19 @@ call sites. Keep them in step when the public API changes.
 | 1241 | **0%** | `consensus/server.py` |
 | 787 | 49% | `consensus/auth.py` |
 | 775 | 59% | `consensus/moderator.py` (one `Moderator` class) |
-| 714 | 51% | `consensus/mcp_server.py` |
 | 636 | 35% | `consensus/desktop.py` |
 
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
 **Next target.** The cheap free-function splits are used up: every module
-left is one class (`Moderator`, `ConsensusMCPServer`, `DesktopBridge`), a
-security-critical module (`auth.py`), or `server.py`'s closures. Of the
-single classes, `mcp_server.py` (714, 51%) and `desktop.py` (636, 35%) are
-the smaller ones; split by method group into mixins, the way `app.py` →
-`app_api/` went. Build the net first either way. `desktop.py` needs a
-fake pywebview `window`. `mcp_server.py` can be driven through
-`ConsensusMCPServer`'s tool methods with the `llm` fake from
-`tests/eval_runner_helpers.py`.
+left is one class (`Moderator`, `DesktopBridge`), a security-critical module
+(`auth.py`), or `server.py`'s closures. `desktop.py` (636, 35%) is the
+smallest; split it by method group into mixins, the way `app.py` → `app_api/`
+and `mcp_server/` went. Build the net first: it needs a fake pywebview
+`window`, and most bridge methods are thin `_run_async` wrappers over
+`ConsensusApp`, so drive them against a real app on `tmp_db` with the `llm`
+fake from `tests/eval_runner_helpers.py`.
 
 **`server.py` is the awkward one — read this before picking it.** It is a
 single 1170-line `launch_web()` whose middleware and ~35 handlers are all
@@ -333,7 +334,10 @@ missing route tests first.
 1. Move code by line range (`sed -n 'a,bp'`) so it transfers verbatim, then
    diff each moved range back against `git show HEAD:<file>` — every range
    should come out byte-identical, and every non-blank line of the original
-   should be accounted for by some range.
+   should be accounted for by some range. (A throwaway script that assembles
+   the new files from `(start, end)` ranges, then checks each range back
+   with the import-depth edits undone, did this in one pass for
+   `mcp_server`.)
 2. Fix relative-import depth for anything nested one level deeper
    (`from .x` → `from ..x`), **including imports inside function bodies** —
    these are the ones that fail at runtime rather than at collection.
@@ -350,7 +354,9 @@ missing route tests first.
    existence — a crossed re-export resolves fine and breaks only in
    production. Scan every module under `consensus/` for call sites, matching
    both the relative and absolute spelling of the package; scanning only
-   `app.py` misses the next consumer someone adds.
+   `app.py` misses the next consumer someone adds. Name consumers by path
+   relative to `consensus/`, not bare filename — the split put a second
+   `server.py` under `consensus/`.
 6. **Mutate the new wiring and watch it fail.** The glue a split *writes* —
    the factory that forwards dependencies to handlers, the guard conditions
    duplicated across two call sites, the keyword names production passes — is
@@ -404,13 +410,13 @@ likeliest pre-existing bug.
   only — there is no JS test harness in this repo).
 - **Packaging** — `packaging/macos/make_icns.sh`
   regeneration needs Pillow on system python3; icon bubbles blur at 16–32 px.
-  (`scripts/release_pypi.sh` now cleans `build/` and `*.egg-info/` and
-  `check_no_shadowed_packages` rejects a wheel shipping both `X.py` and `X/` —
-  a stale `build/lib` once packaged a moved module beside its replacement.)
+  `check_no_shadowed_packages` (`scripts/release_pypi.sh`) rejects a wheel
+  shipping both `X.py` and `X/`.
 
 ### Open GitHub issues (besides #61)
 
-#107 a rotation change spans several commits (crash mid-update desyncs
+#121 MCP server tool validation failures come back as successful results
+(no `isError`); #107 a rotation change spans several commits (crash mid-update desyncs
 members and `method_state`); #102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
 budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #99 route test for the image-serve CSP (fix landed in PR #100; needs a
 `server.py` route-test harness); #97 Seatbelt profile does not confine writes; #96 no UI flag when
