@@ -12,7 +12,12 @@ import tempfile
 import time
 
 from consensus.app import ConsensusApp
-from consensus.models import EntityType
+
+from consensus.evaluation.runner_common import (
+    MODERATOR_COLOR, MODERATOR_SYSTEM_PROMPT, MODERATOR_TEMPERATURE,
+    PARTICIPANT_COLOR, PARTICIPANT_TEMPERATURE, SINGLE_CHAT_MAX_TOKENS,
+    TURN_MAX_TOKENS, conclude, discussion_topic, drive_turns, join_errors,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +66,6 @@ async def run_case_condition_db(
         eval_db.update_run(
             run_id, status="error", error_text=str(e),
             completed_at=time.time())
-    finally:
-        os.environ.pop("_EVAL_TEMP_KEY", None)
 
 
 async def _run_single_chat(
@@ -92,7 +95,8 @@ async def _run_single_chat(
 
     response = await client.complete(
         messages=messages, model=p_model,
-        temperature=0.7, max_tokens=2048,
+        temperature=PARTICIPANT_TEMPERATURE,
+        max_tokens=SINGLE_CHAT_MAX_TOKENS,
     )
 
     eval_db.add_run_message(
@@ -118,32 +122,27 @@ async def _run_multi_party(
     participants: list[dict], provider_url: str, model: str,
     api_key: str, num_rounds: int,
 ) -> None:
-    """Multi-participant discussion via full Consensus machinery."""
+    """Multi-participant discussion via full Consensus machinery.
+
+    ``api_key`` reaches the temp app's providers as per-request BYOK keys
+    (a ContextVar, so concurrent batches cannot see each other's key). It
+    is set even when empty: the batch task inherits the starting request's
+    BYOK keys, which are keyed by the main app's provider ids and must not
+    land on the temp app's providers with the same ids.
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = os.path.join(tmpdir, "eval.db")
         app = ConsensusApp(db_path=db_path)
 
-        # Setup provider — use a dummy env var and set key directly
-        if api_key:
-            os.environ["_EVAL_TEMP_KEY"] = api_key
-            provider = app.db.add_provider(
-                "eval-provider", provider_url, "_EVAL_TEMP_KEY")
-        else:
-            provider = app.db.add_provider(
-                "eval-provider", provider_url, "")
+        provider = app.db.add_provider("eval-provider", provider_url, "")
 
         # Create moderator
         mod_id = app.db.add_entity(
             name="Moderator", entity_type="ai",
-            avatar_color="#6b7280", provider_id=provider,
-            model=model, temperature=0.5, max_tokens=1024,
-            system_prompt=(
-                "You are a medical discussion moderator. Summarise each "
-                "participant's contribution concisely. In the final "
-                "synthesis, state the most likely diagnosis clearly, list "
-                "the key supporting findings, and note any significant "
-                "disagreements or alternative diagnoses raised."
-            ),
+            avatar_color=MODERATOR_COLOR, provider_id=provider,
+            model=model, temperature=MODERATOR_TEMPERATURE,
+            max_tokens=TURN_MAX_TOKENS,
+            system_prompt=MODERATOR_SYSTEM_PROMPT,
         )
 
         # Create participants (with optional per-participant provider/model)
@@ -156,19 +155,16 @@ async def _run_multi_party(
             p_mdl = p.get("model", "").strip()
             if p_url:
                 if p_url not in _extra_providers:
-                    if api_key:
-                        _extra_providers[p_url] = app.db.add_provider(
-                            f"eval-{p['name']}", p_url, "_EVAL_TEMP_KEY")
-                    else:
-                        _extra_providers[p_url] = app.db.add_provider(
-                            f"eval-{p['name']}", p_url, "")
+                    _extra_providers[p_url] = app.db.add_provider(
+                        f"eval-{p['name']}", p_url, "")
                 p_provider = _extra_providers[p_url]
             if p_mdl:
                 p_model = p_mdl
             eid = app.db.add_entity(
                 name=p["name"], entity_type="ai",
-                avatar_color="#3b82f6", provider_id=p_provider,
-                model=p_model, temperature=0.7, max_tokens=1024,
+                avatar_color=PARTICIPANT_COLOR, provider_id=p_provider,
+                model=p_model, temperature=PARTICIPANT_TEMPERATURE,
+                max_tokens=TURN_MAX_TOKENS,
                 system_prompt=p.get("system_prompt", ""),
             )
             entity_ids[p["name"]] = eid
@@ -179,6 +175,10 @@ async def _run_multi_party(
                              "discussion_search"]:
                     app.assign_tool_to_entity(eid, tool, "private")
 
+        provider_ids = [provider, *_extra_providers.values()]
+        ConsensusApp.set_request_api_keys(
+            {str(pid): api_key for pid in provider_ids} if api_key else {})
+
         # Build discussion
         app.add_to_discussion(mod_id, is_moderator=True)
         for p in participants:
@@ -187,13 +187,7 @@ async def _run_multi_party(
                 participant_role=p.get("role", "standard"),
             )
 
-        topic = (
-            f"Clinical Case Discussion\n\n{case['presentation']}\n\n"
-            f"Please discuss this case systematically. Consider the key "
-            f"findings, generate a differential diagnosis, and work toward "
-            f"the most likely diagnosis with supporting reasoning."
-        )
-        app.set_topic(topic)
+        app.set_topic(discussion_topic(case["presentation"]))
 
         start_result = app.start_discussion(moderator_participates=False)
         if "error" in start_result:
@@ -202,64 +196,37 @@ async def _run_multi_party(
                 completed_at=time.time())
             return
 
-        # Run turns
-        turns_completed = 0
-        total_tokens = 0
-        total_latency = 0
-        total_turns = len(participants) * num_rounds
-        turn_index = 0
+        totals = {"tokens": 0, "latency": 0, "turn_index": 0}
 
-        for _ in range(total_turns):
-            current = app.discussion.current_speaker
-            if not current or current.entity_type != EntityType.AI:
-                break
-
-            turn_result = await app.generate_ai_turn()
-            if "error" in turn_result:
-                logger.warning("Turn error: %s", turn_result["error"])
-                break
-
+        def record(speaker, turn_result: dict) -> None:
             tokens = turn_result.get("total_tokens", 0)
-            latency = turn_result.get("latency_ms", 0)
-            total_tokens += tokens
-            total_latency += latency
-
+            totals["tokens"] += tokens
+            totals["latency"] += turn_result.get("latency_ms", 0)
             eval_db.add_run_message(
                 run_id=run_id,
-                turn_index=turn_index,
-                speaker=current.name,
+                turn_index=totals["turn_index"],
+                speaker=speaker.name,
                 role=app.discussion.member_roles.get(
-                    current.id, "standard"),
+                    speaker.id, "standard"),
                 content=turn_result.get("content", ""),
                 model_used=turn_result.get("model_used", ""),
                 tokens=tokens,
             )
-            turn_index += 1
+            totals["turn_index"] += 1
 
-            await app.complete_turn()
-            turns_completed += 1
+        turns_completed, turn_error = await drive_turns(
+            app, len(participants) * num_rounds, record)
+        conclusion, conclusion_error = await conclude(app)
+        error = join_errors(turn_error, conclusion_error)
 
-        # Conclude
-        await app.conclude_discussion()
-
-        # Extract conclusion
-        conclusion = ""
-        for msg in reversed(app.discussion.messages):
-            if (msg.role.value == "moderator"
-                    and "Final Synthesis" in msg.content):
-                conclusion = msg.content
-                break
-        if not conclusion:
-            for msg in reversed(app.discussion.messages):
-                if msg.role.value == "moderator":
-                    conclusion = msg.content
-                    break
-
+        # A truncated or unsynthesised run is not a result: "error" keeps
+        # it out of auto-scoring while its partial transcript stays visible.
         eval_db.update_run(
-            run_id, status="done",
+            run_id, status="error" if error else "done",
+            error_text=error,
             conclusion=conclusion,
             num_turns=turns_completed,
-            total_tokens=total_tokens,
-            total_latency_ms=total_latency,
+            total_tokens=totals["tokens"],
+            total_latency_ms=totals["latency"],
             completed_at=time.time(),
         )

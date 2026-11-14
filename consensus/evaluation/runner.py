@@ -9,7 +9,8 @@ Options:
     --provider-url URL      OpenAI-compatible API base URL
     --model MODEL           Model name to use for all participants
     --api-key-env ENV_VAR   Environment variable holding the API key
-    --output DIR            Output directory for results (default: evaluation/results)
+    --output DIR            Output directory for results
+                            (default: <app data dir>/eval_results)
     --num-rounds N          Override number of discussion rounds
     --dry-run               Print config without running
 """
@@ -28,13 +29,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from consensus.app import ConsensusApp
-from consensus.models import EntityType
+from consensus.config import get_data_dir
 
 from consensus.evaluation.cases import CASES, CaseVignette
 from consensus.evaluation.conditions import CONDITIONS, Condition
 from consensus.evaluation.constants import DEFAULT_MODEL, DEFAULT_PROVIDER_URL
+from consensus.evaluation.runner_common import (
+    MODERATOR_COLOR, MODERATOR_SYSTEM_PROMPT, MODERATOR_TEMPERATURE,
+    PARTICIPANT_COLOR, PARTICIPANT_TEMPERATURE, TURN_MAX_TOKENS, conclude,
+    discussion_topic, drive_turns, join_errors,
+)
 
 logger = logging.getLogger(__name__)
+
+#: Results directory under the app data dir when ``--output`` is not given
+#: (beside the package it would land in site-packages for a wheel install).
+RESULTS_DIRNAME = "eval_results"
 
 
 # ---------------------------------------------------------------------------
@@ -104,18 +114,12 @@ async def run_case_condition(
             mod_id = app.db.add_entity(
                 name="Moderator",
                 entity_type="ai",
-                avatar_color="#6b7280",
+                avatar_color=MODERATOR_COLOR,
                 provider_id=provider,
                 model=model,
-                temperature=0.5,
-                max_tokens=1024,
-                system_prompt=(
-                    "You are a medical discussion moderator. Summarise each "
-                    "participant's contribution concisely. In the final "
-                    "synthesis, state the most likely diagnosis clearly, list "
-                    "the key supporting findings, and note any significant "
-                    "disagreements or alternative diagnoses raised."
-                ),
+                temperature=MODERATOR_TEMPERATURE,
+                max_tokens=TURN_MAX_TOKENS,
+                system_prompt=MODERATOR_SYSTEM_PROMPT,
             )
 
             # --- Create participants ---
@@ -124,11 +128,11 @@ async def run_case_condition(
                 eid = app.db.add_entity(
                     name=spec.name,
                     entity_type="ai",
-                    avatar_color="#3b82f6",
+                    avatar_color=PARTICIPANT_COLOR,
                     provider_id=provider,
                     model=model,
-                    temperature=0.7,
-                    max_tokens=1024,
+                    temperature=PARTICIPANT_TEMPERATURE,
+                    max_tokens=TURN_MAX_TOKENS,
                     system_prompt=spec.system_prompt,
                 )
                 entity_ids[spec.name] = eid
@@ -150,13 +154,7 @@ async def run_case_condition(
                 )
 
             # --- Set topic (the clinical vignette) ---
-            topic = (
-                f"Clinical Case Discussion\n\n{case.presentation}\n\n"
-                f"Please discuss this case systematically. Consider the key "
-                f"findings, generate a differential diagnosis, and work toward "
-                f"the most likely diagnosis with supporting reasoning."
-            )
-            app.set_topic(topic)
+            app.set_topic(discussion_topic(case.presentation))
 
             # --- Start discussion ---
             start_result = app.start_discussion(moderator_participates=False)
@@ -165,75 +163,24 @@ async def run_case_condition(
                 return result
 
             # --- Run rounds ---
-            turns_completed = 0
-            participants_per_round = len(condition.participants)
-            total_turns = participants_per_round * num_rounds
-
-            for turn_idx in range(total_turns):
-                current = app.discussion.current_speaker
-                if not current:
-                    break
-                if current.entity_type != EntityType.AI:
-                    break
-
-                logger.info(
-                    "  Turn %d/%d: %s speaking...",
-                    turn_idx + 1, total_turns, current.name,
-                )
-
-                # Generate AI turn
-                turn_result = await app.generate_ai_turn()
-                if "error" in turn_result:
-                    logger.warning("  Turn error: %s", turn_result["error"])
-                    result.error = turn_result["error"]
-                    break
-
-                # Track tokens
+            def record(speaker, turn_result: dict) -> None:
                 result.total_tokens += turn_result.get("total_tokens", 0)
                 result.total_latency_ms += turn_result.get("latency_ms", 0)
-
-                # Record message
                 result.messages.append({
-                    "speaker": current.name,
-                    "role": app.discussion.member_roles.get(current.id, "standard"),
+                    "speaker": speaker.name,
+                    "role": app.discussion.member_roles.get(speaker.id, "standard"),
                     "content": turn_result.get("content", ""),
                     "model": turn_result.get("model_used", ""),
                     "tokens": turn_result.get("total_tokens", 0),
                 })
 
-                # Complete turn (moderator summarises, advance)
-                complete_result = await app.complete_turn()
-                if "error" in complete_result:
-                    logger.warning("  Complete turn error: %s", complete_result["error"])
-                    break
+            total_turns = len(condition.participants) * num_rounds
+            result.num_turns, turn_error = await drive_turns(
+                app, total_turns, record)
 
-                turns_completed += 1
-
-            result.num_turns = turns_completed
-
-            # --- Conclude ---
-            conclude_result = await app.conclude_discussion()
-            # A failed synthesis must not produce a successful-looking eval
-            # row: without this the fallback below records the last
-            # moderator message as the conclusion and leaves ``error``
-            # unset (golden rule 6, issue #71).
-            if conclude_result.get("conclusion_error"):
-                result.error = (
-                    f"Conclusion failed: {conclude_result['conclusion_error']}"
-                )
-
-            # Extract conclusion from the last moderator message
-            for msg in reversed(app.discussion.messages):
-                if msg.role.value == "moderator" and "Final Synthesis" in msg.content:
-                    result.conclusion = msg.content
-                    break
-
-            # If no formal conclusion, use the last moderator message
-            if not result.conclusion:
-                for msg in reversed(app.discussion.messages):
-                    if msg.role.value == "moderator":
-                        result.conclusion = msg.content
-                        break
+            # --- Conclude --- (a failed synthesis is an error, issue #71)
+            result.conclusion, conclusion_error = await conclude(app)
+            result.error = join_errors(turn_error, conclusion_error)
 
         except Exception as e:
             logger.exception("Run failed for case=%s condition=%s", case.id, condition.name)
@@ -252,7 +199,7 @@ async def run_evaluation(
     num_rounds_override: int | None = None,
 ) -> list[RunResult]:
     """Run all (case, condition) combinations and save results."""
-    output_path = Path(output_dir) if output_dir else Path(__file__).parent / "results"
+    output_path = Path(output_dir or Path(get_data_dir()) / RESULTS_DIRNAME)
     output_path.mkdir(parents=True, exist_ok=True)
 
     results: list[RunResult] = []
@@ -326,7 +273,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output", type=str, default="",
-        help="Output directory for results",
+        help=f"Output directory for results (default: <app data dir>/{RESULTS_DIRNAME})",
     )
     parser.add_argument(
         "--num-rounds", type=int, default=None,

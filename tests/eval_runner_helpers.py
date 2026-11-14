@@ -8,12 +8,14 @@ into a test module to use it.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Callable
 
 import httpx
 import pytest
 
 from consensus.ai_client import AIClient
+from consensus.pricing import PricingCache
 
 #: Tokens the fake provider reports per completion.
 TOKENS_PER_CALL = 7
@@ -22,12 +24,15 @@ TOKENS_PER_CALL = 7
 class FakeLLM:
     """Records every completion request and answers it.
 
-    ``fail_when(payload) -> bool`` makes matching requests return HTTP 500.
+    ``fail_when(payload) -> bool`` makes matching requests return HTTP 500;
+    ``yield_each_call`` yields to the event loop first, so concurrent runs
+    interleave.
     """
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
         self.fail_when: Callable[[dict], bool] = lambda payload: False
+        self.yield_each_call = False
 
     def respond(self, client: AIClient, url: str, payload: dict) -> httpx.Response:
         """Record the request and build the provider's HTTP response."""
@@ -56,9 +61,13 @@ def llm(monkeypatch) -> FakeLLM:
     fake = FakeLLM()
 
     async def fake_post(self, url, payload, model):
+        if fake.yield_each_call:
+            await asyncio.sleep(0)
         return fake.respond(self, url, payload)
 
     monkeypatch.setattr(AIClient, "_post_with_retry", fake_post)
+    # Pricing is fetched from OpenRouter on startup and for unknown models.
+    monkeypatch.setattr(PricingCache, "refresh", lambda self: False)
     return fake
 
 

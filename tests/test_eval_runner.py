@@ -6,6 +6,7 @@ fake is the HTTP edge (``tests/eval_runner_helpers.py``). The CLI path is
 ``run_case_condition_db`` (eval DB in, eval DB out).
 """
 
+import asyncio
 import json
 import sys
 
@@ -86,6 +87,14 @@ class TestRunCaseCondition:
         result = await run_case_condition(CASE, PAIR, URL, "m1")
         assert result.num_turns == 0
         assert len(result.messages) == 1
+        assert result.error.startswith("Turn completion failed:")
+
+    async def test_turn_and_synthesis_failures_are_both_kept(self, llm):
+        llm.fail_when = lambda payload: not is_summary(payload)
+        result = await run_case_condition(CASE, PAIR, URL, "m1")
+        first, second = result.error.split("; ")
+        assert "Conclusion failed:" not in first
+        assert second.startswith("Conclusion failed:")
 
     async def test_failed_synthesis_is_an_error(self, llm):
         llm.fail_when = is_synthesis
@@ -131,6 +140,13 @@ class TestRunEvaluation:
                                 "all_results.json"])
         combined = json.loads((tmp_path / "all_results.json").read_text())
         assert [r["case_id"] for r in combined] == [c.id for c in CASES[:2]]
+
+
+class TestDefaultOutputDir:
+    async def test_defaults_to_the_data_dir(self, llm, tmp_path, monkeypatch):
+        monkeypatch.setattr(runner, "get_data_dir", lambda: str(tmp_path))
+        await runner.run_evaluation([CASE], [PAIR], URL, "m1")
+        assert (tmp_path / runner.RESULTS_DIRNAME / "all_results.json").exists()
 
 
 class TestMain:
@@ -190,7 +206,8 @@ def make_db_run(db, *, participants: list[dict], num_rounds: int = 1,
                 enable_tools: bool = False, model: str = "m1") -> int:
     """Create a pending run of the seeded case under a new condition."""
     case = db.get_case_by_key(CASE_KEY)
-    cond_id = db.add_condition("c", num_rounds=num_rounds,
+    cond_id = db.add_condition(f"c{len(db.list_conditions())}",
+                               num_rounds=num_rounds,
                                enable_tools=enable_tools,
                                participants=participants)
     batch_id = db.create_batch("b", URL, model)
@@ -288,6 +305,54 @@ class TestRunCaseConditionDb:
         await run_case_condition_db(eval_db, run_id)
         names = {t["function"]["name"] for t in turn_calls(llm)[0]["tools"]}
         assert "web_search" in names
+
+    async def test_turn_failure_marks_run_error(self, eval_db, llm):
+        llm.fail_when = is_turn
+        run_id = make_db_run(eval_db, participants=TWO)
+        await run_case_condition_db(eval_db, run_id)
+        run = eval_db.get_run(run_id)
+        assert run["status"] == "error" and run["error_text"]
+        assert run["num_turns"] == 0 and run["completed_at"]
+
+    async def test_summary_failure_marks_run_error(self, eval_db, llm):
+        llm.fail_when = is_summary
+        run_id = make_db_run(eval_db, participants=TWO)
+        await run_case_condition_db(eval_db, run_id)
+        run = eval_db.get_run(run_id)
+        assert run["status"] == "error"
+        assert run["error_text"].startswith("Turn completion failed:")
+        assert len(eval_db.get_run_messages(run_id)) == 1
+
+    async def test_synthesis_failure_marks_run_error(self, eval_db, llm):
+        llm.fail_when = is_synthesis
+        run_id = make_db_run(eval_db, participants=TWO)
+        await run_case_condition_db(eval_db, run_id)
+        run = eval_db.get_run(run_id)
+        assert run["status"] == "error"
+        assert run["error_text"].startswith("Conclusion failed:")
+        assert run["num_turns"] == 2
+
+    async def test_concurrent_runs_keep_their_own_keys(self, eval_db, llm):
+        llm.yield_each_call = True
+        run_a = make_db_run(eval_db, participants=TWO, model="ma")
+        run_b = make_db_run(eval_db, participants=TWO, model="mb")
+        await asyncio.gather(
+            run_case_condition_db(eval_db, run_a, api_key="sk-a"),
+            run_case_condition_db(eval_db, run_b, api_key="sk-b"))
+        keys = {(c["model"], c["api_key"]) for c in llm.calls}
+        assert keys == {("ma", "sk-a"), ("mb", "sk-b")}
+
+    async def test_callers_byok_keys_do_not_reach_the_run(self, eval_db, llm):
+        # The batch task inherits the request's BYOK keys, which are keyed
+        # by the main app's provider ids, not the temp app's.
+        runner_db.ConsensusApp.set_request_api_keys(
+            {str(i): "sk-leak" for i in range(1, 100)})
+        try:
+            run_id = make_db_run(eval_db, participants=TWO)
+            await run_case_condition_db(eval_db, run_id)
+        finally:
+            runner_db.ConsensusApp.clear_request_api_keys()
+        assert {c["api_key"] for c in llm.calls} == {""}
 
     async def test_start_error_marks_run_error(self, eval_db, llm,
                                                monkeypatch):
