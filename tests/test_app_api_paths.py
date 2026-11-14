@@ -225,6 +225,18 @@ async def test_desktop_path_traversal_keeps_traceback(app, images_dir, caplog):
     assert caplog.records[-1].exc_info is not None
 
 
+def test_desktop_start_discussion_runs_the_coroutine(app):
+    """``start_discussion`` is async (#118): the bridge must hand JS its
+    result, not an un-awaited coroutine."""
+    from consensus.desktop import DesktopBridge
+    bridge = DesktopBridge(app)
+    try:
+        result = bridge.start_discussion()
+    finally:
+        bridge._loop.call_soon_threadsafe(bridge._loop.stop)
+    assert result == {"error": "No topic set"}
+
+
 # --- Public API shape --------------------------------------------------------
 
 ASYNC_PUBLIC_API = {
@@ -232,6 +244,7 @@ ASYNC_PUBLIC_API = {
     "complete_turn", "conclude_discussion", "connect_mcp_server",
     "consult_expert", "delete_mcp_server", "fetch_models", "generate_ai_turn",
     "list_available_tools", "mediate", "recommend_method", "shutdown",
+    "start_discussion",
     "test_mcp_connection",
 }
 

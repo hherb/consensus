@@ -104,6 +104,10 @@ A discussion moves through these states:
 
 `start_discussion()`:
 - Validates: topic set, >=2 participants, moderator designated
+- For a method with structured phases, rejects AI models known to lack tool
+  support (issue #23). It is async because it first waits (bounded) for an
+  in-flight model-catalogue download, which holds that capability data
+  (issue #118)
 - Creates a DB `discussions` record (status=`active`)
 - Builds the turn order (all participants except moderator, unless moderator
   also participates)

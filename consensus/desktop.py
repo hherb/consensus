@@ -212,8 +212,8 @@ class DesktopBridge:
                          max_rounds: int = 0,
                          cost_limit: float = 0.0) -> dict:
         """Start the discussion."""
-        return self.app.start_discussion(moderator_participates, max_rounds,
-                                         cost_limit)
+        return self._run_async(self.app.start_discussion(
+            moderator_participates, max_rounds, cost_limit))
 
     def set_cost_limit(self, cost_limit: float) -> dict:
         """Update the cost limit for the current discussion."""

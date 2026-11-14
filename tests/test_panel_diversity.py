@@ -359,7 +359,7 @@ class TestGetStatePanelAdvisory:
         # discussion_method defaults to open_discussion
         assert app.get_state()["panel_advisory"] is None
 
-    def test_participating_moderator_same_model_sets_advisory_on_start(
+    async def test_participating_moderator_same_model_sets_advisory_on_start(
         self, tmp_path,
     ):
         app = self._app(tmp_path)
@@ -374,13 +374,13 @@ class TestGetStatePanelAdvisory:
         app.set_discussion_method("delphi")
         # Pre-start: participation unknown -> panel [gpt-4o, claude] -> quiet.
         assert app.get_state()["panel_advisory"] is None
-        result = app.start_discussion(moderator_participates=True)
+        result = await app.start_discussion(moderator_participates=True)
         assert "error" not in result
         assert result["panel_advisory"] is not None
         assert result["panel_advisory"]["level"] == "warning"
         assert "gpt-4o" in result["panel_advisory"]["message"]
 
-    def test_non_participating_moderator_same_model_no_advisory_on_start(
+    async def test_non_participating_moderator_same_model_no_advisory_on_start(
         self, tmp_path,
     ):
         app = self._app(tmp_path)
@@ -393,11 +393,11 @@ class TestGetStatePanelAdvisory:
         app.add_to_discussion(a)
         app.add_to_discussion(b)
         app.set_discussion_method("delphi")
-        result = app.start_discussion(moderator_participates=False)
+        result = await app.start_discussion(moderator_participates=False)
         assert "error" not in result
         assert result["panel_advisory"] is None
 
-    def test_participating_moderator_advisory_survives_reload(self, tmp_path):
+    async def test_participating_moderator_advisory_survives_reload(self, tmp_path):
         # base_turn_order is rebuilt from discussion_members.turn_position on
         # DB load, so a participating same-model moderator must stay in the
         # estimator panel after a restart (#48).
@@ -412,7 +412,7 @@ class TestGetStatePanelAdvisory:
         app.add_to_discussion(a)
         app.add_to_discussion(b)
         app.set_discussion_method("delphi")
-        result = app.start_discussion(moderator_participates=True)
+        result = await app.start_discussion(moderator_participates=True)
         assert "error" not in result
         did = app.discussion.id
 

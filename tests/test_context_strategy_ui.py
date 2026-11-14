@@ -43,9 +43,9 @@ class TestSetDefaultContextStrategy:
         # Original value unchanged
         assert app.discussion.default_context_strategy == "sliding_window"
 
-    def test_persists_to_db_when_discussion_active(self, app_with_entities):
+    async def test_persists_to_db_when_discussion_active(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion(moderator_participates=False)
+        await app.start_discussion(moderator_participates=False)
         did = app.discussion.id
 
         app.set_default_context_strategy("summary", 15)
@@ -82,9 +82,9 @@ class TestSetMemberContextStrategy:
         result = app.set_member_context_strategy(9999, "full")
         assert "error" in result
 
-    def test_persists_to_db_when_discussion_active(self, app_with_entities):
+    async def test_persists_to_db_when_discussion_active(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion(moderator_participates=False)
+        await app.start_discussion(moderator_participates=False)
         did = app.discussion.id
 
         app.set_member_context_strategy(p1_id, "full", 50)
@@ -120,9 +120,9 @@ class TestStateShape:
         assert cfg["strategy"] == "summary"
         assert cfg["window_size"] == 15
 
-    def test_state_member_configs_from_db_when_active(self, app_with_entities):
+    async def test_state_member_configs_from_db_when_active(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion(moderator_participates=False)
+        await app.start_discussion(moderator_participates=False)
         did = app.discussion.id
         assert did > 0
 
@@ -143,7 +143,7 @@ class TestStateShape:
 # --- Setup-phase flush on start_discussion ---
 
 class TestSetupPhaseFlush:
-    def test_member_configs_flushed_to_db_on_start(self, app_with_entities):
+    async def test_member_configs_flushed_to_db_on_start(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
 
         # Set per-entity overrides during setup
@@ -151,7 +151,7 @@ class TestSetupPhaseFlush:
         app.set_member_context_strategy(p2_id, "full", 50)
 
         # Start discussion — should flush to DB
-        app.start_discussion(moderator_participates=False)
+        await app.start_discussion(moderator_participates=False)
         did = app.discussion.id
 
         m1 = app.db.get_discussion_member(did, p1_id)
@@ -162,29 +162,29 @@ class TestSetupPhaseFlush:
         assert m2["context_strategy"] == "full"
         assert m2["context_window_size"] == 50
 
-    def test_default_strategy_persisted_on_start(self, app_with_entities):
+    async def test_default_strategy_persisted_on_start(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
         app.set_default_context_strategy("summary", 8)
 
-        app.start_discussion(moderator_participates=False)
+        await app.start_discussion(moderator_participates=False)
         did = app.discussion.id
 
         row = app.db.get_discussion(did)
         assert row["default_context_strategy"] == "summary"
         assert row["default_context_window_size"] == 8
 
-    def test_default_values_persisted_on_start(self, app_with_entities):
+    async def test_default_values_persisted_on_start(self, app_with_entities):
         """Even default sliding_window/20 should be written to DB."""
         app, mod_id, p1_id, p2_id = app_with_entities
         # Don't change defaults — leave as sliding_window/20
-        app.start_discussion(moderator_participates=False)
+        await app.start_discussion(moderator_participates=False)
         did = app.discussion.id
 
         row = app.db.get_discussion(did)
         assert row["default_context_strategy"] == "sliding_window"
         assert row["default_context_window_size"] == 20
 
-    def test_entities_without_override_use_db_defaults(self, app_with_entities):
+    async def test_entities_without_override_use_db_defaults(self, app_with_entities):
         """Entities with no explicit override inherit the discussion default."""
         from consensus.context_strategies import ContextConfig, ContextStrategy
 
@@ -192,7 +192,7 @@ class TestSetupPhaseFlush:
         # Only set override for p1, not p2
         app.set_member_context_strategy(p1_id, "full", 100)
 
-        app.start_discussion(moderator_participates=False)
+        await app.start_discussion(moderator_participates=False)
         did = app.discussion.id
 
         # p2 has no stored override (NULL) so the discussion-level default

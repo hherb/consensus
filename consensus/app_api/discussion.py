@@ -128,10 +128,15 @@ class DiscussionMixin:
     # Discussion lifecycle
     # ------------------------------------------------------------------
 
-    def start_discussion(self, moderator_participates: bool = False,
-                         max_rounds: int = 0,
-                         cost_limit: float = 0.0) -> dict:
-        """Start a new discussion with the configured entities and topic."""
+    async def start_discussion(self, moderator_participates: bool = False,
+                               max_rounds: int = 0,
+                               cost_limit: float = 0.0) -> dict:
+        """Start a new discussion with the configured entities and topic.
+
+        Async only to let the tool-capability gate wait for an in-flight
+        model-catalogue download first (#118).
+        """
+        await self.db.pricing.wait_for_refresh()
         result = app_discussion_setup.start_discussion(
             self.discussion, self.db, self.moderator,
             moderator_participates, max_rounds, cost_limit,

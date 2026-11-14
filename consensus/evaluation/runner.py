@@ -158,7 +158,7 @@ async def run_case_condition(
             app.set_topic(discussion_topic(case.presentation))
 
             # --- Start discussion ---
-            start_result = app.start_discussion(moderator_participates=False)
+            start_result = await app.start_discussion(moderator_participates=False)
             if "error" in start_result:
                 result.error = start_result["error"]
                 return result
