@@ -71,7 +71,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
 - `config.py` — platform-aware data dirs (macOS: `~/Library/Application Support/consensus`)
 - `background.py` — `spawn_background()`: fire-and-forget asyncio tasks that keep a strong reference and log their exception (used by `tools_document/embedding.py` and `tools_memory/`)
 - `dbkey.py` — `scoped_key()`: scopes a row id to its database file, so process-global bookkeeping cannot collide across `--multi-user` sessions where every session's first row is id 1
-- `desktop.py` — `DesktopBridge` exposes async Python to JS via pywebview; runs background event loop
+- `desktop/` — `DesktopBridge` (`bridge.py`) exposes async Python to JS via pywebview and runs a background event loop; its methods come from the `catalog`, `discussion` and `files` mixins; `launcher.py` holds `launch_desktop`
 - `server.py` — aiohttp routes mapping to `ConsensusApp` methods; serves static files with path traversal protection; includes rate limiting, security headers, CORS, CSRF protection, auth middleware, health endpoint
 - `session.py` — `SessionManager` for multi-user deployments; per-session `ConsensusApp` + SQLite with TTL-based expiry
 - `auth.py` — `AuthManager`, `AuthDatabase`, `User` model, PBKDF2-SHA256 password hashing, OAuth Authorization Code flow (GitHub, Google, LinkedIn, Apple), bearer token management

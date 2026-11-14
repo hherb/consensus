@@ -12,6 +12,7 @@ import sys
 import pytest
 
 from consensus.mcp_server import ConsensusMCPServer
+from consensus.tools_memory.embedding import MemoryUnavailableError
 from tests.document_helpers import FakeEmbedClient
 
 #: Two orthogonal unit vectors: the query matches ``NEAR`` and not ``FAR``.
@@ -31,7 +32,7 @@ def server(tmp_path):
 @pytest.fixture
 def broken_embed(server):
     """The embedding service is down."""
-    server._embed_client = FakeEmbedClient(error=ConnectionError("ollama down"))
+    server._embed_client = FakeEmbedClient(error=MemoryUnavailableError("ollama down"))
     return server
 
 

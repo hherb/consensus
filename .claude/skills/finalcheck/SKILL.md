@@ -65,7 +65,7 @@ stop and tell me.
 6. **Not covered by any check.** Include each of these that applies in the report:
    - **Frontend** (`consensus/static/`): there is no JS test harness. If the PR touches it, say so, and if
      you can, exercise the change with `python -m consensus --web --debug` in a browser.
-   - **Desktop mode** (`desktop.py`, pywebview) can't run headless, so name any change there as unverified.
+   - **Desktop mode** (`desktop/`, pywebview) can't run headless, so name any change there as unverified.
    - **Packaging and release** (`packaging/`, `scripts/release_pypi.sh`, `pyproject.toml`): the release
      playbook (TestPyPI, then PyPI, then the notarized DMG) is a separate manual process. Mention it if
      the PR touches these.

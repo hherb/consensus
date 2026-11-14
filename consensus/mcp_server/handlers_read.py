@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from .errors import ToolError
 
@@ -77,10 +78,9 @@ class ReadHandlersMixin:
             if not doc:
                 raise ToolError("Document not found.")
             sections_raw = doc.get("sections_json", "[]")
-            try:
-                sections = json.loads(sections_raw) if sections_raw else []
-            except (json.JSONDecodeError, TypeError):
-                sections = []
+            # Unparseable section data is a corrupt row, not a missing section:
+            # let it reach the dispatcher, which logs it with a traceback.
+            sections = json.loads(sections_raw) if sections_raw else []
             target = None
             for s in sections:
                 if s.get("header", "").lower() == section.lower():
@@ -102,6 +102,23 @@ class ReadHandlersMixin:
     # Tool handlers — semantic search
     # -----------------------------------------------------------------------
 
+    async def _embed_query(self, query: str) -> tuple[Any, list[float]]:
+        """Return ``(client, vector)`` for a search query.
+
+        Raises ToolError for the two failures the caller can act on; any
+        other exception is a bug and reaches the dispatcher unchanged.
+        """
+        from ..tools_memory.embedding import (
+            EmbeddingContextLengthError, MemoryUnavailableError,
+        )
+        embed = self._get_embed_client()
+        try:
+            return embed, await embed.embed(query)
+        except EmbeddingContextLengthError as e:
+            raise ToolError(f"Query too long for the embedding model: {e}") from e
+        except MemoryUnavailableError as e:
+            raise ToolError(f"Embedding service unavailable: {e}") from e
+
     async def _handle_search_discussions(self, args: dict) -> str:
         from ..tools_memory import _rank_by_similarity
         query = args.get("query", "").strip()
@@ -109,11 +126,7 @@ class ReadHandlersMixin:
             raise ToolError("No query provided.")
         limit = int(args.get("limit", 5))
         topic_filter = args.get("topic_filter")
-        try:
-            embed = self._get_embed_client()
-            query_vec = await embed.embed(query)
-        except Exception as e:
-            raise ToolError(f"Embedding service unavailable: {e}") from e
+        embed, query_vec = await self._embed_query(query)
         rows = self._db.get_messages_with_embeddings(topic_filter)
         if not rows:
             return "No indexed discussion messages found."
@@ -131,11 +144,7 @@ class ReadHandlersMixin:
         if not query:
             raise ToolError("No query provided.")
         limit = int(args.get("limit", 5))
-        try:
-            embed = self._get_embed_client()
-            query_vec = await embed.embed(query)
-        except Exception as e:
-            raise ToolError(f"Embedding service unavailable: {e}") from e
+        embed, query_vec = await self._embed_query(query)
         await backfill_embeddings(self._db.get_unembedded_entity_memories(entity_id),
                                   embed, self._db.set_entity_memory_embedding, "memory")
         rows = self._db.get_entity_memories_with_embeddings(entity_id)
@@ -153,11 +162,7 @@ class ReadHandlersMixin:
         if not query:
             raise ToolError("No query provided.")
         limit = int(args.get("limit", 5))
-        try:
-            embed = self._get_embed_client()
-            query_vec = await embed.embed(query)
-        except Exception as e:
-            raise ToolError(f"Embedding service unavailable: {e}") from e
+        embed, query_vec = await self._embed_query(query)
         rows = self._db.get_all_chunks_with_embeddings()
         if not rows:
             return "No indexed documents found."
@@ -179,7 +184,8 @@ class ReadHandlersMixin:
         if mode == "neighbors":
             row = self._db.get_kg_node_by_label(query)
             if not row:
-                return f"No node found with label '{query}'. Try mode='search'."
+                raise ToolError(f"No node found with label '{query}'. "
+                                "Try mode='search'.")
             neighbors = self._db.get_kg_neighbors(row["id"])
             if not neighbors:
                 return f"Node '{query}' has no connections."
@@ -192,11 +198,7 @@ class ReadHandlersMixin:
             return "\n".join(lines)
 
         # semantic search
-        try:
-            embed = self._get_embed_client()
-            query_vec = await embed.embed(query)
-        except Exception as e:
-            raise ToolError(f"Embedding service unavailable: {e}") from e
+        embed, query_vec = await self._embed_query(query)
         await backfill_embeddings(self._db.get_unembedded_kg_nodes(), embed,
                                   self._db.set_kg_node_embedding, "kg node")
         rows = self._db.get_kg_nodes_with_embeddings()

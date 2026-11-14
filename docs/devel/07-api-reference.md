@@ -202,11 +202,12 @@ The `DesktopBridge` class mirrors the same methods. From JavaScript:
 ```javascript
 const result = await window.pywebview.api.generate_ai_turn();
 const state  = await window.pywebview.api.get_state();
-const tools  = await window.pywebview.api.list_available_tools();
+const tools  = await window.pywebview.api.list_tools();
 ```
 
-The method names and parameters match the REST API. The bridge handles
-sync-to-async conversion internally.
+The method names and parameters match the REST API's `/api/{method}`
+actions (not always the `ConsensusApp` method behind them). The bridge
+handles sync-to-async conversion internally.
 
 ---
 

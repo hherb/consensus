@@ -81,15 +81,20 @@ input gets a JSON-RPC error reply and the loop keeps serving: an unparseable
 line → `-32700` (also logged), a non-object message → `-32600`, non-object
 `params`, a non-string tool `name` or non-object `arguments` → `-32602`.
 
-A tool call that fails is an `isError: true` result, never a successful one
-carrying error text (#121). A handler raises `ToolError` (`errors.py`) for an
-expected failure — bad arguments, a missing record, the embedding service
-down — which becomes `Error: <message>`, logged at WARNING without a
-traceback. Any other exception from a handler is a bug: `isError: true` with
-the exception type and message, logged with its traceback. Any other
-exception during dispatch is logged and answered with
-`-32603` (`_dispatch()`), so a bug in the server cannot stop the loop. The
-codes are named in `constants.py`.
+A tool call the server rejects is an `isError: true` result, never a
+successful one carrying error text (#121); an unknown tool name is a JSON-RPC
+`-32602` error instead, and `run_discussion` reports a turn loop that failed
+after setup in its successful result (see below). A handler raises `ToolError`
+(`errors.py`) for an expected failure — a value it checks and rejects, a
+missing record (including an unknown node in `neighbors` mode), an over-long
+query, the embedding service down — which becomes `Error: <message>`, logged
+at WARNING without a traceback. Any other exception from a handler is a bug:
+`isError: true` with the text `describe_flow_error()` gives it, logged with
+its traceback. That includes an argument of the wrong type or a missing
+required one (`int("x")`, a `KeyError`; #124) and a document whose
+`sections_json` cannot be parsed. Any other exception during dispatch is
+logged and answered with `-32603` (`_dispatch()`), so a bug in the server
+cannot stop the loop. The codes are named in `constants.py`.
 
 ## Tools
 
@@ -176,8 +181,8 @@ If the embedding service is unavailable the call is an `isError` result
 - **Validation:** `moderator_id` must be one of `entity_ids`; an entity the
   discussion rejects (a duplicate id, say) fails the call with
   `Error: Could not add entity <id>: <reason>`; every validation failure is
-  an `isError` result. The `ConsensusApp` is shut down after
-  every call, so its MCP provider subprocesses do not outlive it.
+  an `isError` result. The `ConsensusApp` is shut down after every call, so
+  its MCP provider subprocesses do not outlive it.
 - **Constraints:** Only AI entities allowed (humans rejected). 10-minute
   timeout (`RUN_DISCUSSION_TIMEOUT_SECONDS`). Auto-selects the first 3 AI
   entities (`AUTO_SELECT_ENTITIES`) if none specified. Excludes the

@@ -14,8 +14,9 @@
    - `server.py` -- add a route handler (dispatch-style for simple methods,
      or dedicated REST endpoints for resource-oriented features like
      documents/images)
-   - `desktop.py` -- add a method to `DesktopBridge` (use `_run_async()` if
-     async)
+   - `desktop/` -- add a method to the matching `DesktopBridge` mixin
+     (`catalog.py`, `discussion.py` or `files.py`; use `_run_async()` if
+     async) and to `BRIDGE_API` in `tests/test_desktop_bridge_api.py`
 3. If it needs new UI, add methods to both API adapter classes in
    `static/api.js` (`DesktopAPI` and `WebAPI`), then create or update the
    relevant JS module in `static/`
@@ -27,7 +28,7 @@
    `^(\d{3})_.*\.sql$` and applies them once each.
 2. Add a CRUD mixin in `consensus/db/` (e.g. `my_feature.py`) and add it to
    the `Database` class in `db/__init__.py`
-3. Expose through `ConsensusApp`, `server.py`, and `desktop.py` as needed
+3. Expose through `ConsensusApp`, `server.py`, and `desktop/` as needed
 
 ### Adding a new prompt template
 

@@ -160,6 +160,22 @@ class TestRunDiscussionReportsFailures:
         await _run(server)
         assert len(shut) == 1
 
+    async def test_app_is_shut_down_when_a_member_is_rejected(
+            self, server, monkeypatch):
+        """The ToolError raised inside ``_run_on_app`` still reaches the
+        ``finally``."""
+        a, _ = _ai_entities(server._db)
+        shut = []
+
+        async def shutdown(self):
+            shut.append(self)
+
+        monkeypatch.setattr(ConsensusApp, "shutdown", shutdown)
+        _, is_error = await call(server, "run_discussion", {
+            "topic": "T", "entity_ids": [a, a]})
+        assert is_error
+        assert len(shut) == 1
+
 
 class TestStdioRobustness:
     """Malformed input gets an error reply; it must not stop the server."""

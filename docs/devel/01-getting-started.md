@@ -114,7 +114,8 @@ consensus/
   server.py                aiohttp web server (REST + resource routes, middleware)
   session.py               Multi-user session manager (per-session app + SQLite)
   auth.py                  Authentication (email/password, OAuth)
-  desktop.py               pywebview launcher and JS-Python bridge
+  desktop/                 pywebview launcher and JS-Python bridge (bridge,
+                           catalog/discussion/files mixins, launcher)
   background.py            spawn_background() — fire-and-forget asyncio tasks that
                            keep a strong reference and log their exception
   dbkey.py                 scoped_key() — scopes a row id to its database file so

@@ -340,7 +340,7 @@ Used by:
 - `_handle_consult_expert()` — emits `tool_progress` during MCP tool execution
 - `server.py` SSE endpoint — listens for `tool_progress` and forwards to
   connected browsers
-- `desktop.py` — forwards progress events via `evaluate_js`
+- `desktop/bridge.py` — forwards progress events via `evaluate_js`
 
 ---
 
