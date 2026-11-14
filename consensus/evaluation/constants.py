@@ -35,3 +35,19 @@ REPORT_WIDTH = 80
 
 #: How much of a run's error text the per-case breakdown shows.
 REPORT_ERROR_PREVIEW_CHARS = 50
+
+#: Allowed ``cases.difficulty`` values — mirrors the ``CHECK`` constraint in
+#: ``evaluation/migrations/001_baseline.sql``.
+CASE_DIFFICULTIES = frozenset({"easy", "moderate", "hard"})
+
+#: Allowed ``condition_participants.role`` values — mirrors the ``CHECK``
+#: constraint in ``evaluation/migrations/001_baseline.sql``.
+PARTICIPANT_ROLES = frozenset({"standard", "devils_advocate"})
+
+#: ``eval_batches.status`` values a batch never leaves; cancelling one is a
+#: 409, not a rewrite of its outcome.
+FINISHED_BATCH_STATUSES = frozenset({"done", "error", "cancelled"})
+
+#: Largest value an SQLite INTEGER column holds; a bigger JSON integer
+#: makes ``sqlite3`` raise ``OverflowError``, so request checks reject it.
+SQLITE_MAX_INTEGER = 2**63 - 1

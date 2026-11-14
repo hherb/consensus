@@ -5,14 +5,29 @@ by calling register_eval_routes(webapp, eval_db).
 """
 
 import asyncio
+import json
 import logging
 import os
+import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
+from consensus.evaluation.constants import (
+    FINISHED_BATCH_STATUSES,
+    SQLITE_MAX_INTEGER,
+)
 from consensus.evaluation.eval_db import EvalDatabase
+from consensus.evaluation.request_checks import (
+    BATCH_FIELDS,
+    CASE_FIELDS,
+    CASE_REQUIRED,
+    CONDITION_FIELDS,
+    CONDITION_REQUIRED,
+    body_problem,
+    conflict_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,19 +66,80 @@ async def _require_json_writes(
     return await handler(request)
 
 
+@web.middleware
+async def _constraint_conflicts(
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+) -> web.StreamResponse:
+    """Answer a known /eval/api/ constraint failure with 409, not 500.
+
+    A duplicate case key or condition name, or deleting a case or
+    condition that runs still reference, is the caller's conflict with
+    stored data rather than a server fault. Any other constraint failure
+    is re-raised (a 500), and so is everything outside /eval/api/: in web
+    mode this middleware sits on the main app.
+    """
+    if not request.path.startswith("/eval/api/"):
+        return await handler(request)
+    try:
+        return await handler(request)
+    except sqlite3.IntegrityError as e:
+        message = conflict_message(str(e))
+        if message is None:
+            raise
+        logger.warning("%s %s conflicts with stored data: %s",
+                       request.method, request.path, e)
+        return _error(message, 409)
+
+
 async def _read_object(request: web.Request) -> dict | None:
-    """The request's JSON body if it is an object, else None."""
+    """The request's JSON body if it is an object, else None.
+
+    Raises ``HTTPBadRequest`` for a body holding a lone surrogate: JSON can
+    spell one (``"\\ud800"``) but SQLite cannot store it.
+    """
     try:
         data = await request.json()
-    except ValueError:
+        json.dumps(data, ensure_ascii=False).encode()
+    except UnicodeEncodeError:
+        raise web.HTTPBadRequest(
+            text=json.dumps({"error": "Request body must be valid Unicode"}),
+            content_type="application/json") from None
+    # LookupError: an unknown charset; RecursionError: a too-deep body.
+    except (ValueError, LookupError, RecursionError):
         return None
     return data if isinstance(data, dict) else None
 
 
+def _stripped(data: dict, fields: tuple[str, ...]) -> dict:
+    """The given ``fields`` present in ``data``; text trimmed as on add."""
+    return {f: data[f].strip() if isinstance(data[f], str) else data[f]
+            for f in fields if f in data}
+
+
+def _path_id(request: web.Request) -> int:
+    """The URL's ``{id}``, or 0 (never a row id) if SQLite cannot store it.
+
+    The route only promises digits; a bigger number would reach SQLite as
+    an ``OverflowError`` (a 500), so 0 lets the handler's lookup answer 404.
+    """
+    raw = request.match_info["id"].lstrip("0")
+    # Length first: int() refuses strings over 4300 digits with ValueError.
+    if len(raw) > len(str(SQLITE_MAX_INTEGER)):
+        return 0
+    value = int(raw or "0")
+    return value if value <= SQLITE_MAX_INTEGER else 0
+
+
 def register_eval_routes(webapp: web.Application,
                          eval_db: EvalDatabase) -> None:
-    """Register all /eval/ routes (and their CSRF guard) on the app."""
+    """Register all /eval/ routes and their middlewares on the app.
+
+    The middlewares are the CSRF guard (415) and the 409 for known
+    constraint conflicts; both act only on ``/eval/api/`` paths.
+    """
     webapp.middlewares.append(_require_json_writes)
+    webapp.middlewares.append(_constraint_conflicts)
 
     eval_static_dir = os.path.realpath(
         os.path.join(os.path.dirname(__file__), "static")
@@ -80,10 +156,9 @@ def register_eval_routes(webapp: web.Application,
         data = await _read_object(request)
         if data is None:
             return _error("Request body must be a JSON object")
-        required = ("case_key", "title", "presentation", "gold_diagnosis")
-        for field in required:
-            if not data.get(field, "").strip():
-                return _error(f"Missing required field: {field}")
+        problem = body_problem(data, CASE_FIELDS, CASE_REQUIRED)
+        if problem:
+            return _error(problem)
         case_id = eval_db.add_case(
             case_key=data["case_key"].strip(),
             title=data["title"].strip(),
@@ -98,17 +173,20 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.get_case(case_id), status=201)
 
     async def update_case(request: web.Request) -> web.Response:
-        case_id = int(request.match_info["id"])
+        case_id = _path_id(request)
+        # Body first: no await may fall between the lookup and the write,
+        # or a concurrent delete turns the write into a foreign key 409.
+        data = await _read_object(request)
         if not eval_db.get_case(case_id):
             return _error("Case not found", 404)
-        data = await _read_object(request)
         if data is None:
             return _error("Request body must be a JSON object")
-        kwargs = {}
-        for field in ("case_key", "title", "presentation", "gold_diagnosis",
-                       "difficulty", "source"):
-            if field in data:
-                kwargs[field] = data[field]
+        problem = body_problem(data, CASE_FIELDS, CASE_REQUIRED,
+                               partial=True)
+        if problem:
+            return _error(problem)
+        kwargs = _stripped(data, ("case_key", "title", "presentation",
+                                  "gold_diagnosis", "difficulty", "source"))
         eval_db.update_case(
             case_id,
             aliases=data.get("aliases"),
@@ -119,7 +197,7 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.get_case(case_id))
 
     async def delete_case(request: web.Request) -> web.Response:
-        case_id = int(request.match_info["id"])
+        case_id = _path_id(request)
         if not eval_db.get_case(case_id):
             return _error("Case not found", 404)
         eval_db.delete_case(case_id)
@@ -136,31 +214,36 @@ def register_eval_routes(webapp: web.Application,
         data = await _read_object(request)
         if data is None:
             return _error("Request body must be a JSON object")
-        if not data.get("name", "").strip():
-            return _error("Missing required field: name")
+        problem = body_problem(data, CONDITION_FIELDS, CONDITION_REQUIRED)
+        if problem:
+            return _error(problem)
         cond_id = eval_db.add_condition(
             name=data["name"].strip(),
             description=data.get("description", ""),
-            enable_da=bool(data.get("enable_da", False)),
-            enable_memory=bool(data.get("enable_memory", False)),
-            enable_tools=bool(data.get("enable_tools", False)),
-            num_rounds=int(data.get("num_rounds", 2)),
+            enable_da=data.get("enable_da", False),
+            enable_memory=data.get("enable_memory", False),
+            enable_tools=data.get("enable_tools", False),
+            num_rounds=data.get("num_rounds", 2),
             participants=data.get("participants", []),
         )
         return _json(eval_db.get_condition(cond_id), status=201)
 
     async def update_condition(request: web.Request) -> web.Response:
-        cond_id = int(request.match_info["id"])
+        cond_id = _path_id(request)
+        # Body first: no await may fall between the lookup and the write,
+        # or a concurrent delete turns the write into a foreign key 409.
+        data = await _read_object(request)
         if not eval_db.get_condition(cond_id):
             return _error("Condition not found", 404)
-        data = await _read_object(request)
         if data is None:
             return _error("Request body must be a JSON object")
-        kwargs = {}
-        for field in ("name", "description", "enable_da", "enable_memory",
-                       "enable_tools", "num_rounds"):
-            if field in data:
-                kwargs[field] = data[field]
+        problem = body_problem(data, CONDITION_FIELDS, CONDITION_REQUIRED,
+                               partial=True)
+        if problem:
+            return _error(problem)
+        kwargs = _stripped(data, ("name", "description", "enable_da",
+                                  "enable_memory", "enable_tools",
+                                  "num_rounds"))
         eval_db.update_condition(
             cond_id,
             participants=data.get("participants"),
@@ -169,7 +252,7 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.get_condition(cond_id))
 
     async def delete_condition(request: web.Request) -> web.Response:
-        cond_id = int(request.match_info["id"])
+        cond_id = _path_id(request)
         if not eval_db.get_condition(cond_id):
             return _error("Condition not found", 404)
         eval_db.delete_condition(cond_id)
@@ -183,7 +266,7 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.list_batches())
 
     async def get_batch(request: web.Request) -> web.Response:
-        batch_id = int(request.match_info["id"])
+        batch_id = _path_id(request)
         batch = eval_db.get_batch(batch_id)
         if not batch:
             return _error("Batch not found", 404)
@@ -196,6 +279,9 @@ def register_eval_routes(webapp: web.Application,
         data = await _read_object(request)
         if data is None:
             return _error("Request body must be a JSON object")
+        problem = body_problem(data, BATCH_FIELDS)
+        if problem:
+            return _error(problem)
         case_ids = data.get("case_ids", [])
         condition_ids = data.get("condition_ids", [])
         provider_url = data.get("provider_url", "").strip()
@@ -210,6 +296,12 @@ def register_eval_routes(webapp: web.Application,
             return _error("Provider URL is required")
         if not model:
             return _error("Model name is required")
+        # Checked up front: a bad id met mid-loop left a half-created batch.
+        unknown = ([f"case {i}" for i in case_ids if not eval_db.get_case(i)]
+                   + [f"condition {i}" for i in condition_ids
+                      if not eval_db.get_condition(i)])
+        if unknown:
+            return _error("Unknown " + ", ".join(unknown))
 
         # Create batch
         batch_name = f"eval-{time.strftime('%Y%m%d-%H%M%S')}"
@@ -231,10 +323,12 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.get_batch(batch_id), status=201)
 
     async def cancel_batch(request: web.Request) -> web.Response:
-        batch_id = int(request.match_info["id"])
+        batch_id = _path_id(request)
         batch = eval_db.get_batch(batch_id)
         if not batch:
             return _error("Batch not found", 404)
+        if batch["status"] in FINISHED_BATCH_STATUSES:
+            return _error(f"Batch already finished ({batch['status']})", 409)
 
         task = _active_batch_tasks.get(batch_id)
         if task and not task.done():
@@ -248,7 +342,7 @@ def register_eval_routes(webapp: web.Application,
     # ------------------------------------------------------------------
 
     async def get_run(request: web.Request) -> web.Response:
-        run_id = int(request.match_info["id"])
+        run_id = _path_id(request)
         run = eval_db.get_run(run_id)
         if not run:
             return _error("Run not found", 404)
@@ -257,7 +351,7 @@ def register_eval_routes(webapp: web.Application,
         return _json(run)
 
     async def score_run(request: web.Request) -> web.Response:
-        run_id = int(request.match_info["id"])
+        run_id = _path_id(request)
         run = eval_db.get_run(run_id)
         if not run:
             return _error("Run not found", 404)
@@ -275,7 +369,7 @@ def register_eval_routes(webapp: web.Application,
         failed judgement returns 502 with the reason and leaves any earlier
         ``llm_judge`` score in place.
         """
-        run_id = int(request.match_info["id"])
+        run_id = _path_id(request)
         run = eval_db.get_run(run_id)
         if not run:
             return _error("Run not found", 404)
