@@ -302,7 +302,7 @@ class TestStartBatch:
         async def no_execute(*args):
             return None
         monkeypatch.setattr(
-            "consensus.evaluation.eval_routes._execute_batch", no_execute)
+            "consensus.evaluation.eval_routes.execute_batch", no_execute)
         case_ids = [c["id"] for c in eval_db.list_cases()]
         cond_ids = [c["id"] for c in eval_db.list_conditions()][:2]
         # More cases than conditions, so a case id with no matching

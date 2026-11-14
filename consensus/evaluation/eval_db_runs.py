@@ -110,6 +110,16 @@ class RunsMixin:
             **kwargs,
         )
 
+    def close_pending_runs(self, batch_id: int, error_text: str) -> None:
+        """Mark a batch's unstarted runs as errors (runs have no
+        "cancelled" status), so none is left pending forever."""
+        with self._lock, self.conn:
+            self.conn.execute(
+                "UPDATE eval_runs SET status='error', error_text=? "
+                "WHERE batch_id=? AND status='pending'",
+                (error_text, batch_id),
+            )
+
     def list_runs(self, batch_id: int | None = None) -> list[dict]:
         if batch_id is not None:
             rows = self.conn.execute(

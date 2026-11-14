@@ -6,6 +6,7 @@ one-round baseline), and writes messages and the conclusion back to the
 eval DB. The in-memory CLI path lives in ``runner.py``.
 """
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -13,6 +14,7 @@ import time
 
 from consensus.app import ConsensusApp
 
+from consensus.evaluation.constants import AUTO_SCORE_FAILED_PREFIX
 from consensus.evaluation.runner_common import (
     MODERATOR_COLOR, MODERATOR_SYSTEM_PROMPT, MODERATOR_TEMPERATURE,
     PARTICIPANT_COLOR, PARTICIPANT_TEMPERATURE, SINGLE_CHAT_MAX_TOKENS,
@@ -20,6 +22,56 @@ from consensus.evaluation.runner_common import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def execute_batch(eval_db, batch_id: int, api_key: str = "") -> None:
+    """Execute all pending runs in a batch. Runs as a background task.
+
+    Each run is auto-scored after it finishes. A scoring failure is logged
+    and noted in the run's ``error_text`` but leaves it "done" — the run
+    itself succeeded and can be rescored (#114).
+    """
+    try:
+        eval_db.update_batch_status(batch_id, "running")
+        runs = eval_db.list_runs(batch_id)
+        pending = [r for r in runs if r["status"] == "pending"]
+
+        for run_data in pending:
+            run_id = run_data["id"]
+            try:
+                await run_case_condition_db(
+                    eval_db=eval_db,
+                    run_id=run_id,
+                    api_key=api_key,
+                )
+            except asyncio.CancelledError:
+                eval_db.update_run(run_id, status="error",
+                                   error_text="Cancelled",
+                                   completed_at=time.time())
+                raise
+            except Exception as e:
+                logger.exception("Run %d failed", run_id)
+                eval_db.update_run(
+                    run_id, status="error", error_text=str(e),
+                    completed_at=time.time(),
+                )
+                continue
+
+            try:
+                from consensus.evaluation.scorer import score_run_from_db
+                score_run_from_db(eval_db, run_id)
+            except Exception as e:
+                logger.exception("Auto-scoring run %d failed", run_id)
+                eval_db.update_run(
+                    run_id, error_text=f"{AUTO_SCORE_FAILED_PREFIX}{e}")
+
+        eval_db.update_batch_status(batch_id, "done", time.time())
+
+    except asyncio.CancelledError:
+        eval_db.update_batch_status(batch_id, "cancelled", time.time())
+    except Exception:
+        logger.exception("Batch %d failed", batch_id)
+        eval_db.update_batch_status(batch_id, "error", time.time())
 
 
 async def run_case_condition_db(

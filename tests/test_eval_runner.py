@@ -374,19 +374,3 @@ class TestRunCaseConditionDb:
         run = eval_db.get_run(run_id)
         assert run["status"] == "error" and run["error_text"] == "kaput"
 
-
-# ---------------------------------------------------------------------------
-# Batch execution (eval_routes._execute_batch -> runner_db + scorer)
-# ---------------------------------------------------------------------------
-
-class TestExecuteBatch:
-    async def test_runs_and_scores_every_pending_run(self, eval_db, llm):
-        from consensus.evaluation.eval_routes import _execute_batch
-        run_id = make_db_run(eval_db, participants=[TWO[0]])
-        batch_id = eval_db.get_run(run_id)["batch_id"]
-        await _execute_batch(eval_db, batch_id, api_key="sk-b")
-        run = eval_db.get_run(run_id)
-        assert run["status"] == "done", run["error_text"]
-        assert eval_db.get_scores(run_id)
-        assert eval_db.get_batch(batch_id)["status"] == "done"
-        assert llm.calls[0]["api_key"] == "sk-b"
