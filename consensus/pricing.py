@@ -1,5 +1,7 @@
 """Fetch and cache model pricing from OpenRouter."""
 
+import asyncio
+import json
 import logging
 import re
 import sqlite3
@@ -8,12 +10,16 @@ import time
 from typing import Optional
 from urllib.parse import urlparse
 
-import httpx
+from .http_fetch import fetch_capped
 
 logger = logging.getLogger(__name__)
 
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 PRICING_MAX_AGE_SECONDS = 7 * 24 * 3600  # 1 week
+#: Per-request timeout for the catalogue download, in seconds.
+PRICING_FETCH_TIMEOUT = 30.0
+#: Largest catalogue accepted (it is a few MB today).
+PRICING_MAX_BYTES = 32 * 1024 * 1024
 
 # Aliases: provider model names that differ from OpenRouter's naming
 # Format: "provider-model-name" → "openrouter/model-id"
@@ -56,6 +62,9 @@ class PricingCache:
         self._capability_refresh_attempted = False
         # Unknown models already refreshed for, so each costs one download.
         self._unknown_models_refreshed: set[str] = set()
+        # The one download in flight, if any (see refresh_in_background).
+        self._refresh_thread: Optional[threading.Thread] = None
+        self._refresh_thread_lock = threading.Lock()
 
     def _needs_refresh(self) -> bool:
         """Check if pricing data is stale (> 1 week old) or empty."""
@@ -75,41 +84,63 @@ class PricingCache:
         )
         return cur.fetchone() is None
 
-    def _refresh_for_unknown_model(self, model_name: str) -> bool:
-        """Refresh at most once per model for this cache (one per
-        ``Database``, so per ``ConsensusApp``) for a model it does not know.
+    def _refresh_for_unknown_model(self, model_name: str) -> None:
+        """Start a background refresh at most once per model for this cache
+        (one per ``Database``, so per ``ConsensusApp``) for a model it does
+        not know.
 
-        A model OpenRouter does not list (a local model, say) is still
-        unknown after the refresh; without this guard every message priced
-        for it re-downloaded the whole catalogue, blocking the event loop.
+        The lookup that triggers it still reports the model as unknown;
+        lookups after the download lands see it. A model OpenRouter does
+        not list (a local model, say) is still unknown after the refresh;
+        without this guard every message priced for it re-downloaded the
+        whole catalogue.
         shortcut: a model OpenRouter lists only later, or whose one refresh
-        failed, stays unpriced for this cache's lifetime; add a retry
-        interval if that matters (#115).
-
-        Returns True if a refresh succeeded, so the caller should look again.
+        failed after its retries, stays unpriced for this cache's lifetime;
+        add a retry interval if that matters.
         """
         if (model_name in self._unknown_models_refreshed
                 or not self.needs_refresh_for_model(model_name)):
-            return False
+            return
         self._unknown_models_refreshed.add(model_name)
-        return self.refresh()
+        self.refresh_in_background()
+
+    def refresh_in_background(self) -> Optional[threading.Thread]:
+        """Run :meth:`refresh` in a daemon thread, unless one is running.
+
+        Every lookup is reached from an event loop, and a download there
+        stalls every request for as long as the network takes (#115). The
+        running download fetches the whole catalogue, so it also covers any
+        model asked for while it is in flight.
+
+        Returns:
+            The started thread, or ``None`` if a download was in flight.
+        """
+        with self._refresh_thread_lock:
+            if self._refresh_thread and self._refresh_thread.is_alive():
+                return None
+            self._refresh_thread = threading.Thread(
+                target=self.refresh, name="pricing-refresh", daemon=True)
+            self._refresh_thread.start()
+            return self._refresh_thread
 
     def refresh(self) -> bool:
         """Fetch pricing from OpenRouter and update cache.
 
+        Blocks for the download, retries included, so call it off the event
+        loop: :meth:`refresh_in_background` does.
+
         Returns True if successful, False on failure.
         """
         try:
-            with httpx.Client(timeout=30.0) as client:
-                resp = client.get(OPENROUTER_MODELS_URL)
-                resp.raise_for_status()
-                data = resp.json()
+            body, _ = asyncio.run(fetch_capped(
+                OPENROUTER_MODELS_URL, max_bytes=PRICING_MAX_BYTES,
+                timeout=PRICING_FETCH_TIMEOUT))
+            models = json.loads(body).get("data", [])
         except Exception:
             logger.warning("Failed to fetch pricing from OpenRouter",
                            exc_info=True)
             return False
 
-        models = data.get("data", [])
         if not models:
             logger.warning("OpenRouter returned no models")
             return False
@@ -136,15 +167,22 @@ class PricingCache:
         if not rows:
             return False
 
-        with self._lock:
-            self._conn.executemany(
-                "INSERT OR REPLACE INTO model_pricing "
-                "(model_id, prompt_cost, completion_cost, last_updated,"
-                " input_modalities, context_length, supported_parameters) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                rows,
-            )
-            self._conn.commit()
+        try:
+            with self._lock:
+                self._conn.executemany(
+                    "INSERT OR REPLACE INTO model_pricing "
+                    "(model_id, prompt_cost, completion_cost, last_updated,"
+                    " input_modalities, context_length,"
+                    " supported_parameters) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    rows,
+                )
+                self._conn.commit()
+        except sqlite3.Error:
+            # E.g. a --multi-user session expired, closing its DB, mid-fetch.
+            logger.warning("Failed to store OpenRouter pricing",
+                           exc_info=True)
+            return False
 
         logger.info("Updated pricing for %d models from OpenRouter",
                      len(rows))
@@ -181,10 +219,11 @@ class PricingCache:
         self, model_name: str, base_url: str,
         prompt_tokens: int, completion_tokens: int,
     ) -> Optional[float]:
-        """Calculate cost in USD, refreshing pricing data once if model is unknown.
+        """Calculate cost in USD; an unknown model starts a background refresh.
 
-        Wraps ``calculate_cost`` with a single retry after refreshing the
-        pricing cache when the model is not yet known.
+        Wraps ``calculate_cost``: when the model is not yet known, the
+        pricing cache is refreshed in the background (once per model), so
+        later calls can price it.
 
         Args:
             model_name: The model identifier (e.g. "gpt-4o").
@@ -193,11 +232,11 @@ class PricingCache:
             completion_tokens: Number of completion/output tokens used.
 
         Returns:
-            Cost in USD, or None if pricing is unavailable even after refresh.
+            Cost in USD, or None if pricing is unavailable (yet).
         """
         cost = self.calculate_cost(model_name, base_url, prompt_tokens, completion_tokens)
-        if cost is None and self._refresh_for_unknown_model(model_name):
-            cost = self.calculate_cost(model_name, base_url, prompt_tokens, completion_tokens)
+        if cost is None:
+            self._refresh_for_unknown_model(model_name)
         return cost
 
     def has_input_modality(self, model_name: str, modality: str,
@@ -205,13 +244,12 @@ class PricingCache:
         """Check if a model supports a given input modality (e.g. "image").
 
         Uses the same fuzzy matching logic as ``lookup()``.
-        Refreshes the cache once if the model is unknown.
+        Refreshes the cache in the background once if the model is unknown.
         Returns True/False if the model is found, None if still unknown.
         """
         row = self._lookup_row(model_name, base_url)
-        if row is None and self._refresh_for_unknown_model(model_name):
-            row = self._lookup_row(model_name, base_url)
         if row is None:
+            self._refresh_for_unknown_model(model_name)
             return None
         modalities = (row["input_modalities"] or "text").lower().split(",")
         return modality.lower() in modalities
@@ -221,12 +259,11 @@ class PricingCache:
         """Return the context window size (in tokens) for a model, or None.
 
         Uses the same fuzzy matching logic as ``lookup()``.
-        Refreshes the cache once if the model is unknown.
+        Refreshes the cache in the background once if the model is unknown.
         """
         row = self._lookup_row(model_name, base_url)
-        if row is None and self._refresh_for_unknown_model(model_name):
-            row = self._lookup_row(model_name, base_url)
         if row is None:
+            self._refresh_for_unknown_model(model_name)
             return None
         return row.get("context_length")
 
@@ -235,26 +272,23 @@ class PricingCache:
         """Check if a model supports native tool/function calling.
 
         Uses the same fuzzy matching logic as ``lookup()`` and refreshes
-        the cache once if the model is unknown, or (at most once per
-        process) when the whole cache predates the
+        the cache in the background once if the model is unknown, or (at
+        most once per process) when the whole cache predates the
         ``supported_parameters`` column (migration 014) so the setup
-        gate works right after an upgrade.  Returns True/False when
+        gate works soon after an upgrade.  Returns True/False when
         OpenRouter reports the model's supported parameters, or None
         when the model — or its capability data — is unknown (e.g.
         local models).
         """
         row = self._lookup_row(model_name, base_url)
-        if row is None and self._refresh_for_unknown_model(model_name):
-            row = self._lookup_row(model_name, base_url)
         if row is None:
+            self._refresh_for_unknown_model(model_name)
             return None
         params = (row.get("supported_parameters") or "").strip()
         if (not params and not self._capability_refresh_attempted
                 and self._capability_data_missing()):
             self._capability_refresh_attempted = True
-            if self.refresh():
-                row = self._lookup_row(model_name, base_url) or row
-                params = (row.get("supported_parameters") or "").strip()
+            self.refresh_in_background()
         if not params:
             return None
         return "tools" in params.split(",")

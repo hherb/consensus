@@ -43,7 +43,8 @@ write serialisation).
 
 | Method | Purpose |
 |--------|---------|
-| `refresh()` | Fetch all model pricing from OpenRouter API, update SQLite cache. Returns `True` on success |
+| `refresh()` | Fetch all model pricing from OpenRouter API (via `http_fetch.fetch_capped`, so with retry and backoff), update SQLite cache. Returns `True` on success. Blocks, so never call it on the event loop |
+| `refresh_in_background()` | Run `refresh()` in a daemon thread unless a download is already in flight |
 | `lookup(model_name, base_url)` | Find pricing for a model. Returns `(prompt_cost, completion_cost)` or `None` |
 | `calculate_cost(model_name, base_url, prompt_tokens, completion_tokens)` | Calculate USD cost for a message. Returns `float` or `None` |
 | `needs_refresh_for_model(model_name)` | Check if the model is missing from cache |
@@ -53,6 +54,14 @@ write serialisation).
 - Pricing data is stored in the `model_pricing` SQLite table
 - Cache auto-refreshes when older than 7 days (`_needs_refresh()`)
 - `ConsensusApp` triggers a refresh check on startup
+- Every download runs in a background thread (issue #115). Lookups are
+  reached from the event loop, and in `--multi-user` mode a `ConsensusApp`
+  (with an empty pricing table) is built inside a request handler for each
+  new visitor. A lookup never waits for a download: a model the cache does
+  not know (or, on a cache from before migration 014, a model with no
+  capability data) starts one background refresh. That lookup returns
+  `None`; lookups after the download lands see the data. Each unknown model
+  starts at most one refresh per cache
 
 ### Model name matching
 

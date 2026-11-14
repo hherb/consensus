@@ -18,8 +18,9 @@ from consensus.models import (
 @pytest.fixture(autouse=True)
 def offline_pricing(monkeypatch):
     """Keep the suite off the network: ``PricingCache.refresh`` downloads
-    OpenRouter's catalogue on every app start and for unknown models.
-    Tests of the refresh itself patch the instance, which still wins."""
+    OpenRouter's catalogue (in a background thread) on app start with a
+    stale cache and for unknown models. Tests of the refresh itself patch
+    the instance, which still wins."""
     from consensus.pricing import PricingCache
     monkeypatch.setattr(PricingCache, "refresh", lambda self: False)
 

@@ -1,10 +1,10 @@
 # HANDOVER
 
 _Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices (through `eval_db.py`, PR #110) and the #104 rotation
-fix; the `evaluation/runner.py` slice plus #112/#113/#114 and a pricing fix are
-on `refactor/eval-runner-split-61` (suite at **3604 passing**). The
-discussion-method review & repair campaign (#12–#48,
+the merged #61 slices (through `evaluation/runner.py`, PR #116, with
+#112/#113/#114) and the #104 rotation fix; the #115 fix (pricing downloads off
+the event loop) is on `fix/pricing-refresh-off-loop-115` (suite at **3618
+passing**). The discussion-method review & repair campaign (#12–#48,
 #56–#60) is finished and merged; so is alpha/stable distribution (PyPI
 `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
@@ -31,33 +31,19 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3604 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 3618 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
 
-- **Method review & repair** — six defect classes (#12–#17), per-method fixes
-  (#19/#20/#21), phase-machine loops (#22), Belief Diffusion abort (#30),
-  structured outputs (#23), order-independent contribution merging (#42),
-  same-model panel warning (#29/#48), Double Crux pre-belief poll (#56),
-  blocked-Triage switch recovery, shared-helper dedup, `coerce_str` hardening.
-- **New methods** — Nominal Group Technique (#24), Weighted Decision Matrix /
-  MCDA (#25), Double Crux (#27), Tree of Thoughts (#26).
-- **Evidence-tracked phases** (#28) — `consensus/evidence.py`, opt-in
-  `Phase.track_evidence`; soft by design (annotate + log, never block) — see
-  `memory/evidence-gating-philosophy.md`.
-- **Structured-phase human input** (#57, #59, #60) —
-  `submit_human_structured_message` + `consensus/static/structured-form.js`.
-- **Method-flow E2E tests** — `tests/test_method_flow_e2e.py` drives NGT, MCDA,
-  Double Crux and ToT start→`method_complete` through the real pipeline.
-- **Provider resilience** (PR #64, #65) — `tool_choice` / sampling-parameter
-  400 downgrades in `ai_client._post_with_retry`; provider bodies surface in
-  skip notices (see ROADMAP "Provider API error resilience").
-- **Distribution** — PyPI + notarized DMG; runbook in
-  `memory/alpha-distribution-release-process.md`.
-- **Flow error visibility** (#71–#74) and **document failure visibility**
-  (#78) — pre-existing defects the #61 splits exposed; contracts below.
-- **Lint gate** (#86) — contract below.
+Method review & repair (#12–#30, #42, #48, #56); new methods NGT (#24), MCDA
+(#25), Double Crux (#27), Tree of Thoughts (#26); evidence-tracked phases
+(#28, soft by design — see `memory/evidence-gating-philosophy.md`);
+structured-phase human input (#57, #59, #60); method-flow E2E tests
+(`tests/test_method_flow_e2e.py`); provider resilience (PR #64, #65 — see
+ROADMAP); distribution (runbook in
+`memory/alpha-distribution-release-process.md`); flow and document failure
+visibility (#71–#74, #78) and the lint gate (#86) — contracts below.
 
 ## Flow error visibility (#71–#74, merged — keep these contracts)
 
@@ -210,6 +196,24 @@ next `start_discussion`, so they stay in memory and never rewrite the
 concluded record. Removing a non-member is an error. Tests:
 `tests/test_app_discussion_rotation.py` (each rule mutation-checked).
 
+## Pricing downloads (#115 — keep this contract)
+
+`PricingCache` lookups (`calculate_cost_with_refresh`, `has_input_modality`,
+`get_context_length`, `supports_tools`) are reached from the event loop.
+`SessionManager` also builds a `ConsensusApp`, with an empty pricing table,
+inside a request handler for every new `--multi-user` visitor. So **no lookup
+downloads inline.** Startup with a stale cache, an unknown model, and a cache
+from before migration 014 each call `refresh_in_background()`, which runs at
+most one download thread at a time. The lookup that triggered it returns
+`None`; later lookups see the data. `refresh()` goes through
+`http_fetch.fetch_capped` (retry/backoff) inside `asyncio.run` in that thread,
+and returns `False` on a fetch, parse, or DB failure, which happens when a
+session expires mid-download. Known limit: the setup tool-capability gate
+passes a model whose data has not landed yet (`supports_tools` → `None`). The
+structured turn then fails visibly. Tests: `tests/test_pricing_background.py`.
+The fixtures there restore the real `refresh` over conftest's autouse stub,
+and they join `_refresh_thread` before asserting.
+
 ## Open work
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
@@ -257,34 +261,18 @@ concluded record. Removing a non-member is an error. Tests:
    `IntegrityError` is still a 500. An in-use case or condition cannot be
    deleted (there is no run/batch delete route). Route tests:
    `tests/test_eval_routes_crud.py`.
-11. `evaluation/runner.py` (677 → 372): web path → `runner_db.py` (moved
-   verbatim, then fixed below; + `execute_batch`, formerly
-   `eval_routes._execute_batch`); both paths share `runner_common.py`
-   (`drive_turns`, `conclude`, prompt, constants), since the copies had
-   drifted. Net: `tests/test_eval_runner.py` (0% → 95%,
-   only `AIClient._post_with_retry` faked) and
-   `tests/test_eval_batch_execution.py`. Fixed: the web path stored runs
-   with a failed turn/summary/synthesis as `done` (now `error`); its BYOK
-   key went through a process-global env var that concurrent batches
-   clobbered (now the request-key ContextVar, **set even when empty** so
-   the starting request's BYOK keys, keyed by main-app provider ids, never
-   reach the temp app's providers that have the same ids); CLI results go to
-   `<data dir>/eval_results`. #114: a scoring failure leaves the run `done`,
-   noting `AUTO_SCORE_FAILED_PREFIX` in `error_text`; a rescore clears it.
-   #113: cancel stamps the interrupted run and closes the unstarted ones
-   (`error`; runs have no `cancelled` status); a batch task stopped any
-   other way (server shutdown, a failed DB write) closes its unstarted runs
-   too, and `register_eval_routes` closes whatever a crash or restart left
-   unfinished (`close_interrupted_batches`). A run error names the
-   exception type, so a text-less timeout is not blank; a discussion that
-   runs out of AI speakers early is an error, not `done`. The CLI exits 1
-   if any run failed. #112: `MAX_NUM_ROUNDS =
-   20` (owner's choice, mirrored in `eval.html`); a batch is capped at
-   `MAX_BATCH_RUNS = 1000` runs. Also: `PricingCache` re-downloaded
-   OpenRouter's catalogue on every lookup for an unknown model (each turn
-   on a local model, blocking the event loop); now once per model per
-   cache, i.e. per `ConsensusApp` — so once per eval run, whose temp app
-   is new. The blocking itself remains as #115.
+11. `evaluation/runner.py` (677 → 372, PR #116): web path → `runner_db.py`
+   (+ `execute_batch`); both paths share `runner_common.py`. Eval contracts:
+   a run with a failed turn/summary/synthesis, or one that runs out of AI
+   speakers, is `error`, not `done`, and its error names the exception type;
+   the BYOK key travels in the request-key ContextVar, **set even when
+   empty** (the temp app's provider ids collide with the main app's); a
+   scoring failure keeps the run `done` with `AUTO_SCORE_FAILED_PREFIX` in
+   `error_text` (#114); cancel, shutdown or a crash closes unstarted runs
+   (`close_interrupted_batches` on startup, #113); `MAX_NUM_ROUNDS = 20`
+   (mirrored in `eval.html`) and `MAX_BATCH_RUNS = 1000` (#112); the CLI
+   writes to `<data dir>/eval_results` and exits 1 if any run failed.
+   `PricingCache` tries each unknown model once per cache.
 
 **Facade guards.** A dropped re-export fails *late*: almost every consumer
 imports lazily inside function bodies (exception: `moderator.py` imports
@@ -417,7 +405,6 @@ likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
-#115 `PricingCache.refresh` is a synchronous HTTP call on the event loop;
 #107 a rotation change spans several commits (crash mid-update desyncs
 members and `method_state`); #102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
 budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #99 route test for the image-serve CSP (fix landed in PR #100; needs a

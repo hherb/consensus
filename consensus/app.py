@@ -68,10 +68,10 @@ class ConsensusApp(
         self._load_mcp_config()
 
     def _refresh_pricing_if_needed(self) -> None:
-        """Refresh pricing cache on startup if stale or missing models."""
+        """Refresh pricing cache in the background on startup if stale."""
         try:
             if self.db.pricing._needs_refresh():
-                self.db.pricing.refresh()
+                self.db.pricing.refresh_in_background()
         except Exception:
             logger.warning("Failed to refresh pricing on startup", exc_info=True)
 
