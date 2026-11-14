@@ -282,3 +282,31 @@ class TestSupportsTools:
             assert pricing_cache.supports_tools("gpt-4o") is None
             assert pricing_cache.supports_tools("gpt-4o-mini") is None
         refresh.assert_called_once()
+
+
+class TestUnknownModelRefreshOnce:
+    """A model OpenRouter does not list (e.g. a local Ollama model) stays
+    unknown after a refresh; it must not re-download the whole catalogue
+    — a blocking call on the event loop — for every message priced."""
+
+    LOOKUPS = [
+        lambda c: c.calculate_cost_with_refresh("llama3", "", 10, 10),
+        lambda c: c.has_input_modality("llama3", "image"),
+        lambda c: c.get_context_length("llama3"),
+        lambda c: c.supports_tools("llama3"),
+    ]
+
+    def test_one_refresh_across_every_lookup(self, pricing_cache):
+        with patch.object(pricing_cache, "refresh",
+                          return_value=False) as refresh:
+            for _ in range(3):
+                for lookup in self.LOOKUPS:
+                    assert lookup(pricing_cache) is None
+        refresh.assert_called_once()
+
+    def test_each_unknown_model_gets_its_own_refresh(self, pricing_cache):
+        with patch.object(pricing_cache, "refresh",
+                          return_value=False) as refresh:
+            pricing_cache.get_context_length("llama3")
+            pricing_cache.get_context_length("mistral")
+        assert refresh.call_count == 2

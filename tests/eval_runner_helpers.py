@@ -15,7 +15,6 @@ import httpx
 import pytest
 
 from consensus.ai_client import AIClient
-from consensus.pricing import PricingCache
 
 #: Tokens the fake provider reports per completion.
 TOKENS_PER_CALL = 7
@@ -66,8 +65,6 @@ def llm(monkeypatch) -> FakeLLM:
         return fake.respond(self, url, payload)
 
     monkeypatch.setattr(AIClient, "_post_with_retry", fake_post)
-    # Pricing is fetched from OpenRouter on startup and for unknown models.
-    monkeypatch.setattr(PricingCache, "refresh", lambda self: False)
     return fake
 
 
