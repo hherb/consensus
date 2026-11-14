@@ -130,7 +130,8 @@ CONFLICT_MESSAGES: Mapping[str, str] = {
         "A case with that case_key already exists",
     "UNIQUE constraint failed: conditions.name":
         "A condition with that name already exists",
-    # Only a delete can hit a foreign key: start_batch checks ids first.
+    # Only a delete can hit a foreign key: start_batch and the updates
+    # check ids with no await before they write.
     "FOREIGN KEY constraint failed":
         "This case or condition is used by evaluation runs, so it cannot "
         "be deleted",

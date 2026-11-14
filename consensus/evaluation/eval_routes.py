@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
+from consensus.evaluation.constants import SQLITE_MAX_INTEGER
 from consensus.evaluation.eval_db import EvalDatabase
 from consensus.evaluation.request_checks import (
     BATCH_FIELDS,
@@ -91,9 +92,23 @@ async def _read_object(request: web.Request) -> dict | None:
     """The request's JSON body if it is an object, else None."""
     try:
         data = await request.json()
-    except ValueError:
+    except (ValueError, LookupError):  # LookupError: an unknown charset
         return None
     return data if isinstance(data, dict) else None
+
+
+def _path_id(request: web.Request) -> int:
+    """The URL's ``{id}``, or 0 (never a row id) if SQLite cannot store it.
+
+    The route only promises digits; a bigger number would reach SQLite as
+    an ``OverflowError`` (a 500), so 0 lets the handler's lookup answer 404.
+    """
+    raw = request.match_info["id"].lstrip("0")
+    # Length first: int() refuses strings over 4300 digits with ValueError.
+    if len(raw) > len(str(SQLITE_MAX_INTEGER)):
+        return 0
+    value = int(raw or "0")
+    return value if value <= SQLITE_MAX_INTEGER else 0
 
 
 def register_eval_routes(webapp: web.Application,
@@ -138,10 +153,12 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.get_case(case_id), status=201)
 
     async def update_case(request: web.Request) -> web.Response:
-        case_id = int(request.match_info["id"])
+        case_id = _path_id(request)
+        # Body first: no await may fall between the lookup and the write,
+        # or a concurrent delete turns the write into a foreign key 409.
+        data = await _read_object(request)
         if not eval_db.get_case(case_id):
             return _error("Case not found", 404)
-        data = await _read_object(request)
         if data is None:
             return _error("Request body must be a JSON object")
         problem = body_problem(data, CASE_FIELDS, CASE_REQUIRED,
@@ -163,7 +180,7 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.get_case(case_id))
 
     async def delete_case(request: web.Request) -> web.Response:
-        case_id = int(request.match_info["id"])
+        case_id = _path_id(request)
         if not eval_db.get_case(case_id):
             return _error("Case not found", 404)
         eval_db.delete_case(case_id)
@@ -195,10 +212,12 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.get_condition(cond_id), status=201)
 
     async def update_condition(request: web.Request) -> web.Response:
-        cond_id = int(request.match_info["id"])
+        cond_id = _path_id(request)
+        # Body first: no await may fall between the lookup and the write,
+        # or a concurrent delete turns the write into a foreign key 409.
+        data = await _read_object(request)
         if not eval_db.get_condition(cond_id):
             return _error("Condition not found", 404)
-        data = await _read_object(request)
         if data is None:
             return _error("Request body must be a JSON object")
         problem = body_problem(data, CONDITION_FIELDS, CONDITION_REQUIRED,
@@ -218,7 +237,7 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.get_condition(cond_id))
 
     async def delete_condition(request: web.Request) -> web.Response:
-        cond_id = int(request.match_info["id"])
+        cond_id = _path_id(request)
         if not eval_db.get_condition(cond_id):
             return _error("Condition not found", 404)
         eval_db.delete_condition(cond_id)
@@ -232,7 +251,7 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.list_batches())
 
     async def get_batch(request: web.Request) -> web.Response:
-        batch_id = int(request.match_info["id"])
+        batch_id = _path_id(request)
         batch = eval_db.get_batch(batch_id)
         if not batch:
             return _error("Batch not found", 404)
@@ -289,7 +308,7 @@ def register_eval_routes(webapp: web.Application,
         return _json(eval_db.get_batch(batch_id), status=201)
 
     async def cancel_batch(request: web.Request) -> web.Response:
-        batch_id = int(request.match_info["id"])
+        batch_id = _path_id(request)
         batch = eval_db.get_batch(batch_id)
         if not batch:
             return _error("Batch not found", 404)
@@ -306,7 +325,7 @@ def register_eval_routes(webapp: web.Application,
     # ------------------------------------------------------------------
 
     async def get_run(request: web.Request) -> web.Response:
-        run_id = int(request.match_info["id"])
+        run_id = _path_id(request)
         run = eval_db.get_run(run_id)
         if not run:
             return _error("Run not found", 404)
@@ -315,7 +334,7 @@ def register_eval_routes(webapp: web.Application,
         return _json(run)
 
     async def score_run(request: web.Request) -> web.Response:
-        run_id = int(request.match_info["id"])
+        run_id = _path_id(request)
         run = eval_db.get_run(run_id)
         if not run:
             return _error("Run not found", 404)
@@ -333,7 +352,7 @@ def register_eval_routes(webapp: web.Application,
         failed judgement returns 502 with the reason and leaves any earlier
         ``llm_judge`` score in place.
         """
-        run_id = int(request.match_info["id"])
+        run_id = _path_id(request)
         run = eval_db.get_run(run_id)
         if not run:
             return _error("Run not found", 404)

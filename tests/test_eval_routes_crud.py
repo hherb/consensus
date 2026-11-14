@@ -283,3 +283,39 @@ class TestConflictMiddlewareScope:
                 sqlite3.OperationalError("disk I/O error")) as c:
             resp = await c.post("/eval/api/thing", json={})
             assert resp.status == 500
+
+    async def test_unknown_integrity_errors_keep_their_500(self, eval_db):
+        # A CHECK/NOT NULL failure is a server bug, not the caller's conflict.
+        async with await self._client_raising(
+                eval_db, "/eval/api/thing",
+                sqlite3.IntegrityError(
+                    "NOT NULL constraint failed: cases.title")) as c:
+            resp = await c.post("/eval/api/thing", json={})
+            assert resp.status == 500
+
+
+class TestUnstorableInput:
+    """Input SQLite or the JSON decoder cannot take is a 4xx, not a 500."""
+
+    @pytest.mark.parametrize("method,path", [
+        ("PUT", "/eval/api/cases/{}"),
+        ("DELETE", "/eval/api/cases/{}"),
+        ("PUT", "/eval/api/conditions/{}"),
+        ("DELETE", "/eval/api/conditions/{}"),
+        ("GET", "/eval/api/batches/{}"),
+        ("POST", "/eval/api/batches/{}/cancel"),
+        ("GET", "/eval/api/runs/{}"),
+        ("POST", "/eval/api/runs/{}/score"),
+        ("POST", "/eval/api/runs/{}/judge"),
+    ])
+    @pytest.mark.parametrize("raw_id", [str(TOO_BIG), "9" * 5000])
+    async def test_oversized_path_id_is_404(self, client, method, path,
+                                            raw_id):
+        resp = await client.request(method, path.format(raw_id), json={})
+        assert resp.status == 404, await resp.text()
+
+    async def test_unknown_charset_is_400(self, client):
+        resp = await client.post(
+            "/eval/api/cases", data=b"{}",
+            headers={"Content-Type": "application/json; charset=bogus"})
+        assert resp.status == 400, await resp.text()

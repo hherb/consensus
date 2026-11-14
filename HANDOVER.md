@@ -2,7 +2,7 @@
 
 _Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices and the #104 rotation fix; the `evaluation/eval_db.py`
-slice and the #109 fix are on `refactor/eval-db-split-61` (suite at **3503
+slice and the #109 fix are on `refactor/eval-db-split-61` (suite at **3523
 passing**). The discussion-method review & repair campaign (#12–#48,
 #56–#60) is finished and merged; so is alpha/stable distribution (PyPI
 `consensus-app` + notarized macOS DMG), the public website, the
@@ -30,7 +30,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3503 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3523 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -241,9 +241,10 @@ concluded record. Removing a non-member is an error. Tests:
    covers desktop's bare eval app too) with a JSON-object body (400);
    **`/eval/` is not mounted in `--multi-user` mode**; the judge's BYOK key
    is held only in the input field, never `sessionStorage` (CodeQL).
-   `JUDGE_DIMENSIONS` is mirrored in `static/eval_scoring.js` and the
-   judge prompt (`tests/test_eval_judge_robustness.py` checks the drift).
-   `static/eval.js` (645) is pre-existing over the limit.
+   `JUDGE_DIMENSIONS` is mirrored in `evaluation/static/eval_scoring.js`
+   and the judge prompt (`tests/test_eval_judge_robustness.py` checks the
+   drift). `evaluation/static/eval.js` (645) is pre-existing over the
+   limit.
 10. `evaluation/eval_db.py` (600 → 86) → `EvalDatabase` composes
    `CatalogMixin` (`eval_db_catalog.py`, cases + conditions),
    `RunsMixin` (`eval_db_runs.py`, batches/runs/messages/scores) and
@@ -259,9 +260,10 @@ concluded record. Removing a non-member is an error. Tests:
    `with self._lock, self.conn` (commit or roll back). Caveat:
    `update_case`/`update_condition` are still two transactions (scalar
    row, then child rows); safe today because only the scalar `UPDATE` can
-   fail (a duplicate key/name), and tests pin "409 leaves the row
-   unchanged". Seeding no longer swallows a failed import of the built-in
-   cases/conditions. Same PR: **#109** — eval routes check field types in
+   fail (a duplicate key/name; the route reads the body before its lookup,
+   so no `await` lets a delete in before the child rows), and tests pin
+   "409 leaves the row unchanged". Seeding no longer swallows a failed
+   import of the built-in cases/conditions. Same PR: **#109** — eval routes check field types in
    `evaluation/request_checks.py` (pure, table-driven; ints capped at
    `SQLITE_MAX_INTEGER`) and answer 400. `_constraint_conflicts` (acts on
    `/eval/api/` only — in web mode it sits on the main app) maps the
@@ -269,7 +271,9 @@ concluded record. Removing a non-member is an error. Tests:
    key / condition name, deleting a case or condition runs still use) to a
    409 and re-raises any other `IntegrityError` as a 500. There is no route
    to delete a run or batch, so an in-use case/condition cannot be deleted
-   at all. `start_batch` checks ids before creating anything. Route tests:
+   at all. `start_batch` checks ids before creating anything. A path id
+   too big for SQLite is a 404 (`_path_id`), an unknown body charset a
+   400. Route tests:
    `tests/test_eval_routes_crud.py`. Enum sets mirroring the schema's
    `CHECK`s live in `evaluation/constants.py`.
 
