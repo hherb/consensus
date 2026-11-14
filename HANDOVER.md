@@ -1,10 +1,11 @@
 # HANDOVER
 
 _Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices (through `evaluation/runner.py`, PR #116, with
-#112/#113/#114), the #104 rotation fix, and the #115/#118 pricing fixes (PRs
-#117/#119). The twelfth #61 slice (`mcp_server.py` → `mcp_server/`, plus the
-defects its net found) is on `refactor/split-mcp-server-61` (suite at **3721
+the merged #61 slices (through `mcp_server.py` → `mcp_server/`, PR #120),
+the #104 rotation fix, and the #115/#118 pricing fixes (PRs #117/#119). The
+#121 fix (MCP tool failures are `isError` results) is PR #122
+(`fix/mcp-tool-errors-121`); the thirteenth #61 slice (`desktop.py` →
+`desktop/`) is stacked on it as `refactor/split-desktop-61` (suite at **3856
 passing**). The discussion-method review & repair campaign (#12–#48,
 #56–#60) is finished and merged; so is alpha/stable distribution (PyPI
 `consensus-app` + notarized macOS DMG), the public website, the
@@ -14,8 +15,8 @@ open structural issue is **#61** (modules over the ~500-line golden rule):
 `app_discussion_flow`, `tools_document`, `app.py` (→ `app_api/` mixins),
 `tools_memory`, `tools_python`, `tools_image`, `methods/base.py`,
 `app_discussion_setup.py`, `evaluation/scorer.py`, `evaluation/eval_db.py`,
-`evaluation/runner.py` and `mcp_server.py` are split; four modules remain over
-the limit. **#86**
+`evaluation/runner.py`, `mcp_server.py` and `desktop.py` are split; three
+modules remain over the limit. **#86**
 (lint gate) is done: zero `ruff --select F` findings in `consensus/`, enforced
 by `tests/test_lint.py`._
 
@@ -33,7 +34,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3721 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 3856 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -100,12 +101,9 @@ narrative is in git history and PR #76.
   one layer down in `ai_client._post_with_retry`, so the flow layer sees only
   exhausted failures.
 
-**Testing lesson worth keeping.** The unreachable-#72 defect stayed green
-because the tests patched `MethodRecommender.recommend` with
-`AsyncMock(side_effect=...)` — asserting a raising contract the real class did
-not have. When a test mocks the thing whose behaviour it is meant to be
-testing, it proves nothing; mock one layer further out (the `AIClient`).
-Contracts are covered by `tests/test_flow_error_visibility.py`,
+**Testing lesson.** #72 stayed green because tests mocked the very method
+under test (`MethodRecommender.recommend`); mock one layer further out (the
+`AIClient`). Contracts are covered by `tests/test_flow_error_visibility.py`,
 `tests/test_flow_error_classification.py`,
 `tests/test_flow_triage_recommender.py` and
 `tests/test_flow_moderator_actions.py`.
@@ -232,7 +230,7 @@ interpreter).
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-**Done — twelve slices** (detail in git history; one PR each):
+**Done — thirteen slices** (detail in git history; one PR each):
 
 1. `app_discussion_flow.py` → `app_discussion_flow/`. **Watch `turns.py`
    (499)**: the next addition crosses the limit — split then.
@@ -269,7 +267,11 @@ interpreter).
    the defects it found in `tests/test_mcp_server_robustness.py` (shared
    fixtures in `tests/mcp_server_helpers.py`), guard in
    `tests/test_mcp_server_facade.py` (also checks the `consensus-mcp` entry
-   point). Contracts: `run_discussion` reports **`turn_errors`** (skipped
+   point). Contracts: **a failed tool call is an `isError` result** — a
+   handler raises `mcp_server/errors.py` `ToolError` (logged at WARNING,
+   no traceback) rather than returning `"Error: ..."` text (#121, pinned
+   per handler in `tests/test_mcp_server_tool_errors.py`); `run_discussion`
+   reports **`turn_errors`** (skipped
    turns), **`error`** (why the loop stopped early — a failed `complete_turn`
    now stops it instead of re-running the turn until the timeout, and an
    exception in the loop is reported and the run still concluded),
@@ -281,18 +283,27 @@ interpreter).
    temporary `ConsensusApp` is `shutdown()` after each call (MCP providers
    only); its DB connection is still never closed (it goes with GC; closing
    it under the pricing thread would segfault — join that first).
+13. `desktop.py` (636) → `desktop/` package: `bridge.py` (`DesktopBridge`:
+   loop, pushes, image data URL, eval server) composing `catalog.py` /
+   `discussion.py` / `files.py` mixins, `launcher.py`, `constants.py`. Net
+   (36% → 99% before the move): `tests/test_desktop_bridge_api.py` pins the
+   pywebview-exposed method set (`BRIDGE_API`) against every
+   `pywebview.api.X` call in `static/` and checks each forward to
+   `ConsensusApp`, sync or via `_run_async`; `tests/test_desktop_bridge.py`
+   covers pushes, gates, file dialogs (a `FakeWindow` in
+   `tests/desktop_helpers.py`), the eval server and `launch_desktop` (a fake
+   `webview` module). Guard: `tests/test_desktop_facade.py`. The one
+   non-verbatim edit: `launcher.py` resolves `pkg_dir` one level up, so
+   `static/` and the icon still resolve (pinned by the launcher tests). **A
+   new bridge method goes in a mixin and in `BRIDGE_API`.**
 
-**Facade guards.** A dropped re-export fails *late*: almost every consumer
-imports lazily inside function bodies (exception: `moderator.py` imports
-`is_vision_capable` / `build_image_content_blocks` at module level, so a
-dropped one of those fails at app import), and `app._init_memory_tools` /
-`_init_document_tools` / `_init_python_tools` / `_init_image_tools` turn an `ImportError` into "feature unavailable" (now
-logged at WARNING; it was INFO before the tools_memory slice, so a broken facade quietly
-disabled the feature). `tests/test_app_discussion_flow_facade.py`,
-`test_tools_document_facade.py`, `test_tools_memory_facade.py`,
-`test_tools_python_facade.py` and `test_tools_image_facade.py` pin
-`__all__` by identity and AST-scan **every module under `consensus/`** for
-call sites. Keep them in step when the public API changes.
+**Facade guards.** A dropped re-export fails *late*: consumers mostly import
+lazily inside function bodies (`moderator.py` imports `is_vision_capable` /
+`build_image_content_blocks` at module level), and the `app._init_*_tools`
+methods turn an `ImportError` into "feature unavailable" (logged at
+WARNING). Each split package has a `tests/test_<package>_facade.py` that pins
+`__all__` by identity and AST-scans every module under `consensus/` for call
+sites. Keep them in step when the public API changes.
 
 **Still over the limit**, with statement coverage from the full suite
 (`uv run --with pytest-cov pytest --cov=consensus`):
@@ -301,20 +312,20 @@ call sites. Keep them in step when the public API changes.
 |------:|------:|------|
 | 1241 | **0%** | `consensus/server.py` |
 | 787 | 49% | `consensus/auth.py` |
-| 775 | 59% | `consensus/moderator.py` (one `Moderator` class) |
-| 636 | 35% | `consensus/desktop.py` |
+| 775 | 71% | `consensus/moderator.py` (one `Moderator` class, 23 methods) |
 
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next target.** The cheap free-function splits are used up: every module
-left is one class (`Moderator`, `DesktopBridge`), a security-critical module
-(`auth.py`), or `server.py`'s closures. `desktop.py` (636, 35%) is the
-smallest; split it by method group into mixins, the way `app.py` → `app_api/`
-and `mcp_server/` went. Build the net first: it needs a fake pywebview
-`window`, and most bridge methods are thin `_run_async` wrappers over
-`ConsensusApp`, so drive them against a real app on `tmp_db` with the `llm`
-fake from `tests/eval_runner_helpers.py`.
+**Next target.** Every module left is one class (`Moderator`), a
+security-critical module (`auth.py`), or `server.py`'s closures.
+`moderator.py` (775, 71%) is the natural next one: split `Moderator` by
+method group into mixins, the way `app_api/`, `mcp_server/` and `desktop/`
+went. Build the net first, through `generate_turn` and the summary paths with
+the `llm` fake from `tests/eval_runner_helpers.py` (fake at
+`AIClient._post_with_retry`, not at `Moderator`). Remember `moderator.py`
+imports `is_vision_capable` / `build_image_content_blocks` at module level
+(see Facade guards).
 
 **`server.py` is the awkward one — read this before picking it.** It is a
 single 1170-line `launch_web()` whose middleware and ~35 handlers are all
@@ -331,13 +342,11 @@ missing route tests first.
    suite proved nothing about it and the net had to be built first (152
    characterization tests, 100% coverage, committed *before* a line moved).
    A split of an untested module is not verified by a green suite.
-1. Move code by line range (`sed -n 'a,bp'`) so it transfers verbatim, then
-   diff each moved range back against `git show HEAD:<file>` — every range
-   should come out byte-identical, and every non-blank line of the original
-   should be accounted for by some range. (A throwaway script that assembles
-   the new files from `(start, end)` ranges, then checks each range back
-   with the import-depth edits undone, did this in one pass for
-   `mcp_server`.)
+1. Move code by line range so it transfers verbatim, with a throwaway
+   script that assembles the new files from `(start, end)` ranges and checks
+   each range back against `git show HEAD:<file>` (known edits undone) plus
+   that every non-blank original line is placed once — one pass did it for
+   `mcp_server` and `desktop`.
 2. Fix relative-import depth for anything nested one level deeper
    (`from .x` → `from ..x`), **including imports inside function bodies** —
    these are the ones that fail at runtime rather than at collection.
@@ -364,28 +373,20 @@ missing route tests first.
    the characterization tests were written against the old shape. On the
    `tools_document` slice three such mutations survived the whole suite at 100% coverage.
    Coverage measures lines executed, not behaviour constrained.
-7. Update the docs that name the old module file — `CLAUDE.md`, `README.md`,
-   `docs/BUILTIN_TOOLS.md`, `docs/devel/01-getting-started.md`,
-   `02-architecture.md`, `08-tool-use.md`, `programmer-manual.md` all carry
-   module inventories. Check the *content* beside the name too: the `doc_*`
-   parameter tables in `BUILTIN_TOOLS.md` and `08-tool-use.md` had been wrong
-   for four of eight tools, in the very blocks earlier PRs edited to fix the
-   module name.
+7. Update the docs that name the old module file (`grep -rn "<name>\.py"
+   --include='*.md'`: `CLAUDE.md`, `README.md`, `docs/devel/*`,
+   `docs/BUILTIN_TOOLS.md`). Check the *content* beside the name too — the
+   `doc_*` tables and the desktop bridge method list were both wrong in
+   blocks earlier PRs had edited only for the module name.
 
-**Writing the safety net, if the target is untested.** Mock one layer further
-out than the code under test: real `Database` (the `tmp_db` fixture), fakes
-only at the network edges. Shared fakes go in a `tests/*_helpers.py` module,
-following `tests/flow_e2e_helpers.py`. `tests/document_helpers.py` has a
-`patch_where_defined(monkeypatch, anchor, name, replacement)` that resolves
-the target through `sys.modules[anchor.__module__]`, so the tests stay valid
-across the split without naming module paths that are about to change — worth
-copying for the next one. Drive handlers through the entry point production
-uses (e.g. `create_memory_provider(db).execute(name, args, ctx)`) rather than
-importing private handler functions, so the tests need no edits when the
-split moves them. **Grep for duplicated logic while writing the net** — two
-copies of the same bookkeeping that have drifted apart (as the two
-lazy-indexing sites in `tools_memory` and `context_strategies` had) are the
-likeliest pre-existing bug.
+**Writing the safety net, if the target is untested.** Real `Database`
+(`tmp_db`), fakes only at the network/GUI edges, shared fakes in a
+`tests/*_helpers.py` module. `tests/document_helpers.py`
+`patch_where_defined(monkeypatch, anchor, name, replacement)` patches through
+`sys.modules[anchor.__module__]`, so tests survive the move. Drive code
+through the entry point production uses, not private functions. **Grep for
+duplicated logic while writing the net** — drifted copies of the same
+bookkeeping are the likeliest pre-existing bug.
 
 ### Deferred follow-ups (no issue filed)
 
@@ -415,8 +416,7 @@ likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
-#121 MCP server tool validation failures come back as successful results
-(no `isError`); #107 a rotation change spans several commits (crash mid-update desyncs
+#107 a rotation change spans several commits (crash mid-update desyncs
 members and `method_state`); #102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
 budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #99 route test for the image-serve CSP (fix landed in PR #100; needs a
 `server.py` route-test harness); #97 Seatbelt profile does not confine writes; #96 no UI flag when

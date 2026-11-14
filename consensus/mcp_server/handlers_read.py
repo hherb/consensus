@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+from .errors import ToolError
+
 
 class ReadHandlersMixin:
     """Handlers that read discussions, entities, documents, memories and the
@@ -33,7 +35,7 @@ class ReadHandlersMixin:
         discussion_id = int(args["discussion_id"])
         data = app_discussion_state.get_export_data(self._db, discussion_id)
         if "error" in data:
-            return f"Error: {data['error']}"
+            raise ToolError(data['error'])
         include_msgs = args.get("include_messages", True)
         include_sb = args.get("include_storyboard", True)
         if not include_msgs:
@@ -73,7 +75,7 @@ class ReadHandlersMixin:
         if section:
             doc = self._db.get_document(doc_id)
             if not doc:
-                return "Error: Document not found."
+                raise ToolError("Document not found.")
             sections_raw = doc.get("sections_json", "[]")
             try:
                 sections = json.loads(sections_raw) if sections_raw else []
@@ -89,10 +91,11 @@ class ReadHandlersMixin:
                     doc_id, target["from_char"], target["to_char"])
                 text = "\n".join(c["content"] for c in chunks)
                 return text or "Section found but no content."
-            return f"Section '{section}' not found. Available: {[s['header'] for s in sections]}"
+            raise ToolError(f"Section '{section}' not found. "
+                            f"Available: {[s['header'] for s in sections]}")
         markdown = self._db.get_document_markdown(doc_id)
         if markdown is None:
-            return "Error: Document not found."
+            raise ToolError("Document not found.")
         return markdown
 
     # -----------------------------------------------------------------------
@@ -103,14 +106,14 @@ class ReadHandlersMixin:
         from ..tools_memory import _rank_by_similarity
         query = args.get("query", "").strip()
         if not query:
-            return "Error: No query provided."
+            raise ToolError("No query provided.")
         limit = int(args.get("limit", 5))
         topic_filter = args.get("topic_filter")
         try:
             embed = self._get_embed_client()
             query_vec = await embed.embed(query)
         except Exception as e:
-            return f"Embedding service unavailable: {e}"
+            raise ToolError(f"Embedding service unavailable: {e}") from e
         rows = self._db.get_messages_with_embeddings(topic_filter)
         if not rows:
             return "No indexed discussion messages found."
@@ -126,13 +129,13 @@ class ReadHandlersMixin:
         entity_id = self._resolve_entity_id(int(args.get("entity_id", 0)))
         query = args.get("query", "").strip()
         if not query:
-            return "Error: No query provided."
+            raise ToolError("No query provided.")
         limit = int(args.get("limit", 5))
         try:
             embed = self._get_embed_client()
             query_vec = await embed.embed(query)
         except Exception as e:
-            return f"Embedding service unavailable: {e}"
+            raise ToolError(f"Embedding service unavailable: {e}") from e
         await backfill_embeddings(self._db.get_unembedded_entity_memories(entity_id),
                                   embed, self._db.set_entity_memory_embedding, "memory")
         rows = self._db.get_entity_memories_with_embeddings(entity_id)
@@ -148,13 +151,13 @@ class ReadHandlersMixin:
         from ..tools_memory import _rank_by_similarity
         query = args.get("query", "").strip()
         if not query:
-            return "Error: No query provided."
+            raise ToolError("No query provided.")
         limit = int(args.get("limit", 5))
         try:
             embed = self._get_embed_client()
             query_vec = await embed.embed(query)
         except Exception as e:
-            return f"Embedding service unavailable: {e}"
+            raise ToolError(f"Embedding service unavailable: {e}") from e
         rows = self._db.get_all_chunks_with_embeddings()
         if not rows:
             return "No indexed documents found."
@@ -169,7 +172,7 @@ class ReadHandlersMixin:
         from ..tools_memory import _rank_by_similarity, backfill_embeddings
         query = args.get("query", "").strip()
         if not query:
-            return "Error: No query provided."
+            raise ToolError("No query provided.")
         mode = args.get("mode", "search")
         limit = int(args.get("limit", 5))
 
@@ -193,7 +196,7 @@ class ReadHandlersMixin:
             embed = self._get_embed_client()
             query_vec = await embed.embed(query)
         except Exception as e:
-            return f"Embedding service unavailable: {e}"
+            raise ToolError(f"Embedding service unavailable: {e}") from e
         await backfill_embeddings(self._db.get_unembedded_kg_nodes(), embed,
                                   self._db.set_kg_node_embedding, "kg node")
         rows = self._db.get_kg_nodes_with_embeddings()

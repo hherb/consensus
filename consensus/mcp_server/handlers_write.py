@@ -14,6 +14,7 @@ from .constants import (
     AGENT_ENTITY_NAME, AUTO_SELECT_ENTITIES, DEFAULT_COST_LIMIT_USD,
     DEFAULT_MAX_ROUNDS, RUN_DISCUSSION_TIMEOUT_SECONDS,
 )
+from .errors import ToolError
 
 if TYPE_CHECKING:
     from ..app import ConsensusApp
@@ -39,7 +40,7 @@ class WriteHandlersMixin:
     async def _handle_store_memory(self, args: dict) -> str:
         content = args.get("content", "").strip()
         if not content:
-            return "Error: No content provided."
+            raise ToolError("No content provided.")
         entity_id = self._resolve_entity_id(int(args.get("entity_id", 0)))
         memory_id = str(uuid.uuid4())
         self._db.add_entity_memory(
@@ -61,13 +62,13 @@ class WriteHandlersMixin:
     async def _handle_delete_memory(self, args: dict) -> str:
         memory_id = args.get("memory_id", "").strip()
         if not memory_id:
-            return "Error: No memory_id provided."
+            raise ToolError("No memory_id provided.")
         # HARD RULE: can only delete own agent's memories
         agent_id = self._get_agent_entity_id()
         deleted = self._db.delete_entity_memory(memory_id, agent_id)
         if deleted:
             return f"Memory {memory_id} deleted."
-        return "Memory not found or does not belong to this agent."
+        raise ToolError("Memory not found or does not belong to this agent.")
 
     async def _handle_assert_knowledge(self, args: dict) -> str:
         subject = args.get("subject", "").strip()
@@ -75,7 +76,7 @@ class WriteHandlersMixin:
         obj = args.get("object", "").strip()
         description = args.get("description", "").strip() or None
         if not subject or not relation or not obj:
-            return "Error: subject, relation, and object are all required."
+            raise ToolError("subject, relation, and object are all required.")
         # Upsert subject node
         subj_row = self._db.get_kg_node_by_label(subject)
         if not subj_row:
@@ -116,7 +117,7 @@ class WriteHandlersMixin:
 
         topic = args.get("topic", "").strip()
         if not topic:
-            return "Error: No topic provided."
+            raise ToolError("No topic provided.")
         entity_ids = args.get("entity_ids")
         max_rounds = int(args.get("max_rounds", DEFAULT_MAX_ROUNDS))
         moderator_id = args.get("moderator_id")
@@ -127,23 +128,24 @@ class WriteHandlersMixin:
             all_ai = self._db.get_entities(entity_type="ai")
             all_ai = [e for e in all_ai if e["name"] != AGENT_ENTITY_NAME]
             if len(all_ai) < 2:
-                return ("Error: Need at least 2 AI entities configured. "
-                        "Create them in the Consensus UI first.")
+                raise ToolError("Need at least 2 AI entities configured. "
+                                "Create them in the Consensus UI first.")
             entity_ids = [e["id"] for e in all_ai[:AUTO_SELECT_ENTITIES]]
 
         # Validate all are AI
         for eid in entity_ids:
             entity = self._db.get_entity(eid)
             if not entity:
-                return f"Error: Entity {eid} not found."
+                raise ToolError(f"Entity {eid} not found.")
             if entity["entity_type"] == "human":
-                return (f"Error: Entity '{entity['name']}' is human. "
-                        "Only AI entities can participate in automated discussions.")
+                raise ToolError(
+                    f"Entity '{entity['name']}' is human. "
+                    "Only AI entities can participate in automated discussions.")
 
         if not moderator_id:
             moderator_id = entity_ids[0]
         elif moderator_id not in entity_ids:
-            return f"Error: moderator_id {moderator_id} is not in entity_ids."
+            raise ToolError(f"moderator_id {moderator_id} is not in entity_ids.")
 
         # A fresh ConsensusApp, shut down after so that its MCP provider
         # subprocesses do not outlive the call.
@@ -164,7 +166,7 @@ class WriteHandlersMixin:
         for eid in entity_ids:
             added = app.add_to_discussion(eid, is_moderator=(eid == moderator_id))
             if "error" in added:
-                return f"Error adding entity {eid}: {added['error']}"
+                raise ToolError(f"Could not add entity {eid}: {added['error']}")
 
         app.set_topic(topic)
 
@@ -175,7 +177,7 @@ class WriteHandlersMixin:
             cost_limit=cost_limit,
         )
         if isinstance(result, dict) and "error" in result:
-            return f"Error starting discussion: {result['error']}"
+            raise ToolError(f"Could not start the discussion: {result['error']}")
 
         # Run turn loop. A skipped turn (the participant's provider failed)
         # is recorded and the discussion goes on, as it does in the UI; any
