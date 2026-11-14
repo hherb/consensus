@@ -2,9 +2,10 @@
 
 _Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices (through `evaluation/runner.py`, PR #116, with
-#112/#113/#114) and the #104 rotation fix; the #115 fix (pricing downloads off
-the event loop) is on `fix/pricing-refresh-off-loop-115` (suite at **3629
-passing**). The discussion-method review & repair campaign (#12–#48,
+#112/#113/#114), the #104 rotation fix and the #115 fix (pricing downloads off
+the event loop, PR #117); the #118 fix (the tool-capability gate waits for an
+in-flight download) is on `fix/tool-gate-waits-for-pricing-118` (suite at
+**3641 passing**). The discussion-method review & repair campaign (#12–#48,
 #56–#60) is finished and merged; so is alpha/stable distribution (PyPI
 `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
@@ -31,7 +32,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3629 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 3641 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -166,10 +167,8 @@ by `tests/test_tools_document_failures.py`, `tests/test_background.py` and
 unknown modes; `tools_memory` handler failures log via `_tool_failure`
 (`MemoryUnavailableError` → warning; `EmbeddingClient.embed` logs a
 non-transport fault such as a malformed response with its traceback first).
-**pytest was declared nowhere**, so `uv run pytest` had silently used pyenv's
-global Python. The `dev` group (`pytest`, `pytest-asyncio` 1.x, `ruff`) fixes
-that. pytest-asyncio 1.x leaves no current event loop, so write async tests
-as `async def`, never `get_event_loop().run_until_complete`.
+The `dev` group pins `pytest`, `pytest-asyncio` 1.x and `ruff`; 1.x leaves
+no current event loop, so write async tests as `async def`.
 
 ## Speaking rotation after start (#104 — keep this contract)
 
@@ -196,30 +195,37 @@ next `start_discussion`, so they stay in memory and never rewrite the
 concluded record. Removing a non-member is an error. Tests:
 `tests/test_app_discussion_rotation.py` (each rule mutation-checked).
 
-## Pricing downloads (#115 — keep this contract)
+## Pricing downloads (#115, #118 — keep this contract)
 
 `PricingCache` lookups (`calculate_cost_with_refresh`, `has_input_modality`,
 `get_context_length`, `supports_tools`) are reached from the event loop.
 `SessionManager` also builds a `ConsensusApp`, with an empty pricing table,
 inside a request handler for every new `--multi-user` visitor. So **no lookup
-downloads inline.** Startup with a stale cache, an unknown model, and a cache
-from before migration 014 each call `refresh_in_background()`, which runs at
-most one download thread per cache (per `ConsensusApp`). The lookup that
-triggered it returns `None`; later lookups see the data. A model (or the
-capability refresh) counts as tried only once a download starts for it, so a
-lookup made while another download is in flight is retried if that download
-fails. `refresh()` goes through `http_fetch.fetch_capped` (retry/backoff)
-inside `asyncio.run` in that thread. It returns `False` on a fetch failure, an
-unreadable or empty catalogue, or a DB failure (e.g. the session expired and
-closed its DB mid-download); malformed entries are skipped, and anything else
-the thread raises is logged. Known limit (#118): the tool-capability gate
-passes a model whose data has not landed yet (`supports_tools` → `None`) —
-after an upgrade past migration 014, and on any fresh DB (a first run, every
-new `--multi-user` session) until the startup download lands. The structured
-turn then fails visibly. Messages priced before the data lands keep a `NULL`
-cost. Tests: `tests/test_pricing_background.py`. Its `cache` fixture restores
-the real `refresh` over conftest's autouse stub; tests join `_refresh_thread`
-(with a timeout) before asserting.
+downloads inline.** Startup with a stale cache or one with no capability data
+(empty, or from before migration 014), and a lookup of an unknown model, call
+`refresh_in_background()`, which runs at most one download thread per cache
+(per `ConsensusApp`). The lookup that triggered it returns `None`; later
+lookups see the data. A model counts as tried only once a download starts for
+it. `refresh()` goes through `http_fetch.fetch_capped` (retry/backoff) inside
+`asyncio.run` in that thread; it returns `False` on a fetch failure, an
+unreadable or empty catalogue, or a DB failure; malformed entries are skipped.
+
+**The tool-capability gate waits for the download in flight** (#118):
+`supports_tools` → `None` passes the gate, so `ConsensusApp.start_discussion`
+(now **async** — desktop wraps it in `_run_async`, every other caller awaits)
+and `app_discussion_setup.recommend_method` first `await
+pricing.wait_for_refresh()`, which joins the thread via `asyncio.to_thread`
+for at most `CAPABILITY_WAIT_SECONDS` (15 s), logging a warning on timeout.
+Only starts the gate applies to wait (`structured_output.method_needs_tools`),
+plus Triage: its method-switch gate does not wait, so its start does.
+Remaining limits: an unknown model in a populated cache still passes on its
+first setup (its download starts inside the scan); messages priced before the
+data lands keep a `NULL` cost. Tests:
+`tests/test_pricing_background.py` (its `cache` fixture restores the real
+`refresh`; tests join `_refresh_thread` with a timeout before asserting) and
+`tests/test_pricing_capability_wait.py` (**join the download thread before
+closing the DB** — closing it under a writing thread segfaults the
+interpreter).
 
 ## Open work
 
@@ -229,23 +235,15 @@ the real `refresh` over conftest's autouse stub; tests join `_refresh_thread`
 
 1. `app_discussion_flow.py` → `app_discussion_flow/`. **Watch `turns.py`
    (499)**: the next addition crosses the limit — split then.
-2. `tools_document.py` → `tools_document/` (its pre-existing defects → #78).
-3. `app.py` → `app.py` + `app_api/` mixins (chosen with the owner). **Moved
-   code logs under `consensus.app_api.*`** — `caplog` on `consensus.app`
-   sees nothing.
-4. `tools_memory.py` → `tools_memory/`; one shared
-   `ensure_discussion_indexed()`. Loggers are children of the package.
-5. `tools_python.py` → `tools_python/`; facade exports only
-   `create_python_provider`; `uv pip install --python sys.executable`;
-   timed-out/cancelled installs kill and re-raise. #96, #97 open.
-6. `tools_image.py` → `tools_image/`. **URL fetching is one policy in
-   `consensus/http_fetch.py`** (`fetch_capped`, per-hop `guard`,
-   `redact_url`); `require_public_host` runs in every mode (#98). Every
-   fetch test installs a fake transport.
-7. `methods/base.py` → dataclasses in `methods/phase_types.py`, re-exported
-   by `base.py` (`__all__`; guard `tests/test_methods_base_facade.py`).
-8. `app_discussion_setup.py` → role code in `app_discussion_roles.py` (no
-   re-export; callers import the defining module).
+2–8. `tools_document/` (defects → #78); `app.py` → `app_api/` mixins
+   (**moved code logs under `consensus.app_api.*`** — `caplog` on
+   `consensus.app` sees nothing); `tools_memory/` (one shared
+   `ensure_discussion_indexed()`); `tools_python/` (facade exports only
+   `create_python_provider`); `tools_image/` (**URL fetching is one policy in
+   `http_fetch.py`**; every fetch test installs a fake transport);
+   `methods/base.py` → `phase_types.py` (re-exported, guarded by
+   `tests/test_methods_base_facade.py`); `app_discussion_setup.py` → role
+   code in `app_discussion_roles.py` (no re-export).
 9. `evaluation/scorer.py` → `print_report` in `evaluation/report.py`. Eval
    contracts kept from that PR: a failed LLM judgement returns 502 and
    **never overwrites an earlier score** (`scorer.judge_reply_problem`);

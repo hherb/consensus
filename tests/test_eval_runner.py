@@ -9,6 +9,7 @@ fake is the HTTP edge (``tests/eval_runner_helpers.py``). The CLI path is
 import asyncio
 import json
 import sys
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -103,7 +104,7 @@ class TestRunCaseCondition:
 
     async def test_start_error_is_recorded(self, llm, monkeypatch):
         monkeypatch.setattr(runner.ConsensusApp, "start_discussion",
-                            lambda self, **kw: {"error": "no go"})
+                            AsyncMock(return_value={"error": "no go"}))
         result = await run_case_condition(CASE, PAIR, URL, "m1")
         assert result.error == "no go"
         assert llm.calls == []
@@ -359,7 +360,7 @@ class TestRunCaseConditionDb:
     async def test_start_error_marks_run_error(self, eval_db, llm,
                                                monkeypatch):
         monkeypatch.setattr(runner_db.ConsensusApp, "start_discussion",
-                            lambda self, **kw: {"error": "no go"})
+                            AsyncMock(return_value={"error": "no go"}))
         run_id = make_db_run(eval_db, participants=TWO)
         await run_case_condition_db(eval_db, run_id)
         run = eval_db.get_run(run_id)

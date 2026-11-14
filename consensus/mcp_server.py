@@ -541,7 +541,7 @@ class ConsensusMCPServer:
         app.set_topic(topic)
 
         mod_participates = len(entity_ids) <= 2
-        result = app.start_discussion(
+        result = await app.start_discussion(
             moderator_participates=mod_participates,
             max_rounds=max_rounds,
             cost_limit=cost_limit,

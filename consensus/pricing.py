@@ -20,6 +20,8 @@ PRICING_MAX_AGE_SECONDS = 7 * 24 * 3600  # 1 week
 PRICING_FETCH_TIMEOUT = 30.0
 #: Largest catalogue accepted (it is a few MB today).
 PRICING_MAX_BYTES = 32 * 1024 * 1024
+#: Longest the tool-capability gate waits for an in-flight download (#118).
+CAPABILITY_WAIT_SECONDS = 15.0
 
 # Aliases: provider model names that differ from OpenRouter's naming
 # Format: "provider-model-name" → "openrouter/model-id"
@@ -127,6 +129,29 @@ class PricingCache:
                 daemon=True)
             self._refresh_thread.start()
             return self._refresh_thread
+
+    async def wait_for_refresh(self) -> bool:
+        """Wait, off the event loop, for the download in flight to land.
+
+        The tool-capability gate calls this before scanning: until the
+        catalogue lands, :meth:`supports_tools` answers ``None``, which the
+        gate lets through (#118). The wait is capped at
+        ``CAPABILITY_WAIT_SECONDS`` because a download can spend minutes
+        in its retries.
+
+        Returns:
+            False if a download is still running after the cap, else True.
+        """
+        thread = self._refresh_thread
+        if thread is None or not thread.is_alive():
+            return True
+        await asyncio.to_thread(thread.join, CAPABILITY_WAIT_SECONDS)
+        if thread.is_alive():
+            logger.warning("Model catalogue still downloading after %.0f s; "
+                           "checking tool support with the data cached",
+                           CAPABILITY_WAIT_SECONDS)
+            return False
+        return True
 
     def _refresh_logged(self) -> None:
         """Thread target: :meth:`refresh`, with any error it raises logged."""

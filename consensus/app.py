@@ -68,10 +68,13 @@ class ConsensusApp(
         self._load_mcp_config()
 
     def _refresh_pricing_if_needed(self) -> None:
-        """Refresh pricing cache in the background on startup if stale."""
+        """Refresh pricing cache in the background on startup if stale, or
+        if it predates capability data (migration 014), so the setup gate
+        has a download to wait for (#118)."""
         try:
-            if self.db.pricing._needs_refresh():
-                self.db.pricing.refresh_in_background()
+            pricing = self.db.pricing
+            if pricing._needs_refresh() or pricing._capability_data_missing():
+                pricing.refresh_in_background()
         except Exception:
             logger.warning("Failed to refresh pricing on startup", exc_info=True)
 

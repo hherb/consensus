@@ -91,9 +91,9 @@ class TestPauseResumePreservesInputSpec:
     wholesale, so resuming a paused structured-phase turn wiped the input
     spec and the schema-driven form fell back to the plain textarea."""
 
-    def test_resume_returns_current_input_spec(self, app_with_entities):
+    async def test_resume_returns_current_input_spec(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         _drive_to_prior_phase(app, p2_id)  # Bob, human, not moderator
 
         pause_result = app.pause_discussion()
@@ -106,9 +106,9 @@ class TestPauseResumePreservesInputSpec:
         assert resumed.get("current_input_spec") is not None
         assert resumed["current_input_spec"]["tool_name"] == "submit_beliefs"
 
-    def test_reopen_returns_current_input_spec(self, app_with_entities):
+    async def test_reopen_returns_current_input_spec(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         _drive_to_prior_phase(app, p2_id)  # Bob, human, not moderator
 
         # Manually conclude the discussion to satisfy reopen's precondition

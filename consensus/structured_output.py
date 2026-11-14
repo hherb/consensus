@@ -53,6 +53,15 @@ class StructuredOutputError(RuntimeError):
     """The provider/model cannot satisfy a phase's forced output tool."""
 
 
+def method_needs_tools(method_name: str) -> bool:
+    """True when the method has structured phases, so the tool-capability
+    gate applies. False for unknown names (open_discussion has none)."""
+    try:
+        return get_method(method_name).requires_structured_output()
+    except KeyError:
+        return False
+
+
 def find_tool_blocked_entities(
     discussion: "Discussion", db: "Database",
     method_name: Optional[str] = None,
@@ -79,11 +88,7 @@ def find_tool_blocked_entities(
         method_name if method_name is not None
         else discussion.discussion_method
     )
-    try:
-        method = get_method(target)
-    except KeyError:
-        return []  # open_discussion — no structured phases
-    if not method.requires_structured_output():
+    if not method_needs_tools(target):
         return []
     blocked: list[dict] = []
     for e in discussion.entities:

@@ -62,9 +62,16 @@ write serialisation).
   capability data) starts one background refresh. That lookup returns
   `None`; lookups after the download lands see the data. Each unknown model
   starts at most one refresh per cache, counted only once a download starts
-  for it. Malformed catalogue entries are skipped. Until the first download
-  lands on a fresh DB, `supports_tools` returns `None`, so the
-  tool-capability gate lets every model through (issue #118)
+  for it. Malformed catalogue entries are skipped.
+- Until a download lands, `supports_tools` returns `None`, which the
+  tool-capability gate lets through. So the method recommender, and
+  `start_discussion` for a method with structured phases or Triage (whose
+  later method switch runs the gate without waiting), first
+  `await pricing.wait_for_refresh()`: it joins the download in flight, off
+  the event loop, for at most `CAPABILITY_WAIT_SECONDS` (15 s), then the
+  gate scans whatever is cached (issue #118). Startup also downloads when
+  the cache has no capability data (from before migration 014), so that
+  case has a download to wait for
 
 ### Model name matching
 

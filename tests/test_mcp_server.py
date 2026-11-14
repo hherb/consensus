@@ -369,6 +369,26 @@ class TestRunDiscussion:
         assert "human" in text.lower()
 
     @pytest.mark.asyncio
+    async def test_run_discussion_reports_start_error(
+            self, server_with_entities, monkeypatch):
+        """The async start_discussion is awaited, so its error reaches the
+        caller instead of a never-run coroutine (#118)."""
+        from consensus.app import ConsensusApp
+
+        async def start(self, **kwargs):
+            return {"error": "no go"}
+
+        monkeypatch.setattr(ConsensusApp, "start_discussion", start)
+        server, _, _, _ = server_with_entities
+        resp = await server.handle_request({
+            "jsonrpc": "2.0", "id": 43, "method": "tools/call",
+            "params": {"name": "run_discussion",
+                       "arguments": {"topic": "Test"}},
+        })
+        text = resp["result"]["content"][0]["text"]
+        assert "Error starting discussion: no go" in text
+
+    @pytest.mark.asyncio
     async def test_run_discussion_empty_topic(self, server):
         resp = await server.handle_request({
             "jsonrpc": "2.0", "id": 42, "method": "tools/call",

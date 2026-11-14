@@ -195,30 +195,30 @@ class TestDiscussionSetup:
 # --- Discussion lifecycle ---
 
 class TestStartDiscussion:
-    def test_start_requires_topic(self, app):
-        result = app.start_discussion()
+    async def test_start_requires_topic(self, app):
+        result = await app.start_discussion()
         assert "error" in result
         assert "topic" in result["error"].lower()
 
-    def test_start_requires_participants(self, app):
+    async def test_start_requires_participants(self, app):
         app.set_topic("Test")
-        result = app.start_discussion()
+        result = await app.start_discussion()
         assert "error" in result
         assert "2 participants" in result["error"]
 
-    def test_start_requires_moderator(self, app):
+    async def test_start_requires_moderator(self, app):
         app.set_topic("Test")
         e1 = app.db.add_entity("A", "human", "#000")
         e2 = app.db.add_entity("B", "human", "#111")
         app.add_to_discussion(e1)
         app.add_to_discussion(e2)
-        result = app.start_discussion()
+        result = await app.start_discussion()
         assert "error" in result
         assert "moderator" in result["error"].lower()
 
-    def test_start_successful(self, app_with_entities):
+    async def test_start_successful(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        result = app.start_discussion()
+        result = await app.start_discussion()
         assert "error" not in result
         assert app.discussion.is_active is True
         assert app.discussion.status == "active"
@@ -226,23 +226,23 @@ class TestStartDiscussion:
         assert len(app.discussion.messages) == 1  # opening message
         assert app.discussion.turn_number == 1
 
-    def test_moderator_excluded_from_turn_order_by_default(self, app_with_entities):
+    async def test_moderator_excluded_from_turn_order_by_default(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion(moderator_participates=False)
+        await app.start_discussion(moderator_participates=False)
         assert mod_id not in app.discussion.turn_order
         assert p1_id in app.discussion.turn_order
         assert p2_id in app.discussion.turn_order
 
-    def test_moderator_included_when_participates(self, app_with_entities):
+    async def test_moderator_included_when_participates(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion(moderator_participates=True)
+        await app.start_discussion(moderator_participates=True)
         assert mod_id in app.discussion.turn_order
 
 
 class TestSubmitHumanMessage:
-    def test_submit_on_turn(self, app_with_entities):
+    async def test_submit_on_turn(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         # First speaker should be p1 (Alice, AI) not Bob
         # Advance past AI to get to human
         app.discussion.current_turn_index = app.discussion.turn_order.index(p2_id)
@@ -250,49 +250,49 @@ class TestSubmitHumanMessage:
         assert "error" not in result
         assert result["content"] == "Hello from Bob!"
 
-    def test_submit_not_on_turn(self, app_with_entities):
+    async def test_submit_not_on_turn(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         # p2 tries to speak when it's p1's turn
         if app.discussion.current_speaker.id != p2_id:
             result = app.submit_human_message(p2_id, "Out of turn!")
             assert "error" in result
 
-    def test_submit_unknown_entity(self, app_with_entities):
+    async def test_submit_unknown_entity(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         result = app.submit_human_message(99999, "Ghost!")
         assert "error" in result
 
 
 class TestPauseResume:
-    def test_pause_active_discussion(self, app_with_entities):
+    async def test_pause_active_discussion(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         result = app.pause_discussion()
         assert "error" not in result
         assert app.discussion.status == "paused"
         assert app.discussion.is_active is False
 
-    def test_pause_already_paused(self, app_with_entities):
+    async def test_pause_already_paused(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         app.pause_discussion()
         result = app.pause_discussion()
         assert "error" in result
 
-    def test_resume_paused_discussion(self, app_with_entities):
+    async def test_resume_paused_discussion(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         app.pause_discussion()
         result = app.resume_discussion()
         assert "error" not in result
         assert app.discussion.status == "active"
         assert app.discussion.is_active is True
 
-    def test_resume_not_paused(self, app_with_entities):
+    async def test_resume_not_paused(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         result = app.resume_discussion()
         assert "error" in result
 
@@ -310,7 +310,7 @@ class TestConcludeDiscussion:
     @pytest.mark.asyncio
     async def test_conclude_marks_discussion_done(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         # Mock AI conclusion generation
         with patch.object(app.moderator, 'generate_conclusion',
                           new_callable=AsyncMock,
@@ -321,9 +321,9 @@ class TestConcludeDiscussion:
 
 
 class TestReset:
-    def test_reset_clears_state(self, app_with_entities):
+    async def test_reset_clears_state(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         app.reset()
         assert app.discussion.topic == ""
         assert app.discussion.entities == []
@@ -334,7 +334,7 @@ class TestReopenDiscussion:
     @pytest.mark.asyncio
     async def test_reopen_concluded(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         with patch.object(app.moderator, 'generate_conclusion',
                           new_callable=AsyncMock,
                           return_value=AIResponse(content="Done.")):
@@ -344,16 +344,16 @@ class TestReopenDiscussion:
         assert "error" not in result
         assert app.discussion.status == "paused"
 
-    def test_reopen_not_concluded(self, app_with_entities):
+    async def test_reopen_not_concluded(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         result = app.reopen_discussion()
         assert "error" in result
 
     @pytest.mark.asyncio
     async def test_continue_concluded(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         original_max = app.discussion.max_rounds
         with patch.object(app.moderator, 'generate_conclusion',
                           new_callable=AsyncMock,
@@ -378,7 +378,7 @@ class TestReopenDiscussion:
     async def test_continue_budget_scales_correctly(self, app_with_entities):
         """Budget should scale as original * n, not compound."""
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         original_max = app.discussion.max_rounds
 
         for i in range(3):
@@ -392,15 +392,15 @@ class TestReopenDiscussion:
             # After 3 continuations: original * 4 (count starts at 1, increments each time)
             assert app.discussion.max_rounds == original_max * 4
 
-    def test_continue_not_concluded(self, app_with_entities):
+    async def test_continue_not_concluded(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         result = app.continue_discussion("More please")
         assert "error" in result
 
-    def test_continue_empty_content(self, app_with_entities):
+    async def test_continue_empty_content(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         app.discussion.status = "concluded"
         result = app.continue_discussion("")
         assert "error" in result
@@ -411,9 +411,9 @@ class TestReopenDiscussion:
 # --- Add/remove during active discussion ---
 
 class TestLiveDiscussionManagement:
-    def test_add_entity_during_active_discussion(self, app_with_entities):
+    async def test_add_entity_during_active_discussion(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         new_id = app.db.add_entity("Eve", "human", "#999")
         result = app.add_to_discussion(new_id)
         assert "error" not in result
@@ -423,15 +423,15 @@ class TestLiveDiscussionManagement:
                      if "joined" in m.content]
         assert len(join_msgs) == 1
 
-    def test_cannot_remove_moderator_during_active(self, app_with_entities):
+    async def test_cannot_remove_moderator_during_active(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         result = app.remove_from_discussion(mod_id)
         assert "error" in result
 
-    def test_remove_participant_during_active(self, app_with_entities):
+    async def test_remove_participant_during_active(self, app_with_entities):
         app, mod_id, p1_id, p2_id = app_with_entities
-        app.start_discussion()
+        await app.start_discussion()
         # Remove a participant who is NOT current speaker
         current = app.discussion.current_speaker
         remove_id = p2_id if current.id != p2_id else p1_id
@@ -447,7 +447,7 @@ class TestLiveDiscussionManagement:
 # --- Turn index adjustment on removal ---
 
 class TestTurnIndexAdjustment:
-    def test_removal_adjusts_turn_index(self, app):
+    async def test_removal_adjusts_turn_index(self, app):
         """Removing an entity before the current index keeps the speaker."""
         mod = app.db.add_entity("M", "human", "#333")
         e1 = app.db.add_entity("A", "human", "#000")
@@ -457,7 +457,7 @@ class TestTurnIndexAdjustment:
         app.add_to_discussion(mod, is_moderator=True)
         for eid in (e1, e2, e3):
             app.add_to_discussion(eid)
-        app.start_discussion()
+        await app.start_discussion()
         assert app.discussion.turn_order == [e1, e2, e3]
         app.discussion.current_turn_index = 2  # pointing to e3
 

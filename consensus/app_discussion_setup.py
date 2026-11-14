@@ -209,6 +209,7 @@ async def recommend_method(
         provider=provider,
     )
     if db is not None and panel_models:
+        await db.pricing.wait_for_refresh()  # see supports_tools (#118)
         recommendations = downrank_incompatible_recommendations(
             recommendations, db, panel_models,
         )

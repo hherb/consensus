@@ -245,7 +245,7 @@ async def _run_multi_party(
 
         app.set_topic(discussion_topic(case["presentation"]))
 
-        start_result = app.start_discussion(moderator_participates=False)
+        start_result = await app.start_discussion(moderator_participates=False)
         if "error" in start_result:
             eval_db.update_run(
                 run_id, status="error", error_text=start_result["error"],
