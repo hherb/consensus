@@ -303,15 +303,22 @@ deployments.
 
 ---
 
-## `desktop.py` -- Desktop Mode (pywebview)
+## `desktop/` -- Desktop Mode (pywebview)
 
 The desktop mode uses pywebview to render the same HTML/CSS/JS in a native
 window. The key challenge is bridging pywebview's synchronous JS-to-Python
 calls with the async application methods.
 
-**`DesktopBridge`** is the JS API object passed to pywebview. Every public
-method (no leading underscore) becomes callable from JavaScript as
-`window.pywebview.api.<method_name>(...)`.
+**`DesktopBridge`** (`desktop/bridge.py`) is the JS API object passed to
+pywebview. Every public method (no leading underscore), inherited ones
+included, becomes callable from JavaScript as
+`window.pywebview.api.<method_name>(...)`. The class holds the event-loop
+plumbing, state pushes, image data URLs and the evaluation server; the rest
+come from one mixin per UI area: `catalog.py` (providers, entities, prompts,
+tools, MCP servers, experts, memory config), `discussion.py` (setup, turn
+lifecycle, history) and `files.py` (documents, images, export, native file
+dialogs). `tests/test_desktop_bridge_api.py` pins the method set against the
+frontend's `pywebview.api` calls.
 
 **Async bridging:** A background `asyncio` event loop runs in a daemon thread.
 Async methods are submitted with `asyncio.run_coroutine_threadsafe()` and
@@ -327,9 +334,10 @@ def _run_async(self, coro):
 invoke `onStateUpdate(state)` in the frontend whenever state changes.
 
 **Tool bridge methods:** `DesktopBridge` includes methods for tool management:
-`list_available_tools()`, `get_entity_tools()`, `assign_tool()`,
-`remove_entity_tool()`, `set_discussion_tool_override()`. These mirror the
-corresponding `ConsensusApp` methods.
+`list_tools()`, `get_entity_tools()`, `assign_tool()`, `remove_tool()`,
+`set_tool_override()`. They forward to `ConsensusApp.list_available_tools()`,
+`get_entity_tools()`, `assign_tool_to_entity()`, `remove_entity_tool()` and
+`set_discussion_tool_override()`.
 
 **MCP/Expert bridge methods:** `DesktopBridge` exposes MCP server and expert
 management: `get_mcp_servers()`, `add_mcp_server()`, `update_mcp_server()`,
@@ -338,14 +346,14 @@ management: `get_mcp_servers()`, `add_mcp_server()`, `update_mcp_server()`,
 consult) are wrapped in `_run_async()`.
 
 **Document bridge methods:** `upload_document()` (opens a file picker),
-`add_document_by_url()`, `get_discussion_documents()`, `remove_document()`,
+`add_document_from_url()`, `get_discussion_documents()`, `remove_document()`,
 `delete_document()`.
 
 **Image bridge methods:** `upload_image()` (opens a file picker for
 PNG/JPEG/GIF/WebP), `add_image_from_url()`, `get_discussion_images()`,
 `remove_image()`, `delete_image()`.
 
-**`launch_desktop()`** creates the pywebview window (1280x800, min 900x600)
+**`launch_desktop()`** (`desktop/launcher.py`) creates the pywebview window (1280x800, min 900x600)
 pointing at `static/index.html`, wires up the bridge, and starts the webview
 event loop.
 
