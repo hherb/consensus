@@ -463,7 +463,7 @@ async def _execute_batch(eval_db: EvalDatabase, batch_id: int,
         for run_data in pending:
             run_id = run_data["id"]
             try:
-                from consensus.evaluation.runner import run_case_condition_db
+                from consensus.evaluation.runner_db import run_case_condition_db
                 await run_case_condition_db(
                     eval_db=eval_db,
                     run_id=run_id,
