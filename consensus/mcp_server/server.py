@@ -82,9 +82,15 @@ class ConsensusMCPServer(ToolRegistrationMixin, ReadHandlersMixin,
         }
 
     async def handle_request(self, msg: dict) -> Optional[dict]:
+        if not isinstance(msg, dict):
+            return self._make_error(None, -32600,
+                                    "Invalid Request: expected a JSON object")
         method = msg.get("method")
         msg_id = msg.get("id")
-        params = msg.get("params", {})
+        params = msg.get("params") or {}
+        if not isinstance(params, dict):
+            return self._make_error(msg_id, -32602,
+                                    "Invalid params: expected an object")
 
         if method == "initialize":
             return self._make_response(msg_id, {
@@ -93,8 +99,8 @@ class ConsensusMCPServer(ToolRegistrationMixin, ReadHandlersMixin,
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             })
 
-        if method == "notifications/initialized":
-            return None  # notification — no response
+        if "id" not in msg:
+            return None  # a notification: JSON-RPC forbids a response
 
         if method == "tools/list":
             tools = [t["definition"] for t in self._tools.values()]
@@ -107,7 +113,7 @@ class ConsensusMCPServer(ToolRegistrationMixin, ReadHandlersMixin,
 
     async def _handle_tool_call(self, msg_id: Any, params: dict) -> dict:
         tool_name = params.get("name", "")
-        arguments = params.get("arguments", {})
+        arguments = params.get("arguments") or {}
         tool = self._tools.get(tool_name)
         if not tool:
             return self._make_error(msg_id, -32602, f"Unknown tool: {tool_name}")
@@ -134,7 +140,7 @@ class ConsensusMCPServer(ToolRegistrationMixin, ReadHandlersMixin,
         pipe transport issues on macOS/redirected pipes, while keeping tool
         handlers fully async.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         while True:
             line = await loop.run_in_executor(None, sys.stdin.readline)
@@ -145,9 +151,11 @@ class ConsensusMCPServer(ToolRegistrationMixin, ReadHandlersMixin,
                 continue
             try:
                 msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            response = await self.handle_request(msg)
+            except json.JSONDecodeError as e:
+                logger.warning("Unparseable JSON-RPC line: %s", e)
+                response = self._make_error(None, -32700, f"Parse error: {e}")
+            else:
+                response = await self.handle_request(msg)
             if response is not None:
                 out = json.dumps(response) + "\n"
                 sys.stdout.write(out)

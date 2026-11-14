@@ -69,12 +69,15 @@ stdout. All logging goes to stderr.
 | Method | Response |
 |--------|----------|
 | `initialize` | Protocol version, capabilities `{"tools": {}}`, server info |
-| `notifications/initialized` | None (notification) |
+| Any message without an `id` | None — a notification is never answered |
 | `tools/list` | All 13 tool definitions |
 | `tools/call` | Tool execution result |
 
-The main loop uses `asyncio.get_event_loop().run_in_executor()` to read from
-stdin in a thread, avoiding asyncio pipe transport issues on macOS.
+The main loop uses `asyncio.get_running_loop().run_in_executor()` to read from
+stdin in a thread, avoiding asyncio pipe transport issues on macOS. Malformed
+input gets a JSON-RPC error reply and the loop keeps serving: an unparseable
+line → `-32700` (also logged), a non-object message → `-32600`, non-object
+`params` → `-32602`. A tool handler that raises returns `isError: true`.
 
 ## Tools
 
@@ -147,8 +150,15 @@ They gracefully return error messages if the embedding service is unavailable.
 - Implementation: Instantiates a fresh `ConsensusApp`, adds entities, starts
   discussion, runs `generate_ai_turn()` + `complete_turn()` loop, concludes,
   returns JSON with conclusion, cost, participants, rounds
+- **Failures are in the result, not only the log.** `turn_errors` lists every
+  skipped turn (`"<name>: <detail>"` — the discussion goes on, as in the UI);
+  `error` says why the turn loop stopped early (a failed turn completion, no
+  AI speaker due, or the timeout) and is `""` for a run that finished;
+  `conclusion_error` reports a failed synthesis. A caller must check all
+  three before trusting `conclusion`.
 - **Constraints:** Only AI entities allowed (humans rejected). 10-minute
-  timeout. Auto-selects first 3 AI entities if none specified. Excludes the
+  timeout (`RUN_DISCUSSION_TIMEOUT_SECONDS`). Auto-selects the first 3 AI
+  entities (`AUTO_SELECT_ENTITIES`) if none specified. Excludes the
   "Claude Code Agent" entity from auto-selection.
 
 ## Agent Entity

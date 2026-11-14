@@ -161,7 +161,7 @@ class ReadHandlersMixin:
         top = _rank_by_similarity(query_vec, rows, limit)
         lines = [f"Found {len(top)} relevant chunks:\n"]
         for i, row in enumerate(top, 1):
-            title = row.get("title", row.get("filename", "?"))
+            title = row.get("doc_title") or row.get("doc_filename") or "?"
             lines.append(f"{i}. [Document: {title}]\n   {row['content'][:400]}")
         return "\n".join(lines)
 

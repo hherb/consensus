@@ -9,7 +9,10 @@ import logging
 import uuid
 
 from ..models import MessageRole
-from .constants import AGENT_ENTITY_NAME
+from .constants import (
+    AGENT_ENTITY_NAME, AUTO_SELECT_ENTITIES, DEFAULT_COST_LIMIT_USD,
+    DEFAULT_MAX_ROUNDS, RUN_DISCUSSION_TIMEOUT_SECONDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +105,9 @@ class WriteHandlersMixin:
         if not topic:
             return "Error: No topic provided."
         entity_ids = args.get("entity_ids")
-        max_rounds = int(args.get("max_rounds", 3))
+        max_rounds = int(args.get("max_rounds", DEFAULT_MAX_ROUNDS))
         moderator_id = args.get("moderator_id")
-        cost_limit = float(args.get("cost_limit", 1.0))
+        cost_limit = float(args.get("cost_limit", DEFAULT_COST_LIMIT_USD))
 
         # Resolve entities
         if not entity_ids:
@@ -113,7 +116,7 @@ class WriteHandlersMixin:
             if len(all_ai) < 2:
                 return ("Error: Need at least 2 AI entities configured. "
                         "Create them in the Consensus UI first.")
-            entity_ids = [e["id"] for e in all_ai[:3]]
+            entity_ids = [e["id"] for e in all_ai[:AUTO_SELECT_ENTITIES]]
 
         # Validate all are AI
         for eid in entity_ids:
@@ -145,29 +148,41 @@ class WriteHandlersMixin:
         if isinstance(result, dict) and "error" in result:
             return f"Error starting discussion: {result['error']}"
 
-        # Run turn loop
-        async def _run_turns():
+        # Run turn loop. A skipped turn (the participant's provider failed)
+        # is recorded and the discussion goes on, as it does in the UI; any
+        # other failure stops it, since retrying would repeat the same turn.
+        turn_errors: list[str] = []
+
+        async def _run_turns() -> str:
+            """Run AI turns to the end; return why it stopped early, or ""."""
             while app.discussion.is_active and app.discussion.status == "active":
                 current = app.discussion.current_speaker
-                if not current:
-                    break
-                if current.entity_type.value == "human":
-                    break
+                if not current or current.entity_type.value == "human":
+                    return "Discussion stopped: no AI speaker due"
                 turn_result = await app.generate_ai_turn()
-                if isinstance(turn_result, dict):
-                    if "error" in turn_result and not turn_result.get("skipped"):
-                        break
+                if isinstance(turn_result, dict) and "error" in turn_result:
+                    if not turn_result.get("skipped"):
+                        return f"Turn failed: {turn_result['error']}"
+                    turn_errors.append(f"{current.name}: {turn_result['error']}")
                 complete_result = await app.complete_turn()
                 if isinstance(complete_result, dict):
+                    if "error" in complete_result:
+                        return ("Turn completion failed: "
+                                f"{complete_result['error']}")
                     if (complete_result.get("max_rounds_reached")
                             or complete_result.get("cost_limit_reached")
                             or complete_result.get("method_complete")):
-                        break
+                        return ""
+            return ""
 
         try:
-            await asyncio.wait_for(_run_turns(), timeout=600)
+            run_error = await asyncio.wait_for(
+                _run_turns(), timeout=RUN_DISCUSSION_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
-            logger.warning("run_discussion timed out after 10 minutes")
+            run_error = (f"Discussion timed out after "
+                         f"{RUN_DISCUSSION_TIMEOUT_SECONDS} s")
+        if run_error:
+            logger.warning("run_discussion: %s", run_error)
 
         # Conclude
         conclusion_error = ""
@@ -196,6 +211,8 @@ class WriteHandlersMixin:
             "topic": topic,
             "conclusion": conclusion,
             "conclusion_error": conclusion_error,
+            "error": run_error,
+            "turn_errors": turn_errors,
             "total_messages": len(app.discussion.messages),
             "total_cost": round(total_cost, 6),
             "participants": participant_names,
