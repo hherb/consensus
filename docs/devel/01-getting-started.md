@@ -100,7 +100,7 @@ consensus/
   models.py                Dataclasses: Entity, AIConfig, Message, Discussion, ...
   config.py                Platform paths, .env loading, API key helpers
   ai_client.py             Async OpenAI-compatible HTTP client (httpx)
-  moderator.py             Turn flow, AI generation, prompt resolution, tool execution
+  moderator/               Moderator: core, context, turn (tool loop), synthesis
   app.py                   ConsensusApp orchestrator (central controller)
   app_api/                 ConsensusApp's public methods, grouped as mixins
   app_providers.py         Provider management (extracted from app.py)

@@ -248,7 +248,7 @@ class DiscussionMethod(ABC):
         return phase
 
     # ------------------------------------------------------------------
-    # Prompt hooks — called by moderator.py
+    # Prompt hooks — called by the moderator package
     # ------------------------------------------------------------------
 
     def get_system_prompt(self, entity: Entity, discussion: Discussion) -> str:

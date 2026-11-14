@@ -71,8 +71,8 @@ def test_export_is_the_one_its_submodule_defines(name):
 def test_known_consumers_are_found():
     names = {path.relative_to(PACKAGE_ROOT.parent).as_posix()
              for path in _consumer_modules()}
-    assert {"app.py", "moderator.py", "desktop/bridge.py",
-            "app_api/images.py"} <= names
+    assert {"app.py", "moderator/context.py", "moderator/turn.py",
+            "desktop/bridge.py", "app_api/images.py"} <= names
 
 
 def test_every_consumer_imports_only_exported_names():

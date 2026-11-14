@@ -83,7 +83,7 @@ def list_methods() -> list[dict]:
 def get_active_method(discussion) -> Optional[DiscussionMethod]:
     """Return the DiscussionMethod for a discussion, or None for open.
 
-    This is the canonical helper used by `moderator.py` and the
+    This is the canonical helper used by `moderator/` and the
     `app_discussion_flow/` package (`helpers`, `submissions`, `turns`)
     to avoid duplicating the lookup logic.
     """

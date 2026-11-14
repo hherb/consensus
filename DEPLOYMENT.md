@@ -73,7 +73,7 @@ Browser ──cookie──→ aiohttp session middleware
 
 **Files to modify:**
 - `ai_client.py` — accept per-call API key override
-- `moderator.py` — pass keys from request context to AI client
+- `moderator/core.py` — pass keys from request context to AI client
 - `app.py` — add key parameter to methods that trigger AI calls
 - `server.py` — extract keys from request headers, pass through to app
 - `static/app.js` — key management UI, attach keys to requests

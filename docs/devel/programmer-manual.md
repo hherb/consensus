@@ -39,7 +39,7 @@ Frontend (static/ — vanilla JS ES modules)
 ConsensusApp (app.py + app_api/ mixins + app_*.py domain modules)
     |  Central orchestrator: state management, validation, DB writes, event emitter
     |
-    +-- Moderator (moderator.py)
+    +-- Moderator (moderator/)
     |     Turn flow, prompt resolution, AI generation, tool execution loop,
     |     multimodal context (images for vision-capable models)
     |

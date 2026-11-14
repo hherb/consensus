@@ -1,22 +1,21 @@
 # HANDOVER
 
-_Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices (through `mcp_server.py` → `mcp_server/`, PR #120),
-the #104 rotation fix, and the #115/#118 pricing fixes (PRs #117/#119). The
-#121 fix (MCP tool failures are `isError` results) is PR #122
-(`fix/mcp-tool-errors-121`); the thirteenth #61 slice (`desktop.py` →
-`desktop/`) is stacked on it as `refactor/split-desktop-61` (suite at **3861
-passing**). The discussion-method review & repair campaign (#12–#48,
-#56–#60) is finished and merged; so is alpha/stable distribution (PyPI
-`consensus-app` + notarized macOS DMG), the public website, the
+_Last updated: 2026-11-15. `main` is at **v2.0.0** (released 2026-07-20) plus
+the merged #61 slices (through `desktop.py` → `desktop/`, PR #123), the #121
+fix (MCP tool failures are `isError` results, PR #122), the #104 rotation
+fix, and the #115/#118 pricing fixes (PRs #117/#119). The fourteenth #61
+slice (`moderator.py` → `moderator/`) is on `refactor/split-moderator-61`
+(suite at **3921 passing**). The discussion-method review & repair campaign
+(#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
+(PyPI `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
 failure-visibility work (#78) — contracts for both summarised below. The one
 open structural issue is **#61** (modules over the ~500-line golden rule):
 `app_discussion_flow`, `tools_document`, `app.py` (→ `app_api/` mixins),
 `tools_memory`, `tools_python`, `tools_image`, `methods/base.py`,
 `app_discussion_setup.py`, `evaluation/scorer.py`, `evaluation/eval_db.py`,
-`evaluation/runner.py`, `mcp_server.py` and `desktop.py` are split; three
-modules remain over the limit. **#86**
+`evaluation/runner.py`, `mcp_server.py`, `desktop.py` and `moderator.py`
+are split; two modules remain over the limit. **#86**
 (lint gate) is done: zero `ruff --select F` findings in `consensus/`, enforced
 by `tests/test_lint.py`._
 
@@ -34,7 +33,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3861 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 3921 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -230,7 +229,7 @@ interpreter).
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-**Done — thirteen slices** (detail in git history; one PR each):
+**Done — fourteen slices** (detail in git history; one PR each):
 
 1. `app_discussion_flow.py` → `app_discussion_flow/`. **Watch `turns.py`
    (499)**: the next addition crosses the limit — split then.
@@ -260,48 +259,44 @@ interpreter).
    in `eval.html`), `MAX_BATCH_RUNS = 1000` (#112). `JUDGE_DIMENSIONS` is
    mirrored in `eval_scoring.js` and the judge prompt (drift-tested);
    `evaluation/static/eval.js` (645) is pre-existing over the limit.
-12. `mcp_server.py` (714) → `mcp_server/` package of mixins (`server.py`
-   class + JSON-RPC + stdio loop, `tool_defs.py`, `handlers_read.py`,
-   `handlers_write.py`, `constants.py`, `__main__.py` for `python -m`);
-   net in `tests/test_mcp_server_handlers.py` (54% → 97% before the move),
-   the defects it found in `tests/test_mcp_server_robustness.py` (shared
-   fixtures in `tests/mcp_server_helpers.py`), guard in
-   `tests/test_mcp_server_facade.py` (also checks the `consensus-mcp` entry
-   point). Contracts: **a failed tool call is an `isError` result** — a
-   handler raises `mcp_server/errors.py` `ToolError` (logged at WARNING,
-   no traceback) rather than returning `"Error: ..."` text (#121, pinned in
-   `tests/test_mcp_server_tool_errors.py` and, for the search tools,
-   `tests/test_mcp_server_handlers.py`); a wrong-typed or missing argument
-   still takes the bug path (#124); `run_discussion` reports
-   **`turn_errors`** (skipped turns), **`error`** (why the loop stopped
-   early — a failed `complete_turn` now stops it instead of re-running the
-   turn until the timeout, and an exception in the loop is reported and the
-   run still concluded),
-   **`stop_reason`** and a corrected `rounds_completed` (whole rounds, was
-   one too high); `moderator_id` must be in `entity_ids`. Malformed stdio
-   input gets a JSON-RPC error reply (codes named in `constants.py`), a bug
-   in dispatch is answered with `-32603` by `_dispatch()`, so nothing kills
-   the loop, and no notification is answered, even a malformed one. The
-   temporary `ConsensusApp` is `shutdown()` after each call (MCP providers
-   only); its DB connection is still never closed (it goes with GC; closing
-   it under the pricing thread would segfault — join that first).
-13. `desktop.py` (636) → `desktop/` package: `bridge.py` (`DesktopBridge`:
-   loop, pushes, image data URL, eval server) composing `catalog.py` /
-   `discussion.py` / `files.py` mixins, `launcher.py`, `constants.py`. Net
-   (36% → 99% before the move): `tests/test_desktop_bridge_api.py` pins the
-   top-level bridge methods (`BRIDGE_API`; pywebview also exposes
-   `api.app.*` by recursion, #125) against every
-   `pywebview.api.X` call in `static/` and checks each forward to
-   `ConsensusApp`, sync or via `_run_async`; `tests/test_desktop_bridge.py`
-   covers pushes, gates, file dialogs (a `FakeWindow` in
-   `tests/desktop_helpers.py`), the eval server and `launch_desktop` (a fake
-   `webview` module). Guard: `tests/test_desktop_facade.py`. The one
-   non-verbatim edit: `launcher.py` resolves `pkg_dir` one level up, so
-   `static/` and the icon still resolve (pinned by the launcher tests). **A
-   new bridge method goes in a mixin and in `BRIDGE_API`.**
+12. `mcp_server.py` (714) → `mcp_server/` mixins (`server.py`,
+   `tool_defs.py`, `handlers_read.py`, `handlers_write.py`, `constants.py`,
+   `errors.py`, `__main__.py`); net `tests/test_mcp_server_handlers.py` +
+   `_robustness.py` (fixtures in `tests/mcp_server_helpers.py`), guard
+   `tests/test_mcp_server_facade.py`. Contracts: **a failed tool call is an
+   `isError` result** — handlers raise `ToolError` (WARNING, no traceback),
+   never return `"Error: ..."` text (#121); a wrong-typed argument still
+   takes the bug path (#124). `run_discussion` reports `turn_errors`,
+   `error` (why it stopped early — a failed `complete_turn` stops the loop),
+   `stop_reason` and whole-round `rounds_completed`; `moderator_id` must be
+   in `entity_ids`. Malformed stdio input gets a JSON-RPC error reply, a
+   dispatch bug `-32603`, a notification never a reply. The temporary
+   `ConsensusApp` is `shutdown()` per call; its DB connection is left to GC
+   (closing it under the pricing thread segfaults — join that first).
+13. `desktop.py` (636) → `desktop/`: `bridge.py` (`DesktopBridge`) composing
+   `catalog.py` / `discussion.py` / `files.py` mixins, `launcher.py`
+   (resolves `pkg_dir` one level up), `constants.py`.
+   `tests/test_desktop_bridge_api.py` pins `BRIDGE_API` against every
+   `pywebview.api.X` call in `static/` (pywebview also exposes `api.app.*`,
+   #125); `tests/test_desktop_bridge.py` uses a `FakeWindow`
+   (`tests/desktop_helpers.py`) and a fake `webview`; guard
+   `tests/test_desktop_facade.py`. **A new bridge method goes in a mixin and
+   in `BRIDGE_API`.**
+14. `moderator.py` (775) → `moderator/`: `core.py` (`Moderator`: prompts, AI
+   clients, turn bookkeeping) composing `context.py`, `turn.py`
+   (`generate_turn` + tool loop, 338) and `synthesis.py` (summary,
+   conclusion, mediation) mixins, plus `constants.py`. Net (71% → 99% before
+   the move): `tests/test_moderator_turn.py` / `_synthesis.py`, driven by
+   `ScriptedLLM` (`tests/moderator_helpers.py`: a reply queue of message
+   dicts or HTTP statuses at `_post_with_retry`; `dsml_call` for DSML
+   markup); `use_method` patches `get_active_method` in every mixin module.
+   Guard `tests/test_moderator_facade.py`. Only non-verbatim edits: class
+   lines naming the mixins, new docstrings and import blocks, and an extra
+   dot on every relative import.
 
 **Facade guards.** A dropped re-export fails *late*: consumers mostly import
-lazily inside function bodies (`moderator.py` imports `is_vision_capable` /
+lazily inside function bodies (exceptions: `moderator/turn.py` imports
+`is_vision_capable` and `moderator/context.py` imports
 `build_image_content_blocks` at module level), and the `app._init_*_tools`
 methods turn an `ImportError` into "feature unavailable" (logged at
 WARNING). Each re-exporting facade has a `tests/test_<name>_facade.py` that
@@ -315,20 +310,15 @@ call sites. Keep them in step when the public API changes.
 |------:|------:|------|
 | 1241 | **0%** | `consensus/server.py` |
 | 787 | 49% | `consensus/auth.py` |
-| 775 | 71% | `consensus/moderator.py` (one `Moderator` class, 22 methods) |
 
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next target.** Every module left is one class (`Moderator`), a
-security-critical module (`auth.py`), or `server.py`'s closures.
-`moderator.py` (775, 71%) is the natural next one: split `Moderator` by
-method group into mixins, the way `app_api/`, `mcp_server/` and `desktop/`
-went. Build the net first, through `generate_turn` and the summary paths with
-the `llm` fake from `tests/eval_runner_helpers.py` (fake at
-`AIClient._post_with_retry`, not at `Moderator`). Remember `moderator.py`
-imports `is_vision_capable` / `build_image_content_blocks` at module level
-(see Facade guards).
+**Next target.** Both modules left are the hard ones. `auth.py` (787, 49%)
+is security-critical: write the net first (registration, login rate limit,
+token hashing/expiry, every OAuth provider's callback with a fake token
+endpoint) and treat any defect found as its own fix commit before a line
+moves. Only after that, `server.py`.
 
 **`server.py` is the awkward one — read this before picking it.** It is a
 single 1170-line `launch_web()` whose middleware and ~35 handlers are all
