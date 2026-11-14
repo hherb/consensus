@@ -1,9 +1,10 @@
 # HANDOVER
 
 _Last updated: 2026-11-14. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices and the #104 rotation fix; the `evaluation/eval_db.py`
-slice and the #109 fix are on `refactor/eval-db-split-61` (suite at **3551
-passing**). The discussion-method review & repair campaign (#12–#48,
+the merged #61 slices (through `eval_db.py`, PR #110) and the #104 rotation
+fix; the `evaluation/runner.py` slice plus #112/#113/#114 and a pricing fix are
+on `refactor/eval-runner-split-61` (suite at **3597 passing**). The
+discussion-method review & repair campaign (#12–#48,
 #56–#60) is finished and merged; so is alpha/stable distribution (PyPI
 `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
@@ -11,8 +12,8 @@ failure-visibility work (#78) — contracts for both summarised below. The one
 open structural issue is **#61** (modules over the ~500-line golden rule):
 `app_discussion_flow`, `tools_document`, `app.py` (→ `app_api/` mixins),
 `tools_memory`, `tools_python`, `tools_image`, `methods/base.py`,
-`app_discussion_setup.py`, `evaluation/scorer.py` and `evaluation/eval_db.py`
-are split; six modules remain over the limit. **#86** (lint gate) is done:
+`app_discussion_setup.py`, `evaluation/scorer.py`, `evaluation/eval_db.py` and
+`evaluation/runner.py` are split; five modules remain over the limit. **#86** (lint gate) is done:
 zero `ruff --select F` findings in `consensus/`, enforced by
 `tests/test_lint.py`._
 
@@ -30,7 +31,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3551 passing (`uv run pytest`, ~100 s; runs in `.venv` via the `dev` group) |
+| Tests | 3597 passing (`uv run pytest`, ~35–45 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -213,7 +214,7 @@ concluded record. Removing a non-member is an error. Tests:
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-**Done — ten slices** (detail in git history; one PR each):
+**Done — eleven slices** (detail in git history; one PR each):
 
 1. `app_discussion_flow.py` → `app_discussion_flow/`. **Watch `turns.py`
    (499)**: the next addition crosses the limit — split then.
@@ -245,43 +246,37 @@ concluded record. Removing a non-member is an error. Tests:
    and the judge prompt (`tests/test_eval_judge_robustness.py` checks the
    drift). `evaluation/static/eval.js` (645) is pre-existing over the
    limit.
-10. `evaluation/eval_db.py` (600 → 98) → `EvalDatabase` composes
-   `CatalogMixin` (`eval_db_catalog.py`, cases + conditions),
-   `RunsMixin` (`eval_db_runs.py`, batches/runs/messages/scores) and
-   `SeedingMixin` (`eval_db_seed.py`), like `db/`. Sibling modules, not a
-   package, because `_get_migrations_dir` resolves from `__file__`.
-   Verbatim move; no caller changed. Coverage 62% → 100% first
-   (`tests/test_eval_db.py`). Defects fixed: `update_condition` dropped
-   each participant's `provider_url`/`model` (saving a condition in the UI
-   wiped its overrides); every write committed explicitly with no
-   rollback, so a failed statement left its transaction open — earlier
-   rows waited for the next unrelated write to commit them, and the file
-   stayed write-locked for other processes. Every write now runs in
-   `with self._lock, self.conn` (commit or roll back);
-   `update_case`/`update_condition` change the row and its child rows in
-   one transaction (`_update_statement` builds the `UPDATE` without
-   running it). The update routes read the body before their lookup, so
-   no `await` lets a delete in between (a regression test pins the 404).
-   Seeding no longer swallows a failed import of the built-in
-   cases/conditions. Same PR: **#109** — eval routes check field types in
-   `evaluation/request_checks.py` (pure, table-driven; ints capped at
-   `SQLITE_MAX_INTEGER`) and answer 400. `_constraint_conflicts` (acts on
-   `/eval/api/` only — in web mode it sits on the main app) maps the
-   *known* conflicts in `request_checks.CONFLICT_MESSAGES` (duplicate case
-   key / condition name, deleting a case or condition runs still use) to a
-   409 and re-raises any other `IntegrityError` as a 500. There is no route
-   to delete a run or batch, so an in-use case/condition cannot be deleted
-   at all. `start_batch` checks ids before creating anything. A path id
-   too big for SQLite is a 404 (`_path_id`); an unknown body charset, a
-   too-deeply nested body or a lone surrogate (`"\ud800"`, which SQLite
-   cannot encode) a 400. Updates trim text like adds, so padding cannot
-   dodge the `UNIQUE` key/name. Cancelling a finished batch is a 409
-   instead of overwriting its status. Route tests:
-   `tests/test_eval_routes_crud.py`. Enum sets mirroring the schema's
-   `CHECK`s live in `evaluation/constants.py`.
-
-Smaller slices came out of the error-visibility work: `ai_response.py` (from
-`ai_client.py`) and `static/turn-notices.js` (from `discussion-actions.js`).
+10. `evaluation/eval_db.py` (600 → 98) → `CatalogMixin` / `RunsMixin` /
+   `SeedingMixin` sibling modules (not a package: `_get_migrations_dir`
+   resolves from `__file__`). Contracts kept: every write runs in
+   `with self._lock, self.conn` (commit or roll back), and an update
+   changes its row and child rows in one transaction. Eval routes check
+   field types in `evaluation/request_checks.py` (pure, table-driven) →
+   400, and map known constraint conflicts
+   (`request_checks.CONFLICT_MESSAGES`) → 409. Any other
+   `IntegrityError` is still a 500. An in-use case or condition cannot be
+   deleted (there is no run/batch delete route). Route tests:
+   `tests/test_eval_routes_crud.py`.
+11. `evaluation/runner.py` (677 → 372): web path verbatim → `runner_db.py`
+   (+ `execute_batch`, ex-`eval_routes._execute_batch`); both paths share
+   `runner_common.py` (`drive_turns`, `conclude`, prompt, constants), since
+   the copies had drifted. Net: `tests/test_eval_runner.py` (0% → 95%,
+   only `AIClient._post_with_retry` faked) and
+   `tests/test_eval_batch_execution.py`. Fixed: the web path stored runs
+   with a failed turn/summary/synthesis as `done` (now `error`); its BYOK
+   key went through a process-global env var that concurrent batches
+   clobbered (now the request-key ContextVar, **set even when empty** so
+   the starting request's BYOK keys, keyed by main-app provider ids, never
+   reach the temp app's providers that have the same ids); CLI results go to
+   `<data dir>/eval_results`. #114: a scoring failure leaves the run `done`,
+   noting `AUTO_SCORE_FAILED_PREFIX` in `error_text`; a rescore clears it.
+   #113: cancel stamps the interrupted run and closes the unstarted ones
+   (`error`; runs have no `cancelled` status). #112: `MAX_NUM_ROUNDS = 20`
+   (owner's choice, mirrored in `eval.html`), `MAX_BATCH_RUNS = 1000`.
+   Also: `PricingCache` re-downloaded OpenRouter's catalogue on every
+   lookup for an unknown model (each turn on a local model, blocking the
+   event loop); now once per model per process. The blocking itself
+   remains as #115.
 
 **Facade guards.** A dropped re-export fails *late*: almost every consumer
 imports lazily inside function bodies (exception: `moderator.py` imports
@@ -304,25 +299,20 @@ call sites. Keep them in step when the public API changes.
 | 787 | 49% | `consensus/auth.py` |
 | 775 | 59% | `consensus/moderator.py` (one `Moderator` class) |
 | 714 | 51% | `consensus/mcp_server.py` |
-| 677 | **0%** | `consensus/evaluation/runner.py` |
 | 636 | 35% | `consensus/desktop.py` |
 
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next-best target: `consensus/evaluation/runner.py`** (677, **0%**) — free
-functions, so it splits without glue: the in-memory CLI path
-(`RunResult`, `run_case_condition`, `run_evaluation`, `parse_args`,
-`main`) vs the DB-backed web path (`run_case_condition_db`,
-`_run_single_chat`, `_run_multi_party`). It drives a real `ConsensusApp`,
-so the net needs a stubbed `AIClient` (`judge_calls` in
-`tests/eval_helpers.py` patches `AIClient.complete`) plus that module's
-`eval_db` fixture; `tests/flow_e2e_helpers.py` shows how to drive a real
-`ConsensusApp`. Also fix the
-known packaging gap there (default results dir lands in site-packages).
-`moderator.py` and `auth.py` are bigger payoffs but are a single class and
-a security-critical module at ~50–60% — build their nets before moving a
-line.
+**Next target.** The cheap free-function splits are used up: every module
+left is one class (`Moderator`, `ConsensusMCPServer`, `DesktopBridge`), a
+security-critical module (`auth.py`), or `server.py`'s closures. Of the
+single classes, `mcp_server.py` (714, 51%) and `desktop.py` (636, 35%) are
+the smaller ones; split by method group into mixins, the way `app.py` →
+`app_api/` went. Build the net first either way. `desktop.py` needs a
+fake pywebview `window`. `mcp_server.py` can be driven through
+`ConsensusMCPServer`'s tool methods with the `llm` fake from
+`tests/eval_runner_helpers.py`.
 
 **`server.py` is the awkward one — read this before picking it.** It is a
 single 1170-line `launch_web()` whose middleware and ~35 handlers are all
@@ -411,8 +401,7 @@ likeliest pre-existing bug.
   `gather_evidence` and ACH `present_evidence`; a richer source-picker UI; a
   live browser click-through of the Attach-evidence button (verified statically
   only — there is no JS test harness in this repo).
-- **Packaging** — `consensus/evaluation/runner.py`'s default results dir lands
-  in site-packages for wheel installs; `packaging/macos/make_icns.sh`
+- **Packaging** — `packaging/macos/make_icns.sh`
   regeneration needs Pillow on system python3; icon bubbles blur at 16–32 px.
   (`scripts/release_pypi.sh` now cleans `build/` and `*.egg-info/` and
   `check_no_shadowed_packages` rejects a wheel shipping both `X.py` and `X/` —
@@ -420,6 +409,7 @@ likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
+#115 `PricingCache.refresh` is a synchronous HTTP call on the event loop;
 #107 a rotation change spans several commits (crash mid-update desyncs
 members and `method_state`); #102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
 budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #99 route test for the image-serve CSP (fix landed in PR #100; needs a
@@ -492,6 +482,10 @@ token-aware context windowing and lazy discussion message loading.
   - `submit_human_structured_message` keeps a full `is_active` check: a
     structured payload writes into `method_state`, so it is unambiguously a
     turn — and the form is never mounted while paused anyway.
+- **The suite is offline.** `tests/conftest.py`'s autouse `offline_pricing`
+  stubs `PricingCache.refresh`; a test of the refresh itself patches the
+  instance. Fake LLMs at `AIClient._post_with_retry`
+  (`tests/eval_runner_helpers.py`) to run a real `ConsensusApp` end to end.
 - Project rules: `uv` only (never pip), TDD (failing test first), files under
   ~500 lines (issue #61), docstrings + type hints mandatory.
 
