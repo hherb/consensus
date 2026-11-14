@@ -14,7 +14,8 @@ from consensus.pricing import PricingCache
 def pricing_cache(tmp_path):
     """Create a PricingCache with a temporary database matching production schema."""
     db_path = str(tmp_path / "pricing_test.db")
-    conn = sqlite3.connect(db_path)
+    # Shared with the refresh thread, as Database's connection is.
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute(
         "CREATE TABLE IF NOT EXISTS model_pricing "
@@ -26,6 +27,12 @@ def pricing_cache(tmp_path):
     conn.commit()
     cache = PricingCache(conn, threading.Lock())
     return cache
+
+
+def _settle(cache: PricingCache) -> None:
+    """Wait for the background refresh a lookup started, if any."""
+    if cache._refresh_thread is not None:
+        cache._refresh_thread.join()
 
 
 class TestCalculateCostWithRefresh:
@@ -81,40 +88,32 @@ class TestCalculateCostWithRefresh:
             cost = pricing_cache.calculate_cost_with_refresh(
                 "unknown-model", "", 100, 50,
             )
+            _settle(pricing_cache)
         mock_refresh.assert_called_once()
         assert cost is None
 
-    def test_refreshes_and_retries_when_model_unknown(self, pricing_cache):
-        """Should refresh pricing data and retry when model initially unknown."""
-        call_count = 0
-        original_calculate = pricing_cache.calculate_cost
+    def test_landed_refresh_prices_the_next_call(self, pricing_cache):
+        """An unknown model starts a background refresh; the call that
+        started it reports no cost, and once it lands later calls do."""
+        def _populate() -> bool:
+            pricing_cache._conn.execute(
+                "INSERT INTO model_pricing "
+                "(model_id, prompt_cost, completion_cost, last_updated) "
+                "VALUES (?, ?, ?, ?)",
+                ("new-model", 0.001, 0.002, time.time()),
+            )
+            pricing_cache._conn.commit()
+            return True
 
-        def mock_calculate(model, url, pt, ct):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return None  # First call: unknown
-            return original_calculate(model, url, pt, ct)
-
-        # Insert pricing so second call succeeds
-        pricing_cache._conn.execute(
-            "INSERT INTO model_pricing (model_id, prompt_cost, completion_cost, last_updated) "
-            "VALUES (?, ?, ?, ?)",
-            ("new-model", 0.001, 0.002, time.time()),
-        )
-        pricing_cache._conn.commit()
-
-        with patch.object(pricing_cache, "calculate_cost", side_effect=mock_calculate):
-            with patch.object(pricing_cache, "needs_refresh_for_model", return_value=True):
-                with patch.object(pricing_cache, "refresh", return_value=True) as mock_refresh:
-                    cost = pricing_cache.calculate_cost_with_refresh(
-                        "new-model", "", 100, 50,
-                    )
-        assert call_count == 2
+        with patch.object(pricing_cache, "refresh",
+                          side_effect=_populate) as mock_refresh:
+            assert pricing_cache.calculate_cost_with_refresh(
+                "new-model", "", 100, 50) is None
+            _settle(pricing_cache)
+            cost = pricing_cache.calculate_cost_with_refresh(
+                "new-model", "", 100, 50)
         mock_refresh.assert_called_once()
-        expected_cost = 100 * 0.001 + 50 * 0.002
-        assert cost is not None
-        assert abs(cost - expected_cost) < 1e-10
+        assert cost == pytest.approx(100 * 0.001 + 50 * 0.002)
 
 
 class TestHasInputModality:
@@ -248,7 +247,8 @@ class TestSupportsTools:
             self, pricing_cache):
         """Rows cached before migration 014 have an empty
         supported_parameters column; the first capability lookup must
-        refresh so the setup gate works right after an upgrade."""
+        refresh (in the background) so the setup gate works soon after an
+        upgrade."""
         _insert_model_with_params(pricing_cache, "openai/gpt-4o", "")
 
         def _populate() -> bool:
@@ -262,6 +262,8 @@ class TestSupportsTools:
 
         with patch.object(pricing_cache, "refresh",
                           side_effect=_populate) as refresh:
+            assert pricing_cache.supports_tools("gpt-4o") is None
+            _settle(pricing_cache)
             assert pricing_cache.supports_tools("gpt-4o") is True
         refresh.assert_called_once()
 
@@ -274,20 +276,22 @@ class TestSupportsTools:
     def test_capability_refresh_attempted_at_most_once(self, pricing_cache):
         """A failed capability refresh (e.g. offline) must not be
         re-attempted on every call — the setup gate checks every AI
-        member in a loop and each refresh can block for up to 30s."""
+        member in a loop."""
         _insert_model_with_params(pricing_cache, "openai/gpt-4o", "")
         _insert_model_with_params(pricing_cache, "openai/gpt-4o-mini", "")
         with patch.object(pricing_cache, "refresh",
                           return_value=False) as refresh:
             assert pricing_cache.supports_tools("gpt-4o") is None
+            _settle(pricing_cache)
             assert pricing_cache.supports_tools("gpt-4o-mini") is None
+            _settle(pricing_cache)
         refresh.assert_called_once()
 
 
 class TestUnknownModelRefreshOnce:
     """A model OpenRouter does not list (e.g. a local Ollama model) stays
     unknown after a refresh; it must not re-download the whole catalogue
-    — a blocking call on the event loop — for every message priced."""
+    for every message priced."""
 
     LOOKUPS = [
         lambda c: c.calculate_cost_with_refresh("llama3", "", 10, 10),
@@ -302,11 +306,14 @@ class TestUnknownModelRefreshOnce:
             for _ in range(3):
                 for lookup in self.LOOKUPS:
                     assert lookup(pricing_cache) is None
+                    _settle(pricing_cache)
         refresh.assert_called_once()
 
     def test_each_unknown_model_gets_its_own_refresh(self, pricing_cache):
         with patch.object(pricing_cache, "refresh",
                           return_value=False) as refresh:
             pricing_cache.get_context_length("llama3")
+            _settle(pricing_cache)
             pricing_cache.get_context_length("mistral")
+            _settle(pricing_cache)
         assert refresh.call_count == 2
