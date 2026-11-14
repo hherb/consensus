@@ -121,9 +121,51 @@ async def test_wait_is_bounded(fresh_app, slow_download, monkeypatch, caplog):
     assert "still downloading" in caplog.text
 
 
-async def test_recommender_waits_for_download(tmp_path, slow_download):
+async def test_unstructured_start_does_not_wait(fresh_app):
+    """Only methods with structured phases need the catalogue, so an open
+    discussion starts while the download is still in flight."""
+    fresh_app.discussion.discussion_method = "open_discussion"
+    started = time.monotonic()
+    result = await fresh_app.start_discussion()
+    assert time.monotonic() - started < BLOCK_SECONDS / 2
+    assert "error" not in result, result
+    assert fresh_app.db.pricing._refresh_thread.is_alive()
+
+
+async def test_triage_start_waits(fresh_app, slow_download):
+    """Triage has no structured phases but switches into methods that do,
+    and that switch gate does not wait, so its start waits instead."""
+    fresh_app.discussion.discussion_method = "triage"
+    asyncio.get_running_loop().call_later(0.2, slow_download.set)
+    await fresh_app.start_discussion()
+    assert not fresh_app.db.pricing._refresh_thread.is_alive()
+
+
+async def test_failed_download_ends_the_wait(tmp_path, monkeypatch):
+    """A download that gives up releases the gate at once, not at the cap."""
+    release = threading.Event()
+
+    def refresh(self) -> bool:
+        release.wait(BLOCK_SECONDS)
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(PricingCache, "refresh", refresh)
+    monkeypatch.setattr(pricing_module, "CAPABILITY_WAIT_SECONDS",
+                        BLOCK_SECONDS * 2)
+    app = ConsensusApp(db_path=str(tmp_path / "offline.db"))
+    try:
+        asyncio.get_running_loop().call_later(0.1, release.set)
+        started = time.monotonic()
+        assert await app.db.pricing.wait_for_refresh() is True
+        assert time.monotonic() - started < BLOCK_SECONDS / 2
+    finally:
+        close_app(app, release)
+
+
+async def test_recommender_waits_for_download(tmp_path, slow_download,
+                                              monkeypatch):
     """Down-ranking sees the landed catalogue too."""
-    app = ConsensusApp(db_path=str(tmp_path / "rec.db"))
+    import consensus.methods.recommender as rec_module
 
     class Recommender:
         async def recommend(self, **kwargs):
@@ -131,17 +173,13 @@ async def test_recommender_waits_for_download(tmp_path, slow_download):
                 method_name="delphi", display_name="Delphi",
                 confidence=0.9, reasoning="fits")]
 
+    monkeypatch.setattr(rec_module, "MethodRecommender", Recommender)
+    app = ConsensusApp(db_path=str(tmp_path / "rec.db"))
     asyncio.get_running_loop().call_later(0.2, slow_download.set)
     try:
-        import consensus.methods.recommender as rec_module
-        real = rec_module.MethodRecommender
-        rec_module.MethodRecommender = Recommender
-        try:
-            recs = await recommend_method(
-                "topic", "", ai_client=None, provider={}, db=app.db,
-                panel_models=[("llama3", "http://localhost:11434/v1")])
-        finally:
-            rec_module.MethodRecommender = real
+        recs = await recommend_method(
+            "topic", "", ai_client=None, provider={}, db=app.db,
+            panel_models=[("llama3", "http://localhost:11434/v1")])
     finally:
         close_app(app, slow_download)
     assert recs[0]["capability_warning"], recs
@@ -177,5 +215,25 @@ def test_startup_refreshes_a_cache_without_capability_data(
     try:
         app.db.pricing._refresh_thread.join(BLOCK_SECONDS)
         assert started == ["x"]
+    finally:
+        close_app(app, threading.Event())
+
+
+def test_startup_leaves_a_fresh_capability_cache_alone(
+        tmp_path, monkeypatch):
+    """A fresh cache that has capability data does not download again."""
+    db_path = str(tmp_path / "current.db")
+    app = ConsensusApp(db_path=db_path)
+    app.db.pricing._refresh_thread.join(BLOCK_SECONDS)
+    _insert_model(app.db.pricing, "meta/llama3", "tools")
+    app.db.close()
+
+    started: list[str] = []
+    monkeypatch.setattr(PricingCache, "refresh",
+                        lambda self: started.append("x") or False)
+    app = ConsensusApp(db_path=db_path)
+    try:
+        assert app.db.pricing._refresh_thread is None
+        assert started == []
     finally:
         close_app(app, threading.Event())

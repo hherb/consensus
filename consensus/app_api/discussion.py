@@ -7,7 +7,8 @@ is ``ConsensusApp``, which owns all state.
 import logging
 
 from ..models import EntityType
-from .. import app_discussion_flow, app_discussion_roles, app_discussion_setup
+from .. import (app_discussion_flow, app_discussion_roles,
+                app_discussion_setup, structured_output)
 
 
 logger = logging.getLogger(__name__)
@@ -134,9 +135,13 @@ class DiscussionMixin:
         """Start a new discussion with the configured entities and topic.
 
         Async only to let the tool-capability gate wait for an in-flight
-        model-catalogue download first (#118).
+        model-catalogue download first (#118). Only methods the gate
+        applies to wait, plus Triage: its later switch into a structured
+        method runs the gate without waiting.
         """
-        await self.db.pricing.wait_for_refresh()
+        method = self.discussion.discussion_method
+        if method == "triage" or structured_output.method_needs_tools(method):
+            await self.db.pricing.wait_for_refresh()
         result = app_discussion_setup.start_discussion(
             self.discussion, self.db, self.moderator,
             moderator_participates, max_rounds, cost_limit,

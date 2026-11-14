@@ -5,7 +5,7 @@ the merged #61 slices (through `evaluation/runner.py`, PR #116, with
 #112/#113/#114), the #104 rotation fix and the #115 fix (pricing downloads off
 the event loop, PR #117); the #118 fix (the tool-capability gate waits for an
 in-flight download) is on `fix/tool-gate-waits-for-pricing-118` (suite at
-**3636 passing**). The discussion-method review & repair campaign (#12–#48,
+**3641 passing**). The discussion-method review & repair campaign (#12–#48,
 #56–#60) is finished and merged; so is alpha/stable distribution (PyPI
 `consensus-app` + notarized macOS DMG), the public website, the
 flow-error-visibility work (#71–#74, PR #76), and the tools_document
@@ -32,7 +32,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3636 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 3641 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -216,10 +216,11 @@ unreadable or empty catalogue, or a DB failure; malformed entries are skipped.
 and `app_discussion_setup.recommend_method` first `await
 pricing.wait_for_refresh()`, which joins the thread via `asyncio.to_thread`
 for at most `CAPABILITY_WAIT_SECONDS` (15 s), logging a warning on timeout.
-The Triage method-switch gate does not wait: it runs turns after a start that
-already did. Remaining limits: an unknown model in a populated cache still
-passes on its first setup (its download starts inside the scan); messages
-priced before the data lands keep a `NULL` cost. Tests:
+Only starts the gate applies to wait (`structured_output.method_needs_tools`),
+plus Triage: its method-switch gate does not wait, so its start does.
+Remaining limits: an unknown model in a populated cache still passes on its
+first setup (its download starts inside the scan); messages priced before the
+data lands keep a `NULL` cost. Tests:
 `tests/test_pricing_background.py` (its `cache` fixture restores the real
 `refresh`; tests join `_refresh_thread` with a timeout before asserting) and
 `tests/test_pricing_capability_wait.py` (**join the download thread before
