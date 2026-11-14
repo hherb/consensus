@@ -2,7 +2,7 @@
 
 They drive the real ``AIClient`` parsing through ``ScriptedLLM`` (faked at
 ``_post_with_retry``) and patch collaborators where they are *defined*, so
-they keep working when ``moderator.py`` becomes a package.
+they survive the split of ``moderator.py`` into a package.
 """
 
 import logging

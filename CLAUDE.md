@@ -50,7 +50,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
     ├── app_discussion_flow/ — turn flow package (submissions, turns,
     │     method_switch, conclusion, helpers)
     ├── app_discussion_state.py — discussion state management
-    ├── Moderator (moderator.py) — turn flow, AI generation, summaries
+    ├── Moderator (moderator/) — turn flow, AI generation, summaries
     ├── DiscussionMethod (methods/) — pluggable analytical frameworks
     │     ├── PhaseHandler (methods/phase_handler.py) — composable phase ABC
     │     ├── MethodRecommender (methods/recommender.py) — LLM-based method classification
@@ -71,6 +71,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
 - `config.py` — platform-aware data dirs (macOS: `~/Library/Application Support/consensus`)
 - `background.py` — `spawn_background()`: fire-and-forget asyncio tasks that keep a strong reference and log their exception (used by `tools_document/embedding.py` and `tools_memory/`)
 - `dbkey.py` — `scoped_key()`: scopes a row id to its database file, so process-global bookkeeping cannot collide across `--multi-user` sessions where every session's first row is id 1
+- `moderator/` — `Moderator` (`core.py`: prompt lookup, AI clients, turn bookkeeping) composed of mixins: `context.py` (per-participant context strategy → OpenAI message array, images), `turn.py` (`generate_turn`: prompt selection, structured-output path, tool execution loop), `synthesis.py` (summary, conclusion, mediation); `constants.py` holds the moderator's generation settings
 - `desktop/` — `DesktopBridge` (`bridge.py`) exposes async Python to JS via pywebview and runs a background event loop; its methods come from the `catalog`, `discussion` and `files` mixins; `launcher.py` holds `launch_desktop`
 - `server.py` — aiohttp routes mapping to `ConsensusApp` methods; serves static files with path traversal protection; includes rate limiting, security headers, CORS, CSRF protection, auth middleware, health endpoint
 - `session.py` — `SessionManager` for multi-user deployments; per-session `ConsensusApp` + SQLite with TTL-based expiry

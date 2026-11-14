@@ -28,7 +28,7 @@ Here is what happens when an AI participant takes a turn in web mode:
      moderator.generate_turn(entity)
        |
        v
-5. moderator.py: Moderator.generate_turn(entity)
+5. moderator/turn.py: Moderator.generate_turn(entity)
    - Resolves the system prompt (from DB or entity config)
    - Resolves the turn prompt
    - Builds context messages (system + last 20 messages + task)

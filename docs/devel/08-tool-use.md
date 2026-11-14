@@ -56,7 +56,7 @@ ConsensusApp
     |           |
     |           +-- Tools discovered dynamically via MCP tools/list
     |
-    +-- Moderator (moderator.py)
+    +-- Moderator (moderator/)
           |
           +-- generate_turn() tool execution loop
           |     |

@@ -16,7 +16,7 @@ Frontend (static/ — vanilla JS ES modules)
 ConsensusApp (app.py + app_api/ mixins + app_*.py domain modules)
     |  Central orchestrator: state management, validation, DB writes, event emitter
     |
-    +-- Moderator (moderator.py)
+    +-- Moderator (moderator/)
     |     Turn flow, prompt resolution, AI generation, tool execution loop,
     |     multimodal context (images for vision-capable models)
     |
@@ -239,11 +239,14 @@ all generation currently uses `complete()` or `complete_with_tools()`.
 
 ---
 
-### `moderator.py` -- Discussion Logic
+### `moderator/` -- Discussion Logic
 
-`Moderator` manages everything related to **discussion flow and AI
-generation**. It holds a reference to the current `Discussion`, the
-`Database`, and optionally a `ToolRegistry`.
+`Moderator` (`moderator/core.py`) manages everything related to
+**discussion flow and AI generation**. Its methods come from three mixins:
+`context.py` (context building), `turn.py` (`generate_turn` and the tool
+execution loop) and `synthesis.py` (summary, conclusion, mediation). It
+holds a reference to the current `Discussion`, the `Database`, and
+optionally a `ToolRegistry`.
 
 **Prompt resolution:** `resolve_prompt(role, target, task, **variables)` looks
 up a prompt template from the database and fills in template variables using

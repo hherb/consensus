@@ -97,16 +97,17 @@ class DiscussionMethod(ABC):
 
 | Hook | Called by | Purpose |
 |------|-----------|---------|
-| `get_system_prompt(entity, discussion)` | `moderator.py` | System prompt for the current phase |
-| `get_turn_prompt(entity, discussion)` | `moderator.py` | Turn instruction for the current phase |
-| `get_summary_prompt(discussion, speaker, next_speaker)` | `moderator.py` | Summary prompt override |
-| `get_conclusion_prompt(discussion)` | `moderator.py` | Final conclusion prompt |
-| `filter_context_message(name, content, role, discussion)` | `moderator.py` | Transform context messages (e.g. anonymise for Delphi) |
+| `get_system_prompt(entity, discussion)` | `moderator/turn.py` | System prompt for the current phase |
+| `get_turn_prompt(entity, discussion)` | `moderator/turn.py` | Turn instruction for the current phase |
+| `get_output_tool(entity, discussion)` | `moderator/turn.py` | Forced output tool for a structured phase (issue #23) |
+| `get_summary_prompt(discussion, speaker, next_speaker)` | `moderator/synthesis.py` | Summary prompt override |
+| `get_conclusion_prompt(discussion)` | `moderator/synthesis.py` | Final conclusion prompt |
+| `filter_context_message(name, content, role, discussion)` | `moderator/context.py` | Transform context messages (e.g. anonymise for Delphi) |
 | `process_response(content, entity, discussion)` | `app_discussion_flow/turns.py` + `submissions.py` | Extract structured data from responses (AI turns and human turns respectively) |
 | `should_advance_phase(discussion)` | `app_discussion_flow/turns.py` | Check if current phase is complete |
 | `advance_phase(discussion)` | `app_discussion_flow/turns.py` | Move to next phase |
 | `on_round_complete(discussion)` | `app_discussion_flow/turns.py` | Update counters after all participants respond |
-| `get_turn_order(entity_ids, discussion)` | `moderator.py` | Custom turn ordering per phase |
+| `get_turn_order(entity_ids, discussion)` | `app_discussion_flow/helpers.py` | Custom turn ordering per phase |
 | `init_state(discussion)` | `app_discussion_setup.py` | Initial `method_state` dict |
 
 **`__init_subclass__` magic:** When a subclass sets `phase_handlers` without
@@ -192,9 +193,10 @@ Methods register by being imported in `__init__.py`. The registry maps
 1. **Setup:** `app_discussion_setup.py` calls `method.init_state(discussion)`
    and stores the result in `discussion.method_state`.
 
-2. **Turn generation:** `moderator.py` calls `method.get_system_prompt()` and
-   `method.get_turn_prompt()` to build phase-specific prompts. If these return
-   empty strings, the standard DB-template prompts are used as fallback.
+2. **Turn generation:** `moderator/turn.py` calls
+   `method.get_system_prompt()` and `method.get_turn_prompt()` to build
+   phase-specific prompts. If these return empty strings, the standard
+   DB-template prompts are used as fallback.
 
 3. **Response processing:** `app_discussion_flow/` calls
    `method.process_response()` after each AI turn. The handler extracts

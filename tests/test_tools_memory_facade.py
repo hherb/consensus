@@ -4,7 +4,7 @@ Splitting the former single module into a package (issue #61) moved every
 public name behind re-exports in ``__init__.py``. Every production consumer
 imports them *lazily, inside function bodies* ::
 
-    from .tools_memory import EmbeddingClient        # moderator.py, server.py, ...
+    from .tools_memory import EmbeddingClient        # moderator/context.py, server.py, ...
 
 so a name dropped from ``__init__.py`` raises ``ImportError`` the first time
 that code path runs in production, not at collection time. These tests pin

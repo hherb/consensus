@@ -124,7 +124,7 @@ class TestCallSites:
     """Scans every module under ``consensus/``, not just ``app.py``.
 
     A lazy ``from .tools_document import ...`` added to ``server.py``,
-    ``moderator.py`` or anywhere else would otherwise pass CI green and raise
+    ``moderator/`` or anywhere else would otherwise pass CI green and raise
     ``ImportError`` on first call in production — the exact failure class
     these tests exist to prevent.
     """
