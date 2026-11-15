@@ -161,6 +161,30 @@ async def test_oauth_verified_email_links_existing_account(manager, google):
     assert manager.get_current_user(token).id == existing.id
 
 
+async def test_oauth_link_drops_password_and_sessions_set_by_others(
+        manager, google):
+    # Registration never verifies the email, so whoever set this password
+    # may not own the address; the provider just proved who does.
+    squatter, squatter_token = manager.register("v@example.com", "attacker1")
+    google(id="g-5", email="v@example.com", verified_email=True)
+    user, token = await _google_login(manager)
+    assert user.id == squatter.id
+    assert user.password_hash == ""
+    assert manager.get_current_user(squatter_token) is None
+    assert manager.get_current_user(token).id == user.id
+    with pytest.raises(ValueError, match="Invalid email or password"):
+        manager.login("v@example.com", "attacker1")
+
+
+async def test_oauth_link_without_password_keeps_sessions(manager, google):
+    owner = manager.db.create_user(email="o@example.com",
+                                   oauth_provider="github", oauth_id="gh-1")
+    session = manager.db.create_token(owner.id)
+    google(id="g-6", email="o@example.com", verified_email=True)
+    await _google_login(manager)
+    assert manager.get_current_user(session).id == owner.id
+
+
 async def test_oauth_unverified_email_never_links(manager, google):
     manager.db.create_user(email="a@example.com", password="long-enough")
     google(id="g-3", email="a@example.com", verified_email=False)

@@ -332,6 +332,12 @@ class AuthDatabase:
             (pw_hash, user_id),
         )
 
+    def clear_password(self, user_id: int) -> None:
+        """Remove the user's password, leaving OAuth as the only sign-in."""
+        self._execute_write(
+            "UPDATE users SET password_hash = '' WHERE id = ?", (user_id,),
+        )
+
     def link_oauth(self, user_id: int, provider: str, oauth_id: str,
                    avatar_url: str = "") -> None:
         """Link an OAuth identity to an existing user.
@@ -769,16 +775,25 @@ class AuthManager:
                 raise ValueError(
                     f"An account already exists for {email}, but {provider} "
                     "did not confirm this email is verified.  Sign in with "
-                    "your existing method, then link this provider from your "
-                    "account settings."
+                    "your existing method instead."
                 )
             self.db.link_oauth(
                 user.id, provider, oauth_id,
                 avatar_url=userinfo.get("avatar_url", ""),
             )
+            if user.password_hash:
+                # Registration never verifies the email, so the password may
+                # have been set by someone who does not own the address; the
+                # provider just proved who does.  Lock that someone out.
+                self.db.clear_password(user.id)
+                self.db.revoke_all_tokens(user.id)
+                logger.warning(
+                    "OAuth %s verified the email of password account %d; "
+                    "cleared its password and revoked its sessions",
+                    provider, user.id)
             self.db.update_last_login(user.id)
             token = self.db.create_token(user.id)
-            return user, token
+            return self.db.get_user_by_id(user.id) or user, token
 
         # Create new user
         user = self.db.create_user(
