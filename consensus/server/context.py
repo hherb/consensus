@@ -79,7 +79,7 @@ def build_context(host: str, port: int, multi_user: bool) -> ServerContext:
     static_dir = os.path.realpath(os.path.join(
         os.path.dirname(os.path.dirname(__file__)), "static"))
 
-    # Single-user mode: one shared app (preserves original behavior)
+    # Single-user mode: one shared app
     shared_app: ConsensusApp | None = None
     session_mgr: SessionManager | None = None
 
@@ -137,7 +137,9 @@ def _generate_session_id() -> str:
 async def get_app_for_request(request: web.Request) -> tuple[ConsensusApp | None, str]:
     """Get the ConsensusApp for this request.
 
-    Returns (app, session_id). In single-user mode, session_id is empty.
+    Returns (app, session_id). In single-user mode, session_id is empty;
+    in ``--multi-user`` mode, app is ``None`` when the server is at capacity
+    (both callers answer 503).
     """
     ctx = request.app[CTX_KEY]
     if ctx.shared_app:

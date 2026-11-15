@@ -233,17 +233,29 @@ async def test_missing_required_field_is_a_500(single_client):
     assert "entity_id" in (await resp.json())["error"]
 
 
-async def test_unreadable_body_is_treated_as_empty(single_client, monkeypatch):
-    """A body that is not JSON dispatches with an empty payload."""
+@pytest.mark.parametrize("body", [b"{not json", b"[1, 2]", b"\xff"])
+async def test_unreadable_body_is_a_400(single_client, monkeypatch, body):
+    """A body that is not a JSON object never reaches the app.
+
+    It used to dispatch as ``{}``, so e.g. ``set_cost_limit`` silently
+    saved a limit of 0.
+    """
     calls: list = []
-    monkeypatch.setattr(ConsensusApp, "recommend_method",
+    monkeypatch.setattr(ConsensusApp, "set_cost_limit",
                         _recorder(calls, None, awaitable=False))
     resp = await single_client.post(
-        "/api/recommend_method", data=b"{not json",
+        "/api/set_cost_limit", data=body,
         headers={"Content-Type": "application/json"},
     )
-    assert resp.status == 200
-    assert calls == [(("", ""), {})]
+    assert resp.status == 400
+    assert (await resp.json()) == {"error": "Invalid JSON body"}
+    assert calls == []
+
+
+async def test_body_over_one_mib_is_a_413(single_client):
+    """Only the upload routes lift aiohttp's 1 MiB body limit."""
+    resp = await api(single_client, "get_state", {"pad": "a" * (1024 * 1024)})
+    assert resp.status == 413
 
 
 class TestByokKeys:

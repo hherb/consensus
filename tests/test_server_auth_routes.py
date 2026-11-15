@@ -302,6 +302,14 @@ class TestOAuth:
         assert resp.status == 302
         assert calls[0][:2] == ("apple", "the-code")
 
+    async def test_callback_form_post_error_is_shown(self, multi_client):
+        """Apple posts its ``error`` in the form body, not the query."""
+        resp = await multi_client.post(
+            "/auth/oauth/callback/apple",
+            data={"error": "user_cancelled_authorize"})
+        assert resp.status == 400
+        assert "user_cancelled_authorize" in await resp.text()
+
     async def test_callback_exchange_failure_is_escaped(self, multi_client,
                                                         monkeypatch):
         state, _ = await self._authorize(multi_client, monkeypatch)
@@ -422,3 +430,64 @@ class TestNonStringFields:
         resp = await signed_in.post("/auth/me", json=body)
         assert resp.status == 400
         assert "must be a string" in (await resp.json())["error"]
+
+
+class TestLogoutFailure:
+    async def test_revoke_failure_still_clears_the_cookie(
+            self, signed_in, monkeypatch, caplog):
+        import sqlite3
+
+        def logout(self, token):
+            raise sqlite3.OperationalError("database is locked")
+        monkeypatch.setattr(AuthManager, "logout", logout)
+        resp = await signed_in.post("/auth/logout", json={})
+        assert resp.status == 200
+        assert resp.cookies[server.AUTH_COOKIE].value == ""
+        assert "database is locked" in caplog.text
+
+
+class TestPruneAfterSuccess:
+    async def test_empty_bucket_from_a_success_is_pruned(self, multi_client,
+                                                         monkeypatch):
+        """A successful login leaves an empty bucket; pruning must survive it."""
+        mod = login_limit_module()
+        ctx = multi_client.server.app[server.CTX_KEY]
+        clock = [1_000_000.0]
+        monkeypatch.setattr(mod.time, "time", lambda: clock[0])
+        await register(multi_client)
+        assert (await login(multi_client)).status == 200
+        assert ctx.login_attempts[TEST_EMAIL] == []
+        clock[0] += mod.LOGIN_RATE_LIMIT_WINDOW + 1
+        assert (await login(multi_client, email="bob@example.com",
+                            password="wrong")).status == 401
+        assert TEST_EMAIL not in ctx.login_attempts
+
+
+class TestSecureCookies:
+    async def test_cookies_are_secure_behind_allowed_origins(
+            self, server_home, fast_hashing, monkeypatch):  # noqa: F811
+        from tests.server_helpers import make_client
+        monkeypatch.setenv("CONSENSUS_ALLOWED_ORIGINS",
+                           "https://consensus.example")
+        client = await make_client(multi_user=True)
+        try:
+            resp = await client.post("/auth/register", json={
+                "email": TEST_EMAIL, "password": TEST_PASSWORD})
+            assert resp.cookies[server.AUTH_COOKIE]["secure"]
+            resp = await login(client)
+            assert resp.cookies[server.AUTH_COOKIE]["secure"]
+            # The jar never sends a Secure cookie over the test's plain
+            # HTTP, so authenticate the /api/ call with the bearer header.
+            token = auth_cookie(client)
+            resp = await api(client, "get_state", headers={
+                "Authorization": f"Bearer {token}"})
+            assert resp.status == 200
+            assert resp.cookies[server.SESSION_COOKIE]["secure"]
+        finally:
+            await client.close()
+
+
+async def test_login_body_over_one_mib_is_a_413(multi_client):
+    resp = await multi_client.post("/auth/login", json={
+        "email": TEST_EMAIL, "password": "a" * (1024 * 1024)})
+    assert resp.status == 413

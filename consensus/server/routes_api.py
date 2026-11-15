@@ -1,7 +1,6 @@
 """``POST /api/<method>``: the JSON dispatch onto ``ConsensusApp`` methods."""
 
 import inspect
-import json
 import logging
 
 from aiohttp import web
@@ -10,6 +9,7 @@ from .constants import CAPACITY_ERROR
 from .context import (
     CTX_KEY, extract_api_keys, get_app_for_request, set_session_cookie,
 )
+from .request_io import read_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +27,9 @@ async def handle_api(request: web.Request) -> web.StreamResponse:
         )
         return resp
 
-    try:
-        data = await request.json()
-    except (json.JSONDecodeError, Exception):
-        data = {}
+    data = await read_json_object(request)
+    if data is None:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     # Extract BYOK keys and inject into app context
     api_keys = extract_api_keys(request)

@@ -4,7 +4,9 @@ from aiohttp import web
 
 from .constants import IMAGE_SERVE_CSP
 from .context import session_app
-from .request_io import UploadError, read_json_object, read_upload
+from .request_io import (
+    UploadError, non_string_field, read_json_object, read_upload,
+)
 
 
 async def handle_image_upload(request: web.Request) -> web.StreamResponse:
@@ -43,6 +45,9 @@ async def handle_image_add_url(request: web.Request) -> web.StreamResponse:
     if data is None:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
 
+    bad = non_string_field(data, ("title",))
+    if bad:
+        return bad
     url = data.get("url", "")
     url = url.strip() if isinstance(url, str) else ""
     if not url:

@@ -322,7 +322,9 @@ async function bootstrap() {
             });
             evtSource.onerror = () => console.debug('SSE reconnecting...');
         };
-        firstState.then(openEventStream, openEventStream);
+        // finally, not then(f, f): a failed first load must still reach
+        // the global unhandledrejection toast.
+        firstState.finally(openEventStream);
     }
 
     // Show user bar if authenticated

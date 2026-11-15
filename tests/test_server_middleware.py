@@ -117,6 +117,20 @@ class TestRateLimit:
         assert (await api(single_client, "get_state")).status == 200
 
 
+    async def test_rotating_cookies_do_not_reset_the_limit(
+            self, single_client, monkeypatch):
+        """The limiter keys on the peer IP, never on a client-chosen cookie."""
+        monkeypatch.setattr(rate_limit_module(), "RATE_LIMIT_MAX", 2)
+        statuses = []
+        for i in range(3):
+            cookie = f"{i}" * 32
+            resp = await api(single_client, "get_state", headers={
+                "Cookie": f"{server.SESSION_COOKIE}={cookie}; "
+                          f"{server.AUTH_COOKIE}={cookie}"})
+            statuses.append(resp.status)
+        assert statuses == [200, 200, 429]
+
+
 class TestCsrf:
     @pytest.mark.parametrize("path", ["/api/get_state", "/auth/login",
                                       "/auth/register", "/api/memory/test"])
@@ -144,7 +158,7 @@ class TestCsrf:
         resp = await single_client.post(
             "/api/memory/test", data=b"",
             headers={server.CSRF_HEADER: "1", "Content-Type": "text/plain"})
-        assert resp.status != 415
+        assert resp.status == 200
 
     async def test_oauth_callback_form_post_is_exempt(self, single_client):
         # Reaches the handler (auth disabled → 404), not the CSRF 415.

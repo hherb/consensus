@@ -15,18 +15,9 @@ from ..auth import (
 )
 from .constants import AUTH_COOKIE, LOGIN_RATE_LIMIT_MAX, LOGIN_RATE_LIMIT_WINDOW
 from .context import CTX_KEY, extract_auth_token, prune_stale
-from .request_io import read_json_object
+from .request_io import non_string_field, read_json_object
 
 logger = logging.getLogger(__name__)
-
-
-def non_string_field(data: dict, names: tuple[str, ...]) -> web.Response | None:
-    """A 400 naming the first of *names* present in *data* but not a string."""
-    for name in names:
-        if name in data and not isinstance(data[name], str):
-            return web.json_response({"error": f"{name} must be a string"},
-                                     status=400)
-    return None
 
 
 async def handle_auth_register(request: web.Request) -> web.StreamResponse:
@@ -119,7 +110,12 @@ async def handle_auth_logout(request: web.Request) -> web.StreamResponse:
     if ctx.auth_mgr:
         token = extract_auth_token(request)
         if token:
-            ctx.auth_mgr.logout(token)
+            try:
+                ctx.auth_mgr.logout(token)
+            except Exception:
+                # The cookie still goes: a 500 here left the browser signed
+                # in while the UI showed it signed out.
+                logger.exception("Could not revoke the auth token on logout")
 
     resp = web.json_response({"ok": True})
     resp.del_cookie(AUTH_COOKIE)
@@ -231,15 +227,14 @@ async def handle_oauth_callback(request: web.Request) -> web.StreamResponse:
 
     # Get code and state from query params (GET) or form body (POST, e.g. Apple)
     if request.method == "POST":
-        post_data = await request.post()
-        code = str(post_data.get("code", ""))
-        state = str(post_data.get("state", ""))
+        params = await request.post()
     else:
-        code = request.query.get("code", "")
-        state = request.query.get("state", "")
+        params = request.query
+    code = str(params.get("code", ""))
+    state = str(params.get("state", ""))
 
     if not code or not state:
-        error = html_mod.escape(request.query.get("error", "unknown_error"))
+        error = html_mod.escape(str(params.get("error", "unknown_error")))
         return web.Response(
             status=400,
             content_type="text/html",

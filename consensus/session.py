@@ -91,57 +91,74 @@ class SessionManager:
         if not self.is_valid_session_id(session_id):
             logger.warning("Rejected invalid session ID: %r", session_id[:80])
             return None
-        async with self._lock:
-            if session_id in self._sessions:
-                self._sessions[session_id]["last_access"] = time.time()
-                return self._sessions[session_id]["app"]
+        evicted: list = []
+        try:
+            async with self._lock:
+                if session_id in self._sessions:
+                    self._sessions[session_id]["last_access"] = time.time()
+                    return self._sessions[session_id]["app"]
 
-            if len(self._sessions) >= self.max_sessions:
-                # Try to evict expired sessions first
-                await self._evict_expired()
                 if len(self._sessions) >= self.max_sessions:
-                    return None
+                    # Try to evict expired sessions first
+                    evicted = self._evict_expired()
+                    if len(self._sessions) >= self.max_sessions:
+                        return None
 
-            db_path = os.path.join(self._data_dir, f"{session_id}.db")
-            app = ConsensusApp(db_path=db_path)
-            self._sessions[session_id] = {
-                "app": app,
-                "last_access": time.time(),
-                "db_path": db_path,
-            }
-            return app
+                db_path = os.path.join(self._data_dir, f"{session_id}.db")
+                app = ConsensusApp(db_path=db_path)
+                self._sessions[session_id] = {
+                    "app": app,
+                    "last_access": time.time(),
+                    "db_path": db_path,
+                }
+                return app
+        finally:
+            await self._close_apps(evicted)
 
     @property
     def active_count(self) -> int:
         """Number of active sessions."""
         return len(self._sessions)
 
-    async def _evict_expired(self) -> None:
-        """Remove expired sessions (call under lock)."""
+    def _evict_expired(self) -> list[tuple[str, ConsensusApp]]:
+        """Remove expired sessions and their databases (call under lock).
+
+        Returns the evicted ``(sid, app)`` pairs; the caller passes them to
+        ``_close_apps`` after releasing the lock, because closing an MCP
+        subprocess can take seconds and every request waits on this lock.
+        The database goes now, under the lock, so a returning user cannot
+        reopen a file that is being deleted.
+        """
         now = time.time()
         expired = [
             sid for sid, info in self._sessions.items()
             if now - info["last_access"] > self.session_ttl
         ]
+        evicted = []
         for sid in expired:
             info = self._sessions.pop(sid)
-            # MCP subprocesses and httpx clients would otherwise leak.
-            await self._close_app(sid, info["app"])
+            evicted.append((sid, info["app"]))
             try:
                 info["app"].db.conn.close()
             except Exception as e:
                 logger.warning("Error closing session DB %s: %s", sid[:8], e)
-            # Clean up session database
-            try:
-                db_path = info["db_path"]
-                for suffix in ("", "-wal", "-shm"):
-                    p = db_path + suffix
-                    if os.path.exists(p):
-                        os.remove(p)
-            except OSError:
-                logger.warning("Failed to clean session DB %s", sid[:8])
+            for suffix in ("", "-wal", "-shm"):
+                path = info["db_path"] + suffix
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                except OSError as e:
+                    logger.warning("Failed to remove session DB file %s%s: %s",
+                                   sid[:8], suffix, e)
         if expired:
             logger.info("Evicted %d expired sessions", len(expired))
+        return evicted
+
+    async def _close_apps(self, evicted: list[tuple[str, ConsensusApp]]
+                          ) -> None:
+        """Release evicted apps' MCP subprocesses and httpx clients."""
+        for sid, app in evicted:
+            await self._close_app(sid, app)
 
     async def _cleanup_loop(self) -> None:
         """Periodically evict expired sessions."""
@@ -149,6 +166,7 @@ class SessionManager:
             while True:
                 await asyncio.sleep(CLEANUP_INTERVAL)
                 async with self._lock:
-                    await self._evict_expired()
+                    evicted = self._evict_expired()
+                await self._close_apps(evicted)
         except asyncio.CancelledError:
             pass

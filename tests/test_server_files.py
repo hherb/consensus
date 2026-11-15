@@ -84,6 +84,16 @@ class TestMemoryConfig:
                                                 "application/json"})
         assert resp.status == 400
 
+    @pytest.mark.parametrize("value", [None, {"a": 1}, [1]])
+    async def test_put_non_scalar_value_is_a_400(self, single_client, value):
+        """``None`` used to be saved as the string "None"."""
+        resp = await single_client.put("/api/memory/config",
+                                       json={"embedding_endpoint": value})
+        assert resp.status == 400
+        assert "embedding_endpoint" in (await resp.json())["error"]
+        config = await (await single_client.get("/api/memory/config")).json()
+        assert config.get("embedding_endpoint") != "None"
+
     async def test_get_failure_is_a_500(self, single_client, monkeypatch,
                                         caplog):
         from consensus.database import Database
@@ -172,6 +182,23 @@ class TestDocuments:
             b"x", discussion_id="abc"))
         assert calls[0][1]["discussion_id"] == 0
 
+    async def test_upload_unicode_digit_discussion_is_unbound(
+            self, single_client, monkeypatch):
+        # "\u00b2".isdigit() is true but int() rejects it.
+        calls = record(monkeypatch, "add_document", {}, awaitable=True)
+        resp = await upload(single_client, "/api/documents/upload", multipart(
+            b"x", discussion_id="\u00b2"))
+        assert resp.status == 200
+        assert calls[0][1]["discussion_id"] == 0
+
+    async def test_upload_non_utf8_field_names_the_field(self, single_client):
+        form = aiohttp.FormData(default_to_multipart=True)
+        form.add_field("file", b"x", filename="f.bin")
+        form.add_field("title", b"\xff\xfe", content_type="text/plain")
+        resp = await upload(single_client, "/api/documents/upload", form)
+        assert resp.status == 400
+        assert (await resp.json()) == {"error": "title must be UTF-8 text"}
+
     async def test_upload_without_a_file_is_a_400(self, single_client):
         resp = await upload(single_client, "/api/documents/upload", multipart(None, title="t"))
         assert resp.status == 400
@@ -245,6 +272,28 @@ class TestDocuments:
         resp = await single_client.post("/api/documents/add-url", json=body)
         assert resp.status == 400
         assert (await resp.json()) == {"error": "url is required"}
+
+    @pytest.mark.parametrize("path", ["/api/documents/add-url",
+                                      "/api/images/add-url"])
+    async def test_add_url_non_string_title_is_a_400(self, single_client,
+                                                     monkeypatch, path):
+        calls = record(monkeypatch, "add_document_from_url", {},
+                       awaitable=True)
+        record(monkeypatch, "add_image_from_url", {}, awaitable=True)
+        resp = await single_client.post(path, json={
+            "url": "https://example.com/a", "title": {}})
+        assert resp.status == 400
+        assert "must be a string" in (await resp.json())["error"]
+        assert calls == []
+
+    @pytest.mark.parametrize("path", ["/api/documents/add-url",
+                                      "/api/images/add-url"])
+    async def test_add_url_body_over_one_mib_is_a_413(self, single_client,
+                                                      path):
+        """Not "Invalid JSON body": the real cause reaches the client."""
+        resp = await single_client.post(path, json={
+            "url": "https://example.com/a", "title": "a" * (1024 * 1024)})
+        assert resp.status == 413
 
     async def test_add_url_bad_json_is_a_400(self, single_client):
         resp = await single_client.post(

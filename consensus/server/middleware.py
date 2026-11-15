@@ -29,7 +29,7 @@ async def cors_middleware(request: web.Request,
     if request.path.startswith("/api/"):
         origin = request.headers.get("Origin", "")
         if origin:
-            # In single-user mode, allow the local origin
+            # The local origin is allowed in every mode
             local_origin = f"http://{ctx.host}:{ctx.port}"
             if origin == local_origin:
                 pass  # always allowed

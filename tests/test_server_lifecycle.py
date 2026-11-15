@@ -30,7 +30,10 @@ class TestStatic:
         assert "<html" in (await resp.text()).lower()
 
     @pytest.mark.parametrize("raw", ["/..%2fserver.py", "/%2e%2e/server.py",
-                                     "/..%2f..%2fpyproject.toml"])
+                                     "/..%2f..%2fpyproject.toml",
+                                     # a sibling sharing the prefix "static"
+                                     "/..%2fstatic_evil%2fx",
+                                     "/%2fetc%2fpasswd"])
     async def test_traversal_is_forbidden(self, single_client, raw):
         resp = await single_client.get(URL(raw, encoded=True))
         assert resp.status == 403

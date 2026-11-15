@@ -5,7 +5,9 @@ import logging
 from aiohttp import web
 
 from .context import session_app
-from .request_io import UploadError, read_json_object, read_upload
+from .request_io import (
+    UploadError, non_string_field, read_json_object, read_upload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +45,13 @@ async def handle_memory_config_put(request: web.Request) -> web.StreamResponse:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     allowed_keys = {"embedding_backend", "embedding_model", "embedding_endpoint"}
-    for key, value in data.items():
-        if key not in allowed_keys:
-            continue
+    updates = {k: v for k, v in data.items() if k in allowed_keys}
+    for key, value in updates.items():
+        # bool is an int: a checkbox-style true would read back as "True".
+        if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+            return web.json_response(
+                {"error": f"{key} must be a string or a number"}, status=400)
+    for key, value in updates.items():
         app_inst.db.set_memory_config(key, str(value))
 
     return web.json_response({"ok": True})
@@ -119,6 +125,9 @@ async def handle_document_add_url(request: web.Request) -> web.StreamResponse:
     if data is None:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
 
+    bad = non_string_field(data, ("title",))
+    if bad:
+        return bad
     url = data.get("url", "")
     url = url.strip() if isinstance(url, str) else ""
     if not url:
