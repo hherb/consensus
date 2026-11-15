@@ -5,9 +5,9 @@ the merged #61 slices through `auth.py` → `auth/` (PR #129), the #121 fix
 (MCP tool failures are `isError` results, PR #122), the #104 rotation fix and
 the #115/#118 pricing fixes (PRs #117/#119). The sixteenth and **last** #61
 slice — `server.py` → `server/`, with a route-test net and seven web-mode
-defect fixes — is on `refactor/split-server-61` (PR #133, suite at **4332 passing**);
-once it merges, every Python module is under the ~500-line golden rule and
-#61 is closed. The discussion-method review & repair campaign (#12–#48,
+defect fixes — is on `refactor/split-server-61` (PR #133, suite at **4332
+passing**); once it merges, every Python module is under the ~500-line golden
+rule and #61 is closed. The discussion-method review & repair campaign (#12–#48,
 #56–#60), alpha/stable distribution (PyPI `consensus-app` + notarized macOS
 DMG), the public website, flow-error visibility (#71–#74), tools_document
 failure visibility (#78) and the lint gate (#86, `tests/test_lint.py`) are
