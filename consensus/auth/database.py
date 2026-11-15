@@ -249,20 +249,37 @@ class AuthDatabase:
 
     # -- Auth tokens -------------------------------------------------------
 
-    def create_token(self, user_id: int,
-                     ttl: int = AUTH_TOKEN_TTL) -> str:
+    def create_token(self, user_id: int, ttl: int = AUTH_TOKEN_TTL,
+                     password_hash: Optional[str] = None) -> str:
         """Create a new auth token. Returns the raw token string.
 
         Expired tokens are pruned first; nothing else removes them.
+
+        With *password_hash*, the token is issued only while the user is
+        active and still stores that hash, in one statement: a password
+        login verifies off the event loop (#141), and an OAuth lock-out or
+        a disable landing meanwhile must not be followed by a fresh
+        session. Raises ValueError if the condition fails.
         """
         self.cleanup_expired_tokens()
         raw_token = secrets.token_urlsafe(AUTH_TOKEN_BYTES)
         now = time.time()
-        self._execute_write(
-            """INSERT INTO auth_tokens (user_id, token_hash, created_at, expires_at)
-               VALUES (?, ?, ?, ?)""",
-            (user_id, _hash_token(raw_token), now, now + ttl),
-        )
+        params: tuple = (user_id, _hash_token(raw_token), now, now + ttl)
+        if password_hash is None:
+            self._execute_write(
+                """INSERT INTO auth_tokens
+                   (user_id, token_hash, created_at, expires_at)
+                   VALUES (?, ?, ?, ?)""", params)
+            return raw_token
+        cur = self._execute_write(
+            """INSERT INTO auth_tokens
+               (user_id, token_hash, created_at, expires_at)
+               SELECT ?, ?, ?, ? WHERE EXISTS (
+                   SELECT 1 FROM users WHERE id = ? AND password_hash = ?
+                   AND password_hash != '' AND is_active = 1)""",
+            params + (user_id, password_hash))
+        if cur.rowcount == 0:
+            raise ValueError("Invalid email or password")
         return raw_token
 
     def validate_token(self, raw_token: str) -> Optional[User]:

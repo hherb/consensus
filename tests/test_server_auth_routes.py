@@ -529,9 +529,21 @@ class TestPasswordHashingOffLoop:
         statuses = sorted(r.status for r in replies)
         assert statuses == [401] * limit + [429] * 3
 
+    async def test_concurrent_registrations_make_one_account(
+            self, multi_client):
+        # Both now hash in parallel threads; only UNIQUE(email) decides.
+        body = {"email": TEST_EMAIL, "password": TEST_PASSWORD}
+        replies = await asyncio.gather(*(
+            multi_client.post("/auth/register", json=body) for _ in range(2)))
+        assert sorted(r.status for r in replies) == [200, 400]
+        ctx = multi_client.server.app[server.CTX_KEY]
+        assert ctx.auth_mgr.db.conn.execute(
+            "SELECT COUNT(*) FROM users").fetchone()[0] == 1
+
     async def test_hashing_concurrency_is_bounded(self, multi_client,
                                                   monkeypatch):
         ctx = multi_client.server.app[server.CTX_KEY]
+        # Works only while _hash_off_loop reads the slots per request.
         ctx.password_slots = asyncio.Semaphore(1)
         lock = threading.Lock()
         state = {"now": 0, "peak": 0}

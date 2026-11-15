@@ -408,14 +408,20 @@ def test_database_creates_missing_parent_dir_and_reopens(tmp_path,
     reopened.conn.close()
 
 
-def test_reads_wait_for_the_write_lock(auth_db):
+@pytest.mark.parametrize("read", [
+    lambda db, u: db.get_user_by_email(u.email),
+    lambda db, u: db.get_user_by_id(u.id),
+    lambda db, u: db.get_user_by_oauth("github", "gh-1"),
+    lambda db, u: db.validate_token(db.create_token(u.id)),
+], ids=["by_email", "by_id", "by_oauth", "validate_token"])
+def test_reads_wait_for_the_write_lock(auth_db, read):
     """Login runs in worker threads (#141); a read must not see a
     half-applied multi-statement write such as ``link_oauth``."""
     import threading
-    auth_db.create_user(email="a@example.com")
+    user = auth_db.create_user(email="a@example.com",
+                               oauth_provider="github", oauth_id="gh-1")
     found: list = []
-    reader = threading.Thread(
-        target=lambda: found.append(auth_db.get_user_by_email("a@example.com")))
+    reader = threading.Thread(target=lambda: found.append(read(auth_db, user)))
     with auth_db._lock:
         reader.start()
         reader.join(timeout=0.2)

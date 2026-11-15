@@ -70,11 +70,13 @@ class AuthManager:
             raise ValueError("Invalid email or password")
         if not user.is_active:
             raise ValueError("Account is disabled")
+        # Conditional on the hash just verified: a lock-out or disable
+        # during the verify (which runs off the loop, #141) wins.
+        token = self.db.create_token(user.id,
+                                     password_hash=user.password_hash)
+        self.db.update_last_login(user.id)
         if needs_rehash(user.password_hash):
             self._rehash(user, password)
-
-        self.db.update_last_login(user.id)
-        token = self.db.create_token(user.id)
         return user, token
 
     def _rehash(self, user: User, password: str) -> None:

@@ -7,7 +7,7 @@ now under the ~500-line golden rule (the last slice, `server.py` →
 record their PBKDF2 cost, #127; equal login timing, #131) is merged. This
 branch, `fix/auth-event-loop-141-130`, moves password hashing off the event
 loop (#141) and gives an OAuth callback an overall deadline (#130). The suite
-is at **4426 passing**. Merged campaigns and their contracts are summarised
+is at **4432 passing**. Merged campaigns and their contracts are summarised
 below._
 
 This file briefs the next session on what is done, what is still open, and
@@ -23,7 +23,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4426 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4432 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -251,7 +251,10 @@ before the move. Keep these when touching `consensus/auth/`:
   result are now split by an await, **the handler counts an attempt before
   hashing** and removes it on success. `AuthDatabase` reads go through
   `_query_one` under the write lock, so a worker-thread read never lands
-  inside `link_oauth`'s transaction on the shared connection.
+  inside `link_oauth`'s transaction on the shared connection. Login issues
+  its token with `create_token(password_hash=...)`, one statement that
+  requires the verified hash and `is_active`, so an OAuth lock-out or a
+  disable during the verify leaves no session; the rehash runs after it.
 - **An OAuth exchange has a deadline** (#130): `oauth_callback` wraps
   `exchange_oauth_code` in `asyncio.timeout(SIGN_IN_DEADLINE_SECONDS)` (45 s,
   under nginx's default 60 s `proxy_read_timeout`). On expiry it logs and
@@ -404,20 +407,20 @@ fails only in production). Keep them in step with the public API.
 
 ### Open GitHub issues
 
-#139 registration reveals that an email has an account; #138 name the field and expected type in
-`/api/<method>` 400s; #128 unverified OAuth sign-up can pre-hijack an address (#128 and #139 both want an
-email-verification design); #125 pywebview exposes all of `ConsensusApp` to
-JS; #124 validate MCP tool arguments against `inputSchema`; #107 a rotation
-change spans several commits (crash mid-update desyncs members and
-`method_state`); #102 follow-ups from the PR #100 review (Retry-After,
-`doc_add` ingest budget, DNS-rebinding pin, `_init_image_tools` catch, test
-file size); #97 Seatbelt profile does not confine writes; #96 no UI flag when
-Python or image tools fail to load; #92 tool error results echo raw exception
-text to the model and UI (the `/api/<method>` 500 body does too — noted on the
-issue); #81 persist parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'`
-documents. #141 and #130 are closed by this branch. Suggested next: #138,
-or #125/#124; #128/#139 need the repo owner's call on email
-verification.
+#139 registration reveals that an email has an account; #138 name the field and
+expected type in `/api/<method>` 400s; #128 unverified OAuth sign-up can
+pre-hijack an address (#128 and #139 both want an email-verification design);
+#125 pywebview exposes all of `ConsensusApp` to JS; #124 validate MCP tool
+arguments against `inputSchema`; #107 a rotation change spans several commits
+(crash mid-update desyncs members and `method_state`); #102 follow-ups from the
+PR #100 review (Retry-After, `doc_add` ingest budget, DNS-rebinding pin,
+`_init_image_tools` catch, test file size); #97 Seatbelt profile does not
+confine writes; #96 no UI flag when Python or image tools fail to load; #92
+tool error results echo raw exception text to the model and UI (the
+`/api/<method>` 500 body does too — noted on the issue); #81 persist parse
+fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents. #141 and #130 are closed
+by this branch. Suggested next: #138, or #125/#124; #128/#139 need the repo
+owner's call on email verification.
 
 ### Roadmap
 
