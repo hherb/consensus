@@ -59,14 +59,14 @@ def set_credentials(monkeypatch, provider: str,
                     client_id: str = CLIENT_ID,
                     client_secret: str = CLIENT_SECRET) -> None:
     """Configure *provider*'s client credentials in the environment."""
-    cfg = auth.OAUTH_PROVIDERS[provider]
+    cfg = auth.SIGN_IN_PROVIDERS[provider]
     monkeypatch.setenv(cfg["env_client_id"], client_id)
     monkeypatch.setenv(cfg["env_client_secret"], client_secret)
 
 
 def clear_all_credentials(monkeypatch) -> None:
     """Remove every provider's client credentials from the environment."""
-    for cfg in auth.OAUTH_PROVIDERS.values():
+    for cfg in auth.SIGN_IN_PROVIDERS.values():
         monkeypatch.delenv(cfg["env_client_id"], raising=False)
         monkeypatch.delenv(cfg["env_client_secret"], raising=False)
 

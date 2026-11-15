@@ -25,7 +25,7 @@ from tests.auth_helpers import (  # noqa: F401
     token_ok,
 )
 
-GOOGLE = auth.OAUTH_PROVIDERS["google"]
+GOOGLE = auth.SIGN_IN_PROVIDERS["google"]
 
 
 @pytest.fixture
@@ -240,7 +240,7 @@ async def test_oauth_provider_failure_is_refused(manager, monkeypatch):
         await _google_login(manager)
 
 
-GH = auth.OAUTH_PROVIDERS["github"]
+GH = auth.SIGN_IN_PROVIDERS["github"]
 
 
 @pytest.mark.parametrize("profile_email", ["a@example.com", None])

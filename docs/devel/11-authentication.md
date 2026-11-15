@@ -20,7 +20,7 @@ SHA-256 hashed before storage in the database (never stored in plaintext).
 ## Package: `auth/`
 
 `consensus/auth/` (split from `auth.py`, issue #61): `constants.py`
-(constants and `OAUTH_PROVIDERS`), `models.py`, `passwords.py`,
+(constants and `SIGN_IN_PROVIDERS`), `models.py`, `passwords.py`,
 `database.py` (`AuthDatabase`), `oauth.py` (provider helpers and code
 exchange) and `manager.py` (`AuthManager`). `__init__.py` re-exports the
 public API.
@@ -103,7 +103,7 @@ High-level API used by `server.py`. Methods:
 5. Server validates the state token, exchanges the code for an access token,
    fetches user info, and finds-or-creates the user. Each provider request
    retries transient faults (transport errors, 408/425/429, most 5xx) with
-   exponential backoff (`OAUTH_MAX_RETRIES`, `OAUTH_RETRY_BASE_DELAY`, shared
+   exponential backoff (`SIGN_IN_MAX_RETRIES`, `SIGN_IN_RETRY_BASE_DELAY`, shared
    with `http_fetch`)
 6. Auth cookie is set and user is redirected to `/`
 
@@ -122,7 +122,7 @@ not set, falls back to request host with a warning log.
 
 **Adding a new OAuth provider:**
 
-1. Add provider config to `OAUTH_PROVIDERS` dict in `auth/constants.py`
+1. Add provider config to `SIGN_IN_PROVIDERS` dict in `auth/constants.py`
 2. Add a case to `_extract_user_info()` (`auth/oauth.py`) for the provider's
    userinfo format, returning `email`, `name`, `avatar_url`, `oauth_id` (via
    `_provider_id()`) and `email_verified`

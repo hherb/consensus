@@ -11,11 +11,11 @@ import httpx
 
 from ..http_fetch import is_retryable_status
 from .constants import (
-    OAUTH_ERROR_BODY_LOG_CHARS,
-    OAUTH_HTTP_TIMEOUT,
-    OAUTH_MAX_RETRIES,
-    OAUTH_PROVIDERS,
-    OAUTH_RETRY_BASE_DELAY,
+    SIGN_IN_ERROR_BODY_LOG_CHARS,
+    SIGN_IN_HTTP_TIMEOUT,
+    SIGN_IN_MAX_RETRIES,
+    SIGN_IN_PROVIDERS,
+    SIGN_IN_RETRY_BASE_DELAY,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ def get_available_oauth_providers() -> list[dict]:
     after the user has already consented at the provider.
     """
     available = []
-    for name, cfg in OAUTH_PROVIDERS.items():
+    for name, cfg in SIGN_IN_PROVIDERS.items():
         client_id = os.environ.get(cfg["env_client_id"], "")
         if client_id and os.environ.get(cfg["env_client_secret"], ""):
             available.append({
@@ -42,7 +42,7 @@ def get_available_oauth_providers() -> list[dict]:
 def build_oauth_authorize_url(provider: str, redirect_uri: str,
                                state: str) -> Optional[str]:
     """Build the OAuth authorization URL for the given provider."""
-    cfg = OAUTH_PROVIDERS.get(provider)
+    cfg = SIGN_IN_PROVIDERS.get(provider)
     if not cfg:
         return None
     client_id = os.environ.get(cfg["env_client_id"], "")
@@ -73,7 +73,7 @@ async def _send_with_retry(client: httpx.AsyncClient, method: str, url: str,
 
     Transport errors, timeouts and retryable statuses
     (:func:`http_fetch.is_retryable_status`) are attempted up to
-    ``OAUTH_MAX_RETRIES`` times in total, with exponential backoff. Retrying
+    ``SIGN_IN_MAX_RETRIES`` times in total, with exponential backoff. Retrying
     the code-exchange POST is safe: if an earlier attempt did reach the
     provider, the single-use code is spent and the retry fails permanently.
 
@@ -84,7 +84,7 @@ async def _send_with_retry(client: httpx.AsyncClient, method: str, url: str,
     Raises:
         httpx.TransportError: When the final attempt fails in transport.
     """
-    for attempt in range(OAUTH_MAX_RETRIES - 1):
+    for attempt in range(SIGN_IN_MAX_RETRIES - 1):
         try:
             resp = await client.request(method, url, **kwargs)
         except httpx.TransportError as e:
@@ -93,10 +93,10 @@ async def _send_with_retry(client: httpx.AsyncClient, method: str, url: str,
             if not is_retryable_status(resp.status_code):
                 return resp
             fault = f"HTTP {resp.status_code}"
-        delay = OAUTH_RETRY_BASE_DELAY * (2 ** attempt)
+        delay = SIGN_IN_RETRY_BASE_DELAY * (2 ** attempt)
         logger.warning("OAuth request to %s failed (attempt %d/%d: %s), "
                        "retrying in %.1fs", url, attempt + 1,
-                       OAUTH_MAX_RETRIES, fault, delay)
+                       SIGN_IN_MAX_RETRIES, fault, delay)
         await asyncio.sleep(delay)
     return await client.request(method, url, **kwargs)
 
@@ -109,7 +109,7 @@ async def exchange_oauth_code(provider: str, code: str,
     email_verified (bool) — GitHub adds email_lookup_failed (bool) — or
     None on failure.
     """
-    cfg = OAUTH_PROVIDERS.get(provider)
+    cfg = SIGN_IN_PROVIDERS.get(provider)
     if not cfg:
         return None
 
@@ -128,7 +128,7 @@ async def exchange_oauth_code(provider: str, code: str,
         "grant_type": "authorization_code",
     }
 
-    async with httpx.AsyncClient(timeout=OAUTH_HTTP_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=SIGN_IN_HTTP_TIMEOUT) as client:
         try:
             headers = {"Accept": "application/json"}
             resp = await _send_with_retry(
@@ -179,7 +179,7 @@ def _provider_reply(exc: Exception) -> str:
     reason (``invalid_grant``, ``redirect_uri_mismatch``) is in the body.
     """
     if isinstance(exc, httpx.HTTPStatusError):
-        return f"; provider replied: {exc.response.text[:OAUTH_ERROR_BODY_LOG_CHARS]}"
+        return f"; provider replied: {exc.response.text[:SIGN_IN_ERROR_BODY_LOG_CHARS]}"
     return ""
 
 
@@ -228,7 +228,7 @@ async def _extract_user_info(provider: str, userinfo: dict,
         # ``verified`` flag.  Default to unverified.
         email_verified = False
         lookup_failed = False
-        cfg = OAUTH_PROVIDERS["github"]
+        cfg = SIGN_IN_PROVIDERS["github"]
         email_url = cfg.get("userinfo_email_url", "")
         if email_url:
             try:

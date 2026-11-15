@@ -15,7 +15,7 @@ import pytest
 
 from consensus import auth
 from consensus.auth import oauth
-from consensus.auth.constants import OAUTH_MAX_RETRIES, OAUTH_RETRY_BASE_DELAY
+from consensus.auth.constants import SIGN_IN_MAX_RETRIES, SIGN_IN_RETRY_BASE_DELAY
 from tests.auth_helpers import (
     CLIENT_ID,
     CLIENT_SECRET,
@@ -27,10 +27,10 @@ from tests.auth_helpers import (
     token_ok,
 )
 
-GH = auth.OAUTH_PROVIDERS["github"]
-GOOGLE = auth.OAUTH_PROVIDERS["google"]
-LINKEDIN = auth.OAUTH_PROVIDERS["linkedin"]
-APPLE = auth.OAUTH_PROVIDERS["apple"]
+GH = auth.SIGN_IN_PROVIDERS["github"]
+GOOGLE = auth.SIGN_IN_PROVIDERS["google"]
+LINKEDIN = auth.SIGN_IN_PROVIDERS["linkedin"]
+APPLE = auth.SIGN_IN_PROVIDERS["apple"]
 
 
 @pytest.fixture(autouse=True)
@@ -189,7 +189,7 @@ async def test_exchange_without_access_token_returns_none(monkeypatch, caplog):
 async def test_null_provider_id_is_no_id(monkeypatch, provider, profile):
     # str(None) == "None" would give every such reply one shared identity.
     set_credentials(monkeypatch, provider)
-    cfg = auth.OAUTH_PROVIDERS[provider]
+    cfg = auth.SIGN_IN_PROVIDERS[provider]
     routes = {cfg["token_url"]: token_ok(),
               cfg["userinfo_url"]: httpx.Response(200, json=profile)}
     if provider == "github":
@@ -237,7 +237,7 @@ async def test_transient_token_failure_is_retried_with_backoff(
     with caplog.at_level(logging.WARNING, logger="consensus.auth"):
         assert (await _exchange("google"))["oauth_id"] == "1"
     assert [r.url.path for r in seen].count("/token") == 3
-    assert sleeps == [OAUTH_RETRY_BASE_DELAY, OAUTH_RETRY_BASE_DELAY * 2]
+    assert sleeps == [SIGN_IN_RETRY_BASE_DELAY, SIGN_IN_RETRY_BASE_DELAY * 2]
     assert "HTTP 503" in caplog.text and "ConnectError" in caplog.text
 
 
@@ -251,7 +251,7 @@ async def test_transient_userinfo_failure_is_retried(monkeypatch, sleeps):
         ],
     })
     assert (await _exchange("google"))["oauth_id"] == "2"
-    assert sleeps == [OAUTH_RETRY_BASE_DELAY]
+    assert sleeps == [SIGN_IN_RETRY_BASE_DELAY]
 
 
 async def test_github_email_lookup_is_retried(monkeypatch, sleeps):
@@ -269,8 +269,8 @@ async def test_retries_give_up_after_max_attempts(monkeypatch, sleeps,
     set_credentials(monkeypatch, "google")
     seen = install_routes(monkeypatch, {GOOGLE["token_url"]: failure})
     assert await _exchange("google") is None
-    assert len(seen) == OAUTH_MAX_RETRIES
-    assert len(sleeps) == OAUTH_MAX_RETRIES - 1
+    assert len(seen) == SIGN_IN_MAX_RETRIES
+    assert len(sleeps) == SIGN_IN_MAX_RETRIES - 1
 
 
 async def test_permanent_failure_is_not_retried(monkeypatch, sleeps):

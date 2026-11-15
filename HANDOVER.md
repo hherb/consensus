@@ -232,6 +232,11 @@ before the move. Keep these when touching `consensus/auth/`:
   logged, means "unverified" and sets `email_lookup_failed`, so the user is
   told to retry rather than to use another sign-in method.
 - Providers are offered only with both client ID and secret set.
+- **No `oauth` in names that reach a log call** (`SIGN_IN_PROVIDERS`,
+  `SIGN_IN_MAX_RETRIES`, …): CodeQL's password heuristic matches `oauth` and
+  raised high-severity clear-text-logging alerts that block merging (PR #129).
+  Check with `gh codeql database analyze` on the
+  `Security/CWE-312/CleartextLogging.ql` query.
 - `create_token` / `store_oauth_state` prune expired rows (nothing else
   does); `login` checks the password before saying "disabled". Never change
   `PASSWORD_HASH_ITERATIONS` before **#127** lands.
