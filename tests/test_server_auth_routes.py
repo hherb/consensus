@@ -7,6 +7,9 @@ brute-force limit, and the OAuth redirect/state/callback handling.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -491,3 +494,58 @@ async def test_login_body_over_one_mib_is_a_413(multi_client):
     resp = await multi_client.post("/auth/login", json={
         "email": TEST_EMAIL, "password": "a" * (1024 * 1024)})
     assert resp.status == 413
+
+
+class TestPasswordHashingOffLoop:
+    """PBKDF2 runs in worker threads, not on the event loop (#141)."""
+
+    @staticmethod
+    def _record_thread(monkeypatch, name: str, seen: list) -> None:
+        original = getattr(AuthManager, name)
+
+        def wrapper(self, *args, **kwargs):
+            seen.append(threading.get_ident())
+            return original(self, *args, **kwargs)
+        monkeypatch.setattr(AuthManager, name, wrapper)
+
+    async def test_register_and_login_leave_the_loop(self, multi_client,
+                                                     monkeypatch):
+        seen: list = []
+        self._record_thread(monkeypatch, "register", seen)
+        self._record_thread(monkeypatch, "login", seen)
+        await register(multi_client)
+        assert (await login(multi_client)).status == 200
+        assert len(seen) == 2
+        assert threading.get_ident() not in seen
+
+    async def test_concurrent_attempts_share_the_per_email_limit(
+            self, multi_client):
+        # The limit check and the failure record are now split by an
+        # await; a burst must still not get more than the limit through.
+        await register(multi_client)
+        limit = login_limit_module().LOGIN_RATE_LIMIT_MAX
+        replies = await asyncio.gather(*(
+            login(multi_client, password="wrong") for _ in range(limit + 3)))
+        statuses = sorted(r.status for r in replies)
+        assert statuses == [401] * limit + [429] * 3
+
+    async def test_hashing_concurrency_is_bounded(self, multi_client,
+                                                  monkeypatch):
+        ctx = multi_client.server.app[server.CTX_KEY]
+        ctx.password_slots = asyncio.Semaphore(1)
+        lock = threading.Lock()
+        state = {"now": 0, "peak": 0}
+
+        def slow_login(self, email, password):
+            with lock:
+                state["now"] += 1
+                state["peak"] = max(state["peak"], state["now"])
+            time.sleep(0.05)
+            with lock:
+                state["now"] -= 1
+            raise ValueError("Invalid email or password")
+        monkeypatch.setattr(AuthManager, "login", slow_login)
+        replies = await asyncio.gather(*(
+            login(multi_client, email=f"u{i}@example.com") for i in range(3)))
+        assert [r.status for r in replies] == [401] * 3
+        assert state["peak"] == 1

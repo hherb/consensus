@@ -1,10 +1,12 @@
 """``/auth/*``: password sign-in, the profile, and the OAuth flow."""
 
+import asyncio
 import html as html_mod
 import logging
 import os
 import secrets
 import time
+from typing import Callable, TypeVar
 
 from aiohttp import web
 
@@ -18,6 +20,20 @@ from .context import CTX_KEY, extract_auth_token, prune_stale
 from .request_io import non_string_field, read_json_object
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+async def _hash_off_loop(request: web.Request, fn: Callable[..., _T],
+                         **kwargs: object) -> _T:
+    """Run a PBKDF2-bound auth call in a worker thread (#141).
+
+    One hash takes ~0.13 s; on the event loop a burst of logins stalled
+    every other request, SSE included. ``password_slots`` bounds how many
+    run at once.
+    """
+    async with request.app[CTX_KEY].password_slots:
+        return await asyncio.to_thread(fn, **kwargs)
 
 
 async def handle_auth_register(request: web.Request) -> web.StreamResponse:
@@ -35,7 +51,8 @@ async def handle_auth_register(request: web.Request) -> web.StreamResponse:
         return bad
 
     try:
-        user, token = ctx.auth_mgr.register(
+        user, token = await _hash_off_loop(
+            request, ctx.auth_mgr.register,
             email=data.get("email", ""),
             password=data.get("password", ""),
             display_name=data.get("display_name", ""),
@@ -83,17 +100,23 @@ async def handle_auth_login(request: web.Request) -> web.StreamResponse:
                 {"error": "Too many login attempts. Please try again later."},
                 status=429,
             )
+        # Count the attempt before the await below, or a concurrent burst
+        # would all pass the check; a success takes it back.
+        attempts.append(now)
 
     try:
-        user, token = ctx.auth_mgr.login(
+        user, token = await _hash_off_loop(
+            request, ctx.auth_mgr.login,
             email=email,
             password=data.get("password", ""),
         )
     except ValueError as e:
-        # Record failed attempt
-        if email:
-            ctx.login_attempts.setdefault(email, []).append(now)
         return web.json_response({"error": str(e)}, status=401)
+    if email:
+        # Another request may have replaced or pruned the list meanwhile.
+        current = ctx.login_attempts.get(email)
+        if current and now in current:
+            current.remove(now)
 
     resp = web.json_response({"user": user.to_dict()})
     resp.set_cookie(

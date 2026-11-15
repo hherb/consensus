@@ -381,3 +381,27 @@ async def test_github_email_lookup_outage_asks_to_retry(
         await manager.oauth_callback("github", "code", REDIRECT_URI)
     assert "did not confirm" not in str(exc.value)
     assert manager.db.get_user_by_oauth("github", "9") is None
+
+
+async def test_oauth_exchange_past_the_deadline_is_refused(manager,
+                                                           monkeypatch):
+    """A slow provider must not outlive a proxy's timeout (#130)."""
+    import asyncio
+    mod = module_of(auth.AuthManager)
+
+    async def slow_exchange(provider, code, redirect_uri):
+        await asyncio.sleep(10)
+        return {"email": "late@example.com", "oauth_id": "1"}
+
+    monkeypatch.setattr(mod, "exchange_oauth_code", slow_exchange)
+    monkeypatch.setattr(mod, "SIGN_IN_DEADLINE_SECONDS", 0.01)
+    with pytest.raises(ValueError, match="did not answer in time"):
+        await _google_login(manager)
+    assert manager.db.get_user_by_email("late@example.com") is None
+
+
+def test_sign_in_deadline_fits_under_a_default_proxy_timeout():
+    nginx_proxy_read_timeout = 60
+    deadline = module_of(auth.AuthManager).SIGN_IN_DEADLINE_SECONDS
+    assert (auth.SIGN_IN_HTTP_TIMEOUT < deadline
+            < nginx_proxy_read_timeout)

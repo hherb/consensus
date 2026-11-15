@@ -6,6 +6,7 @@ application under ``CTX_KEY``; handlers are module-level functions that read
 it with ``request.app[CTX_KEY]``.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -18,7 +19,8 @@ from ..app import ConsensusApp
 from ..auth import AuthDatabase, AuthManager
 from ..session import SessionManager
 from .constants import (
-    AUTH_COOKIE, AUTH_HEADER, NO_SESSION_ERROR, SESSION_COOKIE,
+    AUTH_COOKIE, AUTH_HEADER, NO_SESSION_ERROR, PASSWORD_HASH_CONCURRENCY,
+    SESSION_COOKIE,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,8 @@ class ServerContext:
             only — does not apply across multiple workers/processes.
         login_attempts_last_cleanup: When stale ``login_attempts`` were last
             purged.
+        password_slots: Bounds the password hashes running in worker
+            threads at once (``PASSWORD_HASH_CONCURRENCY``, #141).
     """
 
     host: str
@@ -58,6 +62,8 @@ class ServerContext:
     rate_limit_last_cleanup: float = 0.0
     login_attempts: dict[str, list[float]] = field(default_factory=dict)
     login_attempts_last_cleanup: float = 0.0
+    password_slots: asyncio.Semaphore = field(
+        default_factory=lambda: asyncio.Semaphore(PASSWORD_HASH_CONCURRENCY))
 
 
 CTX_KEY = web.AppKey("consensus_server_context", ServerContext)

@@ -3,13 +3,12 @@
 _Last updated: 2026-11-15. `main` is at **v2.0.0** (released 2026-07-20) plus
 everything merged since, including the whole of #61: every Python module is
 now under the ~500-line golden rule (the last slice, `server.py` →
-`server/`, was PR #133, with follow-ups in PR #137). This branch,
-`fix/auth-password-hashing-127-131`, makes password hashes record their
-PBKDF2 iteration count (#127) and equalises login timing (#131). The suite
-is at **4420 passing**. The method review & repair campaign
-(#12–#48, #56–#60), distribution (PyPI `consensus-app` + notarized macOS
-DMG), the website, flow and document failure visibility (#71–#74, #78) and
-the lint gate (#86) are all merged. Their contracts are summarised below._
+`server/`, was PR #133, with follow-ups in PR #137). PR #140 (password hashes
+record their PBKDF2 cost, #127; equal login timing, #131) is merged. This
+branch, `fix/auth-event-loop-141-130`, moves password hashing off the event
+loop (#141) and gives an OAuth callback an overall deadline (#130). The suite
+is at **4426 passing**. Merged campaigns and their contracts are summarised
+below._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep; delete sections that are no longer instructive.
@@ -24,7 +23,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4420 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4426 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -140,12 +139,11 @@ does not render `summary_status`/`fidelity` (**#81**); pre-#78
 by `tests/test_tools_document_failures.py`, `tests/test_background.py` and
 `tests/test_tools_document*.py`.
 
-## Lint gate (#86, PR #91 — keep in mind)
+## Lint gate (#86 — keep in mind)
 
 `tests/test_lint.py` fails on any `ruff --select F` finding in `consensus/`
-(`tests/` is not linted). The `dev` group pins `pytest`, `pytest-asyncio`
-1.x (`asyncio_mode = auto`; no current event loop, so write async tests as
-`async def`) and `ruff`.
+(not `tests/`). `pytest-asyncio` 1.x runs in `asyncio_mode = auto`: write
+async tests as `async def`.
 
 ## Speaking rotation after start (#104 — keep this contract)
 
@@ -245,6 +243,19 @@ before the move. Keep these when touching `consensus/auth/`:
   all-zero dummy hash. Until a raised count has reached every user, a
   dormant account's old cheaper hash is still distinguishable. Registration
   still reveals a taken email (**#139**, needs email verification first).
+- **Login and registration hash off the event loop** (#141):
+  `routes_auth._hash_off_loop` runs `AuthManager.login` / `register` via
+  `asyncio.to_thread`, at most `PASSWORD_HASH_CONCURRENCY` at once
+  (`ServerContext.password_slots`), so a burst cannot take the default
+  executor that DNS lookups share. Because the rate-limit check and the
+  result are now split by an await, **the handler counts an attempt before
+  hashing** and removes it on success. `AuthDatabase` reads go through
+  `_query_one` under the write lock, so a worker-thread read never lands
+  inside `link_oauth`'s transaction on the shared connection.
+- **An OAuth exchange has a deadline** (#130): `oauth_callback` wraps
+  `exchange_oauth_code` in `asyncio.timeout(SIGN_IN_DEADLINE_SECONDS)` (45 s,
+  under nginx's default 60 s `proxy_read_timeout`). On expiry it logs and
+  raises "did not answer in time" before any user or token is written.
 
 Tests: `tests/test_auth_db.py`, `_manager.py`, `_oauth_exchange.py`,
 `_oauth.py` (100% coverage; providers faked at the httpx transport via
@@ -393,10 +404,8 @@ fails only in production). Keep them in step with the public API.
 
 ### Open GitHub issues
 
-#141 login/registration PBKDF2 blocks the event loop; #139 registration
-reveals that an email has an account; #138 name the field and expected type in
-`/api/<method>` 400s; #130 an OAuth callback has no overall deadline; #128
-unverified OAuth sign-up can pre-hijack an address (#128 and #139 both want an
+#139 registration reveals that an email has an account; #138 name the field and expected type in
+`/api/<method>` 400s; #128 unverified OAuth sign-up can pre-hijack an address (#128 and #139 both want an
 email-verification design); #125 pywebview exposes all of `ConsensusApp` to
 JS; #124 validate MCP tool arguments against `inputSchema`; #107 a rotation
 change spans several commits (crash mid-update desyncs members and
@@ -406,8 +415,8 @@ file size); #97 Seatbelt profile does not confine writes; #96 no UI flag when
 Python or image tools fail to load; #92 tool error results echo raw exception
 text to the model and UI (the `/api/<method>` 500 body does too — noted on the
 issue); #81 persist parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'`
-documents. #127 and #131 are closed by this branch. Suggested next: #130,
-#138, or #125/#124; #128/#139 need the repo owner's call on email
+documents. #141 and #130 are closed by this branch. Suggested next: #138,
+or #125/#124; #128/#139 need the repo owner's call on email
 verification.
 
 ### Roadmap

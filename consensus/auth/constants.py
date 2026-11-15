@@ -17,6 +17,10 @@ OAUTH_STATE_TTL = 600  # 10 minutes: max time for user to complete OAuth flow
 # Names on the provider-request logging path avoid "oauth": CodeQL's
 # password heuristic matches it and flags every log line they reach.
 SIGN_IN_HTTP_TIMEOUT = 15  # seconds per request to a provider
+#: Seconds the whole provider exchange may take, retries included (#130).
+#: Kept under nginx's default 60 s ``proxy_read_timeout``, so the browser
+#: hears "try again" from us rather than a 504 while sign-in carries on.
+SIGN_IN_DEADLINE_SECONDS = 45
 #: Attempts per provider request, the first included (shared fetch policy).
 SIGN_IN_MAX_RETRIES = FETCH_MAX_RETRIES
 #: Seconds before the first retry; doubled for each later one.

@@ -406,3 +406,19 @@ def test_database_creates_missing_parent_dir_and_reopens(tmp_path,
     assert reopened.get_user_by_email("keep@example.com") is not None
     assert reopened.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     reopened.conn.close()
+
+
+def test_reads_wait_for_the_write_lock(auth_db):
+    """Login runs in worker threads (#141); a read must not see a
+    half-applied multi-statement write such as ``link_oauth``."""
+    import threading
+    auth_db.create_user(email="a@example.com")
+    found: list = []
+    reader = threading.Thread(
+        target=lambda: found.append(auth_db.get_user_by_email("a@example.com")))
+    with auth_db._lock:
+        reader.start()
+        reader.join(timeout=0.2)
+        assert reader.is_alive() and not found
+    reader.join(timeout=5)
+    assert found and found[0].email == "a@example.com"
