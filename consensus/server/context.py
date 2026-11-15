@@ -42,6 +42,8 @@ class ServerContext:
         rate_limit_last_cleanup: When stale ``rate_limits`` were last purged.
         login_attempts: Failed logins per email, ``{email: [ts]}``. In-process
             only — does not apply across multiple workers/processes.
+        login_attempts_last_cleanup: When stale ``login_attempts`` were last
+            purged.
     """
 
     host: str
@@ -55,6 +57,7 @@ class ServerContext:
     rate_limits: dict[str, list[float]] = field(default_factory=dict)
     rate_limit_last_cleanup: float = 0.0
     login_attempts: dict[str, list[float]] = field(default_factory=dict)
+    login_attempts_last_cleanup: float = 0.0
 
 
 CTX_KEY = web.AppKey("consensus_server_context", ServerContext)
@@ -112,6 +115,18 @@ def build_context(host: str, port: int, multi_user: bool) -> ServerContext:
         auth_required=multi_user,  # auth only enforced in multi-user mode
         allowed_origins=allowed_origins,
     )
+
+
+def prune_stale(buckets: dict[str, list[float]], window_start: float) -> None:
+    """Drop the keys whose newest timestamp is older than *window_start*.
+
+    Keeps the per-IP and per-email limiter tables bounded by recent
+    activity rather than by every client or email ever seen.
+    """
+    stale_keys = [k for k, ts in buckets.items()
+                  if not ts or ts[-1] < window_start]
+    for k in stale_keys:
+        del buckets[k]
 
 
 def _generate_session_id() -> str:

@@ -7,7 +7,7 @@ from aiohttp import web
 from .constants import (
     CSRF_HEADER, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW, RequestHandler,
 )
-from .context import CTX_KEY, extract_auth_token
+from .context import CTX_KEY, extract_auth_token, prune_stale
 
 
 @web.middleware
@@ -64,12 +64,7 @@ async def rate_limit_middleware(request: web.Request,
 
     # Periodically purge stale client entries (every RATE_LIMIT_WINDOW seconds)
     if now - ctx.rate_limit_last_cleanup > RATE_LIMIT_WINDOW:
-        stale_keys = [
-            k for k, ts in ctx.rate_limits.items()
-            if not ts or ts[-1] < window_start
-        ]
-        for k in stale_keys:
-            del ctx.rate_limits[k]
+        prune_stale(ctx.rate_limits, window_start)
         ctx.rate_limit_last_cleanup = now
 
     # Clean old entries and check limit

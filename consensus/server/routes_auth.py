@@ -14,7 +14,7 @@ from ..auth import (
     get_available_oauth_providers,
 )
 from .constants import AUTH_COOKIE, LOGIN_RATE_LIMIT_MAX, LOGIN_RATE_LIMIT_WINDOW
-from .context import CTX_KEY, extract_auth_token
+from .context import CTX_KEY, extract_auth_token, prune_stale
 from .request_io import read_json_object
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,9 @@ async def handle_auth_login(request: web.Request) -> web.StreamResponse:
     # Per-email brute-force protection
     now = time.time()
     window_start = now - LOGIN_RATE_LIMIT_WINDOW
+    if now - ctx.login_attempts_last_cleanup > LOGIN_RATE_LIMIT_WINDOW:
+        prune_stale(ctx.login_attempts, window_start)
+        ctx.login_attempts_last_cleanup = now
     if email:
         attempts = ctx.login_attempts.get(email, [])
         attempts = [t for t in attempts if t > window_start]

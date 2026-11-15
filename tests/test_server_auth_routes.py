@@ -363,3 +363,35 @@ class TestNonObjectBodies:
         resp = await multi_client.post("/auth/login",
                                        json={"email": 5, "password": "x"})
         assert resp.status == 400
+
+
+class TestLoginAttemptPruning:
+    """Failed-login bookkeeping cannot grow without bound."""
+
+    async def test_stale_emails_are_dropped(self, multi_client, monkeypatch):
+        mod = login_limit_module()
+        ctx = multi_client.server.app[server.CTX_KEY]
+        clock = [1_000_000.0]
+        monkeypatch.setattr(mod.time, "time", lambda: clock[0])
+        for i in range(20):
+            await login(multi_client, email=f"user{i}@example.com",
+                        password="wrong")
+        assert len(ctx.login_attempts) == 20
+        clock[0] += mod.LOGIN_RATE_LIMIT_WINDOW + 1
+        await login(multi_client, email="late@example.com", password="wrong")
+        assert set(ctx.login_attempts) == {"late@example.com"}
+
+    async def test_recent_attempts_survive_a_prune(self, multi_client,
+                                                   monkeypatch):
+        mod = login_limit_module()
+        ctx = multi_client.server.app[server.CTX_KEY]
+        clock = [1_000_000.0]
+        monkeypatch.setattr(mod.time, "time", lambda: clock[0])
+        await register(multi_client)
+        await login(multi_client, email="old@example.com", password="wrong")
+        clock[0] += mod.LOGIN_RATE_LIMIT_WINDOW - 1
+        for _ in range(mod.LOGIN_RATE_LIMIT_MAX):
+            await login(multi_client, password="wrong")
+        clock[0] += 2  # old@ is now stale, alice's attempts are not
+        assert (await login(multi_client)).status == 429
+        assert set(ctx.login_attempts) == {TEST_EMAIL}
