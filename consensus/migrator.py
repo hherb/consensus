@@ -74,7 +74,9 @@ def run_migrations(conn: sqlite3.Connection,
 
     Idempotent: tracks applied versions in a `migrations` table.
     Single-execution guard: skips if already run for this db_path
-    in the current process.
+    in the current process and the file still has its ``migrations``
+    table (a deleted and re-created file, as after a ``--multi-user``
+    session eviction, is migrated again).
 
     Args:
         migrations_dir: Directory containing .sql migration files.
@@ -83,7 +85,9 @@ def run_migrations(conn: sqlite3.Connection,
     For existing databases with the legacy `schema_version` table,
     stamps baseline version 001 as applied and drops the old table.
     """
-    if db_path in _migrations_done:
+    if db_path in _migrations_done and conn.execute(
+            "SELECT 1 FROM sqlite_master"
+            " WHERE type = 'table' AND name = 'migrations'").fetchone():
         return
 
     _ensure_migrations_table(conn, lock)

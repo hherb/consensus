@@ -180,9 +180,10 @@ async def handle_api(request: web.Request) -> web.StreamResponse:
     try:
         call = handler()
         inspect.signature(call.func).bind(*call.args, **call.keywords)
-    except (KeyError, TypeError, ValueError) as e:
-        # The client's mistake: a missing key, an unconvertible value, or
-        # keyword arguments the method does not take. Nothing has run yet.
+    except (KeyError, TypeError, ValueError, OverflowError) as e:
+        # The client's mistake: a missing key, an unconvertible value (an
+        # infinite or huge number overflows), or keyword arguments a
+        # fixed-signature method does not take. Nothing has run yet.
         error = (f"missing field {e}" if isinstance(e, KeyError) else str(e))
         logger.warning("API %s: invalid arguments: %s", method, error)
         return reply({"error": f"Invalid arguments for {method}: {error}"},

@@ -117,7 +117,10 @@ class SessionManager:
 
     def lookup(self, session_id: str, touch: bool = True
                ) -> Optional[ConsensusApp]:
-        """The live app for *session_id*, or ``None``; never creates one.
+        """The app for *session_id* unless evicted, else ``None``; never creates.
+
+        An expired session the cleanup has not evicted yet is still returned
+        (and ``touch=True`` renews it).
 
         For routes that cannot set the session cookie (#132): a session they
         created would be orphaned. ``touch=False`` checks liveness without

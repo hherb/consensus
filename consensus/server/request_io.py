@@ -1,7 +1,5 @@
 """Reading request bodies: JSON objects and multipart uploads."""
 
-import json
-
 from aiohttp import BodyPartReader, web
 
 
@@ -13,7 +11,9 @@ async def read_json_object(request: web.Request) -> dict | None:
     """
     try:
         data = await request.json()
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except ValueError:
+        # JSONDecodeError and UnicodeDecodeError are ValueErrors, and so is
+        # an integer past Python's int-string length limit.
         return None
     return data if isinstance(data, dict) else None
 

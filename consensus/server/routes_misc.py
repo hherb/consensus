@@ -2,12 +2,15 @@
 
 import asyncio
 import json
+import logging
 import os
 
 from aiohttp import web
 
 from .constants import SESSION_COOKIE, SSE_KEEPALIVE_SECONDS
 from .context import CTX_KEY, session_app
+
+logger = logging.getLogger(__name__)
 
 
 async def handle_health(request: web.Request) -> web.StreamResponse:
@@ -22,10 +25,11 @@ async def handle_health(request: web.Request) -> web.StreamResponse:
 async def handle_events(request: web.Request) -> web.StreamResponse:
     """SSE endpoint for real-time events (tool progress, etc.).
 
-    In ``--multi-user`` the stream ends once its session is no longer live
-    (#135): the app it listens to was shut down. The reconnect gets the
-    no-session 400, and the frontend rebinds after a dispatch call has made
-    the next session.
+    In ``--multi-user`` the stream ends, after a ``session_expired`` event,
+    once its session is evicted (#135): the app it listens to was shut down.
+    If a dispatch call has already re-created the session, EventSource's
+    reconnect joins its new app; otherwise it gets the no-session 400 and
+    closes, and the frontend calls ``get_state`` and reopens it.
     """
     app_instance = await session_app(request)
     if isinstance(app_instance, web.Response):
@@ -62,6 +66,12 @@ async def handle_events(request: web.Request) -> web.StreamResponse:
                 if (session_mgr is not None
                         and session_mgr.lookup(sid, touch=False)
                         is not app_instance):
+                    # Named, so the page can tell the user why its state
+                    # is about to reset rather than wiping it silently.
+                    logger.info("SSE: session %s gone; ending its stream",
+                                sid[:8])
+                    await resp.write(
+                        b"event: session_expired\ndata: {}\n\n")
                     break
                 await resp.write(b": keepalive\n\n")
     except (asyncio.CancelledError, ConnectionResetError):

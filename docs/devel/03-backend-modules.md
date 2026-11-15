@@ -204,9 +204,10 @@ All API calls are `POST /api/{method}` where `{method}` maps to a key in the
 `handlers` dict in `handle_api()`, whose lambdas build a `functools.partial`
 of a `ConsensusApp` method with arguments (and defaults) from the JSON body.
 The call is checked against the method's signature before it runs, so a
-missing key, an unconvertible value or an unknown keyword argument is a 400
-(`Invalid arguments for <method>: ...`); an exception raised inside the method
-is a 500 carrying its message. A body that is not a JSON object is a 400; an
+missing key, an unconvertible or overflowing number, or a keyword argument a
+fixed-signature method does not take is a 400 (`Invalid arguments for
+<method>: ...`; a `**kwargs` method such as `update_provider` ignores unknown
+keys); an exception raised inside the method is a 500 carrying its message. A body that is not a JSON object is a 400; an
 unknown method is a 404. `tests/test_server_api.py` pins every entry's
 forwarded arguments, and its `DISPATCH` must name exactly the table's keys.
 
@@ -224,22 +225,26 @@ The memory/document/image routes and the SSE stream start with
 send instead: 401 without a signed-in user, 400 (`NO_SESSION_ERROR`) when
 `--multi-user` has no live session for the cookie. They never create a
 session (`SessionManager.lookup()`), because they cannot set its cookie.
-Uploads
-go through `read_upload()`, which lifts aiohttp's 1 MiB body limit to
-`MAX_DOCUMENT_BYTES` / `MAX_IMAGE_BYTES` for that read only; malformed ids
-and bodies are 400s.
+Uploads go through `read_upload()`, which lifts aiohttp's 1 MiB body limit to
+`MAX_DOCUMENT_BYTES` / `MAX_IMAGE_BYTES` for that read only; malformed ids and
+bodies are 400s.
 
 ### Session cookies
 
-In multi-user mode, every `/api/{method}` response (errors included) sets a
-`consensus_sid` cookie (httponly, SameSite=Lax, `Secure` when
-`CONSENSUS_ALLOWED_ORIGINS` is set); it is the only route that creates a
-session. A malformed incoming id is replaced. The frontend opens the SSE
-stream only after its first `get_state` call, so a first visit's stream joins
-the session that call created. The stream ends at the next keepalive once its
-session is evicted; EventSource's reconnect then gets the no-session 400 and
-closes, and the frontend calls `get_state` (creating the next session) and
-reopens it. Keepalives do not extend the session's TTL.
+In multi-user mode, every `/api/{method}` reply that has a session (errors
+included; the capacity 503 has none) sets a `consensus_sid` cookie (httponly,
+SameSite=Lax, `Secure` when `CONSENSUS_ALLOWED_ORIGINS` is set); it is the
+only route that creates a session. A malformed incoming id is replaced. The
+frontend opens the SSE stream only after its first `get_state` call, so a
+first visit's stream joins the session that call created. At the next
+keepalive after its session is evicted, the stream sends `session_expired`
+(the page shows a notice) and ends. If a dispatch call has already re-created
+the session, EventSource's reconnect joins it; otherwise the reconnect gets
+the no-session 400 and closes, and the frontend calls `get_state` (creating
+the next session) and reopens it, with exponential backoff and a notice after
+`SSE_REOPEN_MAX_ATTEMPTS` failures. Keepalives do not extend the session's
+TTL. Migrations re-run for a database file deleted by eviction and re-created
+at the same path.
 
 ### Authentication (multi-user mode)
 

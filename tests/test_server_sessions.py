@@ -84,9 +84,10 @@ class TestEvents:
         lines = []
         while True:
             line = (await asyncio.wait_for(resp.content.readline(), 5)).decode()
+            assert line, "stream ended before a complete event"
             if line == "\n" and lines:
                 break
-            if line.strip():
+            if line.strip() and not line.startswith(":"):  # not keepalive
                 lines.append(line.strip())
         fields = dict(line.split(": ", 1) for line in lines)
         return fields["event"], json.loads(fields["data"])
@@ -140,7 +141,34 @@ class TestEvents:
         for info in mgr._sessions.values():
             info["last_access"] = 0
         await mgr._close_apps(mgr._evict_expired())
+        # Named, so the page can tell the user why its state reset.
+        assert await self._read_event(resp) == ("session_expired", {})
         await asyncio.wait_for(resp.content.read(), 5)  # EOF, not a hang
+        assert resp.content.at_eof()
+
+    async def test_stream_ends_when_its_session_is_replaced(self, signed_in,
+                                                           monkeypatch):
+        """A dispatch call re-creating the evicted sid still ends the stream.
+
+        The cookie's sid gets a fresh app; the old stream must not stay
+        bound to the dead one.
+        """
+        monkeypatch.setattr(module_of(routes_misc.handle_events),
+                            "SSE_KEEPALIVE_SECONDS", 0.01)
+        await api(signed_in, "get_state")
+        mgr = signed_in.app[server.CTX_KEY].session_mgr
+        (sid,) = mgr._sessions
+        # Slow keepalives: the replacement lands before the next check.
+        monkeypatch.setattr(module_of(routes_misc.handle_events),
+                            "SSE_KEEPALIVE_SECONDS", 0.2)
+        resp = await signed_in.get("/api/events")
+        assert resp.status == 200
+        mgr._sessions[sid]["last_access"] = 0
+        await mgr._close_apps(mgr._evict_expired())
+        await api(signed_in, "get_state")
+        assert sid in mgr._sessions, "the cookie's sid was not reused"
+        assert await self._read_event(resp) == ("session_expired", {})
+        await asyncio.wait_for(resp.content.read(), 5)
         assert resp.content.at_eof()
 
     async def test_stream_survives_while_its_session_lives(self, signed_in,

@@ -312,13 +312,42 @@ async function bootstrap() {
         // has no session cookie yet, and a stream opened alongside that call
         // would be bound to a session of its own, never seeing this
         // session's tool progress or ask_user requests.
+        // Failed reopens in a row; reset once a stream opens.
+        let reopenAttempts = 0;
+        const reopenEventStream = () => {
+            if (reopenAttempts >= SSE_REOPEN_MAX_ATTEMPTS) {
+                showToast('Live updates disconnected: tool progress and '
+                    + 'questions from AI participants will not appear. '
+                    + 'Reload the page to reconnect.',
+                    SSE_GIVE_UP_TOAST_MS, 'warning');
+                return;
+            }
+            // Backoff also caps how many sessions a tab that keeps losing
+            // its cookie can create: each get_state here makes one.
+            const delay = SSE_REOPEN_DELAY_MS * 2 ** reopenAttempts++;
+            setTimeout(() => {
+                api.getState().then((r) => {
+                    if (r && r.error) throw new Error(r.error);
+                    openEventStream();
+                }).catch((e) => {
+                    console.warn('SSE reopen failed:', e);
+                    reopenEventStream();
+                });
+            }, delay);
+        };
         const openEventStream = () => {
             const evtSource = new EventSource('/api/events');
+            evtSource.onopen = () => { reopenAttempts = 0; };
             evtSource.addEventListener('tool_progress', (e) => {
                 onToolProgress(JSON.parse(e.data));
             });
             evtSource.addEventListener('user_input_request', (e) => {
                 onUserInputRequest(JSON.parse(e.data));
+            });
+            evtSource.addEventListener('session_expired', () => {
+                showToast('Your session expired after inactivity; '
+                    + 'a new, empty one has been started.',
+                    SSE_GIVE_UP_TOAST_MS, 'warning');
             });
             evtSource.onerror = () => {
                 if (evtSource.readyState !== EventSource.CLOSED) {
@@ -329,11 +358,7 @@ async function bootstrap() {
                 // --multi-user the session expired (#135), and only a
                 // dispatch call creates the next one. Make one, then rebind.
                 console.debug('SSE closed; reopening after get_state');
-                setTimeout(() => {
-                    api.getState().then((r) => {
-                        if (!(r && r.error)) openEventStream();
-                    });
-                }, SSE_REOPEN_DELAY_MS);
+                reopenEventStream();
             };
         };
         // finally, not then(f, f): a failed first load must still reach
@@ -349,8 +374,12 @@ async function bootstrap() {
 
 // Bootstrap: detect pywebview or fall back to web mode
 const WEBVIEW_DETECT_TIMEOUT_MS = 100;
-// Wait before reopening an SSE stream the server closed (expired session).
+// Wait before reopening an SSE stream the server closed (expired session);
+// doubled per failed attempt, up to SSE_REOPEN_MAX_ATTEMPTS (~1 min total).
 const SSE_REOPEN_DELAY_MS = 2000;
+const SSE_REOPEN_MAX_ATTEMPTS = 5;
+// How long the session-expired and gave-up notices stay up.
+const SSE_GIVE_UP_TOAST_MS = 15000;
 if (window.pywebview) { bootstrap(); }
 else {
     window.addEventListener('pywebviewready', bootstrap);

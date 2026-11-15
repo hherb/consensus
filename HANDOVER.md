@@ -23,7 +23,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4389 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4396 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -267,34 +267,45 @@ middleware through aiohttp's `TestClient` (sessions and SSE in
   one capacity message.
 - **`/api/<method>` entries build a `functools.partial`; they never call**
   (#134). `handle_api` binds it against the method's signature before
-  running it, so a missing key, an unconvertible value or an unknown kwarg is
-  a 400 `Invalid arguments for <method>: …`, while the same exception types
-  raised *inside* the app method stay a logged 500. A new entry must follow
-  the `lambda: partial(app.x, …)` shape.
+  running it, so a missing key, an unconvertible or overflowing number, or a
+  kwarg a fixed-signature method does not take (`**kwargs` methods such as
+  `update_provider` ignore unknown keys) is a 400 `Invalid arguments for
+  <method>: …`, while the same exception types raised *inside* the app method
+  stay a logged 500. A new entry must follow the `lambda: partial(app.x, …)`
+  shape. `DISPATCH` cases are bound against the real method signatures.
 - **Only `POST /api/<method>` creates a `--multi-user` session** (#132,
-  repo owner's choice). It sets the cookie on *every* reply, errors
-  included. Every other `/api/` route goes through `session_app()`, which
+  repo owner's choice). It sets the cookie on every reply that has a session,
+  errors included (the capacity 503 has none). Every other `/api/` route goes through `session_app()`, which
   uses `SessionManager.lookup()` (never creates) and answers 401 or 400
   `NO_SESSION_ERROR`.
 - **The SSE stream ends once its session is evicted** (#135): each keepalive
   tick checks `lookup(sid, touch=False) is app_instance`. `touch=False`
-  matters: an open tab alone must not keep a session alive. EventSource's
-  reconnect then gets the 400 and closes; `static/app.js` reacts to `CLOSED`
-  by calling `get_state` (which creates the next session) and reopening,
-  after `SSE_REOPEN_DELAY_MS` (verified by reading only; there is no JS
-  harness).
+  matters: an open tab alone must not keep a session alive. The stream sends
+  `session_expired` (the page shows a notice) before it ends. If a dispatch
+  call has already re-created the session, the reconnect joins it; otherwise
+  it gets the 400 and closes, and `static/app.js` reacts to `CLOSED` by
+  calling `get_state` (which creates the next session) and reopening, with
+  exponential backoff from `SSE_REOPEN_DELAY_MS` and a notice after
+  `SSE_REOPEN_MAX_ATTEMPTS` (verified by reading only; there is no JS
+  harness). An in-page sign-in reloads the page, so `init()` and the stream
+  run for the signed-in user.
+- **`run_migrations` re-checks the file**: its per-path guard skips only when
+  the `migrations` table is still there. Eviction deletes a session's DB and
+  a returning cookie re-creates it at the same path; it used to come back
+  schema-less (`no such table: prompts` on every call).
 - **PUT/DELETE carry no CSRF check by design**: a cross-site form cannot send
   them, and a cross-origin fetch needs a preflight the server never grants
   (`test_preflight_is_never_granted` pins the other half).
 - `SessionManager` expiry and `stop()` share `_close_app()` (expiry used to
   skip `app.shutdown()`, leaking MCP subprocesses). Expiry deletes the DB
   under the lock but closes apps after releasing it (`_close_apps`): an MCP
-  shutdown can take seconds. Session ids in logs are truncated. `login_attempts` / `rate_limits` are pruned by `prune_stale()`.
+  shutdown can take seconds. Session ids in logs are truncated.
+  `login_attempts` / `rate_limits` are pruned by `prune_stale()`.
 - Tests patch a setting where it is read (`middleware.RATE_LIMIT_MAX`,
   `routes_auth.LOGIN_RATE_LIMIT_*`, `routes_misc.SSE_KEEPALIVE_SECONDS`).
   `tests/test_server_api.py` `DISPATCH` pins every `/api/<method>` entry's
-  forwarded arguments and must name exactly the table's keys (read by AST); `tests/test_server_facade.py` pins `__all__`, the one
-  consumer (`__main__.py`) and every route → handler. **A new route goes in
+  forwarded arguments and must name exactly the table's keys (read by AST);
+  `tests/test_server_facade.py` pins `__all__`, the one consumer (`__main__.py`) and every route → handler. **A new route goes in
   `app_factory.py` and that table; a new dispatch entry in `DISPATCH`.**
 
 ## Open work
