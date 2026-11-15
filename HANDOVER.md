@@ -1,17 +1,14 @@
 # HANDOVER
 
 _Last updated: 2026-11-15. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices through `auth.py` → `auth/` (PR #129), the #121 fix
-(MCP tool failures are `isError` results, PR #122), the #104 rotation fix and
-the #115/#118 pricing fixes (PRs #117/#119). The sixteenth and **last** #61
-slice — `server.py` → `server/`, with a route-test net and seven web-mode
-defect fixes — is on `refactor/split-server-61` (PR #133, suite at **4355
-passing**); once it merges, every Python module is under the ~500-line golden
-rule and #61 is closed. The discussion-method review & repair campaign (#12–#48,
-#56–#60), alpha/stable distribution (PyPI `consensus-app` + notarized macOS
-DMG), the public website, flow-error visibility (#71–#74), tools_document
-failure visibility (#78) and the lint gate (#86, `tests/test_lint.py`) are
-all merged — contracts summarised below._
+everything merged since, including the whole of #61: every Python module is
+now under the ~500-line golden rule (the last slice, `server.py` →
+`server/`, was PR #133). This branch, `fix/server-followups-132-136`, fixes
+the four server follow-ups from the PR #133 review (#132, #134, #135, #136).
+The suite is at **4389 passing**. The method review & repair campaign
+(#12–#48, #56–#60), distribution (PyPI `consensus-app` + notarized macOS
+DMG), the website, flow and document failure visibility (#71–#74, #78) and
+the lint gate (#86) are all merged. Their contracts are summarised below._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep; delete sections that are no longer instructive.
@@ -26,7 +23,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4355 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4389 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -247,7 +244,8 @@ the guard `tests/test_auth_facade.py`. Patch through the defining module
 app under `CTX_KEY`; handlers are module-level and read
 `request.app[CTX_KEY]`. The net (`tests/test_server_*.py`, fixtures in
 `tests/server_helpers.py`, which point `HOME` at a temp dir) drives the real
-middleware through aiohttp's `TestClient`; it found the defects below.
+middleware through aiohttp's `TestClient` (sessions and SSE in
+`tests/test_server_sessions.py`); it found the defects below.
 
 - **A POST to `/api/` or `/auth/` must be JSON or carry `X-Consensus-Request`**
   (`CSRF_HEADER`). Multipart uploads send the header (`UPLOAD_HEADERS` in
@@ -265,14 +263,29 @@ middleware through aiohttp's `TestClient`; it found the defects below.
 - Bodies go through `read_json_object` (non-object → 400, `/api/<method>`
   included; an oversized body stays a 413); malformed ids and
   `discussion_id`s are 400s, as are non-string credentials, profile fields
-  and add-url titles (`request_io.non_string_field`). `session_app()` is the one
-  401/503 preamble for the file routes; `CAPACITY_ERROR` the one capacity
-  message.
-- **The frontend opens the SSE stream after the first `get_state`**
-  (`static/app.js`), so a first `--multi-user` visit's stream joins the
-  session that call created instead of an orphan one. It uses `.finally`, so a
-  failed first load still reaches the global toast (verified by reading
-  only — no JS harness).
+  and add-url titles (`request_io.non_string_field`). `CAPACITY_ERROR` is the
+  one capacity message.
+- **`/api/<method>` entries build a `functools.partial`; they never call**
+  (#134). `handle_api` binds it against the method's signature before
+  running it, so a missing key, an unconvertible value or an unknown kwarg is
+  a 400 `Invalid arguments for <method>: …`, while the same exception types
+  raised *inside* the app method stay a logged 500. A new entry must follow
+  the `lambda: partial(app.x, …)` shape.
+- **Only `POST /api/<method>` creates a `--multi-user` session** (#132,
+  repo owner's choice). It sets the cookie on *every* reply, errors
+  included. Every other `/api/` route goes through `session_app()`, which
+  uses `SessionManager.lookup()` (never creates) and answers 401 or 400
+  `NO_SESSION_ERROR`.
+- **The SSE stream ends once its session is evicted** (#135): each keepalive
+  tick checks `lookup(sid, touch=False) is app_instance`. `touch=False`
+  matters: an open tab alone must not keep a session alive. EventSource's
+  reconnect then gets the 400 and closes; `static/app.js` reacts to `CLOSED`
+  by calling `get_state` (which creates the next session) and reopening,
+  after `SSE_REOPEN_DELAY_MS` (verified by reading only; there is no JS
+  harness).
+- **PUT/DELETE carry no CSRF check by design**: a cross-site form cannot send
+  them, and a cross-origin fetch needs a preflight the server never grants
+  (`test_preflight_is_never_granted` pins the other half).
 - `SessionManager` expiry and `stop()` share `_close_app()` (expiry used to
   skip `app.shutdown()`, leaking MCP subprocesses). Expiry deletes the DB
   under the lock but closes apps after releasing it (`_close_apps`): an MCP
@@ -280,27 +293,22 @@ middleware through aiohttp's `TestClient`; it found the defects below.
 - Tests patch a setting where it is read (`middleware.RATE_LIMIT_MAX`,
   `routes_auth.LOGIN_RATE_LIMIT_*`, `routes_misc.SSE_KEEPALIVE_SECONDS`).
   `tests/test_server_api.py` `DISPATCH` pins every `/api/<method>` entry's
-  forwarded arguments; `tests/test_server_facade.py` pins `__all__`, the one
+  forwarded arguments and must name exactly the table's keys (read by AST); `tests/test_server_facade.py` pins `__all__`, the one
   consumer (`__main__.py`) and every route → handler. **A new route goes in
   `app_factory.py` and that table; a new dispatch entry in `DISPATCH`.**
 
 ## Open work
 
-### Issue #61 — modules over the ~500-line golden rule (done on this branch)
+### File size (#61 done, keep it that way)
 
-Sixteen slices, one PR each (detail in git history and the contract sections
-above): `app_discussion_flow/`, `tools_document/`, `app.py` → `app_api/`
-mixins (**moved code logs under `consensus.app_api.*`**), `tools_memory/`,
-`tools_python/`, `tools_image/` (+ `http_fetch.py`), `methods/base.py` →
-`phase_types.py`, `app_discussion_setup.py` → `app_discussion_roles.py`,
-`evaluation/` (`report.py`, eval_db mixins, `runner_db.py` /
-`runner_common.py`), `mcp_server/`, `desktop/`, `moderator/`, `auth/`,
-`server/`. Eval contracts worth keeping: a failed LLM judgement returns 502
-and never overwrites an earlier score; `/eval/` is **not mounted in
+All sixteen oversized Python modules are split, one PR each (git history has
+the detail). Contracts worth keeping: eval — a failed LLM judgement returns
+502 and never overwrites an earlier score; `/eval/` is **not mounted in
 `--multi-user`**; a run with a failed turn/summary/synthesis is `error`, not
-`done`. `mcp_server` contracts: a failed tool call is an `isError` result
-(#121); `run_discussion` reports `turn_errors`, `error`, `stop_reason`. A new
-desktop bridge method goes in a mixin **and** in `BRIDGE_API`.
+`done`. `mcp_server` — a failed tool call is an `isError` result (#121);
+`run_discussion` reports `turn_errors`, `error`, `stop_reason`. A new desktop
+bridge method goes in a mixin **and** in `BRIDGE_API`. Moved code logs under
+its new module (e.g. `consensus.app_api.*`).
 
 **Watch:** `app_discussion_flow/turns.py` (499) and `pricing.py` (498) — the
 next addition crosses the limit, so split first. `evaluation/static/eval.js`
@@ -311,17 +319,16 @@ next addition crosses the limit, so split first. `evaluation/static/eval.js`
 `consensus/` for call sites (consumers import lazily, so a dropped re-export
 fails only in production). Keep them in step with the public API.
 
-**Recipe for the next split** (worked for all sixteen):
+**Recipe for a split** (worked for all sixteen):
 0. Check coverage first (`uv run --with pytest-cov pytest -q
    --cov=consensus.<module> --cov-report=term-missing`); a green suite over
    an untested module proves nothing — write the characterization net and
-   commit it *before* a line moves. Fix each defect it finds in its own
-   commit. Grep for duplicated logic while writing it: drifted copies were
-   the likeliest pre-existing bug every time. Use a real `Database`
-   (`tmp_db`), fakes only at the network/GUI edges, shared fakes in a
-   `tests/*_helpers.py`, and drive the entry point production uses.
+   commit it *before* a line moves, and fix each defect it finds in its own
+   commit. Drifted duplicate logic was the likeliest pre-existing bug every
+   time. Use a real `Database` (`tmp_db`), fakes only at the network/GUI
+   edges, and drive the entry point production uses.
 1. Move by line range with a throwaway script that checks every moved line
-   reappears once (`server.py` also rewrote closure names to `ctx.<name>`).
+   reappears once.
 2. Fix relative-import depth, **including imports inside function bodies**,
    and `__file__`-relative paths.
 3. Re-export from `__init__.py`; point test patches at the submodule that
@@ -329,8 +336,7 @@ fails only in production). Keep them in step with the public API.
 4. `uvx ruff check --select F <pkg>`, then the full suite.
 5. Add the facade guard; delete a re-export and watch it fail.
 6. **Mutate the new wiring and watch it fail** — coverage measures lines
-   executed, not behaviour constrained (on `server/` a second context and the
-   cookie max-age survived until tests were added).
+   executed, not behaviour constrained.
 7. Update every doc naming the old file *and* the content beside the name.
 
 ### Deferred follow-ups (no issue filed)
@@ -361,23 +367,20 @@ fails only in production). Keep them in step with the public API.
 
 ### Open GitHub issues
 
-#136 server test follow-ups from the PR #133 review; #135 an SSE stream
-stays bound to an evicted `--multi-user` session; #134 client mistakes in
-`/api/<method>` arguments are a 500, not a 400; #132 non-dispatch routes create a `--multi-user` session without setting its
-cookie (orphaned sessions hold capacity); #131 login timing reveals which
-emails have a password account; #130 an OAuth callback has no overall
-deadline; #128 unverified OAuth sign-up can pre-hijack an address; #127 stored
-password hashes lack their PBKDF2 iteration count; #125 pywebview exposes all
-of `ConsensusApp` to JS; #124 validate MCP tool arguments against
-`inputSchema`; #107 a rotation change spans several commits (crash mid-update
-desyncs members and `method_state`); #102 follow-ups from the PR #100 review
-(Retry-After, `doc_add` ingest budget, DNS-rebinding pin, `_init_image_tools`
-catch, test file size); #97 Seatbelt profile does not confine writes; #96 no
-UI flag when Python or image tools fail to load; #92 tool error results echo
-raw exception text to the model and UI (the `/api/<method>` 500 body does too
-— noted on the issue); #81 persist parse fidelity/notes; #80 pre-#78
-`'(Empty PDF)'` documents. #99 (image-serve CSP route test) is closed by this
-branch.
+#131 login timing reveals which emails have a password account; #130 an
+OAuth callback has no overall deadline; #128 unverified OAuth sign-up can
+pre-hijack an address; #127 stored password hashes lack their PBKDF2
+iteration count; #125 pywebview exposes all of `ConsensusApp` to JS; #124
+validate MCP tool arguments against `inputSchema`; #107 a rotation change
+spans several commits (crash mid-update desyncs members and `method_state`);
+#102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
+budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #97
+Seatbelt profile does not confine writes; #96 no UI flag when Python or image
+tools fail to load; #92 tool error results echo raw exception text to the
+model and UI (the `/api/<method>` 500 body does too — noted on the issue);
+#81 persist parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents.
+#132, #134, #135 and #136 are closed by this branch. Suggested next: the
+auth issues (#127, #128, #130, #131), or #125/#124.
 
 ### Roadmap
 
