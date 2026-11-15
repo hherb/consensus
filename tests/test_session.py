@@ -89,3 +89,98 @@ class TestSessionLifecycle:
         await mgr.get_app("b" * 32)
         await mgr.stop()
         assert mgr.active_count == 0
+
+
+# --- Closing sessions ---
+
+class TestSessionClose:
+    """Expiry and stop() both release a session's MCP providers (#61 net)."""
+
+    @staticmethod
+    def _record_shutdowns(monkeypatch, fail: bool = False) -> list:
+        from consensus.app import ConsensusApp
+        calls: list = []
+
+        async def shutdown(self):
+            calls.append(self)
+            if fail:
+                raise RuntimeError("mcp subprocess hung")
+        monkeypatch.setattr(ConsensusApp, "shutdown", shutdown)
+        return calls
+
+    async def test_expiry_shuts_the_app_down(self, tmp_path, monkeypatch):
+        calls = self._record_shutdowns(monkeypatch)
+        mgr = SessionManager(max_sessions=1, session_ttl=0,
+                             data_dir=str(tmp_path / "sessions"))
+        app = await mgr.get_app("a" * 32)
+        mgr._sessions["a" * 32]["last_access"] = 0
+        await mgr.get_app("b" * 32)
+        assert calls == [app]
+
+    async def test_stop_logs_a_failed_shutdown(self, tmp_path, monkeypatch,
+                                               caplog):
+        self._record_shutdowns(monkeypatch, fail=True)
+        mgr = SessionManager(data_dir=str(tmp_path / "sessions"))
+        await mgr.get_app("a" * 32)
+        await mgr.stop()
+        assert mgr.active_count == 0
+        assert "mcp subprocess hung" in caplog.text
+        assert any(r.levelname == "WARNING" for r in caplog.records)
+
+    async def test_expiry_logs_a_failed_shutdown_and_still_evicts(
+            self, tmp_path, monkeypatch, caplog):
+        self._record_shutdowns(monkeypatch, fail=True)
+        mgr = SessionManager(max_sessions=1, session_ttl=0,
+                             data_dir=str(tmp_path / "sessions"))
+        await mgr.get_app("a" * 32)
+        mgr._sessions["a" * 32]["last_access"] = 0
+        assert await mgr.get_app("b" * 32) is not None
+        assert "a" * 32 not in mgr._sessions
+        assert "mcp subprocess hung" in caplog.text
+
+    async def test_expiry_closes_the_app_outside_the_lock(
+            self, tmp_path, monkeypatch):
+        # A slow MCP shutdown must not stall every other session's request.
+        from consensus.app import ConsensusApp
+        mgr = SessionManager(max_sessions=1, session_ttl=0,
+                             data_dir=str(tmp_path / "sessions"))
+        held: list = []
+
+        async def shutdown(self):
+            held.append(mgr._lock.locked())
+        monkeypatch.setattr(ConsensusApp, "shutdown", shutdown)
+        await mgr.get_app("a" * 32)
+        mgr._sessions["a" * 32]["last_access"] = 0
+        assert await mgr.get_app("b" * 32) is not None
+        assert held == [False]
+
+    async def test_expiry_closes_the_moderator_and_deletes_the_db(
+            self, tmp_path, monkeypatch):
+        self._record_shutdowns(monkeypatch)
+        mgr = SessionManager(max_sessions=1, session_ttl=0,
+                             data_dir=str(tmp_path / "sessions"))
+        app = await mgr.get_app("a" * 32)
+        closed: list = []
+
+        async def close():
+            closed.append(True)
+        monkeypatch.setattr(app.moderator, "close", close)
+        db_path = mgr._sessions["a" * 32]["db_path"]
+        assert (tmp_path / "sessions" / ("a" * 32 + ".db")).exists()
+        mgr._sessions["a" * 32]["last_access"] = 0
+        await mgr.get_app("b" * 32)
+        assert closed == [True]
+        for suffix in ("", "-wal", "-shm"):
+            assert not (tmp_path / "sessions").joinpath(
+                ("a" * 32) + ".db" + suffix).exists(), db_path + suffix
+
+    async def test_stop_keeps_closing_after_one_failure(
+            self, tmp_path, monkeypatch, caplog):
+        calls = self._record_shutdowns(monkeypatch, fail=True)
+        mgr = SessionManager(data_dir=str(tmp_path / "sessions"))
+        first = await mgr.get_app("a" * 32)
+        second = await mgr.get_app("b" * 32)
+        await mgr.stop()
+        assert calls == [first, second]
+        # A full session id is a credential: logs carry only a prefix.
+        assert "a" * 32 not in caplog.text

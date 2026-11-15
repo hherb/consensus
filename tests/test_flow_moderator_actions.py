@@ -1,7 +1,7 @@
 """Moderator interventions and turn reassignment (issue #73).
 
 ``mediate`` and the ``reassign_turn`` flow wrapper are live web routes
-(``server.py``) that no test in the suite drove before the #61 split
+(``server/``) that no test in the suite drove before the #61 split
 surfaced the gap.  Both persist or return contracts the frontend depends
 on, so they are pinned here: cost attribution, the moderator-role message,
 the awaiting-human branch, and the reassignment result shape.
@@ -163,7 +163,7 @@ class TestMediate:
 
 
 class TestReassignTurn:
-    """The flow wrapper around ``Moderator.reassign_turn`` (server.py route)."""
+    """The flow wrapper around ``Moderator.reassign_turn`` (server/ route)."""
 
     def test_success_returns_the_new_speaker(self, discussion_with_entities):
         disc = discussion_with_entities

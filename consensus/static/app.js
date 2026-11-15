@@ -49,7 +49,8 @@ function switchTab(tabName) {
 }
 
 /**
- * Attach all event listeners for the application UI.
+ * Attach all event listeners for the application UI and load the state.
+ * @returns {Promise<void>} Settles once the initial state call has.
  */
 function init() {
     // Tab navigation
@@ -248,7 +249,7 @@ function init() {
     });
 
     // Load initial state
-    api.getState().then(s => {
+    return api.getState().then(s => {
         onStateUpdate(s);
         renderSetupTab();
         // Re-show ask_user input bubble if there's a pending request
@@ -298,7 +299,7 @@ async function bootstrap() {
         }
     }
 
-    init();
+    const firstState = init();
 
     if (window.pywebview) {
         // Expose callbacks for pywebview Python→JS evaluate_js() calls
@@ -306,15 +307,24 @@ async function bootstrap() {
         window.onToolProgress = onToolProgress;
         window.onUserInputRequest = onUserInputRequest;
     } else {
-        // SSE connection for real-time events (web mode only)
-        const evtSource = new EventSource('/api/events');
-        evtSource.addEventListener('tool_progress', (e) => {
-            onToolProgress(JSON.parse(e.data));
-        });
-        evtSource.addEventListener('user_input_request', (e) => {
-            onUserInputRequest(JSON.parse(e.data));
-        });
-        evtSource.onerror = () => console.debug('SSE reconnecting...');
+        // SSE connection for real-time events (web mode only). Opened once
+        // the first state call has settled: in --multi-user a first visit
+        // has no session cookie yet, and a stream opened alongside that call
+        // would be bound to a session of its own, never seeing this
+        // session's tool progress or ask_user requests.
+        const openEventStream = () => {
+            const evtSource = new EventSource('/api/events');
+            evtSource.addEventListener('tool_progress', (e) => {
+                onToolProgress(JSON.parse(e.data));
+            });
+            evtSource.addEventListener('user_input_request', (e) => {
+                onUserInputRequest(JSON.parse(e.data));
+            });
+            evtSource.onerror = () => console.debug('SSE reconnecting...');
+        };
+        // finally, not then(f, f): a failed first load must still reach
+        // the global unhandledrejection toast.
+        firstState.finally(openEventStream);
     }
 
     // Show user bar if authenticated

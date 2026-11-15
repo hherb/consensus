@@ -17,7 +17,7 @@ Here is what happens when an AI participant takes a turn in web mode:
    WebAPI._post('generate_ai_turn', {})
        |
        v
-3. server.py: handle_api() dispatches to
+3. server/routes_api.py: handle_api() dispatches to
    app.generate_ai_turn()
        |
        v
@@ -54,7 +54,7 @@ Here is what happens when an AI participant takes a turn in web mode:
      calls self._notify(), which triggers the state push
        |
        v
-7. server.py: wraps result + full state in JSON response
+7. server/routes_api.py: wraps result + full state in JSON response
        |
        v
 8. Frontend receives response:

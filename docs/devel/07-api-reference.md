@@ -118,7 +118,9 @@ Images use dedicated REST endpoints with multipart upload and file serving.
 | `/api/images/{image_id}/{discussion_id}` | DELETE | *(none)* | `{"success": true}` |
 | `/api/images/{image_id}` | DELETE | *(none)* | `{"success": true}` |
 
-**Security:** Upload endpoints enforce a 20 MB file size limit (HTTP 413).
+**Security:** Upload endpoints enforce a size limit (HTTP 413): 20 MB for
+images, 50 MB for documents. Every other route keeps aiohttp's 1 MiB body
+limit.
 URL fetch endpoints include SSRF protection (blocks private/internal IPs).
 Image serving includes path traversal protection and requires authentication
 in multi-user mode.
@@ -133,8 +135,9 @@ in multi-user mode.
 
 ### Authentication Endpoints (multi-user mode)
 
-Auth endpoints live under `/auth/` (not `/api/`), bypassing the auth
-middleware. They are protected by the CSRF middleware (except OAuth callbacks).
+Auth endpoints live under `/auth/` (not `/api/`), so the auth middleware
+does not enforce sign-in on them (it only resolves the user for `/auth/me`).
+They are protected by the CSRF middleware (except OAuth callbacks).
 
 | Endpoint | Method | Body / Params | Returns |
 |----------|--------|--------------|---------|

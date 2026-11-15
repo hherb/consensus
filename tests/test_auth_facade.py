@@ -1,9 +1,9 @@
 """Contract tests for the ``consensus.auth`` package facade.
 
 Splitting the former single module into a package (issue #61) moved the
-API behind re-exports in ``__init__.py``. Its consumer, ``server.py``,
-builds auth only in ``--multi-user`` mode, so a dropped re-export would
-surface only on a hosted deployment.
+API behind re-exports in ``__init__.py``. Its consumers (``server/context.py``,
+``server/routes_auth.py``) build auth only in ``--multi-user`` mode, so a
+dropped re-export would surface only on a hosted deployment.
 """
 
 import ast
@@ -79,7 +79,8 @@ class TestPublicApi:
             names = _imported_names(path)
             if names:
                 consumers[str(path.relative_to(REPO_ROOT))] = names
-        assert set(consumers) == {"consensus/server.py"}
+        assert set(consumers) == {"consensus/server/context.py",
+                                  "consensus/server/routes_auth.py"}
         for where, names in consumers.items():
             assert set(names) <= EXPECTED_PUBLIC_API, where
 

@@ -210,7 +210,9 @@ async function doRegister() {
  */
 async function doLogout() {
     try {
-        await fetch('/auth/logout', { method: 'POST' });
+        await fetch('/auth/logout', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        });
     } catch { /* ignore */ }
     authUser = null;
     if (authRequired) {

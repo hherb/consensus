@@ -107,7 +107,7 @@ In multi-user mode, the entity-to-provider flow has an additional layer:
 
 1. Frontend stores user-provided keys in `sessionStorage`
 2. Keys are sent as `X-API-Keys` HTTP header (JSON map: `provider_id -> key`)
-3. Server extracts keys via `_extract_api_keys(request)`
+3. Server extracts keys via `extract_api_keys(request)` (`server/context.py`)
 4. Keys are set in a `contextvars.ContextVar` (request-scoped)
 5. `ConsensusApp.resolve_provider_api_key()` checks BYOK first, falls back to
    environment variables
@@ -150,7 +150,7 @@ maintain these invariants:
   sent via `X-API-Keys` headers are used for the duration of the request and
   never logged, cached, or written to disk.
 
-- **Path traversal protection:** `server.py` resolves static file paths with
+- **Path traversal protection:** `server/routes_misc.py` resolves static file paths with
   `os.path.realpath()` and checks they start with the static directory prefix.
 
 - **Security headers:** All responses include `X-Content-Type-Options: nosniff`,
@@ -160,8 +160,8 @@ maintain these invariants:
   non-matching `Origin` headers. In multi-user mode, allowed origins must be
   explicitly configured via `CONSENSUS_ALLOWED_ORIGINS`.
 
-- **Rate limiting:** Per-session/IP rate limiting prevents abuse (120
-  requests per 60-second window by default).
+- **Rate limiting:** Per-IP rate limiting prevents abuse (120 requests per
+  60-second window by default).
 
 - **Session security:** Session IDs are cryptographically random
   (`secrets.token_urlsafe(32)`), validated against a strict regex, and set as
@@ -190,8 +190,9 @@ maintain these invariants:
   Tokens are set as httpOnly cookies only, never in response bodies.
 
 - **CSRF protection:** A middleware rejects POST requests to `/api/` and
-  `/auth/` that lack `Content-Type: application/json`. OAuth callbacks are
-  exempt (Apple uses `response_mode=form_post`).
+  `/auth/` that are neither `Content-Type: application/json` nor carry the
+  `X-Consensus-Request` header (multipart uploads send it). OAuth callbacks
+  are exempt (Apple uses `response_mode=form_post`).
 
 - **Login brute-force protection:** Maximum 5 failed login attempts per email
   per 5-minute window. State is in-memory (resets on server restart).

@@ -50,7 +50,7 @@ Browser ──cookie──→ aiohttp session middleware
 - Cap maximum concurrent sessions (e.g., 50) to prevent resource exhaustion
 
 **Files to modify:**
-- `server.py` — add session middleware, replace single `ConsensusApp` with `SessionManager`
+- `server/` — add session middleware, replace single `ConsensusApp` with `SessionManager`
 - New: `session.py` — `SessionManager` class with TTL-based expiry and cleanup
 
 ### Phase 2: Client-Side API Key Management (Critical)
@@ -75,7 +75,7 @@ Browser ──cookie──→ aiohttp session middleware
 - `ai_client.py` — accept per-call API key override
 - `moderator/core.py` — pass keys from request context to AI client
 - `app.py` — add key parameter to methods that trigger AI calls
-- `server.py` — extract keys from request headers, pass through to app
+- `server/` — extract keys from request headers, pass through to app
 - `static/app.js` — key management UI, attach keys to requests
 
 ### Phase 3: Rate Limiting & Abuse Prevention
@@ -88,7 +88,7 @@ Browser ──cookie──→ aiohttp session middleware
 - Request size limit on aiohttp (already default 1MB, can tighten)
 
 **Files to modify:**
-- `server.py` — add rate limiting middleware
+- `server/` — add rate limiting middleware
 
 ### Phase 4: Production Hardening
 

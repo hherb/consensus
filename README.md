@@ -155,7 +155,7 @@ This is deliberately soft: an ungrounded turn is annotated and logged, never rej
 - **OAuth sign-in** via GitHub, Google, LinkedIn, and Apple (Authorization Code flow)
 - **Multiple OAuth identities** per user account (link GitHub + Google to the same account)
 - **Secure token management** — SHA-256 hashed token storage, httpOnly cookies, 30-day TTL
-- **CSRF protection** — Content-Type enforcement on all POST endpoints
+- **CSRF protection** — POSTs to `/api/` and `/auth/` must be JSON or carry the `X-Consensus-Request` header
 - **Brute-force protection** — per-email rate limiting (5 attempts per 5-minute window)
 - **Login/register UI** with OAuth provider buttons and form validation
 

@@ -11,9 +11,12 @@
 1. Add the method to `ConsensusApp` via the matching `app_api/` mixin
    (logic for larger features goes in an `app_*.py` domain module)
 2. Expose it in **both**:
-   - `server.py` -- add a route handler (dispatch-style for simple methods,
-     or dedicated REST endpoints for resource-oriented features like
-     documents/images)
+   - `server/` -- add an entry to the `handle_api` dispatch table in
+     `routes_api.py` (simple methods; pin it in `DISPATCH` in
+     `tests/test_server_api.py`), or a dedicated REST handler in a
+     `routes_*.py` module registered in `app_factory.py` (and in
+     `tests/test_server_facade.py`'s route table) for resource-oriented
+     features like documents/images
    - `desktop/` -- add a method to the matching `DesktopBridge` mixin
      (`catalog.py`, `discussion.py` or `files.py`; use `_run_async()` if
      async) and to `BRIDGE_API` in `tests/test_desktop_bridge_api.py`
@@ -28,7 +31,7 @@
    `^(\d{3})_.*\.sql$` and applies them once each.
 2. Add a CRUD mixin in `consensus/db/` (e.g. `my_feature.py`) and add it to
    the `Database` class in `db/__init__.py`
-3. Expose through `ConsensusApp`, `server.py`, and `desktop/` as needed
+3. Expose through `ConsensusApp`, `server/`, and `desktop/` as needed
 
 ### Adding a new prompt template
 

@@ -240,7 +240,7 @@ class ConsensusApp(
             try:
                 await provider.close()
             except Exception:
-                logger.debug("Error closing MCP provider", exc_info=True)
+                logger.warning("Error closing MCP provider", exc_info=True)
         self._mcp_providers.clear()
 
     # ------------------------------------------------------------------
