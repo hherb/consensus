@@ -113,7 +113,7 @@ consensus/
   app_discussion_state.py  Discussion state management
   server.py                aiohttp web server (REST + resource routes, middleware)
   session.py               Multi-user session manager (per-session app + SQLite)
-  auth.py                  Authentication (email/password, OAuth)
+  auth/                    Authentication package (email/password, OAuth)
   desktop/                 pywebview launcher and JS-Python bridge (bridge,
                            catalog/discussion/files mixins, launcher)
   background.py            spawn_background() — fire-and-forget asyncio tasks that

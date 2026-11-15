@@ -9,21 +9,23 @@ from __future__ import annotations
 
 import pytest
 
-import consensus.auth as auth_mod
-from consensus.auth import AuthDatabase, AuthManager, _coerce_verified
-
-
-@pytest.fixture
-def manager(tmp_path):
-    db = AuthDatabase(str(tmp_path / "auth.db"))
-    return AuthManager(db)
+from consensus.auth import AuthManager
+from consensus.auth.oauth import _coerce_verified
+from tests.auth_helpers import (  # noqa: F401
+    auth_db,
+    fast_hashing,
+    manager,
+    module_of,
+)
 
 
 def _patch_exchange(monkeypatch, userinfo):
     async def fake_exchange(provider, code, redirect_uri):
         return userinfo
 
-    monkeypatch.setattr(auth_mod, "exchange_oauth_code", fake_exchange)
+    # Patch where AuthManager looks the name up, not a re-exporting facade.
+    monkeypatch.setattr(module_of(AuthManager), "exchange_oauth_code",
+                        fake_exchange)
 
 
 @pytest.mark.parametrize("value,expected", [

@@ -254,9 +254,10 @@ and forwards them to all connected SSE clients.
 
 ---
 
-## `auth.py` -- Authentication
+## `auth/` -- Authentication
 
-The auth module provides email/password registration and OAuth sign-in
+The auth package (`constants`, `models`, `passwords`, `database`, `oauth`,
+`manager`) provides email/password registration and OAuth sign-in
 (GitHub, Google, LinkedIn, Apple). It is only used in multi-user web mode.
 
 **Key classes:**

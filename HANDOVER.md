@@ -2,28 +2,28 @@
 
 _Last updated: 2026-11-15. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices (through `desktop.py` → `desktop/`, PR #123), the #121
-fix (MCP tool failures are `isError` results, PR #122), the #104 rotation
-fix, and the #115/#118 pricing fixes (PRs #117/#119). The fourteenth #61
-slice (`moderator.py` → `moderator/`) is on `refactor/split-moderator-61`
-(suite at **3921 passing**). The discussion-method review & repair campaign
-(#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
-(PyPI `consensus-app` + notarized macOS DMG), the public website, the
-flow-error-visibility work (#71–#74, PR #76), and the tools_document
+fix (MCP tool failures are `isError` results, PR #122), the #104 rotation fix,
+the #115/#118 pricing fixes (PRs #117/#119) and `moderator.py` → `moderator/`
+(PR #126). The fifteenth #61 slice (`auth.py` → `auth/`, plus eight auth
+defect fixes and the PR #129 review fixes) is on `refactor/split-auth-61` (PR
+#129, suite at **4040 passing**). The discussion-method review & repair
+campaign (#12–#48, #56–#60) is finished and merged; so is alpha/stable
+distribution (PyPI `consensus-app` + notarized macOS DMG), the public website,
+the flow-error-visibility work (#71–#74, PR #76), and the tools_document
 failure-visibility work (#78) — contracts for both summarised below. The one
 open structural issue is **#61** (modules over the ~500-line golden rule):
 `app_discussion_flow`, `tools_document`, `app.py` (→ `app_api/` mixins),
 `tools_memory`, `tools_python`, `tools_image`, `methods/base.py`,
 `app_discussion_setup.py`, `evaluation/scorer.py`, `evaluation/eval_db.py`,
-`evaluation/runner.py`, `mcp_server.py`, `desktop.py` and `moderator.py`
-are split; two modules remain over the limit. **#86**
-(lint gate) is done: zero `ruff --select F` findings in `consensus/`, enforced
-by `tests/test_lint.py`._
+`evaluation/runner.py`, `mcp_server.py`, `desktop.py`, `moderator.py` and
+`auth.py` are split; only `server.py` remains over the limit. **#86** (lint
+gate) is done: zero `ruff --select F` findings in `consensus/`, enforced by
+`tests/test_lint.py`._
 
-This file briefs the next session on what is done, what is still open, and the
-conventions to keep. Update it whenever a session materially changes the plan;
-delete sections that are finished and no longer instructive. Per-PR
-implementation detail lives in git history, `docs/superpowers/specs/`, and
-`docs/superpowers/plans/` — do not re-narrate it here.
+This file briefs the next session on what is done, what is still open, and
+the conventions to keep; delete sections that are no longer instructive.
+Per-PR detail lives in git history and `docs/superpowers/` — do not
+re-narrate it here.
 
 ## Where the project stands
 
@@ -33,7 +33,7 @@ implementation detail lives in git history, `docs/superpowers/specs/`, and
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 3921 passing (`uv run pytest`, ~35–50 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4040 passing (`uv run pytest`, ~45–60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -68,27 +68,20 @@ narrative is in git history and PR #76.
   **Add new failure modes to the classifier, not to the notice wording** —
   notices live in `turns._SKIP_NOTICES` keyed by kind, and the toast wording
   in `static/turn-notices.js` is keyed by the result's `error_kind`.
-- **`helpers.post_notice` is how a notice reaches the transcript.** It appends
-  the in-memory `Message` first and wraps `db.add_message` in try/except: when
-  the DB is what failed, an unguarded write raised a *second* exception out of
-  the handler and the user saw nothing. It returns `(message, persisted)` and
-  on a failed write appends `UNSAVED_NOTICE_SUFFIX`, since a notice that
-  vanishes on reload is the same silent failure one step later. Callers
-  surface the flag as `notice_unsaved`.
-- **`conclude_discussion` returns `conclusion_error`** and posts a system
-  notice; the discussion still concludes, deliberately. A `synthesis_shown`
-  flag picks `_CONCLUSION_NOT_SAVED_NOTICE` over `_CONCLUSION_FAILURE_NOTICE`,
-  because "could not be generated" is false when the synthesis sits directly
-  above the notice. `mediate` posts an equivalent notice.
-- **A failed Triage recommendation is never presented as a recommendation.**
-  `MethodRecommender.recommend` **raises `RecommenderError`** (provider
-  failure, unparseable reply, all-excluded catalog) and callers own the
-  fallback — it previously caught everything itself and returned a plausible
-  stand-in, so the error handler above it was unreachable and a crash reached
-  users as a considered 50%-confidence pick. Both failure paths in
-  `run_triage_recommender` go through `_record_recommender_failure`; key
-  resolution and client construction are *inside* the `try`, and the `finally`
-  close is itself guarded.
+- **`helpers.post_notice` is how a notice reaches the transcript.** It
+  appends the in-memory `Message` first and guards `db.add_message` (a failed
+  DB otherwise raised a second exception and the user saw nothing); it
+  returns `(message, persisted)`, appends `UNSAVED_NOTICE_SUFFIX` on a failed
+  write, and callers surface `notice_unsaved`.
+- **`conclude_discussion` returns `conclusion_error`** and posts a notice;
+  the discussion still concludes. `synthesis_shown` picks
+  `_CONCLUSION_NOT_SAVED_NOTICE` over `_CONCLUSION_FAILURE_NOTICE`. `mediate`
+  posts an equivalent notice.
+- **A failed Triage recommendation is never presented as one.**
+  `MethodRecommender.recommend` **raises `RecommenderError`** and callers own
+  the fallback; both failure paths in `run_triage_recommender` go through
+  `_record_recommender_failure`, with key resolution and client construction
+  inside the `try` and a guarded `finally` close.
 - **Non-UI consumers must not drop the error either.**
   `mcp_server.run_discussion` returns `conclusion_error` as its own field and
   matches the synthesis on `MessageRole.MODERATOR`, not a substring scan;
@@ -101,11 +94,9 @@ narrative is in git history and PR #76.
   exhausted failures.
 
 **Testing lesson.** #72 stayed green because tests mocked the very method
-under test (`MethodRecommender.recommend`); mock one layer further out (the
-`AIClient`). Contracts are covered by `tests/test_flow_error_visibility.py`,
-`tests/test_flow_error_classification.py`,
-`tests/test_flow_triage_recommender.py` and
-`tests/test_flow_moderator_actions.py`.
+under test; mock one layer further out (the `AIClient`). Tests:
+`tests/test_flow_error_*.py`, `_triage_recommender.py`,
+`_moderator_actions.py`.
 
 ## Document failure visibility (#78, PR #79 — keep these contracts)
 
@@ -161,12 +152,9 @@ by `tests/test_tools_document_failures.py`, `tests/test_background.py` and
 ## Lint gate (#86, PR #91 — keep in mind)
 
 `tests/test_lint.py` fails on any `ruff --select F` finding in `consensus/`
-(`tests/` is not linted). `kg_query` dropped its fake `path` mode and rejects
-unknown modes; `tools_memory` handler failures log via `_tool_failure`
-(`MemoryUnavailableError` → warning; `EmbeddingClient.embed` logs a
-non-transport fault such as a malformed response with its traceback first).
-The `dev` group pins `pytest`, `pytest-asyncio` 1.x and `ruff`; 1.x leaves
-no current event loop, so write async tests as `async def`.
+(`tests/` is not linted). The `dev` group pins `pytest`, `pytest-asyncio`
+1.x (`asyncio_mode = auto`; no current event loop, so write async tests as
+`async def`) and `ruff`.
 
 ## Speaking rotation after start (#104 — keep this contract)
 
@@ -209,27 +197,61 @@ it. `refresh()` goes through `http_fetch.fetch_capped` (retry/backoff) inside
 unreadable or empty catalogue, or a DB failure; malformed entries are skipped.
 
 **The tool-capability gate waits for the download in flight** (#118):
-`supports_tools` → `None` passes the gate, so `ConsensusApp.start_discussion`
-(now **async** — desktop wraps it in `_run_async`, every other caller awaits)
-and `app_discussion_setup.recommend_method` first `await
-pricing.wait_for_refresh()`, which joins the thread via `asyncio.to_thread`
-for at most `CAPABILITY_WAIT_SECONDS` (15 s), logging a warning on timeout.
-Only starts the gate applies to wait (`structured_output.method_needs_tools`),
-plus Triage: its method-switch gate does not wait, so its start does.
-Remaining limits: an unknown model in a populated cache still passes on its
-first setup (its download starts inside the scan); messages priced before the
-data lands keep a `NULL` cost. Tests:
-`tests/test_pricing_background.py` (its `cache` fixture restores the real
-`refresh`; tests join `_refresh_thread` with a timeout before asserting) and
-`tests/test_pricing_capability_wait.py` (**join the download thread before
-closing the DB** — closing it under a writing thread segfaults the
-interpreter).
+`ConsensusApp.start_discussion` (**async**; desktop wraps it in
+`_run_async`) and `recommend_method` first `await
+pricing.wait_for_refresh()` (at most `CAPABILITY_WAIT_SECONDS`, 15 s),
+for starts the gate applies to (`method_needs_tools`) plus Triage. An
+unknown model in a populated cache still passes on its first setup. Tests:
+`tests/test_pricing_background.py`, `_capability_wait.py` (**join the
+download thread before closing the DB** — otherwise it segfaults).
+
+## Authentication (`auth/`, #61 slice 15 — keep these contracts)
+
+The characterization net found eight defects, each fixed in its own commit
+before the move. Keep these when touching `consensus/auth/`:
+
+- **Email is never user-editable.** `update_user` allows only
+  `display_name`/`avatar_url`. Nothing verifies a new address, and OAuth
+  auto-links a provider-verified email to the account holding it, so an
+  edit (or any future "change email" feature without verification) is an
+  account-takeover path.
+- **A verified OAuth link to a password account clears the password and
+  revokes every session**, in the same transaction as the link
+  (`link_oauth(..., lock_out_password=True)`). Registration never verifies
+  the email, so the password may belong to a squatter. Repo owner's
+  decision (2026-11-15). An unverified provider email never links; an
+  unverified OAuth *sign-up* can still squat an address (**#128**).
+- **An OAuth reply without an email *or* provider user id is refused** —
+  an empty id would match another empty-id account via the legacy columns.
+  Ids go through `oauth._provider_id`, so a JSON `null` id stays empty
+  rather than becoming the shared string `"None"`.
+- **`link_oauth` preserves the legacy-column identity** in
+  `user_oauth_identities` before overwriting it, in one transaction.
+- **Provider requests go through `oauth._send_with_retry`** (shared
+  `http_fetch` retry policy, golden rule 5). A GitHub email-lookup failure is
+  logged, means "unverified" and sets `email_lookup_failed`, so the user is
+  told to retry rather than to use another sign-in method.
+- Providers are offered only with both client ID and secret set.
+- **No `oauth` in names that reach a log call** (`SIGN_IN_PROVIDERS`,
+  `SIGN_IN_MAX_RETRIES`, …): CodeQL's password heuristic matches `oauth` and
+  raised high-severity clear-text-logging alerts that block merging (PR #129).
+  Check with `gh codeql database analyze` on the
+  `Security/CWE-312/CleartextLogging.ql` query.
+- `create_token` / `store_oauth_state` prune expired rows (nothing else
+  does); `login` checks the password before saying "disabled". Never change
+  `PASSWORD_HASH_ITERATIONS` before **#127** lands.
+
+Tests: `tests/test_auth_db.py`, `_manager.py`, `_oauth_exchange.py`,
+`_oauth.py` (100% coverage; providers faked at the httpx transport via
+`tests/auth_helpers.install_routes`, which scripts retries with a list), and
+the guard `tests/test_auth_facade.py`. Patch through the defining module
+(`auth_helpers.module_of`); `fast_hashing` lowers PBKDF2 rounds.
 
 ## Open work
 
 ### Issue #61 — modules over the ~500-line golden rule (in progress)
 
-**Done — fourteen slices** (detail in git history; one PR each):
+**Done — fifteen slices** (detail in git history; one PR each):
 
 1. `app_discussion_flow.py` → `app_discussion_flow/`. **Watch `turns.py`
    (499)**: the next addition crosses the limit — split then.
@@ -282,26 +304,21 @@ interpreter).
    (`tests/desktop_helpers.py`) and a fake `webview`; guard
    `tests/test_desktop_facade.py`. **A new bridge method goes in a mixin and
    in `BRIDGE_API`.**
-14. `moderator.py` (775) → `moderator/`: `core.py` (`Moderator`: prompts, AI
-   clients, turn bookkeeping) composing `context.py`, `turn.py`
-   (`generate_turn` + tool loop, 338) and `synthesis.py` (summary,
-   conclusion, mediation) mixins, plus `constants.py`. Net (71% → 99% before
-   the move): `tests/test_moderator_turn.py` / `_synthesis.py`, driven by
-   `ScriptedLLM` (`tests/moderator_helpers.py`: a reply queue of message
-   dicts or HTTP statuses at `_post_with_retry`; `dsml_call` for DSML
-   markup); `use_method` patches `get_active_method` in every mixin module.
-   Guard `tests/test_moderator_facade.py`. Only non-verbatim edits: class
-   lines naming the mixins, new docstrings and import blocks, and an extra
-   dot on every relative import.
+14. `moderator.py` (775) → `moderator/` mixins (`core`, `context`, `turn`,
+   `synthesis`, `constants`). Net `tests/test_moderator_turn.py` /
+   `_synthesis.py` driven by `ScriptedLLM` (`tests/moderator_helpers.py`);
+   `use_method` patches `get_active_method` in every mixin module. Guard
+   `tests/test_moderator_facade.py`.
+15. `auth.py` (787, 49% covered) → `auth/` (`constants`, `models`,
+   `passwords`, `database`, `oauth`, `manager`); see the Authentication
+   section above.
 
 **Facade guards.** A dropped re-export fails *late*: consumers mostly import
-lazily inside function bodies (exceptions: `moderator/turn.py` imports
-`is_vision_capable` and `moderator/context.py` imports
-`build_image_content_blocks` at module level), and the `app._init_*_tools`
-methods turn an `ImportError` into "feature unavailable" (logged at
-WARNING). Each re-exporting facade has a `tests/test_<name>_facade.py` that
-pins `__all__` by identity and AST-scans every module under `consensus/` for
-call sites. Keep them in step when the public API changes.
+lazily inside function bodies, and the `app._init_*_tools` methods turn an
+`ImportError` into "feature unavailable" (logged at WARNING). Each
+re-exporting facade has a `tests/test_<name>_facade.py` that pins `__all__`
+by identity and AST-scans every module under `consensus/` for call sites.
+Keep them in step when the public API changes.
 
 **Still over the limit**, with statement coverage from the full suite
 (`uv run --with pytest-cov pytest --cov=consensus`):
@@ -309,19 +326,12 @@ call sites. Keep them in step when the public API changes.
 | Lines | Cover | File |
 |------:|------:|------|
 | 1241 | **0%** | `consensus/server.py` |
-| 787 | 49% | `consensus/auth.py` |
 
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next target.** Both modules left are the hard ones. `auth.py` (787, 49%)
-is security-critical: write the net first (registration, login rate limit,
-token hashing/expiry, every OAuth provider's callback with a fake token
-endpoint) and treat any defect found as its own fix commit before a line
-moves. Only after that, `server.py`.
-
-**`server.py` is the awkward one — read this before picking it.** It is a
-single 1170-line `launch_web()` whose middleware and ~35 handlers are all
+**Next target: `server.py`, the last one — read this before picking it.** It
+is a single 1170-line `launch_web()` whose middleware and ~35 handlers are all
 closures over `session_manager`, `auth_manager`, `app` and the helpers. There
 is no verbatim move available: extracting them means giving each domain group
 a factory that takes an explicit context object, which is a behaviour-risking
@@ -410,19 +420,22 @@ bookkeeping are the likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
-#107 a rotation change spans several commits (crash mid-update desyncs
-members and `method_state`); #102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
-budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #99 route test for the image-serve CSP (fix landed in PR #100; needs a
-`server.py` route-test harness); #97 Seatbelt profile does not confine writes; #96 no UI flag when
-Python or image tools fail to load; #92 tool error results echo raw
-exception text to the model and UI; #81 persist parse fidelity/notes; #80
-pre-#78 `'(Empty PDF)'` documents. (#88/#89/#98 closed with PR #100.)
+#131 login timing reveals which emails have a password account; #130 an OAuth
+callback has no overall deadline; #128 unverified OAuth sign-up can pre-hijack
+an address; #127 stored password hashes lack their PBKDF2 iteration count;
+#107 a rotation change spans several commits (crash mid-update desyncs members
+and `method_state`); #102 follow-ups from the PR #100 review (Retry-After,
+`doc_add` ingest budget, DNS-rebinding pin, `_init_image_tools` catch, test
+file size); #99 route test for the image-serve CSP (fix landed in PR #100;
+needs a `server.py` route-test harness); #97 Seatbelt profile does not confine
+writes; #96 no UI flag when Python or image tools fail to load; #92 tool error
+results echo raw exception text to the model and UI; #81 persist parse
+fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents.
 
 ### Roadmap
 
-`ROADMAP.md` holds the planned feature list. The nearest ⬜ items by payoff are
-Argument Mapping and Tournament / Superforecasting (both Medium), plus
-token-aware context windowing and lazy discussion message loading.
+`ROADMAP.md`: nearest ⬜ items are Argument Mapping, Tournament /
+Superforecasting, token-aware context windowing, lazy message loading.
 
 ## Conventions and gotchas for the next session
 
