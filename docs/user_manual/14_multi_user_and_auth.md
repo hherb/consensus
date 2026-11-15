@@ -72,7 +72,7 @@ export CONSENSUS_BASE_URL="https://consensus.example.com"
 | **Password hashing** | PBKDF2-SHA256, 600k iterations |
 | **Auth tokens** | SHA-256 hashed in storage, httpOnly cookies, 30-day TTL |
 | **Brute-force protection** | 5 login attempts per email per 5 minutes |
-| **CSRF protection** | Content-Type header enforcement |
+| **CSRF protection** | POSTs must be JSON or carry the `X-Consensus-Request` header |
 | **Rate limiting** | 120 requests per 60 seconds per client IP |
 | **CORS** | Configurable allowed origins |
 | **Security headers** | Applied to all responses |

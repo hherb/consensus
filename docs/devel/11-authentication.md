@@ -227,7 +227,8 @@ OAuth providers only appear in the UI when both client ID and secret are set.
 
 - Passwords: PBKDF2-SHA256, 600k iterations, 32-byte random salt
 - Tokens: `secrets.token_urlsafe(32)`, SHA-256 hashed in DB, httpOnly cookie
-- CSRF: Content-Type enforcement (application/json required for POST)
+- CSRF: a POST to `/api/` or `/auth/` must be `application/json` or carry
+  the `X-Consensus-Request` header
 - Brute-force: 5 attempts per email per 5 minutes
 - OAuth state: cryptographically random, 10-minute expiry, single-use
 - OAuth redirect: derived from `CONSENSUS_BASE_URL` (not request headers)

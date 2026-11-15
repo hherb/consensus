@@ -162,7 +162,7 @@ through aiohttp's `TestClient`).
 | `routes_documents.py` | `/api/memory/*`, `/api/documents/*` |
 | `routes_images.py` | `/api/images/*` |
 | `routes_misc.py` | `/health`, `/api/events` (SSE), static files |
-| `request_io.py` | `read_json_object()`, `read_upload()` |
+| `request_io.py` | `read_json_object()`, `non_string_field()`, `read_upload()` |
 | `constants.py` | Limits, cookie/header names, `IMAGE_SERVE_CSP` |
 
 Handlers are module-level functions; the state they share (the shared app or

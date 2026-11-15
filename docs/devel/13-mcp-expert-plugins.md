@@ -357,7 +357,8 @@ data: {"progress": 50, "total": 100, "message": "Consulting PubMed expert..."}
 
 Implementation in `server/routes_misc.py` (`handle_events`):
 1. Creates an `asyncio.Queue` per connected client
-2. Registers a `tool_progress` event handler that pushes to all queues
+2. Registers `tool_progress` and `user_input_request` handlers that push to
+   that client's queue
 3. Sends keepalive comments every 30 seconds
 4. Cleans up queue and handler on client disconnect
 

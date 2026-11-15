@@ -5,7 +5,7 @@ the merged #61 slices through `auth.py` → `auth/` (PR #129), the #121 fix
 (MCP tool failures are `isError` results, PR #122), the #104 rotation fix and
 the #115/#118 pricing fixes (PRs #117/#119). The sixteenth and **last** #61
 slice — `server.py` → `server/`, with a route-test net and seven web-mode
-defect fixes — is on `refactor/split-server-61` (PR #133, suite at **4332
+defect fixes — is on `refactor/split-server-61` (PR #133, suite at **4355
 passing**); once it merges, every Python module is under the ~500-line golden
 rule and #61 is closed. The discussion-method review & repair campaign (#12–#48,
 #56–#60), alpha/stable distribution (PyPI `consensus-app` + notarized macOS
@@ -26,7 +26,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4332 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4355 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -262,18 +262,21 @@ middleware through aiohttp's `TestClient`; it found the defects below.
   optional backend cannot stop the server from starting.
 - **`auth_middleware` resolves the user for `/auth/me`** too (enforces only
   on `/api/*`); before, both `/auth/me` routes were always 401.
-- Bodies go through `read_json_object` (non-object → 400); malformed ids and
-  `discussion_id`s are 400s, as are non-string credentials and profile
-  fields (`routes_auth.non_string_field`). `session_app()` is the one
+- Bodies go through `read_json_object` (non-object → 400, `/api/<method>`
+  included; an oversized body stays a 413); malformed ids and
+  `discussion_id`s are 400s, as are non-string credentials, profile fields
+  and add-url titles (`request_io.non_string_field`). `session_app()` is the one
   401/503 preamble for the file routes; `CAPACITY_ERROR` the one capacity
   message.
 - **The frontend opens the SSE stream after the first `get_state`**
   (`static/app.js`), so a first `--multi-user` visit's stream joins the
-  session that call created instead of an orphan one (verified by reading
+  session that call created instead of an orphan one. It uses `.finally`, so a
+  failed first load still reaches the global toast (verified by reading
   only — no JS harness).
 - `SessionManager` expiry and `stop()` share `_close_app()` (expiry used to
-  skip `app.shutdown()`, leaking MCP subprocesses); session ids in logs are
-  truncated. `login_attempts` / `rate_limits` are pruned by `prune_stale()`.
+  skip `app.shutdown()`, leaking MCP subprocesses). Expiry deletes the DB
+  under the lock but closes apps after releasing it (`_close_apps`): an MCP
+  shutdown can take seconds. Session ids in logs are truncated. `login_attempts` / `rate_limits` are pruned by `prune_stale()`.
 - Tests patch a setting where it is read (`middleware.RATE_LIMIT_MAX`,
   `routes_auth.LOGIN_RATE_LIMIT_*`, `routes_misc.SSE_KEEPALIVE_SECONDS`).
   `tests/test_server_api.py` `DISPATCH` pins every `/api/<method>` entry's
@@ -358,7 +361,9 @@ fails only in production). Keep them in step with the public API.
 
 ### Open GitHub issues
 
-#132 non-dispatch routes create a `--multi-user` session without setting its
+#136 server test follow-ups from the PR #133 review; #135 an SSE stream
+stays bound to an evicted `--multi-user` session; #134 client mistakes in
+`/api/<method>` arguments are a 500, not a 400; #132 non-dispatch routes create a `--multi-user` session without setting its
 cookie (orphaned sessions hold capacity); #131 login timing reveals which
 emails have a password account; #130 an OAuth callback has no overall
 deadline; #128 unverified OAuth sign-up can pre-hijack an address; #127 stored
