@@ -395,3 +395,30 @@ class TestLoginAttemptPruning:
         clock[0] += 2  # old@ is now stale, alice's attempts are not
         assert (await login(multi_client)).status == 429
         assert set(ctx.login_attempts) == {TEST_EMAIL}
+
+
+class TestNonStringFields:
+    """Wrong-typed credentials and profile fields are a 400, not a 500."""
+
+    @pytest.mark.parametrize("body", [
+        {"email": 123, "password": TEST_PASSWORD},
+        {"email": TEST_EMAIL, "password": 12345678},
+        {"email": TEST_EMAIL, "password": TEST_PASSWORD, "display_name": []},
+    ])
+    async def test_register(self, multi_client, body):
+        resp = await multi_client.post("/auth/register", json=body)
+        assert resp.status == 400
+        assert "must be a string" in (await resp.json())["error"]
+
+    async def test_login_non_string_password(self, multi_client):
+        await register(multi_client)
+        resp = await multi_client.post("/auth/login", json={
+            "email": TEST_EMAIL, "password": ["x"]})
+        assert resp.status == 400
+
+    @pytest.mark.parametrize("body", [{"display_name": {"a": 1}},
+                                      {"avatar_url": 5}])
+    async def test_profile_update(self, signed_in, body):
+        resp = await signed_in.post("/auth/me", json=body)
+        assert resp.status == 400
+        assert "must be a string" in (await resp.json())["error"]

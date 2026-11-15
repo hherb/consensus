@@ -20,6 +20,15 @@ from .request_io import read_json_object
 logger = logging.getLogger(__name__)
 
 
+def non_string_field(data: dict, names: tuple[str, ...]) -> web.Response | None:
+    """A 400 naming the first of *names* present in *data* but not a string."""
+    for name in names:
+        if name in data and not isinstance(data[name], str):
+            return web.json_response({"error": f"{name} must be a string"},
+                                     status=400)
+    return None
+
+
 async def handle_auth_register(request: web.Request) -> web.StreamResponse:
     """Register a new user with email/password."""
     ctx = request.app[CTX_KEY]
@@ -30,6 +39,9 @@ async def handle_auth_register(request: web.Request) -> web.StreamResponse:
     data = await read_json_object(request)
     if data is None:
         return web.json_response({"error": "Invalid JSON"}, status=400)
+    bad = non_string_field(data, ("email", "password", "display_name"))
+    if bad:
+        return bad
 
     try:
         user, token = ctx.auth_mgr.register(
@@ -60,11 +72,10 @@ async def handle_auth_login(request: web.Request) -> web.StreamResponse:
     if data is None:
         return web.json_response({"error": "Invalid JSON"}, status=400)
 
-    email = data.get("email", "")
-    if not isinstance(email, str):
-        return web.json_response({"error": "email must be a string"},
-                                 status=400)
-    email = email.strip().lower()
+    bad = non_string_field(data, ("email", "password"))
+    if bad:
+        return bad
+    email = data.get("email", "").strip().lower()
 
     # Per-email brute-force protection
     now = time.time()
@@ -158,6 +169,9 @@ async def handle_auth_update_profile(request: web.Request) -> web.StreamResponse
     if data is None:
         return web.json_response({"error": "Invalid JSON"}, status=400)
 
+    bad = non_string_field(data, ("display_name", "avatar_url"))
+    if bad:
+        return bad
     update_fields = {}
     for field in ("display_name", "avatar_url"):
         if field in data:
