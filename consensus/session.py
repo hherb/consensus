@@ -55,16 +55,27 @@ class SessionManager:
             self._cleanup_task.cancel()
             self._cleanup_task = None
         async with self._lock:
-            for info in self._sessions.values():
-                try:
-                    await info["app"].shutdown()
-                except Exception:
-                    pass
-                try:
-                    await info["app"].moderator.close()
-                except Exception:
-                    pass
+            for sid, info in self._sessions.items():
+                await self._close_app(sid, info["app"])
             self._sessions.clear()
+
+    @staticmethod
+    async def _close_app(sid: str, app: ConsensusApp) -> None:
+        """Release a session app's MCP providers and AI clients.
+
+        Failures are logged and never raised: one stuck session must not
+        stop the others from being closed.
+        """
+        try:
+            await app.shutdown()
+        except Exception as e:
+            logger.warning("Error shutting down session %s: %s", sid[:8], e,
+                           exc_info=True)
+        try:
+            await app.moderator.close()
+        except Exception as e:
+            logger.warning("Error closing moderator clients for session %s: %s",
+                           sid[:8], e, exc_info=True)
 
     @staticmethod
     def is_valid_session_id(session_id: str) -> bool:
@@ -114,15 +125,12 @@ class SessionManager:
         ]
         for sid in expired:
             info = self._sessions.pop(sid)
-            # Close moderator AI clients to avoid leaking httpx connections
-            try:
-                await info["app"].moderator.close()
-            except Exception:
-                logger.debug("Error closing moderator clients for session %s", sid)
+            # MCP subprocesses and httpx clients would otherwise leak.
+            await self._close_app(sid, info["app"])
             try:
                 info["app"].db.conn.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Error closing session DB %s: %s", sid[:8], e)
             # Clean up session database
             try:
                 db_path = info["db_path"]
@@ -131,7 +139,7 @@ class SessionManager:
                     if os.path.exists(p):
                         os.remove(p)
             except OSError:
-                logger.debug("Failed to clean session DB %s", sid)
+                logger.warning("Failed to clean session DB %s", sid[:8])
         if expired:
             logger.info("Evicted %d expired sessions", len(expired))
 
