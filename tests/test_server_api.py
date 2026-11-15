@@ -8,9 +8,13 @@ dropped entry, a crossed argument or a changed default fails here.
 
 from __future__ import annotations
 
+import ast
+import inspect
+
 import pytest
 
 from consensus.app import ConsensusApp
+from consensus.server import routes_api
 from tests.server_helpers import (  # noqa: F401  (fixtures)
     api, fast_hashing, multi_client, server_home, signed_in, single_client,
 )
@@ -199,12 +203,28 @@ async def test_dispatch_awaits_coroutine_results(single_client, monkeypatch):
     assert (await resp.json())["result"] == {"turn": 1}
 
 
+def _route_table_methods() -> set[str]:
+    """The keys of ``handle_api``'s ``handlers`` dict, read from the source."""
+    tree = ast.parse(inspect.getsource(routes_api))
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "handlers"
+                        for t in node.targets)
+                and isinstance(node.value, ast.Dict)):
+            return {k.value for k in node.value.keys}
+    raise AssertionError("handlers table not found in routes_api")
+
+
 async def test_dispatch_covers_every_route_method(single_client):
-    """An unlisted name is a 404, so ``DISPATCH`` covers the whole table."""
+    """``DISPATCH`` and the route table name the same methods (#136).
+
+    Read from the source, so an entry added to ``routes_api`` without a
+    ``DISPATCH`` case fails here; an unlisted name is a 404.
+    """
+    assert _route_table_methods() == ALL_METHODS
     resp = await api(single_client, "no_such_method")
     assert resp.status == 404
     assert (await resp.json()) == {"error": "Unknown method: no_such_method"}
-    assert len(ALL_METHODS) == 55
 
 
 async def test_result_carries_the_real_state(single_client):
@@ -226,11 +246,48 @@ async def test_app_error_is_a_500_with_its_message(single_client, monkeypatch,
     assert "API error: get_inactive_entities" in caplog.text
 
 
-async def test_missing_required_field_is_a_500(single_client):
-    """A missing required key surfaces as an error, not a crash."""
-    resp = await api(single_client, "delete_entity", {})
+@pytest.mark.parametrize("method,payload,attr,needle", [
+    ("delete_entity", {}, "delete_entity", "entity_id"),
+    ("start_discussion", {"max_rounds": "ten"}, "start_discussion", "ten"),
+    ("set_cost_limit", {"cost_limit": None}, "set_cost_limit", "NoneType"),
+    ("save_entity", {"name": "A", "entity_type": "ai", "colour": "red"},
+     "save_entity", "colour"),
+    ("save_entity", {"name": "A"}, "save_entity", "entity_type"),
+])
+async def test_bad_arguments_are_a_400(single_client, monkeypatch, caplog,
+                                       method, payload, attr, needle):
+    """A client mistake in the body never reaches the app (#134).
+
+    Missing keys, unconvertible values and unknown or missing keyword
+    arguments are caught before the call, so they are the client's 400,
+    not a logged server fault.
+    """
+    calls: list = []
+    real = getattr(ConsensusApp, attr)
+
+    def record(self, *args, **kwargs):
+        calls.append((args, kwargs))
+    record.__signature__ = inspect.signature(real)
+    monkeypatch.setattr(ConsensusApp, attr, record)
+    resp = await api(single_client, method, payload)
+    assert resp.status == 400, await resp.text()
+    error = (await resp.json())["error"]
+    assert needle in error
+    assert error.startswith(f"Invalid arguments for {method}:")
+    assert calls == []
+    assert "API error" not in caplog.text
+
+
+@pytest.mark.parametrize("exc", [KeyError("k"), TypeError("t"),
+                                 ValueError("v")])
+async def test_lookup_errors_inside_the_app_stay_a_500(single_client,
+                                                       monkeypatch, exc):
+    """The same exception types raised *by* the app are still server faults."""
+    def boom(self):
+        raise exc
+    monkeypatch.setattr(ConsensusApp, "get_inactive_entities", boom)
+    resp = await api(single_client, "get_inactive_entities")
     assert resp.status == 500
-    assert "entity_id" in (await resp.json())["error"]
 
 
 @pytest.mark.parametrize("body", [b"{not json", b"[1, 2]", b"\xff"])
@@ -342,3 +399,13 @@ class TestMultiUserSessions:
         resp = await api(signed_in, "get_state")
         assert resp.status == 503
         assert "capacity" in (await resp.json())["error"]
+
+    @pytest.mark.parametrize("method,payload", [
+        ("no_such_method", {}), ("delete_entity", {}),
+    ])
+    async def test_error_replies_still_set_the_cookie(self, signed_in,
+                                                      method, payload):
+        """A session this call created is not orphaned by its error (#132)."""
+        resp = await api(signed_in, method, payload)
+        assert resp.status in (400, 404)
+        assert "consensus_sid" in resp.cookies

@@ -320,7 +320,21 @@ async function bootstrap() {
             evtSource.addEventListener('user_input_request', (e) => {
                 onUserInputRequest(JSON.parse(e.data));
             });
-            evtSource.onerror = () => console.debug('SSE reconnecting...');
+            evtSource.onerror = () => {
+                if (evtSource.readyState !== EventSource.CLOSED) {
+                    console.debug('SSE reconnecting...');
+                    return;
+                }
+                // An error status closes EventSource for good: in
+                // --multi-user the session expired (#135), and only a
+                // dispatch call creates the next one. Make one, then rebind.
+                console.debug('SSE closed; reopening after get_state');
+                setTimeout(() => {
+                    api.getState().then((r) => {
+                        if (!(r && r.error)) openEventStream();
+                    });
+                }, SSE_REOPEN_DELAY_MS);
+            };
         };
         // finally, not then(f, f): a failed first load must still reach
         // the global unhandledrejection toast.
@@ -335,6 +349,8 @@ async function bootstrap() {
 
 // Bootstrap: detect pywebview or fall back to web mode
 const WEBVIEW_DETECT_TIMEOUT_MS = 100;
+// Wait before reopening an SSE stream the server closed (expired session).
+const SSE_REOPEN_DELAY_MS = 2000;
 if (window.pywebview) { bootstrap(); }
 else {
     window.addEventListener('pywebviewready', bootstrap);

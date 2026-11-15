@@ -172,10 +172,29 @@ class TestCsrf:
             headers={"Content-Type": "application/json; charset=utf-8"})
         assert resp.status == 200
 
-    async def test_non_post_methods_are_not_checked(self, single_client):
-        resp = await single_client.put("/api/memory/config", data=b"x=1",
-                                       headers={"Content-Type": "text/plain"})
+    @pytest.mark.parametrize("method,path", [
+        ("put", "/api/memory/config"), ("delete", "/api/documents/1"),
+    ])
+    async def test_preflighted_methods_need_no_header(self, single_client,
+                                                      method, path):
+        """PUT and DELETE are exempt by design, not by omission (#136).
+
+        A cross-site form can only GET or POST, and a cross-origin fetch
+        with any other method needs a CORS preflight this server never
+        grants. The frontend's DELETEs send neither JSON nor the header.
+        """
+        resp = await getattr(single_client, method)(
+            path, data=b"x=1", headers={"Content-Type": "text/plain"})
         assert resp.status != 415
+
+    async def test_preflight_is_never_granted(self, single_client):
+        """The other half of that exemption: no ``OPTIONS`` handler."""
+        resp = await single_client.options(
+            "/api/memory/config",
+            headers={"Origin": "https://evil.example",
+                     "Access-Control-Request-Method": "PUT"})
+        assert "Access-Control-Allow-Origin" not in resp.headers
+        assert resp.status in (403, 405)
 
 
 class TestAuthGate:

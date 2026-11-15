@@ -6,7 +6,7 @@ import os
 
 from aiohttp import web
 
-from .constants import SSE_KEEPALIVE_SECONDS
+from .constants import SESSION_COOKIE, SSE_KEEPALIVE_SECONDS
 from .context import CTX_KEY, session_app
 
 
@@ -20,10 +20,18 @@ async def handle_health(request: web.Request) -> web.StreamResponse:
 
 
 async def handle_events(request: web.Request) -> web.StreamResponse:
-    """SSE endpoint for real-time events (tool progress, etc.)."""
+    """SSE endpoint for real-time events (tool progress, etc.).
+
+    In ``--multi-user`` the stream ends once its session is no longer live
+    (#135): the app it listens to was shut down. The reconnect gets the
+    no-session 400, and the frontend rebinds after a dispatch call has made
+    the next session.
+    """
     app_instance = await session_app(request)
     if isinstance(app_instance, web.Response):
         return app_instance
+    session_mgr = request.app[CTX_KEY].session_mgr
+    sid = request.cookies.get(SESSION_COOKIE, "")
 
     resp = web.StreamResponse()
     resp.headers["Content-Type"] = "text/event-stream"
@@ -50,7 +58,11 @@ async def handle_events(request: web.Request) -> web.StreamResponse:
                 event_str = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
                 await resp.write(event_str.encode())
             except asyncio.TimeoutError:
-                # Send keepalive comment
+                # touch=False: an open tab alone must not keep a session alive.
+                if (session_mgr is not None
+                        and session_mgr.lookup(sid, touch=False)
+                        is not app_instance):
+                    break
                 await resp.write(b": keepalive\n\n")
     except (asyncio.CancelledError, ConnectionResetError):
         pass

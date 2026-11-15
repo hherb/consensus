@@ -41,3 +41,7 @@ SSE_KEEPALIVE_SECONDS = 30
 
 # The 503 body when --multi-user has no room for another session.
 CAPACITY_ERROR = "Server is at capacity. Please try again later."
+
+# The 400 body when a route that cannot create a --multi-user session (any
+# /api/ route but POST /api/<method>) finds none for the request's cookie.
+NO_SESSION_ERROR = "No active session. Reload the page."

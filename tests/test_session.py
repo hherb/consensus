@@ -35,6 +35,33 @@ class TestSessionIdValidation:
         assert SessionManager.is_valid_session_id("") is False
 
 
+# --- Lookup without creation (#132) ---
+
+class TestLookup:
+    async def test_unknown_or_invalid_id_creates_nothing(self, tmp_path):
+        mgr = SessionManager(data_dir=str(tmp_path / "sessions"))
+        assert mgr.lookup("a" * 32) is None
+        assert mgr.lookup("../../etc/passwd") is None
+        assert mgr.lookup("") is None
+        assert mgr.active_count == 0
+
+    async def test_finds_and_touches_a_live_session(self, tmp_path):
+        mgr = SessionManager(data_dir=str(tmp_path / "sessions"))
+        sid = "a" * 32
+        app = await mgr.get_app(sid)
+        mgr._sessions[sid]["last_access"] = 0
+        assert mgr.lookup(sid) is app
+        assert mgr._sessions[sid]["last_access"] > 0
+
+    async def test_touch_false_leaves_the_ttl_alone(self, tmp_path):
+        mgr = SessionManager(data_dir=str(tmp_path / "sessions"))
+        sid = "a" * 32
+        app = await mgr.get_app(sid)
+        mgr._sessions[sid]["last_access"] = 0
+        assert mgr.lookup(sid, touch=False) is app
+        assert mgr._sessions[sid]["last_access"] == 0
+
+
 # --- Session lifecycle ---
 
 class TestSessionLifecycle:

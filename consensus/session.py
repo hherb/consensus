@@ -115,6 +115,21 @@ class SessionManager:
         finally:
             await self._close_apps(evicted)
 
+    def lookup(self, session_id: str, touch: bool = True
+               ) -> Optional[ConsensusApp]:
+        """The live app for *session_id*, or ``None``; never creates one.
+
+        For routes that cannot set the session cookie (#132): a session they
+        created would be orphaned. ``touch=False`` checks liveness without
+        extending the TTL (the SSE stream's keepalive check, #135).
+        """
+        info = self._sessions.get(session_id)
+        if info is None:
+            return None
+        if touch:
+            info["last_access"] = time.time()
+        return info["app"]
+
     @property
     def active_count(self) -> int:
         """Number of active sessions."""
