@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from consensus import auth
+from consensus.auth import oauth
 from consensus.http_fetch import FETCH_BASE_DELAY, FETCH_MAX_RETRIES
 from tests.auth_helpers import (
     CLIENT_ID,
@@ -336,22 +337,22 @@ async def test_exchange_apple_reads_the_id_token(monkeypatch):
 
 def test_apple_id_token_name_claim():
     token = apple_id_token({"sub": "s", "email": "e@x.com", "name": "Eve"})
-    assert auth._parse_apple_id_token({"id_token": token})["name"] == "Eve"
+    assert oauth._parse_apple_id_token({"id_token": token})["name"] == "Eve"
 
 
 @pytest.mark.parametrize("token_resp", [
     {}, {"id_token": ""}, {"id_token": "only-one-part"},
 ])
 def test_apple_missing_id_token_returns_none(token_resp):
-    assert auth._parse_apple_id_token(token_resp) is None
+    assert oauth._parse_apple_id_token(token_resp) is None
 
 
 def test_apple_undecodable_id_token_logs_and_returns_none(caplog):
     with caplog.at_level(logging.ERROR, logger="consensus.auth"):
-        assert auth._parse_apple_id_token({"id_token": "a.!!!.c"}) is None
+        assert oauth._parse_apple_id_token({"id_token": "a.!!!.c"}) is None
     assert "Apple ID token parse error" in caplog.text
 
 
 async def test_extract_user_info_unknown_provider_returns_none():
     async with httpx.AsyncClient() as client:
-        assert await auth._extract_user_info("myspace", {}, client, {}) is None
+        assert await oauth._extract_user_info("myspace", {}, client, {}) is None

@@ -1,0 +1,60 @@
+"""Authentication and user registration for Consensus.
+
+Supports two modes:
+- Simple registration (default / desktop): email + password, no external deps.
+- OAuth (hosted / multi-user web): GitHub, Google, LinkedIn, Apple sign-in
+  via standard Authorization Code flow.
+
+OAuth requires ``httpx`` (already a project dependency) for token exchange.
+No additional libraries are needed.
+
+The package splits the former ``auth.py`` (issue #61): ``constants``,
+``models``, ``passwords``, ``database`` (``AuthDatabase``), ``oauth``
+(provider helpers and code exchange) and ``manager`` (``AuthManager``).
+This facade re-exports the public API; private helpers are imported from
+their submodule.
+"""
+
+from .constants import (
+    AUTH_TOKEN_BYTES,
+    AUTH_TOKEN_TTL,
+    MIN_PASSWORD_LENGTH,
+    OAUTH_HTTP_TIMEOUT,
+    OAUTH_MAX_RETRIES,
+    OAUTH_PROVIDERS,
+    OAUTH_RETRY_BASE_DELAY,
+    OAUTH_STATE_TTL,
+    PASSWORD_HASH_ITERATIONS,
+    PASSWORD_SALT_BYTES,
+)
+from .database import AuthDatabase
+from .manager import AuthManager
+from .models import AuthToken, User
+from .oauth import (
+    build_oauth_authorize_url,
+    exchange_oauth_code,
+    get_available_oauth_providers,
+)
+from .passwords import hash_password, verify_password
+
+__all__ = [
+    "AUTH_TOKEN_BYTES",
+    "AUTH_TOKEN_TTL",
+    "MIN_PASSWORD_LENGTH",
+    "OAUTH_HTTP_TIMEOUT",
+    "OAUTH_MAX_RETRIES",
+    "OAUTH_PROVIDERS",
+    "OAUTH_RETRY_BASE_DELAY",
+    "OAUTH_STATE_TTL",
+    "PASSWORD_HASH_ITERATIONS",
+    "PASSWORD_SALT_BYTES",
+    "AuthDatabase",
+    "AuthManager",
+    "AuthToken",
+    "User",
+    "build_oauth_authorize_url",
+    "exchange_oauth_code",
+    "get_available_oauth_providers",
+    "hash_password",
+    "verify_password",
+]

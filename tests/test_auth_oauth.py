@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from consensus.auth import AuthManager, _coerce_verified
+from consensus.auth import AuthManager
+from consensus.auth.oauth import _coerce_verified
 from tests.auth_helpers import (  # noqa: F401
     auth_db,
     fast_hashing,
