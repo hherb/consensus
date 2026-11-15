@@ -6,6 +6,7 @@ the real ``httpx.AsyncClient`` and the real request code run.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from urllib.parse import parse_qs, urlsplit
 
@@ -13,6 +14,7 @@ import httpx
 import pytest
 
 from consensus import auth
+from consensus.http_fetch import FETCH_BASE_DELAY, FETCH_MAX_RETRIES
 from tests.auth_helpers import (
     CLIENT_ID,
     CLIENT_SECRET,
@@ -176,12 +178,87 @@ async def test_exchange_userinfo_error_returns_none(monkeypatch, caplog):
     assert "userinfo failed" in caplog.text
 
 
+# -- Retry with backoff ----------------------------------------------------
+
+@pytest.fixture
+def sleeps(monkeypatch) -> list[float]:
+    """Record backoff delays instead of sleeping."""
+    delays: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        delays.append(seconds)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    return delays
+
+
+def _connect_error(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("connection refused", request=request)
+
+
+async def test_transient_token_failure_is_retried_with_backoff(
+        monkeypatch, sleeps, caplog):
+    set_credentials(monkeypatch, "google")
+    seen = install_routes(monkeypatch, {
+        GOOGLE["token_url"]: [httpx.Response(503), _connect_error,
+                              lambda r: token_ok()],
+        GOOGLE["userinfo_url"]: httpx.Response(200, json={
+            "id": "1", "email": "g@example.com"}),
+    })
+    with caplog.at_level(logging.WARNING, logger="consensus.auth"):
+        assert (await _exchange("google"))["oauth_id"] == "1"
+    assert [r.url.path for r in seen].count("/token") == 3
+    assert sleeps == [FETCH_BASE_DELAY, FETCH_BASE_DELAY * 2]
+    assert "HTTP 503" in caplog.text and "ConnectError" in caplog.text
+
+
+async def test_transient_userinfo_failure_is_retried(monkeypatch, sleeps):
+    set_credentials(monkeypatch, "google")
+    install_routes(monkeypatch, {
+        GOOGLE["token_url"]: token_ok(),
+        GOOGLE["userinfo_url"]: [
+            httpx.Response(429),
+            lambda r: httpx.Response(200, json={"id": "2", "email": "e@x.c"}),
+        ],
+    })
+    assert (await _exchange("google"))["oauth_id"] == "2"
+    assert sleeps == [FETCH_BASE_DELAY]
+
+
+async def test_github_email_lookup_is_retried(monkeypatch, sleeps):
+    emails = [httpx.Response(502), lambda r: httpx.Response(200, json=[
+        {"email": "p@example.com", "primary": True, "verified": True}])]
+    _github(monkeypatch, {"id": 5, "email": "p@example.com"}, emails)
+    assert (await _exchange("github"))["email_verified"] is True
+
+
+@pytest.mark.parametrize("failure", [
+    lambda r: httpx.Response(503), _connect_error,
+])
+async def test_retries_give_up_after_max_attempts(monkeypatch, sleeps,
+                                                  failure):
+    set_credentials(monkeypatch, "google")
+    seen = install_routes(monkeypatch, {GOOGLE["token_url"]: failure})
+    assert await _exchange("google") is None
+    assert len(seen) == FETCH_MAX_RETRIES
+    assert len(sleeps) == FETCH_MAX_RETRIES - 1
+
+
+async def test_permanent_failure_is_not_retried(monkeypatch, sleeps):
+    set_credentials(monkeypatch, "google")
+    seen = install_routes(monkeypatch, {
+        GOOGLE["token_url"]: httpx.Response(400, json={"error": "bad"})})
+    assert await _exchange("google") is None
+    assert len(seen) == 1 and sleeps == []
+
+
 # -- GitHub email reconciliation -------------------------------------------
 
 def _github(monkeypatch, profile: dict, emails) -> list[httpx.Request]:
     set_credentials(monkeypatch, "github")
-    emails_reply = (emails if isinstance(emails, httpx.Response)
-                    else httpx.Response(200, json=emails))
+    emails_reply = (httpx.Response(200, json=emails)
+                    if isinstance(emails, list)
+                    and all(isinstance(e, dict) for e in emails)
+                    else emails)
     return install_routes(monkeypatch, {
         GH["token_url"]: token_ok("tok-gh"),
         GH["userinfo_url"]: httpx.Response(200, json=profile),

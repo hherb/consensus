@@ -9,6 +9,7 @@ OAuth requires ``httpx`` (already a project dependency) for token exchange.
 No additional libraries are needed.
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -19,11 +20,12 @@ import sqlite3
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 from urllib.parse import urlencode
 
-if TYPE_CHECKING:
-    import httpx
+import httpx
+
+from .http_fetch import FETCH_BASE_DELAY, FETCH_MAX_RETRIES, is_retryable_status
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,12 @@ AUTH_TOKEN_TTL = 86400 * 30  # 30 days
 PASSWORD_SALT_BYTES = 32
 PASSWORD_HASH_ITERATIONS = 600_000  # OWASP 2023 recommendation for PBKDF2-SHA256
 OAUTH_STATE_TTL = 600  # 10 minutes: max time for user to complete OAuth flow
+OAUTH_HTTP_TIMEOUT = 15  # seconds per request to a provider
+#: Attempts per provider request, the first included (shared fetch policy).
+OAUTH_MAX_RETRIES = FETCH_MAX_RETRIES
+#: Seconds before the first retry; doubled for each later one.
+OAUTH_RETRY_BASE_DELAY = FETCH_BASE_DELAY
+MIN_PASSWORD_LENGTH = 8
 
 # OAuth provider definitions (client IDs/secrets come from env vars)
 OAUTH_PROVIDERS = {
@@ -502,6 +510,40 @@ def build_oauth_authorize_url(provider: str, redirect_uri: str,
     return cfg["authorize_url"] + "?" + urlencode(params)
 
 
+async def _send_with_retry(client: httpx.AsyncClient, method: str, url: str,
+                           **kwargs: object) -> httpx.Response:
+    """Send one request to a provider, retrying transient faults.
+
+    Transport errors, timeouts and retryable statuses
+    (:func:`http_fetch.is_retryable_status`) are attempted up to
+    ``OAUTH_MAX_RETRIES`` times in total, with exponential backoff. Retrying
+    the code-exchange POST is safe: if an earlier attempt did reach the
+    provider, the single-use code is spent and the retry fails permanently.
+
+    Returns:
+        The first non-retryable response, or the final attempt's; the caller
+        checks its status.
+
+    Raises:
+        httpx.TransportError: When the final attempt fails in transport.
+    """
+    for attempt in range(OAUTH_MAX_RETRIES - 1):
+        try:
+            resp = await client.request(method, url, **kwargs)
+        except httpx.TransportError as e:
+            fault = type(e).__name__
+        else:
+            if not is_retryable_status(resp.status_code):
+                return resp
+            fault = f"HTTP {resp.status_code}"
+        delay = OAUTH_RETRY_BASE_DELAY * (2 ** attempt)
+        logger.warning("OAuth request to %s failed (attempt %d/%d: %s), "
+                       "retrying in %.1fs", url, attempt + 1,
+                       OAUTH_MAX_RETRIES, fault, delay)
+        await asyncio.sleep(delay)
+    return await client.request(method, url, **kwargs)
+
+
 async def exchange_oauth_code(provider: str, code: str,
                                redirect_uri: str) -> Optional[dict]:
     """Exchange an OAuth authorization code for user info.
@@ -509,8 +551,6 @@ async def exchange_oauth_code(provider: str, code: str,
     Returns a dict with keys: email, name, avatar_url, oauth_id
     or None on failure.
     """
-    import httpx
-
     cfg = OAUTH_PROVIDERS.get(provider)
     if not cfg:
         return None
@@ -530,11 +570,12 @@ async def exchange_oauth_code(provider: str, code: str,
         "grant_type": "authorization_code",
     }
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=OAUTH_HTTP_TIMEOUT) as client:
         try:
             headers = {"Accept": "application/json"}
-            resp = await client.post(
-                cfg["token_url"], data=token_data, headers=headers,
+            resp = await _send_with_retry(
+                client, "POST", cfg["token_url"], data=token_data,
+                headers=headers,
             )
             resp.raise_for_status()
             token_resp = resp.json()
@@ -555,7 +596,9 @@ async def exchange_oauth_code(provider: str, code: str,
             return _parse_apple_id_token(token_resp)
 
         try:
-            resp = await client.get(cfg["userinfo_url"], headers=auth_headers)
+            resp = await _send_with_retry(
+                client, "GET", cfg["userinfo_url"], headers=auth_headers,
+            )
             resp.raise_for_status()
             userinfo = resp.json()
         except Exception as e:
@@ -579,7 +622,7 @@ def _coerce_verified(value: object) -> bool:
 
 
 async def _extract_user_info(provider: str, userinfo: dict,
-                              client: "httpx.AsyncClient",
+                              client: httpx.AsyncClient,
                               auth_headers: dict[str, str]) -> Optional[dict]:
     """Extract normalized user info from provider-specific responses.
 
@@ -603,7 +646,9 @@ async def _extract_user_info(provider: str, userinfo: dict,
         email_url = cfg.get("userinfo_email_url", "")
         if email_url:
             try:
-                resp = await client.get(email_url, headers=auth_headers)
+                resp = await _send_with_retry(
+                    client, "GET", email_url, headers=auth_headers,
+                )
                 if resp.status_code != 200:
                     logger.warning("GitHub email lookup failed: HTTP %d; "
                                    "treating the email as unverified",
@@ -718,8 +763,9 @@ class AuthManager:
         email = email.strip().lower()
         if not email or "@" not in email:
             raise ValueError("Valid email address required")
-        if len(password) < 8:
-            raise ValueError("Password must be at least 8 characters")
+        if len(password) < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH}"
+                             " characters")
 
         user = self.db.create_user(
             email=email, display_name=display_name, password=password,
