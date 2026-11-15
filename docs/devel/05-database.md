@@ -354,8 +354,9 @@ images directory.
 ## Auth Tables (multi-user mode)
 
 In multi-user mode (`--web --multi-user`), authentication data lives in a
-**separate** `auth.db` file, managed by `AuthDatabase` in `auth.py`. This
-keeps auth data isolated from per-session discussion databases.
+**separate** `auth.db` file, managed by `AuthDatabase` in
+`auth/database.py`. This keeps auth data isolated from per-session
+discussion databases.
 
 ```sql
 -- User accounts

@@ -54,7 +54,7 @@ ConsensusApp (app.py + app_api/ mixins + app_*.py domain modules)
     |     providers, entities, prompts, discussions, messages, tools,
     |     MCP/experts, memory, documents, images
     |
-    +-- AuthManager (auth.py) [multi-user mode only]
+    +-- AuthManager (auth/) [multi-user mode only]
           Email/password + OAuth auth, token management,
           AuthDatabase (separate auth.db)
 ```

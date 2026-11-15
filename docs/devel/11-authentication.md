@@ -17,7 +17,13 @@ The auth system supports two registration paths:
 Both paths produce an auth token stored as an httpOnly cookie. The token is
 SHA-256 hashed before storage in the database (never stored in plaintext).
 
-## Module: `auth.py`
+## Package: `auth/`
+
+`consensus/auth/` (split from `auth.py`, issue #61): `constants.py`
+(constants and `OAUTH_PROVIDERS`), `models.py`, `passwords.py`,
+`database.py` (`AuthDatabase`), `oauth.py` (provider helpers and code
+exchange) and `manager.py` (`AuthManager`). `__init__.py` re-exports the
+public API.
 
 ### Data Classes
 
@@ -37,7 +43,8 @@ SHA-256 hashed before storage in the database (never stored in plaintext).
 
 - Tokens are generated with `secrets.token_urlsafe(32)` (256 bits of entropy)
 - Stored as SHA-256 hashes (never plaintext)
-- Default TTL: 30 days (`AUTH_TOKEN_TTL`)
+- Default TTL: 30 days (`AUTH_TOKEN_TTL`); `create_token()` prunes expired
+  tokens and `store_oauth_state()` prunes abandoned states
 - Tokens are not returned in JSON responses — they are set as httpOnly cookies only
 
 ### `AuthDatabase`
@@ -68,7 +75,9 @@ source for OAuth identity lookups and supports multiple providers per user.
 | `get_user_by_oauth()` | Lookup by provider + oauth_id (checks `user_oauth_identities` first, falls back to legacy columns) |
 | `create_token()` | Generate and store a new auth token |
 | `validate_token()` | Verify token and return associated user |
-| `link_oauth()` | Link an OAuth identity to an existing user (supports multiple) |
+| `link_oauth()` | Link an OAuth identity to an existing user (supports multiple); first copies the legacy-column identity into `user_oauth_identities` so an OAuth sign-up's original provider is not lost |
+| `update_user()` | Update `display_name` / `avatar_url` only — `email` is deliberately not editable (see Security Summary) |
+| `clear_password()` | Remove the password, leaving OAuth as the only sign-in |
 | `store_oauth_state()` / `consume_oauth_state()` | CSRF protection for OAuth flow |
 
 ### `AuthManager`
@@ -77,11 +86,11 @@ High-level API used by `server.py`. Methods:
 
 | Method | Purpose |
 |--------|---------|
-| `register(email, password, display_name)` | Create user + token. Validates email format and password length (≥8 chars) |
+| `register(email, password, display_name)` | Create user + token. Validates email format and password length (`MIN_PASSWORD_LENGTH`, 8) |
 | `login(email, password)` | Authenticate, return user + token |
 | `logout(token)` | Revoke a single token |
 | `get_current_user(token)` | Validate token, return `User` or `None` |
-| `oauth_callback(provider, code, redirect_uri)` | Exchange OAuth code, find-or-create user, return user + token |
+| `oauth_callback(provider, code, redirect_uri)` | Exchange OAuth code, find-or-create user, return user + token. Refuses a reply without an email or provider user id. Links to an existing account by email only when the provider says the email is verified; if that account has a password, the password is cleared and its sessions revoked |
 
 ### OAuth Flow
 
@@ -91,7 +100,10 @@ High-level API used by `server.py`. Methods:
    to the provider's authorization URL
 4. Provider redirects back to `/auth/oauth/callback/{provider}` with code + state
 5. Server validates the state token, exchanges the code for an access token,
-   fetches user info, and finds-or-creates the user
+   fetches user info, and finds-or-creates the user. Each provider request
+   retries transient faults (transport errors, 408/425/429, most 5xx) with
+   exponential backoff (`OAUTH_MAX_RETRIES`, `OAUTH_RETRY_BASE_DELAY`, shared
+   with `http_fetch`)
 6. Auth cookie is set and user is redirected to `/`
 
 **OAuth redirect URI** is derived from the `CONSENSUS_BASE_URL` environment
@@ -102,15 +114,16 @@ not set, falls back to request host with a warning log.
 
 | Provider | User info source | Special handling |
 |----------|-----------------|-----------------|
-| GitHub | `/user` + `/user/emails` | Fetches verified primary email separately |
+| GitHub | `/user` + `/user/emails` | Fetches verified primary email separately; a failed lookup is logged and the email treated as unverified |
 | Google | `/oauth2/v2/userinfo` | Requests offline access for refresh tokens |
 | LinkedIn | `/v2/userinfo` (OpenID Connect) | Standard OIDC |
 | Apple | ID token (JWT payload) | Uses `response_mode=form_post`; JWT signature verification is a TODO |
 
 **Adding a new OAuth provider:**
 
-1. Add provider config to `OAUTH_PROVIDERS` dict in `auth.py`
-2. Add a case to `_extract_user_info()` for the provider's userinfo format
+1. Add provider config to `OAUTH_PROVIDERS` dict in `auth/constants.py`
+2. Add a case to `_extract_user_info()` (`auth/oauth.py`) for the provider's
+   userinfo format
 3. Set `CONSENSUS_<PROVIDER>_CLIENT_ID` and `CONSENSUS_<PROVIDER>_CLIENT_SECRET`
    environment variables
 4. The provider will automatically appear in the login UI
@@ -145,7 +158,7 @@ callbacks).
 | `/auth/logout` | POST | Revoke current token, clear cookie |
 | `/auth/status` | GET | Check auth state (returns `auth_required`, `authenticated`, `user`, `oauth_providers`) |
 | `/auth/me` | GET | Get current user profile (requires auth via `/api/` check or cookie) |
-| `/auth/me` | POST | Update profile (display_name, avatar_url, email only) |
+| `/auth/me` | POST | Update profile (display_name, avatar_url only) |
 | `/auth/oauth/providers` | GET | List configured OAuth providers |
 | `/auth/oauth/authorize/{provider}` | GET | Start OAuth flow (redirects to provider) |
 | `/auth/oauth/callback/{provider}` | GET/POST | Handle OAuth callback |
@@ -215,7 +228,14 @@ OAuth providers only appear in the UI when both client ID and secret are set.
 - Brute-force: 5 attempts per email per 5 minutes
 - OAuth state: cryptographically random, 10-minute expiry, single-use
 - OAuth redirect: derived from `CONSENSUS_BASE_URL` (not request headers)
-- Profile updates: explicit field allowlist (display_name, avatar_url, email)
+- Profile updates: explicit field allowlist (display_name, avatar_url). The
+  email is not editable: nothing verifies a new address, and OAuth links a
+  provider-verified email to the account holding it, so an edit could claim
+  someone else's address
+- Account pre-hijack: registration does not verify the email, so when a
+  verified OAuth sign-in links to a password account, the password is cleared
+  and every session revoked — whoever set it may not own the address
+- Login checks the password before reporting a disabled account
 - XSS: OAuth error pages use `html.escape()` on user-controlled input
 
 ---

@@ -380,7 +380,7 @@ ConsensusApp — orchestrator, state management, event emitter
     ├── ImageTools (tools_image/) — image storage, vision routing, description
     ├── AskUser (tools_ask_user.py) — interactive user input during AI turns
     ├── PythonExec (tools_python/) — sandboxed Python code execution + package install
-    ├── AuthManager (auth.py) — password + OAuth authentication (multi-user mode)
+    ├── AuthManager (auth/) — password + OAuth authentication (multi-user mode)
     ├── Migrator — file-based SQL migration runner
     └── Evaluation — ablation study framework (cases, runner, scorer, report)
 
