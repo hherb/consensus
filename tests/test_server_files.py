@@ -43,24 +43,16 @@ def record(monkeypatch, attr: str, result: object, awaitable: bool = False
     return calls
 
 
-# Sent by the frontend on non-JSON POSTs (multipart uploads) so the CSRF
-# guard can tell them from a cross-site form submission.
-CSRF_HEADER = "X-Consensus-Request"
-
-UPLOAD_CSRF_BUG = pytest.mark.xfail(
-    strict=True, reason="CSRF middleware answers 415 to multipart uploads")
-
-
 async def upload(client, path: str, form: aiohttp.FormData):
     """POST a multipart upload the way the web frontend does."""
-    return await client.post(path, data=form, headers={CSRF_HEADER: "1"})
+    return await client.post(path, data=form, headers={server.CSRF_HEADER: "1"})
 
 
 def multipart(file_bytes: bytes | None, filename: str = "f.bin",
               content_type: str = "application/octet-stream",
               **fields: str) -> aiohttp.FormData:
     """Build an upload form with an optional ``file`` part plus text fields."""
-    form = aiohttp.FormData()
+    form = aiohttp.FormData(default_to_multipart=True)
     if file_bytes is not None:
         form.add_field("file", file_bytes, filename=filename,
                        content_type=content_type)
@@ -153,14 +145,12 @@ class TestFeatureUnavailable:
         assert (await resp.json())["error"].startswith(
             f"{feature} tools failed to load")
 
-    @UPLOAD_CSRF_BUG
     async def test_document_upload_unavailable(self, bare_client):
         resp = await upload(bare_client, "/api/documents/upload", multipart(b"x"))
         assert resp.status == 404
 
 
 class TestDocuments:
-    @UPLOAD_CSRF_BUG
     async def test_upload_forwards_the_parts(self, single_client, monkeypatch):
         calls = record(monkeypatch, "add_document", {"document_id": 1},
                        awaitable=True)
@@ -174,7 +164,6 @@ class TestDocuments:
                                "mime_type": "text/markdown",
                                "discussion_id": 12, "title": "Notes"})]
 
-    @UPLOAD_CSRF_BUG
     async def test_upload_non_numeric_discussion_is_unbound(
             self, single_client, monkeypatch):
         calls = record(monkeypatch, "add_document", {}, awaitable=True)
@@ -182,13 +171,50 @@ class TestDocuments:
             b"x", discussion_id="abc"))
         assert calls[0][1]["discussion_id"] == 0
 
-    @UPLOAD_CSRF_BUG
     async def test_upload_without_a_file_is_a_400(self, single_client):
         resp = await upload(single_client, "/api/documents/upload", multipart(None, title="t"))
         assert resp.status == 400
         assert (await resp.json()) == {"error": "No file provided"}
 
-    @UPLOAD_CSRF_BUG
+    async def test_upload_over_one_mib_is_accepted(self, single_client,
+                                                   monkeypatch):
+        """aiohttp's 1 MiB default body limit does not apply to uploads."""
+        calls = record(monkeypatch, "add_document", {"document_id": 1},
+                       awaitable=True)
+        resp = await upload(single_client, "/api/documents/upload",
+                            multipart(b"a" * (5 * 1024 * 1024)))
+        assert resp.status == 200
+        assert len(calls[0][1]["content_bytes"]) == 5 * 1024 * 1024
+
+    async def test_upload_over_the_document_limit_is_a_413(
+            self, single_client, monkeypatch):
+        from consensus.tools_document import constants
+        record(monkeypatch, "add_document", {}, awaitable=True)
+        # The handler reads the limit at call time; shrink it to keep the
+        # test fast (the real one is 50 MB).
+        monkeypatch.setattr(constants, "MAX_DOCUMENT_BYTES", 2 * 1024 * 1024)
+        resp = await upload(single_client, "/api/documents/upload",
+                            multipart(b"a" * (2 * 1024 * 1024 + 1)))
+        assert resp.status == 413
+        assert (await resp.json()) == {
+            "error": "File too large. Maximum is 2 MB."}
+
+    @pytest.mark.parametrize("path", ["/api/documents/upload",
+                                      "/api/images/upload"])
+    async def test_non_multipart_body_is_a_400(self, single_client, path):
+        resp = await single_client.post(
+            path, data=b"plain", headers={server.CSRF_HEADER: "1",
+                                          "Content-Type": "text/plain"})
+        assert resp.status == 400
+        assert "multipart/form-data" in (await resp.json())["error"]
+
+    async def test_mime_parameters_are_stripped(self, single_client,
+                                                         monkeypatch):
+        calls = record(monkeypatch, "add_document", {}, awaitable=True)
+        await upload(single_client, "/api/documents/upload", multipart(
+            b"x", content_type="text/plain; charset=latin-1"))
+        assert calls[0][1]["mime_type"] == "text/plain"
+
     async def test_upload_app_error_is_a_400(self, single_client, monkeypatch):
         record(monkeypatch, "add_document", {"error": "unsupported"},
                awaitable=True)
@@ -253,7 +279,6 @@ class TestDocuments:
 
 
 class TestImages:
-    @UPLOAD_CSRF_BUG
     async def test_upload_then_serve_round_trip(self, single_client):
         resp = await upload(single_client, "/api/images/upload", multipart(
             PNG_BYTES, filename="dot.png", content_type="image/png"))
@@ -282,7 +307,6 @@ class TestImages:
         assert "script-src" not in csp
         assert served.headers["X-Content-Type-Options"] == "nosniff"
 
-    @UPLOAD_CSRF_BUG
     async def test_upload_forwards_the_parts(self, single_client, monkeypatch):
         calls = record(monkeypatch, "add_image", {"image_id": 1},
                        awaitable=True)
@@ -293,21 +317,30 @@ class TestImages:
                                "mime_type": "image/jpeg", "discussion_id": 4,
                                "title": "T"})]
 
-    @UPLOAD_CSRF_BUG
     async def test_upload_without_a_file_is_a_400(self, single_client):
         resp = await upload(single_client, "/api/images/upload", multipart(None, discussion_id="1"))
         assert resp.status == 400
 
-    @UPLOAD_CSRF_BUG
     async def test_upload_too_large_is_a_413(self, single_client, monkeypatch):
+        from consensus.tools_image.constants import MAX_IMAGE_BYTES
         calls = record(monkeypatch, "add_image", {}, awaitable=True)
-        too_big = b"\0" * (20 * 1024 * 1024 + 1)
-        resp = await upload(single_client, "/api/images/upload", multipart(too_big))
+        resp = await upload(single_client, "/api/images/upload",
+                            multipart(b"\0" * (MAX_IMAGE_BYTES + 1)))
         assert resp.status == 413
-        assert "Maximum is 20 MB" in (await resp.json())["error"]
+        assert (await resp.json()) == {
+            "error": "File too large. Maximum is 20 MB."}
         assert calls == []
 
-    @UPLOAD_CSRF_BUG
+    async def test_upload_over_one_mib_is_accepted(self, single_client,
+                                                   monkeypatch):
+        """aiohttp's 1 MiB default body limit does not apply to uploads."""
+        calls = record(monkeypatch, "add_image", {"image_id": 1},
+                       awaitable=True)
+        resp = await upload(single_client, "/api/images/upload",
+                            multipart(b"\0" * (3 * 1024 * 1024)))
+        assert resp.status == 200
+        assert len(calls[0][1]["content_bytes"]) == 3 * 1024 * 1024
+
     async def test_upload_app_error_is_a_400(self, single_client, monkeypatch):
         record(monkeypatch, "add_image", {"error": "not an image"},
                awaitable=True)

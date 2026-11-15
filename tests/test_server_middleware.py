@@ -7,6 +7,10 @@ driven through the real app built by ``create_web_app``.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
+import aiohttp
 import pytest
 
 from consensus import server
@@ -125,6 +129,21 @@ class TestCsrf:
         resp = await single_client.post("/api/get_state", data=b"")
         assert resp.status == 415
 
+    @pytest.mark.parametrize("path", ["/api/documents/upload",
+                                      "/api/images/upload"])
+    async def test_multipart_needs_the_csrf_header(self, single_client, path):
+        form = aiohttp.FormData()
+        form.add_field("file", b"x", filename="x.txt")
+        resp = await single_client.post(path, data=form)
+        assert resp.status == 415
+        assert server.CSRF_HEADER in (await resp.json())["error"]
+
+    async def test_csrf_header_admits_a_non_json_post(self, single_client):
+        resp = await single_client.post(
+            "/api/memory/test", data=b"",
+            headers={server.CSRF_HEADER: "1", "Content-Type": "text/plain"})
+        assert resp.status != 415
+
     async def test_oauth_callback_form_post_is_exempt(self, single_client):
         # Reaches the handler (auth disabled → 404), not the CSRF 415.
         resp = await single_client.post(
@@ -184,3 +203,33 @@ class TestAuthGate:
                          headers={"Authorization": f"Bearer {token}"})
         assert resp.status == 401
 
+
+
+STATIC_DIR = Path(server.__file__).resolve().parent / "static"
+FETCH_CALL = re.compile(r"fetch\((?P<args>[^;]*?)\);", re.S)
+
+
+def test_frontend_posts_pass_the_csrf_guard():
+    """Every frontend ``fetch`` POST is JSON or carries ``CSRF_HEADER``.
+
+    There is no JS test harness; this scan is what keeps a new POST (or a
+    dropped header) from being answered 415 in web mode — uploads, logout
+    and the embedding test all were.
+    """
+    offenders = []
+    for js in sorted(STATIC_DIR.rglob("*.js")):
+        for match in FETCH_CALL.finditer(js.read_text()):
+            args = match.group("args")
+            if "'POST'" not in args:
+                continue
+            if ("'Content-Type': 'application/json'" in args
+                    or "UPLOAD_HEADERS" in args or "headers," in args):
+                continue
+            offenders.append(f"{js.name}: fetch({args.strip()[:60]}...)")
+    assert offenders == []
+
+
+def test_frontend_upload_header_matches_the_server():
+    api_js = (STATIC_DIR / "api.js").read_text()
+    assert f"const UPLOAD_HEADERS = {{ '{server.CSRF_HEADER}': '1' }};" \
+        in api_js

@@ -25,6 +25,11 @@ const GENERATION_CALLS = new Set([
     'add_image_from_url',
 ]);
 
+// Multipart uploads cannot be JSON, so they carry the header the server's
+// CSRF guard accepts instead (server.py CSRF_HEADER); a cross-site form
+// cannot set it.
+const UPLOAD_HEADERS = { 'X-Consensus-Request': '1' };
+
 /**
  * Race a promise against a watchdog timeout.
  * The timer is always cleared on settle so the loser never surfaces as a
@@ -309,7 +314,7 @@ class WebAPI {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('discussion_id', String(discussionId || 0));
-        const resp = await fetch('/api/documents/upload', { method: 'POST', body: formData });
+        const resp = await fetch('/api/documents/upload', { method: 'POST', headers: UPLOAD_HEADERS, body: formData });
         if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Upload failed (${resp.status})` }; }
         return await resp.json();
     }
@@ -343,7 +348,7 @@ class WebAPI {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('discussion_id', String(discussionId || 0));
-        const resp = await fetch('/api/images/upload', { method: 'POST', body: formData });
+        const resp = await fetch('/api/images/upload', { method: 'POST', headers: UPLOAD_HEADERS, body: formData });
         if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Upload failed (${resp.status})` }; }
         return await resp.json();
     }
@@ -388,7 +393,9 @@ class WebAPI {
         return await resp.json();
     }
     async testMemoryConnection() {
-        const resp = await fetch('/api/memory/test', { method: 'POST' });
+        const resp = await fetch('/api/memory/test', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        });
         return await resp.json();
     }
 
