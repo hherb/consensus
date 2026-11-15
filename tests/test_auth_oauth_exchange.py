@@ -229,18 +229,19 @@ async def test_github_no_profile_email_takes_first_listed(monkeypatch):
         "first@example.com", False)
 
 
-async def test_github_emails_endpoint_failure_means_unverified(monkeypatch):
-    _github(monkeypatch, {"id": 5, "email": "p@example.com"},
-            httpx.Response(403))
-    info = await _exchange("github")
+@pytest.mark.parametrize("reply,logged", [
+    (httpx.Response(403), "HTTP 403"),
+    (httpx.Response(200, text="not json"), "JSONDecodeError"),
+    (httpx.Response(200, json={"message": "not a list"}), "AttributeError"),
+])
+async def test_github_emails_endpoint_failure_means_unverified(
+        monkeypatch, caplog, reply, logged):
+    _github(monkeypatch, {"id": 5, "email": "p@example.com"}, reply)
+    with caplog.at_level(logging.WARNING, logger="consensus.auth"):
+        info = await _exchange("github")
     assert (info["email"], info["email_verified"]) == ("p@example.com", False)
-
-
-async def test_github_emails_endpoint_garbage_means_unverified(monkeypatch):
-    _github(monkeypatch, {"id": 5, "email": "p@example.com"},
-            httpx.Response(200, text="not json"))
-    info = await _exchange("github")
-    assert (info["email"], info["email_verified"]) == ("p@example.com", False)
+    assert "GitHub email lookup failed" in caplog.text
+    assert logged in caplog.text
 
 
 # -- Apple ID token --------------------------------------------------------

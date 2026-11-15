@@ -604,7 +604,11 @@ async def _extract_user_info(provider: str, userinfo: dict,
         if email_url:
             try:
                 resp = await client.get(email_url, headers=auth_headers)
-                if resp.status_code == 200:
+                if resp.status_code != 200:
+                    logger.warning("GitHub email lookup failed: HTTP %d; "
+                                   "treating the email as unverified",
+                                   resp.status_code)
+                else:
                     emails = resp.json()
                     for e in emails:
                         if e.get("primary") and e.get("verified"):
@@ -621,8 +625,9 @@ async def _extract_user_info(provider: str, userinfo: dict,
                             if e.get("email") == email:
                                 email_verified = bool(e.get("verified"))
                                 break
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("GitHub email lookup failed: %s; treating "
+                               "the email as unverified", type(e).__name__)
         return {
             "email": email,
             "name": userinfo.get("name") or userinfo.get("login", ""),
