@@ -4,7 +4,7 @@ import logging
 
 from aiohttp import web
 
-from .context import CTX_KEY, get_app_for_request
+from .context import session_app
 from .request_io import UploadError, read_json_object, read_upload
 
 logger = logging.getLogger(__name__)
@@ -12,12 +12,9 @@ logger = logging.getLogger(__name__)
 
 async def handle_memory_config_get(request: web.Request) -> web.StreamResponse:
     """Return current memory configuration."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
     if not app_inst.memory_available:
         return web.json_response(
             {"error": "Memory tools failed to load; see the application log for the cause"},
@@ -33,12 +30,9 @@ async def handle_memory_config_get(request: web.Request) -> web.StreamResponse:
 
 async def handle_memory_config_put(request: web.Request) -> web.StreamResponse:
     """Update memory configuration keys."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
     if not app_inst.memory_available:
         return web.json_response(
             {"error": "Memory tools failed to load; see the application log for the cause"},
@@ -59,12 +53,9 @@ async def handle_memory_config_put(request: web.Request) -> web.StreamResponse:
 
 async def handle_memory_test(request: web.Request) -> web.StreamResponse:
     """Test the embedding connection."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
     if not app_inst.memory_available:
         return web.json_response(
             {"error": "Memory tools failed to load; see the application log for the cause"},
@@ -82,12 +73,9 @@ async def handle_memory_test(request: web.Request) -> web.StreamResponse:
 
 async def handle_document_upload(request: web.Request) -> web.StreamResponse:
     """Upload a document file via multipart form data."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
     if not app_inst.documents_available:
         return web.json_response(
             {"error": "Document tools failed to load; see the application log for the cause"},
@@ -118,12 +106,9 @@ async def handle_document_upload(request: web.Request) -> web.StreamResponse:
 
 async def handle_document_add_url(request: web.Request) -> web.StreamResponse:
     """Add a document by fetching from a URL."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
     if not app_inst.documents_available:
         return web.json_response(
             {"error": "Document tools failed to load; see the application log for the cause"},
@@ -156,12 +141,9 @@ async def handle_document_add_url(request: web.Request) -> web.StreamResponse:
 
 async def handle_document_list(request: web.Request) -> web.StreamResponse:
     """List documents for a discussion."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
 
     try:
         discussion_id = int(request.match_info["discussion_id"])
@@ -173,12 +155,9 @@ async def handle_document_list(request: web.Request) -> web.StreamResponse:
 
 async def handle_document_remove(request: web.Request) -> web.StreamResponse:
     """Remove a document from a discussion."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
 
     try:
         document_id = int(request.match_info["document_id"])
@@ -191,12 +170,9 @@ async def handle_document_remove(request: web.Request) -> web.StreamResponse:
 
 async def handle_document_delete(request: web.Request) -> web.StreamResponse:
     """Permanently delete a document."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
 
     try:
         document_id = int(request.match_info["document_id"])

@@ -3,18 +3,15 @@
 from aiohttp import web
 
 from .constants import IMAGE_SERVE_CSP
-from .context import CTX_KEY, get_app_for_request
+from .context import session_app
 from .request_io import UploadError, read_json_object, read_upload
 
 
 async def handle_image_upload(request: web.Request) -> web.StreamResponse:
     """Upload an image file via multipart form data."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
 
     from ..tools_image.constants import MAX_IMAGE_BYTES
     try:
@@ -38,12 +35,9 @@ async def handle_image_upload(request: web.Request) -> web.StreamResponse:
 
 async def handle_image_add_url(request: web.Request) -> web.StreamResponse:
     """Add an image by fetching from a URL."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
 
     data = await read_json_object(request)
     if data is None:
@@ -71,12 +65,9 @@ async def handle_image_add_url(request: web.Request) -> web.StreamResponse:
 
 async def handle_image_list(request: web.Request) -> web.StreamResponse:
     """List images for a discussion."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
 
     try:
         discussion_id = int(request.match_info["discussion_id"])
@@ -88,12 +79,9 @@ async def handle_image_list(request: web.Request) -> web.StreamResponse:
 
 async def handle_image_serve(request: web.Request) -> web.StreamResponse:
     """Serve an image file by ID."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
 
     try:
         image_id = int(request.match_info["image_id"])
@@ -119,12 +107,9 @@ async def handle_image_serve(request: web.Request) -> web.StreamResponse:
 
 async def handle_image_remove(request: web.Request) -> web.StreamResponse:
     """Remove an image from a discussion."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
 
     try:
         image_id = int(request.match_info["image_id"])
@@ -137,12 +122,9 @@ async def handle_image_remove(request: web.Request) -> web.StreamResponse:
 
 async def handle_image_delete(request: web.Request) -> web.StreamResponse:
     """Permanently delete an image."""
-    ctx = request.app[CTX_KEY]
-    if ctx.auth_required and not request.get("auth_user"):
-        return web.json_response({"error": "Authentication required"}, status=401)
-    app_inst, _sid = await get_app_for_request(request)
-    if app_inst is None:
-        return web.json_response({"error": "Server at capacity"}, status=503)
+    app_inst = await session_app(request)
+    if isinstance(app_inst, web.Response):
+        return app_inst
 
     try:
         image_id = int(request.match_info["image_id"])

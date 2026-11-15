@@ -7,7 +7,7 @@ import os
 from aiohttp import web
 
 from .constants import SSE_KEEPALIVE_SECONDS
-from .context import CTX_KEY, get_app_for_request
+from .context import CTX_KEY, session_app
 
 
 async def handle_health(request: web.Request) -> web.StreamResponse:
@@ -21,11 +21,9 @@ async def handle_health(request: web.Request) -> web.StreamResponse:
 
 async def handle_events(request: web.Request) -> web.StreamResponse:
     """SSE endpoint for real-time events (tool progress, etc.)."""
-    app_instance, _sid = await get_app_for_request(request)
-    if app_instance is None:
-        return web.json_response(
-            {"error": "Server is at capacity."}, status=503,
-        )
+    app_instance = await session_app(request)
+    if isinstance(app_instance, web.Response):
+        return app_instance
 
     resp = web.StreamResponse()
     resp.headers["Content-Type"] = "text/event-stream"

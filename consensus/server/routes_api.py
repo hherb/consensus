@@ -6,6 +6,7 @@ import logging
 
 from aiohttp import web
 
+from .constants import CAPACITY_ERROR
 from .context import (
     CTX_KEY, extract_api_keys, get_app_for_request, set_session_cookie,
 )
@@ -21,7 +22,7 @@ async def handle_api(request: web.Request) -> web.StreamResponse:
     app, sid = await get_app_for_request(request)
     if app is None:
         resp = web.json_response(
-            {"error": "Server is at capacity. Please try again later."},
+            {"error": CAPACITY_ERROR},
             status=503,
         )
         return resp

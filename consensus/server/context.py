@@ -17,7 +17,9 @@ from aiohttp import web
 from ..app import ConsensusApp
 from ..auth import AuthDatabase, AuthManager
 from ..session import SessionManager
-from .constants import AUTH_COOKIE, AUTH_HEADER, SESSION_COOKIE
+from .constants import (
+    AUTH_COOKIE, AUTH_HEADER, CAPACITY_ERROR, SESSION_COOKIE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +138,24 @@ async def get_app_for_request(request: web.Request) -> tuple[ConsensusApp | None
     if app is None:
         return None, sid
     return app, sid
+
+
+async def session_app(request: web.Request) -> ConsensusApp | web.Response:
+    """The request's ``ConsensusApp``, or the error response to send instead.
+
+    The shared preamble of every ``/api/`` route outside the dispatch table:
+    401 without a signed-in user where auth is required (``auth_middleware``
+    already answers that; this keeps a route mounted elsewhere safe), 503
+    when ``--multi-user`` has no room for another session.
+    """
+    ctx = request.app[CTX_KEY]
+    if ctx.auth_required and not request.get("auth_user"):
+        return web.json_response({"error": "Authentication required"},
+                                 status=401)
+    app, _sid = await get_app_for_request(request)
+    if app is None:
+        return web.json_response({"error": CAPACITY_ERROR}, status=503)
+    return app
 
 
 def set_session_cookie(ctx: ServerContext, response: web.Response,

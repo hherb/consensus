@@ -38,3 +38,6 @@ IMAGE_SERVE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 
 # An idle SSE stream gets a keepalive comment this often (seconds).
 SSE_KEEPALIVE_SECONDS = 30
+
+# The 503 body when --multi-user has no room for another session.
+CAPACITY_ERROR = "Server is at capacity. Please try again later."
