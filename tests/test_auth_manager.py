@@ -8,6 +8,7 @@ manager's wiring to the exchange is constrained too.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 
 import httpx
@@ -15,12 +16,14 @@ import pytest
 
 from consensus import auth
 from tests.auth_helpers import (  # noqa: F401
+    FAST_HASH_ITERATIONS,
     REDIRECT_URI,
     auth_db,
     clear_all_credentials,
     fast_hashing,
     install_routes,
     manager,
+    module_of,
     set_credentials,
     token_ok,
 )
@@ -115,6 +118,60 @@ def test_login_refused_for_disabled_account(manager):
     # Without the password, the account's status is not revealed.
     with pytest.raises(ValueError, match="^Invalid email or password$"):
         manager.login("a@example.com", "wrong-password")
+
+
+def test_login_rehashes_an_outdated_hash(manager, monkeypatch):
+    """A raised iteration count reaches each hash at its next login (#127)."""
+    user, _ = manager.register("a@example.com", "long-enough")
+    raised = FAST_HASH_ITERATIONS * 2
+    monkeypatch.setattr(module_of(auth.hash_password),
+                        "PASSWORD_HASH_ITERATIONS", raised)
+    with pytest.raises(ValueError):
+        manager.login("a@example.com", "wrong-password")
+    stored = manager.db.get_user_by_id(user.id).password_hash
+    assert stored.split("$")[1] == str(FAST_HASH_ITERATIONS)
+    manager.login("a@example.com", "long-enough")
+    stored = manager.db.get_user_by_id(user.id).password_hash
+    assert stored.split("$")[1] == str(raised)
+    manager.login("a@example.com", "long-enough")
+
+
+def test_login_upgrades_a_legacy_hash(manager):
+    user, _ = manager.register("a@example.com", "long-enough")
+    salt = b"\x02" * auth.PASSWORD_SALT_BYTES
+    legacy = salt.hex() + "$" + hashlib.pbkdf2_hmac(
+        "sha256", b"long-enough", salt,
+        auth.LEGACY_PASSWORD_HASH_ITERATIONS).hex()
+    manager.db.conn.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                            (legacy, user.id))
+    manager.login("a@example.com", "long-enough")
+    stored = manager.db.get_user_by_id(user.id).password_hash
+    assert stored.startswith(auth.PASSWORD_HASH_SCHEME + "$")
+    assert not auth.needs_rehash(stored)
+
+
+@pytest.mark.parametrize("email", ["nobody@example.com", "o@example.com"])
+def test_login_without_a_password_account_costs_one_hash(
+        manager, monkeypatch, email):
+    """Unknown and password-less emails cost what a wrong password does (#131)."""
+    manager.register("a@example.com", "long-enough")
+    manager.db.create_user(email="o@example.com", oauth_provider="github",
+                           oauth_id="1")
+    real = hashlib.pbkdf2_hmac
+    rounds: list[int] = []
+
+    def counting(name, password, salt, iterations, *args):
+        rounds.append(iterations)
+        return real(name, password, salt, iterations, *args)
+
+    with pytest.raises(ValueError):
+        manager.login(email, "long-enough")  # primes the cached dummy hash
+    monkeypatch.setattr(hashlib, "pbkdf2_hmac", counting)
+    for attempt in (email, "a@example.com"):
+        rounds.clear()
+        with pytest.raises(ValueError, match="^Invalid email or password$"):
+            manager.login(attempt, "wrong-password")
+        assert rounds == [FAST_HASH_ITERATIONS], attempt
 
 
 def test_logout_revokes_only_that_session(manager):

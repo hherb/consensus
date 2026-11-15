@@ -20,7 +20,8 @@ CONSTANTS = {
     "AUTH_TOKEN_BYTES", "AUTH_TOKEN_TTL", "MIN_PASSWORD_LENGTH",
     "SIGN_IN_HTTP_TIMEOUT", "SIGN_IN_MAX_RETRIES", "SIGN_IN_PROVIDERS",
     "SIGN_IN_RETRY_BASE_DELAY", "OAUTH_STATE_TTL", "PASSWORD_HASH_ITERATIONS",
-    "PASSWORD_SALT_BYTES",
+    "PASSWORD_SALT_BYTES", "PASSWORD_HASH_SCHEME",
+    "LEGACY_PASSWORD_HASH_ITERATIONS",
 }
 
 #: Exported name -> the submodule that defines it, constants aside.
@@ -33,6 +34,7 @@ DEFINED_IN = {
     "exchange_oauth_code": "oauth",
     "get_available_oauth_providers": "oauth",
     "hash_password": "passwords",
+    "needs_rehash": "passwords",
     "verify_password": "passwords",
 }
 

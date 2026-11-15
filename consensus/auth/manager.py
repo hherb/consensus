@@ -7,7 +7,7 @@ from .constants import MIN_PASSWORD_LENGTH
 from .database import AuthDatabase
 from .models import User
 from .oauth import _coerce_verified, exchange_oauth_code
-from .passwords import verify_password
+from .passwords import burn_password_check, needs_rehash, verify_password
 
 logger = logging.getLogger(__name__)
 
@@ -53,16 +53,21 @@ class AuthManager:
         """Authenticate with email/password.
 
         Returns (user, token) tuple.
-        Raises ValueError on invalid credentials.
+        Raises ValueError on invalid credentials. Every failure costs one
+        PBKDF2, so timing does not reveal which emails have a password
+        (#131); a hash below the current cost is re-hashed on success (#127).
         """
         email = email.strip().lower()
         user = self.db.get_user_by_email(email)
         if not user or not user.password_hash:
+            burn_password_check(password)  # same cost as a wrong password
             raise ValueError("Invalid email or password")
         if not verify_password(password, user.password_hash):
             raise ValueError("Invalid email or password")
         if not user.is_active:
             raise ValueError("Account is disabled")
+        if needs_rehash(user.password_hash):
+            self.db.change_password(user.id, password)
 
         self.db.update_last_login(user.id)
         token = self.db.create_token(user.id)

@@ -11,7 +11,9 @@ import sqlite3
 import pytest
 
 from consensus import auth
-from tests.auth_helpers import auth_db, fast_hashing, module_of  # noqa: F401
+from tests.auth_helpers import (  # noqa: F401
+    FAST_HASH_ITERATIONS, auth_db, fast_hashing, module_of,
+)
 
 
 def _advance_clock(monkeypatch, anchor, seconds: float) -> None:
@@ -31,7 +33,9 @@ def _advance_clock(monkeypatch, anchor, seconds: float) -> None:
 
 def test_hash_password_uses_production_iterations():
     stored = auth.hash_password("correct horse")
-    salt_hex, hash_hex = stored.split("$")
+    scheme, iterations, salt_hex, hash_hex = stored.split("$")
+    assert scheme == auth.PASSWORD_HASH_SCHEME
+    assert int(iterations) == auth.PASSWORD_HASH_ITERATIONS
     assert len(bytes.fromhex(salt_hex)) == auth.PASSWORD_SALT_BYTES
     expected = hashlib.pbkdf2_hmac(
         "sha256", b"correct horse", bytes.fromhex(salt_hex),
@@ -50,9 +54,49 @@ def test_verify_password_round_trip(fast_hashing):
     assert not auth.verify_password("s3cret-pX", stored)
 
 
-@pytest.mark.parametrize("stored", ["", "no-dollar", "zz$abcd", None])
+def test_verify_password_uses_the_stored_iteration_count(
+        fast_hashing, monkeypatch):
+    """Raising the constant must not lock out existing passwords (#127)."""
+    stored = auth.hash_password("s3cret-pw")
+    monkeypatch.setattr(module_of(auth.hash_password),
+                        "PASSWORD_HASH_ITERATIONS", FAST_HASH_ITERATIONS * 2)
+    assert auth.verify_password("s3cret-pw", stored)
+    assert not auth.verify_password("s3cret-pX", stored)
+
+
+def _legacy_hash(password: str) -> str:
+    """A pre-#127 ``salt$hash`` value (always LEGACY iterations)."""
+    salt = b"\x01" * auth.PASSWORD_SALT_BYTES
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt,
+                             auth.LEGACY_PASSWORD_HASH_ITERATIONS)
+    return salt.hex() + "$" + dk.hex()
+
+
+def test_verify_password_accepts_the_legacy_format(fast_hashing):
+    stored = _legacy_hash("old-pw")
+    assert auth.verify_password("old-pw", stored)
+    assert not auth.verify_password("old-pX", stored)
+
+
+@pytest.mark.parametrize("stored", [
+    "", "no-dollar", "zz$abcd", None,
+    "pbkdf2_sha256$0$aa$bb", "pbkdf2_sha256$-5$aa$bb",
+    "pbkdf2_sha256$many$aa$bb", "pbkdf2_sha256$1000$zz$bb",
+    "md5$1000$aa$bb", "pbkdf2_sha256$1000$aa", "a$b$c$d$e",
+])
 def test_verify_password_rejects_malformed_hash(stored, fast_hashing):
     assert auth.verify_password("pw", stored) is False
+
+
+def test_needs_rehash(fast_hashing, monkeypatch):
+    current = auth.hash_password("pw")
+    assert not auth.needs_rehash(current)
+    assert auth.needs_rehash(_legacy_hash("pw"))
+    monkeypatch.setattr(module_of(auth.hash_password),
+                        "PASSWORD_HASH_ITERATIONS", FAST_HASH_ITERATIONS * 2)
+    assert auth.needs_rehash(current)
+    assert not auth.needs_rehash(auth.hash_password("pw"))
+    assert not auth.needs_rehash("garbage")
 
 
 # -- User ------------------------------------------------------------------

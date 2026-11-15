@@ -225,7 +225,13 @@ OAuth providers only appear in the UI when both client ID and secret are set.
 
 ## Security Summary
 
-- Passwords: PBKDF2-SHA256, 600k iterations, 32-byte random salt
+- Passwords: PBKDF2-SHA256, 600k iterations, 32-byte random salt, stored as
+  `pbkdf2_sha256$<iterations>$<salt>$<hash>` so the count can be raised: a
+  hash below the current count (or in the legacy `salt$hash` format, which
+  meant 600k) is re-hashed at the user's next successful login
+- Login timing: an unknown or password-less email is checked against a
+  cached dummy hash, so every failed login costs one PBKDF2. Registration
+  still says when an email is taken (#139)
 - Tokens: `secrets.token_urlsafe(32)`, SHA-256 hashed in DB, httpOnly cookie
 - CSRF: a POST to `/api/` or `/auth/` must be `application/json` or carry
   the `X-Consensus-Request` header
