@@ -218,7 +218,8 @@ before the move. Keep these when touching `consensus/auth/`:
 - **A verified OAuth link to a password account clears the password and
   revokes every session** (`AuthDatabase.clear_password`). Registration
   never verifies the email, so the password may belong to a squatter. Repo
-  owner's decision (2026-11-15). An unverified provider email never links.
+  owner's decision (2026-11-15). An unverified provider email never links;
+  an unverified OAuth *sign-up* can still squat an address (**#128**).
 - **An OAuth reply without an email *or* provider user id is refused** —
   an empty id would match another empty-id account via the legacy columns.
 - **`link_oauth` preserves the legacy-column identity** in
@@ -408,8 +409,8 @@ bookkeeping are the likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
-#127 stored password hashes lack their PBKDF2 iteration count (raising the
-constant locks everyone out); #107 a rotation change spans several commits (crash mid-update desyncs
+#128 unverified OAuth sign-up can pre-hijack an address; #127 stored
+password hashes lack their PBKDF2 iteration count; #107 a rotation change spans several commits (crash mid-update desyncs
 members and `method_state`); #102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
 budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #99 route test for the image-serve CSP (fix landed in PR #100; needs a
 `server.py` route-test harness); #97 Seatbelt profile does not confine writes; #96 no UI flag when
