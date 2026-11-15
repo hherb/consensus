@@ -247,6 +247,25 @@ def test_cleanup_expired_tokens(auth_db):
     assert auth_db.validate_token(live) is not None
 
 
+def test_issuing_a_token_prunes_expired_ones(auth_db):
+    # Nothing else calls cleanup_expired_tokens, so without this the table
+    # only grows.
+    user = auth_db.create_user(email="p@example.com")
+    auth_db.create_token(user.id, ttl=-1)
+    auth_db.create_token(user.id)
+    count = auth_db.conn.execute("SELECT COUNT(*) FROM auth_tokens").fetchone()
+    assert count[0] == 1
+
+
+def test_storing_a_state_prunes_expired_ones(auth_db, monkeypatch):
+    auth_db.store_oauth_state("abandoned", "github")
+    _advance_clock(monkeypatch, auth.AuthDatabase, auth.OAUTH_STATE_TTL + 1)
+    auth_db.store_oauth_state("fresh", "github")
+    states = [r[0] for r in auth_db.conn.execute(
+        "SELECT state FROM oauth_states")]
+    assert states == ["fresh"]
+
+
 def test_deleting_a_user_cascades_to_tokens(auth_db):
     user = auth_db.create_user(email="del@example.com")
     auth_db.create_token(user.id)

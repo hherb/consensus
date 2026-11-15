@@ -386,7 +386,11 @@ class AuthDatabase:
 
     def create_token(self, user_id: int,
                      ttl: int = AUTH_TOKEN_TTL) -> str:
-        """Create a new auth token. Returns the raw token string."""
+        """Create a new auth token. Returns the raw token string.
+
+        Expired tokens are pruned first; nothing else removes them.
+        """
+        self.cleanup_expired_tokens()
         raw_token = secrets.token_urlsafe(AUTH_TOKEN_BYTES)
         now = time.time()
         self._execute_write(
@@ -429,6 +433,8 @@ class AuthDatabase:
 
     def store_oauth_state(self, state: str, provider: str,
                           redirect_uri: str = "") -> None:
+        """Record a pending OAuth flow's state, pruning abandoned ones."""
+        self.cleanup_expired_states()
         self._execute_write(
             "INSERT INTO oauth_states (state, provider, redirect_uri, created_at) VALUES (?, ?, ?, ?)",
             (state, provider, redirect_uri, time.time()),
