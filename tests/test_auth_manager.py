@@ -185,6 +185,18 @@ async def test_oauth_link_without_password_keeps_sessions(manager, google):
     assert manager.get_current_user(session).id == owner.id
 
 
+async def test_oauth_link_keeps_the_identity_the_user_signed_up_with(
+        manager, google):
+    # Sign-up via GitHub stores the identity only in the legacy columns,
+    # which a later link overwrites.
+    owner = manager.db.create_user(email="o@example.com",
+                                   oauth_provider="github", oauth_id="gh-1")
+    google(id="g-7", email="o@example.com", verified_email=True)
+    await _google_login(manager)
+    assert manager.db.get_user_by_oauth("github", "gh-1").id == owner.id
+    assert manager.db.get_user_by_oauth("google", "g-7").id == owner.id
+
+
 async def test_oauth_unverified_email_never_links(manager, google):
     manager.db.create_user(email="a@example.com", password="long-enough")
     google(id="g-3", email="a@example.com", verified_email=False)

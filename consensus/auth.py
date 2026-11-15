@@ -347,17 +347,6 @@ class AuthDatabase:
         on the users table for backwards compatibility.
         """
         now = time.time()
-        try:
-            self._execute_write(
-                """INSERT INTO user_oauth_identities
-                   (user_id, provider, oauth_id, avatar_url, created_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (user_id, provider, oauth_id, avatar_url, now),
-            )
-        except sqlite3.IntegrityError:
-            # Identity already linked (possibly to this user)
-            pass
-        # Update legacy columns to most recent OAuth identity
         sql = "UPDATE users SET oauth_provider = ?, oauth_id = ?"
         params: list = [provider, oauth_id]
         if avatar_url:
@@ -365,7 +354,25 @@ class AuthDatabase:
             params.append(avatar_url)
         sql += " WHERE id = ?"
         params.append(user_id)
-        self._execute_write(sql, tuple(params))
+        with self._lock, self.conn:
+            # A user who signed up via OAuth has that identity only in the
+            # legacy columns; keep it before they are overwritten below.
+            self.conn.execute(
+                """INSERT OR IGNORE INTO user_oauth_identities
+                   (user_id, provider, oauth_id, avatar_url, created_at)
+                   SELECT id, oauth_provider, oauth_id, avatar_url, created_at
+                   FROM users WHERE id = ? AND oauth_provider != ''""",
+                (user_id,),
+            )
+            # OR IGNORE: the identity may already be linked to this user.
+            self.conn.execute(
+                """INSERT OR IGNORE INTO user_oauth_identities
+                   (user_id, provider, oauth_id, avatar_url, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (user_id, provider, oauth_id, avatar_url, now),
+            )
+            # Legacy columns track the most recent OAuth identity.
+            self.conn.execute(sql, tuple(params))
 
     # -- Auth tokens -------------------------------------------------------
 
