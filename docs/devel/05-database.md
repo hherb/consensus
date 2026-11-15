@@ -363,14 +363,17 @@ discussion databases.
 users (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     email           TEXT NOT NULL UNIQUE,
-    password_hash   TEXT,            -- NULL for OAuth-only users
     display_name    TEXT NOT NULL DEFAULT '',
+    password_hash   TEXT NOT NULL DEFAULT '',  -- '' for OAuth-only users
+    oauth_provider  TEXT NOT NULL DEFAULT '',  -- sign-up / latest identity
+    oauth_id        TEXT NOT NULL DEFAULT '',
     avatar_url      TEXT NOT NULL DEFAULT '',
-    oauth_provider  TEXT,            -- legacy; see user_oauth_identities
-    oauth_id        TEXT,            -- legacy; see user_oauth_identities
+    is_active       INTEGER NOT NULL DEFAULT 1,
     created_at      REAL NOT NULL,
-    updated_at      REAL NOT NULL
+    last_login      REAL NOT NULL DEFAULT 0
 )
+-- UNIQUE INDEX idx_users_oauth ON users(oauth_provider, oauth_id)
+--     WHERE oauth_provider != ''
 
 -- Hashed auth tokens
 auth_tokens (
@@ -396,13 +399,16 @@ user_oauth_identities (
 oauth_states (
     state       TEXT PRIMARY KEY,
     provider    TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL DEFAULT '',
     created_at  REAL NOT NULL
 )
 ```
 
-The `users` table retains legacy `oauth_provider` and `oauth_id` columns for
-backwards compatibility. `user_oauth_identities` is the canonical source for
-OAuth identity lookups and supports linking multiple providers to one account.
+An OAuth sign-up stores its identity only in the `users` columns
+`oauth_provider` and `oauth_id`. The first `link_oauth()` copies that identity
+into `user_oauth_identities`, which holds every linked provider from then on.
+`get_user_by_oauth()` checks `user_oauth_identities` first and falls back to
+the `users` columns, so lookups need both.
 
 ---
 

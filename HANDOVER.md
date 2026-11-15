@@ -2,23 +2,23 @@
 
 _Last updated: 2026-11-15. `main` is at **v2.0.0** (released 2026-07-20) plus
 the merged #61 slices (through `desktop.py` → `desktop/`, PR #123), the #121
-fix (MCP tool failures are `isError` results, PR #122), the #104 rotation
-fix, the #115/#118 pricing fixes (PRs #117/#119) and `moderator.py` →
-`moderator/` (PR #126). The fifteenth #61 slice (`auth.py` → `auth/`, plus
-eight auth defect fixes) is on `refactor/split-auth-61` (suite at **4029
-passing**). The discussion-method review & repair campaign
-(#12–#48, #56–#60) is finished and merged; so is alpha/stable distribution
-(PyPI `consensus-app` + notarized macOS DMG), the public website, the
-flow-error-visibility work (#71–#74, PR #76), and the tools_document
+fix (MCP tool failures are `isError` results, PR #122), the #104 rotation fix,
+the #115/#118 pricing fixes (PRs #117/#119) and `moderator.py` → `moderator/`
+(PR #126). The fifteenth #61 slice (`auth.py` → `auth/`, plus eight auth
+defect fixes and the PR #129 review fixes) is on `refactor/split-auth-61` (PR
+#129, suite at **4040 passing**). The discussion-method review & repair
+campaign (#12–#48, #56–#60) is finished and merged; so is alpha/stable
+distribution (PyPI `consensus-app` + notarized macOS DMG), the public website,
+the flow-error-visibility work (#71–#74, PR #76), and the tools_document
 failure-visibility work (#78) — contracts for both summarised below. The one
 open structural issue is **#61** (modules over the ~500-line golden rule):
 `app_discussion_flow`, `tools_document`, `app.py` (→ `app_api/` mixins),
 `tools_memory`, `tools_python`, `tools_image`, `methods/base.py`,
 `app_discussion_setup.py`, `evaluation/scorer.py`, `evaluation/eval_db.py`,
 `evaluation/runner.py`, `mcp_server.py`, `desktop.py`, `moderator.py` and
-`auth.py` are split; only `server.py` remains over the limit. **#86**
-(lint gate) is done: zero `ruff --select F` findings in `consensus/`, enforced
-by `tests/test_lint.py`._
+`auth.py` are split; only `server.py` remains over the limit. **#86** (lint
+gate) is done: zero `ruff --select F` findings in `consensus/`, enforced by
+`tests/test_lint.py`._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep; delete sections that are no longer instructive.
@@ -33,7 +33,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4029 passing (`uv run pytest`, ~45–60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4040 passing (`uv run pytest`, ~45–60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -216,17 +216,22 @@ before the move. Keep these when touching `consensus/auth/`:
   edit (or any future "change email" feature without verification) is an
   account-takeover path.
 - **A verified OAuth link to a password account clears the password and
-  revokes every session** (`AuthDatabase.clear_password`). Registration
-  never verifies the email, so the password may belong to a squatter. Repo
-  owner's decision (2026-11-15). An unverified provider email never links;
-  an unverified OAuth *sign-up* can still squat an address (**#128**).
+  revokes every session**, in the same transaction as the link
+  (`link_oauth(..., lock_out_password=True)`). Registration never verifies
+  the email, so the password may belong to a squatter. Repo owner's
+  decision (2026-11-15). An unverified provider email never links; an
+  unverified OAuth *sign-up* can still squat an address (**#128**).
 - **An OAuth reply without an email *or* provider user id is refused** —
   an empty id would match another empty-id account via the legacy columns.
+  Ids go through `oauth._provider_id`, so a JSON `null` id stays empty
+  rather than becoming the shared string `"None"`.
 - **`link_oauth` preserves the legacy-column identity** in
   `user_oauth_identities` before overwriting it, in one transaction.
 - **Provider requests go through `oauth._send_with_retry`** (shared
-  `http_fetch` retry policy, golden rule 5); a GitHub email-lookup failure is
-  logged and means "unverified".
+  `http_fetch` retry policy, golden rule 5). A GitHub email-lookup failure is
+  logged, means "unverified" and sets `email_lookup_failed`, so the user is
+  told to retry rather than to use another sign-in method.
+- Providers are offered only with both client ID and secret set.
 - `create_token` / `store_oauth_state` prune expired rows (nothing else
   does); `login` checks the password before saying "disabled". Never change
   `PASSWORD_HASH_ITERATIONS` before **#127** lands.
@@ -305,9 +310,10 @@ the guard `tests/test_auth_facade.py`. Patch through the defining module
 
 **Facade guards.** A dropped re-export fails *late*: consumers mostly import
 lazily inside function bodies, and the `app._init_*_tools` methods turn an
-`ImportError` into "feature unavailable" (logged at WARNING). Each re-exporting facade has a `tests/test_<name>_facade.py` that
-pins `__all__` by identity and AST-scans every module under `consensus/` for
-call sites. Keep them in step when the public API changes.
+`ImportError` into "feature unavailable" (logged at WARNING). Each
+re-exporting facade has a `tests/test_<name>_facade.py` that pins `__all__`
+by identity and AST-scans every module under `consensus/` for call sites.
+Keep them in step when the public API changes.
 
 **Still over the limit**, with statement coverage from the full suite
 (`uv run --with pytest-cov pytest --cov=consensus`):
@@ -319,8 +325,8 @@ call sites. Keep them in step when the public API changes.
 Structural only — no behaviour change — one module per PR, suite green before
 and after.
 
-**Next target: `server.py`, the last one — read this before picking it.** It is a
-single 1170-line `launch_web()` whose middleware and ~35 handlers are all
+**Next target: `server.py`, the last one — read this before picking it.** It
+is a single 1170-line `launch_web()` whose middleware and ~35 handlers are all
 closures over `session_manager`, `auth_manager`, `app` and the helpers. There
 is no verbatim move available: extracting them means giving each domain group
 a factory that takes an explicit context object, which is a behaviour-risking
@@ -409,14 +415,17 @@ bookkeeping are the likeliest pre-existing bug.
 
 ### Open GitHub issues (besides #61)
 
-#128 unverified OAuth sign-up can pre-hijack an address; #127 stored
-password hashes lack their PBKDF2 iteration count; #107 a rotation change spans several commits (crash mid-update desyncs
-members and `method_state`); #102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
-budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #99 route test for the image-serve CSP (fix landed in PR #100; needs a
-`server.py` route-test harness); #97 Seatbelt profile does not confine writes; #96 no UI flag when
-Python or image tools fail to load; #92 tool error results echo raw
-exception text to the model and UI; #81 persist parse fidelity/notes; #80
-pre-#78 `'(Empty PDF)'` documents.
+#131 login timing reveals which emails have a password account; #130 an OAuth
+callback has no overall deadline; #128 unverified OAuth sign-up can pre-hijack
+an address; #127 stored password hashes lack their PBKDF2 iteration count;
+#107 a rotation change spans several commits (crash mid-update desyncs members
+and `method_state`); #102 follow-ups from the PR #100 review (Retry-After,
+`doc_add` ingest budget, DNS-rebinding pin, `_init_image_tools` catch, test
+file size); #99 route test for the image-serve CSP (fix landed in PR #100;
+needs a `server.py` route-test harness); #97 Seatbelt profile does not confine
+writes; #96 no UI flag when Python or image tools fail to load; #92 tool error
+results echo raw exception text to the model and UI; #81 persist parse
+fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents.
 
 ### Roadmap
 

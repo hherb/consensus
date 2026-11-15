@@ -14,8 +14,7 @@ from .passwords import _hash_token, hash_password
 class AuthDatabase:
     """SQLite persistence for users and auth tokens.
 
-    Shares the same database file as the main app when in single-user mode,
-    or uses a dedicated auth.db in multi-user mode.
+    Backed by a dedicated ``auth.db``; used only in multi-user mode.
     """
 
     def __init__(self, db_path: str) -> None:
@@ -94,7 +93,11 @@ class AuthDatabase:
     def create_user(self, email: str, display_name: str = "",
                     password: str = "", oauth_provider: str = "",
                     oauth_id: str = "", avatar_url: str = "") -> User:
-        """Create a new user. Raises ValueError if email already exists."""
+        """Create a new user.
+
+        Raises ValueError if the email, or the (oauth_provider, oauth_id)
+        pair, is already registered.
+        """
         now = time.time()
         pw_hash = hash_password(password) if password else ""
         try:
@@ -106,8 +109,11 @@ class AuthDatabase:
                 (email, display_name or email.split("@")[0], pw_hash,
                  oauth_provider, oauth_id, avatar_url, now, now),
             )
-        except sqlite3.IntegrityError:
-            raise ValueError(f"User with email '{email}' already exists")
+        except sqlite3.IntegrityError as e:
+            if "users.email" in str(e):
+                raise ValueError(f"User with email '{email}' already exists")
+            raise ValueError(
+                f"This {oauth_provider} account is already registered")
         return User(
             id=cur.lastrowid or 0, email=email,
             display_name=display_name or email.split("@")[0],
@@ -175,19 +181,18 @@ class AuthDatabase:
             (pw_hash, user_id),
         )
 
-    def clear_password(self, user_id: int) -> None:
-        """Remove the user's password, leaving OAuth as the only sign-in."""
-        self._execute_write(
-            "UPDATE users SET password_hash = '' WHERE id = ?", (user_id,),
-        )
-
     def link_oauth(self, user_id: int, provider: str, oauth_id: str,
-                   avatar_url: str = "") -> None:
+                   avatar_url: str = "",
+                   lock_out_password: bool = False) -> None:
         """Link an OAuth identity to an existing user.
 
         Supports multiple OAuth identities per user via the
         user_oauth_identities table. Also updates legacy columns
         on the users table for backwards compatibility.
+
+        With *lock_out_password*, also clears the password and revokes every
+        session, in the same transaction: a link that left a squatter's
+        sessions alive would be worse than no link.
         """
         now = time.time()
         sql = "UPDATE users SET oauth_provider = ?, oauth_id = ?"
@@ -216,6 +221,12 @@ class AuthDatabase:
             )
             # Legacy columns track the most recent OAuth identity.
             self.conn.execute(sql, tuple(params))
+            if lock_out_password:
+                self.conn.execute(
+                    "UPDATE users SET password_hash = '' WHERE id = ?",
+                    (user_id,))
+                self.conn.execute(
+                    "DELETE FROM auth_tokens WHERE user_id = ?", (user_id,))
 
     # -- Auth tokens -------------------------------------------------------
 

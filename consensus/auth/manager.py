@@ -11,6 +11,13 @@ from .passwords import verify_password
 
 logger = logging.getLogger(__name__)
 
+
+def _lookup_failed_message(provider: str) -> str:
+    """User-facing message for a provider whose email lookup failed."""
+    return (f"Could not confirm your email with {provider} right now.  "
+            "Please try again in a moment.")
+
+
 class AuthManager:
     """High-level authentication operations.
 
@@ -26,7 +33,8 @@ class AuthManager:
         """Register a new user with email/password.
 
         Returns (user, token) tuple.
-        Raises ValueError if email is taken or password is too short.
+        Raises ValueError if the email is invalid or taken, or the password
+        is too short.
         """
         email = email.strip().lower()
         if not email or "@" not in email:
@@ -85,6 +93,8 @@ class AuthManager:
             if userinfo:
                 logger.warning("OAuth %s returned no email or user id",
                                provider)
+                if userinfo.get("email_lookup_failed"):
+                    raise ValueError(_lookup_failed_message(provider))
             raise ValueError(f"Could not retrieve user info from {provider}")
 
         email = userinfo["email"].strip().lower()
@@ -104,21 +114,25 @@ class AuthManager:
         user = self.db.get_user_by_email(email)
         if user:
             if not _coerce_verified(userinfo.get("email_verified")):
+                # A failed lookup says nothing about verification.
+                if userinfo.get("email_lookup_failed"):
+                    raise ValueError(_lookup_failed_message(provider))
                 raise ValueError(
                     f"An account already exists for {email}, but {provider} "
                     "did not confirm this email is verified.  Sign in with "
                     "your existing method instead."
                 )
+            # Registration never verifies the email, so a password may have
+            # been set by someone who does not own the address; the provider
+            # just proved who does.  Lock that someone out, in the same
+            # transaction as the link.
+            had_password = bool(user.password_hash)
             self.db.link_oauth(
                 user.id, provider, oauth_id,
                 avatar_url=userinfo.get("avatar_url", ""),
+                lock_out_password=had_password,
             )
-            if user.password_hash:
-                # Registration never verifies the email, so the password may
-                # have been set by someone who does not own the address; the
-                # provider just proved who does.  Lock that someone out.
-                self.db.clear_password(user.id)
-                self.db.revoke_all_tokens(user.id)
+            if had_password:
                 logger.warning(
                     "OAuth %s verified the email of password account %d; "
                     "cleared its password and revoked its sessions",

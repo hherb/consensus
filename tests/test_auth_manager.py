@@ -217,12 +217,14 @@ async def test_oauth_without_email_is_refused(manager, google, reply):
         await _google_login(manager)
 
 
-async def test_oauth_without_provider_id_is_refused(manager, google, caplog):
+@pytest.mark.parametrize("id_field", [{}, {"id": None}, {"id": ""}])
+async def test_oauth_without_provider_id_is_refused(manager, google, caplog,
+                                                    id_field):
     # An empty id would match any other account stored with an empty id,
     # signing this person in as someone else.
     manager.db.create_user(email="first@example.com",
                            oauth_provider="google", oauth_id="")
-    google(email="second@example.com", verified_email=True)
+    google(email="second@example.com", verified_email=True, **id_field)
     with caplog.at_level(logging.WARNING, logger="consensus.auth"):
         with pytest.raises(ValueError, match="Could not retrieve user info"):
             await _google_login(manager)
@@ -236,3 +238,26 @@ async def test_oauth_provider_failure_is_refused(manager, monkeypatch):
         GOOGLE["token_url"]: httpx.Response(400, json={"error": "x"})})
     with pytest.raises(ValueError, match="from google"):
         await _google_login(manager)
+
+
+GH = auth.OAUTH_PROVIDERS["github"]
+
+
+@pytest.mark.parametrize("profile_email", ["a@example.com", None])
+async def test_github_email_lookup_outage_asks_to_retry(
+        manager, monkeypatch, profile_email):
+    # An outage is not evidence the email is unverified; saying so would
+    # send the user off to another sign-in method for no reason.
+    manager.db.create_user(email="a@example.com", password="long-enough")
+    clear_all_credentials(monkeypatch)
+    set_credentials(monkeypatch, "github")
+    install_routes(monkeypatch, {
+        GH["token_url"]: token_ok(),
+        GH["userinfo_url"]: httpx.Response(200, json={
+            "id": 9, "email": profile_email}),
+        GH["userinfo_email_url"]: httpx.Response(403),
+    })
+    with pytest.raises(ValueError, match="try again") as exc:
+        await manager.oauth_callback("github", "code", REDIRECT_URI)
+    assert "did not confirm" not in str(exc.value)
+    assert manager.db.get_user_by_oauth("github", "9") is None

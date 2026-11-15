@@ -1,9 +1,10 @@
 """Authentication and user registration for Consensus.
 
-Supports two modes:
-- Simple registration (default / desktop): email + password, no external deps.
-- OAuth (hosted / multi-user web): GitHub, Google, LinkedIn, Apple sign-in
-  via standard Authorization Code flow.
+Used only in multi-user web mode (``--web --multi-user``); desktop and
+single-user web run without authentication.  Two ways to sign in:
+- Email + password registration, no external deps.
+- OAuth: GitHub, Google, LinkedIn, Apple sign-in via the standard
+  Authorization Code flow.
 
 OAuth requires ``httpx`` (already a project dependency) for token exchange.
 No additional libraries are needed.

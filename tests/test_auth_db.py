@@ -163,6 +163,30 @@ def test_link_oauth_twice_is_idempotent(auth_db):
     assert count == 1
 
 
+def test_link_oauth_lockout_clears_password_and_sessions(auth_db):
+    user = auth_db.create_user(email="lo@example.com", password="pw-123456")
+    token = auth_db.create_token(user.id)
+    auth_db.link_oauth(user.id, "google", "g-lo", lock_out_password=True)
+    assert auth_db.get_user_by_id(user.id).password_hash == ""
+    assert auth_db.validate_token(token) is None
+    assert auth_db.get_user_by_oauth("google", "g-lo").id == user.id
+
+
+def test_link_oauth_lockout_is_all_or_nothing(auth_db):
+    # A link that leaves the squatter's sessions alive would be worse than
+    # no link at all, so a failed revoke must undo the link and the clear.
+    user = auth_db.create_user(email="an@example.com", password="pw-123456")
+    token = auth_db.create_token(user.id)
+    auth_db.conn.execute(
+        """CREATE TRIGGER fail_revoke BEFORE DELETE ON auth_tokens
+           BEGIN SELECT RAISE(ABORT, 'disk full'); END""")
+    with pytest.raises(sqlite3.IntegrityError):
+        auth_db.link_oauth(user.id, "google", "g-an", lock_out_password=True)
+    assert auth_db.get_user_by_oauth("google", "g-an") is None
+    assert auth_db.get_user_by_id(user.id).password_hash != ""
+    assert auth_db.validate_token(token).id == user.id
+
+
 def test_get_user_by_oauth_falls_back_to_legacy_columns(auth_db):
     user = auth_db.create_user(email="leg@example.com",
                                oauth_provider="github", oauth_id="gh-9")
@@ -173,9 +197,10 @@ def test_get_user_by_oauth_falls_back_to_legacy_columns(auth_db):
 def test_legacy_oauth_pair_is_unique(auth_db):
     auth_db.create_user(email="a@example.com", oauth_provider="github",
                         oauth_id="same")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="already registered") as exc:
         auth_db.create_user(email="b@example.com", oauth_provider="github",
                             oauth_id="same")
+    assert "email" not in str(exc.value)
 
 
 # -- Tokens ----------------------------------------------------------------

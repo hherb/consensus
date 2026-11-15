@@ -1,4 +1,4 @@
-"""OAuth Authorization Code flow: provider config, URLs and code exchange."""
+"""OAuth Authorization Code flow: provider listing, URLs and code exchange."""
 
 import asyncio
 import json
@@ -11,6 +11,7 @@ import httpx
 
 from ..http_fetch import is_retryable_status
 from .constants import (
+    OAUTH_ERROR_BODY_LOG_CHARS,
     OAUTH_HTTP_TIMEOUT,
     OAUTH_MAX_RETRIES,
     OAUTH_PROVIDERS,
@@ -19,12 +20,17 @@ from .constants import (
 
 logger = logging.getLogger(__name__)
 
+
 def get_available_oauth_providers() -> list[dict]:
-    """Return list of OAuth providers that have client credentials configured."""
+    """Return the OAuth providers whose client ID *and* secret are set.
+
+    A provider without a secret would fail only at the code exchange,
+    after the user has already consented at the provider.
+    """
     available = []
     for name, cfg in OAUTH_PROVIDERS.items():
         client_id = os.environ.get(cfg["env_client_id"], "")
-        if client_id:
+        if client_id and os.environ.get(cfg["env_client_secret"], ""):
             available.append({
                 "id": name,
                 "name": name.capitalize(),
@@ -99,8 +105,9 @@ async def exchange_oauth_code(provider: str, code: str,
                                redirect_uri: str) -> Optional[dict]:
     """Exchange an OAuth authorization code for user info.
 
-    Returns a dict with keys: email, name, avatar_url, oauth_id
-    or None on failure.
+    Returns a dict with keys: email, name, avatar_url, oauth_id and
+    email_verified (bool) — GitHub adds email_lookup_failed (bool) — or
+    None on failure.
     """
     cfg = OAUTH_PROVIDERS.get(provider)
     if not cfg:
@@ -131,12 +138,17 @@ async def exchange_oauth_code(provider: str, code: str,
             resp.raise_for_status()
             token_resp = resp.json()
         except Exception as e:
-            logger.error("OAuth %s token exchange failed: %s", provider, e)
+            logger.error("OAuth %s token exchange failed: %s%s", provider, e,
+                         _provider_reply(e))
             return None
 
         access_token = token_resp.get("access_token", "")
         if not access_token:
-            logger.error("OAuth %s: no access_token in response", provider)
+            # GitHub reports a bad or already-spent code as HTTP 200 with an
+            # error field, e.g. after a retried POST the provider had served.
+            logger.error("OAuth %s: no access_token in response (error=%s: %s)",
+                         provider, token_resp.get("error", ""),
+                         token_resp.get("error_description", ""))
             return None
 
         # Step 2: Fetch user info
@@ -153,10 +165,31 @@ async def exchange_oauth_code(provider: str, code: str,
             resp.raise_for_status()
             userinfo = resp.json()
         except Exception as e:
-            logger.error("OAuth %s userinfo failed: %s", provider, e)
+            logger.error("OAuth %s userinfo failed: %s%s", provider, e,
+                         _provider_reply(e))
             return None
 
         return await _extract_user_info(provider, userinfo, client, auth_headers)
+
+
+def _provider_reply(exc: Exception) -> str:
+    """Return the start of an HTTP error's body for the log, else ``""``.
+
+    ``str(HTTPStatusError)`` holds only the status and URL; the provider's
+    reason (``invalid_grant``, ``redirect_uri_mismatch``) is in the body.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"; provider replied: {exc.response.text[:OAUTH_ERROR_BODY_LOG_CHARS]}"
+    return ""
+
+
+def _provider_id(value: object) -> str:
+    """Stringify a provider's user id, keeping a missing or null one empty.
+
+    ``str(None)`` is ``"None"``, which would give every reply with a null id
+    one shared identity.
+    """
+    return "" if value is None else str(value)
 
 
 def _coerce_verified(value: object) -> bool:
@@ -184,7 +217,8 @@ async def _extract_user_info(provider: str, userinfo: dict,
         auth_headers: Authorization headers with Bearer token.
 
     Returns:
-        Normalized dict with keys: email, name, avatar_url, oauth_id.
+        Normalized dict with keys: email, name, avatar_url, oauth_id and
+        email_verified (bool); GitHub adds email_lookup_failed (bool).
         None if the provider is unrecognized.
     """
     if provider == "github":
@@ -193,6 +227,7 @@ async def _extract_user_info(provider: str, userinfo: dict,
         # confirm it against the emails endpoint, which carries a per-email
         # ``verified`` flag.  Default to unverified.
         email_verified = False
+        lookup_failed = False
         cfg = OAUTH_PROVIDERS["github"]
         email_url = cfg.get("userinfo_email_url", "")
         if email_url:
@@ -201,6 +236,7 @@ async def _extract_user_info(provider: str, userinfo: dict,
                     client, "GET", email_url, headers=auth_headers,
                 )
                 if resp.status_code != 200:
+                    lookup_failed = True
                     logger.warning("GitHub email lookup failed: HTTP %d; "
                                    "treating the email as unverified",
                                    resp.status_code)
@@ -222,14 +258,18 @@ async def _extract_user_info(provider: str, userinfo: dict,
                                 email_verified = bool(e.get("verified"))
                                 break
             except Exception as e:
-                logger.warning("GitHub email lookup failed: %s; treating "
-                               "the email as unverified", type(e).__name__)
+                # Broad on purpose: a payload of the wrong shape raises
+                # AttributeError/KeyError, and must not fail the sign-in.
+                lookup_failed = True
+                logger.warning("GitHub email lookup failed: %s: %s; treating "
+                               "the email as unverified", type(e).__name__, e)
         return {
             "email": email,
             "name": userinfo.get("name") or userinfo.get("login", ""),
             "avatar_url": userinfo.get("avatar_url", ""),
-            "oauth_id": str(userinfo.get("id", "")),
+            "oauth_id": _provider_id(userinfo.get("id")),
             "email_verified": email_verified,
+            "email_lookup_failed": lookup_failed,
         }
 
     elif provider == "google":
@@ -237,7 +277,7 @@ async def _extract_user_info(provider: str, userinfo: dict,
             "email": userinfo.get("email", ""),
             "name": userinfo.get("name", ""),
             "avatar_url": userinfo.get("picture", ""),
-            "oauth_id": str(userinfo.get("id", "")),
+            "oauth_id": _provider_id(userinfo.get("id")),
             "email_verified": _coerce_verified(
                 userinfo.get("email_verified", userinfo.get("verified_email"))
             ),
@@ -248,7 +288,7 @@ async def _extract_user_info(provider: str, userinfo: dict,
             "email": userinfo.get("email", ""),
             "name": userinfo.get("name", ""),
             "avatar_url": userinfo.get("picture", ""),
-            "oauth_id": str(userinfo.get("sub", "")),
+            "oauth_id": _provider_id(userinfo.get("sub")),
             "email_verified": _coerce_verified(userinfo.get("email_verified")),
         }
 
@@ -267,14 +307,14 @@ def _parse_apple_id_token(token_resp: dict) -> Optional[dict]:
     import base64
 
     id_token = token_resp.get("id_token", "")
-    if not id_token:
+    parts = id_token.split(".") if id_token else []
+    # JWT is header.payload.signature — we need the payload
+    if len(parts) < 2:
+        logger.error("Apple token response has no usable id_token (keys: %s)",
+                     sorted(token_resp))
         return None
 
     try:
-        # JWT is header.payload.signature — we need the payload
-        parts = id_token.split(".")
-        if len(parts) < 2:
-            return None
         # Add base64 padding (0–2 '=' chars as needed)
         payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
         payload = json.loads(base64.urlsafe_b64decode(payload_b64))
@@ -282,7 +322,7 @@ def _parse_apple_id_token(token_resp: dict) -> Optional[dict]:
             "email": payload.get("email", ""),
             "name": payload.get("name", payload.get("email", "").split("@")[0]),
             "avatar_url": "",
-            "oauth_id": payload.get("sub", ""),
+            "oauth_id": _provider_id(payload.get("sub")),
             "email_verified": _coerce_verified(payload.get("email_verified")),
         }
     except Exception as e:

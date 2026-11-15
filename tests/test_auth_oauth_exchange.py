@@ -15,7 +15,7 @@ import pytest
 
 from consensus import auth
 from consensus.auth import oauth
-from consensus.http_fetch import FETCH_BASE_DELAY, FETCH_MAX_RETRIES
+from consensus.auth.constants import OAUTH_MAX_RETRIES, OAUTH_RETRY_BASE_DELAY
 from tests.auth_helpers import (
     CLIENT_ID,
     CLIENT_SECRET,
@@ -49,6 +49,12 @@ def test_available_providers_lists_only_configured(monkeypatch):
     set_credentials(monkeypatch, "github", client_id="gh-id")
     assert auth.get_available_oauth_providers() == [
         {"id": "github", "name": "Github", "client_id": "gh-id"}]
+
+
+def test_provider_without_secret_is_not_offered(monkeypatch):
+    # Listed without a secret, it would fail only after the user consented.
+    set_credentials(monkeypatch, "github", client_secret="")
+    assert auth.get_available_oauth_providers() == []
 
 
 def test_authorize_url_unknown_or_unconfigured_provider(monkeypatch):
@@ -147,10 +153,12 @@ async def test_exchange_linkedin(monkeypatch):
 async def test_exchange_token_endpoint_error_returns_none(monkeypatch, caplog):
     set_credentials(monkeypatch, "google")
     install_routes(monkeypatch, {
-        GOOGLE["token_url"]: httpx.Response(400, json={"error": "bad"})})
+        GOOGLE["token_url"]: httpx.Response(
+            400, json={"error": "invalid_grant", "error_description": "used"})})
     with caplog.at_level(logging.ERROR, logger="consensus.auth"):
         assert await _exchange("google") is None
     assert "token exchange failed" in caplog.text
+    assert "invalid_grant" in caplog.text  # the provider's reason
 
 
 async def test_exchange_token_reply_not_json_returns_none(monkeypatch):
@@ -163,10 +171,31 @@ async def test_exchange_token_reply_not_json_returns_none(monkeypatch):
 async def test_exchange_without_access_token_returns_none(monkeypatch, caplog):
     set_credentials(monkeypatch, "google")
     install_routes(monkeypatch, {
-        GOOGLE["token_url"]: httpx.Response(200, json={"error": "denied"})})
+        GOOGLE["token_url"]: httpx.Response(200, json={
+            "error": "bad_verification_code",
+            "error_description": "The code is incorrect or expired."})})
     with caplog.at_level(logging.ERROR, logger="consensus.auth"):
         assert await _exchange("google") is None
     assert "no access_token" in caplog.text
+    assert "bad_verification_code" in caplog.text
+    assert "incorrect or expired" in caplog.text
+
+
+@pytest.mark.parametrize("provider,profile", [
+    ("github", {"id": None, "email": "n@example.com"}),
+    ("google", {"id": None, "email": "n@example.com"}),
+    ("linkedin", {"sub": None, "email": "n@example.com"}),
+])
+async def test_null_provider_id_is_no_id(monkeypatch, provider, profile):
+    # str(None) == "None" would give every such reply one shared identity.
+    set_credentials(monkeypatch, provider)
+    cfg = auth.OAUTH_PROVIDERS[provider]
+    routes = {cfg["token_url"]: token_ok(),
+              cfg["userinfo_url"]: httpx.Response(200, json=profile)}
+    if provider == "github":
+        routes[GH["userinfo_email_url"]] = httpx.Response(200, json=[])
+    install_routes(monkeypatch, routes)
+    assert (await _exchange(provider))["oauth_id"] == ""
 
 
 async def test_exchange_userinfo_error_returns_none(monkeypatch, caplog):
@@ -208,7 +237,7 @@ async def test_transient_token_failure_is_retried_with_backoff(
     with caplog.at_level(logging.WARNING, logger="consensus.auth"):
         assert (await _exchange("google"))["oauth_id"] == "1"
     assert [r.url.path for r in seen].count("/token") == 3
-    assert sleeps == [FETCH_BASE_DELAY, FETCH_BASE_DELAY * 2]
+    assert sleeps == [OAUTH_RETRY_BASE_DELAY, OAUTH_RETRY_BASE_DELAY * 2]
     assert "HTTP 503" in caplog.text and "ConnectError" in caplog.text
 
 
@@ -222,7 +251,7 @@ async def test_transient_userinfo_failure_is_retried(monkeypatch, sleeps):
         ],
     })
     assert (await _exchange("google"))["oauth_id"] == "2"
-    assert sleeps == [FETCH_BASE_DELAY]
+    assert sleeps == [OAUTH_RETRY_BASE_DELAY]
 
 
 async def test_github_email_lookup_is_retried(monkeypatch, sleeps):
@@ -240,8 +269,8 @@ async def test_retries_give_up_after_max_attempts(monkeypatch, sleeps,
     set_credentials(monkeypatch, "google")
     seen = install_routes(monkeypatch, {GOOGLE["token_url"]: failure})
     assert await _exchange("google") is None
-    assert len(seen) == FETCH_MAX_RETRIES
-    assert len(sleeps) == FETCH_MAX_RETRIES - 1
+    assert len(seen) == OAUTH_MAX_RETRIES
+    assert len(sleeps) == OAUTH_MAX_RETRIES - 1
 
 
 async def test_permanent_failure_is_not_retried(monkeypatch, sleeps):
@@ -277,7 +306,7 @@ async def test_github_primary_verified_email_wins(monkeypatch):
     assert await _exchange("github") == {
         "email": "main@example.com", "name": "octo",
         "avatar_url": "https://a/o.png", "oauth_id": "5",
-        "email_verified": True}
+        "email_verified": True, "email_lookup_failed": False}
     assert seen[-1].headers["authorization"] == "Bearer tok-gh"
 
 
@@ -318,8 +347,17 @@ async def test_github_emails_endpoint_failure_means_unverified(
     with caplog.at_level(logging.WARNING, logger="consensus.auth"):
         info = await _exchange("github")
     assert (info["email"], info["email_verified"]) == ("p@example.com", False)
+    assert info["email_lookup_failed"] is True
     assert "GitHub email lookup failed" in caplog.text
     assert logged in caplog.text
+
+
+async def test_github_lookup_failure_logs_the_exception_text(monkeypatch,
+                                                             caplog, sleeps):
+    _github(monkeypatch, {"id": 5, "email": "p@example.com"}, _connect_error)
+    with caplog.at_level(logging.WARNING, logger="consensus.auth"):
+        await _exchange("github")
+    assert "connection refused" in caplog.text
 
 
 # -- Apple ID token --------------------------------------------------------
@@ -343,8 +381,10 @@ def test_apple_id_token_name_claim():
 @pytest.mark.parametrize("token_resp", [
     {}, {"id_token": ""}, {"id_token": "only-one-part"},
 ])
-def test_apple_missing_id_token_returns_none(token_resp):
-    assert oauth._parse_apple_id_token(token_resp) is None
+def test_apple_missing_id_token_logs_and_returns_none(token_resp, caplog):
+    with caplog.at_level(logging.ERROR, logger="consensus.auth"):
+        assert oauth._parse_apple_id_token(token_resp) is None
+    assert "no usable id_token" in caplog.text
 
 
 def test_apple_undecodable_id_token_logs_and_returns_none(caplog):

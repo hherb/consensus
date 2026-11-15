@@ -2,7 +2,7 @@
 
 Everything is patched through the module that *defines* the patched name
 (``sys.modules[anchor.__module__]``), so the tests keep constraining the
-code after ``auth.py`` is split into a package.
+code now that ``auth.py`` is split into a package.
 """
 
 from __future__ import annotations

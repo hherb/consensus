@@ -13,6 +13,8 @@ OAUTH_MAX_RETRIES = FETCH_MAX_RETRIES
 #: Seconds before the first retry; doubled for each later one.
 OAUTH_RETRY_BASE_DELAY = FETCH_BASE_DELAY
 MIN_PASSWORD_LENGTH = 8
+#: Characters of a provider's error reply body kept in the log.
+OAUTH_ERROR_BODY_LOG_CHARS = 300
 
 # OAuth provider definitions (client IDs/secrets come from env vars)
 OAUTH_PROVIDERS = {

@@ -62,9 +62,10 @@ the main `Database` class. In multi-user mode, auth data lives in a dedicated
 | `user_oauth_identities` | Multiple OAuth identities per user (provider + oauth_id) |
 | `oauth_states` | CSRF state tokens for OAuth flow (10-minute TTL) |
 
-The `users` table retains legacy `oauth_provider` and `oauth_id` columns for
-backwards compatibility. The `user_oauth_identities` table is the canonical
-source for OAuth identity lookups and supports multiple providers per user.
+An OAuth sign-up stores its identity only in the `users` columns
+`oauth_provider` and `oauth_id`; the first `link_oauth()` copies it into
+`user_oauth_identities`, which holds every linked provider from then on.
+Lookups check that table first and fall back to the `users` columns.
 
 **Key methods:**
 
@@ -123,7 +124,8 @@ not set, falls back to request host with a warning log.
 
 1. Add provider config to `OAUTH_PROVIDERS` dict in `auth/constants.py`
 2. Add a case to `_extract_user_info()` (`auth/oauth.py`) for the provider's
-   userinfo format
+   userinfo format, returning `email`, `name`, `avatar_url`, `oauth_id` (via
+   `_provider_id()`) and `email_verified`
 3. Set `CONSENSUS_<PROVIDER>_CLIENT_ID` and `CONSENSUS_<PROVIDER>_CLIENT_SECRET`
    environment variables
 4. The provider will automatically appear in the login UI
