@@ -759,7 +759,13 @@ class AuthManager:
         Raises ValueError on failure.
         """
         userinfo = await exchange_oauth_code(provider, code, redirect_uri)
-        if not userinfo or not userinfo.get("email"):
+        # Without an id, the identity lookup would match any other account
+        # stored with an empty id.
+        if (not userinfo or not userinfo.get("email")
+                or not userinfo.get("oauth_id")):
+            if userinfo:
+                logger.warning("OAuth %s returned no email or user id",
+                               provider)
             raise ValueError(f"Could not retrieve user info from {provider}")
 
         email = userinfo["email"].strip().lower()

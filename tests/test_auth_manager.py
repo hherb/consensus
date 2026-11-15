@@ -8,6 +8,8 @@ manager's wiring to the exchange is constrained too.
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 import pytest
 
@@ -210,6 +212,18 @@ async def test_oauth_without_email_is_refused(manager, google, reply):
     google(**reply)
     with pytest.raises(ValueError, match="Could not retrieve user info"):
         await _google_login(manager)
+
+
+async def test_oauth_without_provider_id_is_refused(manager, google, caplog):
+    # An empty id would match any other account stored with an empty id,
+    # signing this person in as someone else.
+    manager.db.create_user(email="first@example.com",
+                           oauth_provider="google", oauth_id="")
+    google(email="second@example.com", verified_email=True)
+    with caplog.at_level(logging.WARNING, logger="consensus.auth"):
+        with pytest.raises(ValueError, match="Could not retrieve user info"):
+            await _google_login(manager)
+    assert "no email or user id" in caplog.text
 
 
 async def test_oauth_provider_failure_is_refused(manager, monkeypatch):
