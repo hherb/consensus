@@ -150,7 +150,7 @@ maintain these invariants:
   sent via `X-API-Keys` headers are used for the duration of the request and
   never logged, cached, or written to disk.
 
-- **Path traversal protection:** `server.py` resolves static file paths with
+- **Path traversal protection:** `server/routes_misc.py` resolves static file paths with
   `os.path.realpath()` and checks they start with the static directory prefix.
 
 - **Security headers:** All responses include `X-Content-Type-Options: nosniff`,

@@ -338,7 +338,7 @@ app.emit("tool_progress", {"progress": 50, "total": 100, "message": "..."})
 
 Used by:
 - `_handle_consult_expert()` — emits `tool_progress` during MCP tool execution
-- `server.py` SSE endpoint — listens for `tool_progress` and forwards to
+- `server/routes_misc.py` SSE endpoint — listens for `tool_progress` and forwards to
   connected browsers
 - `desktop/bridge.py` — forwards progress events via `evaluate_js`
 
@@ -355,7 +355,7 @@ data: {"progress": 50, "total": 100, "message": "Consulting PubMed expert..."}
 : keepalive
 ```
 
-Implementation in `server.py`:
+Implementation in `server/routes_misc.py` (`handle_events`):
 1. Creates an `asyncio.Queue` per connected client
 2. Registers a `tool_progress` event handler that pushes to all queues
 3. Sends keepalive comments every 30 seconds

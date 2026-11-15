@@ -1,22 +1,17 @@
 # HANDOVER
 
 _Last updated: 2026-11-15. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices (through `auth.py` → `auth/`, PR #129), the #121 fix
+the merged #61 slices through `auth.py` → `auth/` (PR #129), the #121 fix
 (MCP tool failures are `isError` results, PR #122), the #104 rotation fix and
-the #115/#118 pricing fixes (PRs #117/#119). The sixteenth and last #61 slice
-(`server.py` → `server/`) is in progress on `refactor/split-server-61`. The discussion-method review & repair
-campaign (#12–#48, #56–#60) is finished and merged; so is alpha/stable
-distribution (PyPI `consensus-app` + notarized macOS DMG), the public website,
-the flow-error-visibility work (#71–#74, PR #76), and the tools_document
-failure-visibility work (#78) — contracts for both summarised below. The one
-open structural issue is **#61** (modules over the ~500-line golden rule):
-`app_discussion_flow`, `tools_document`, `app.py` (→ `app_api/` mixins),
-`tools_memory`, `tools_python`, `tools_image`, `methods/base.py`,
-`app_discussion_setup.py`, `evaluation/scorer.py`, `evaluation/eval_db.py`,
-`evaluation/runner.py`, `mcp_server.py`, `desktop.py`, `moderator.py` and
-`auth.py` are split; only `server.py` remains over the limit. **#86** (lint
-gate) is done: zero `ruff --select F` findings in `consensus/`, enforced by
-`tests/test_lint.py`._
+the #115/#118 pricing fixes (PRs #117/#119). The sixteenth and **last** #61
+slice — `server.py` → `server/`, with a route-test net and seven web-mode
+defect fixes — is on `refactor/split-server-61` (suite at **4332 passing**);
+once it merges, every Python module is under the ~500-line golden rule and
+#61 is closed. The discussion-method review & repair campaign (#12–#48,
+#56–#60), alpha/stable distribution (PyPI `consensus-app` + notarized macOS
+DMG), the public website, flow-error visibility (#71–#74), tools_document
+failure visibility (#78) and the lint gate (#86, `tests/test_lint.py`) are
+all merged — contracts summarised below._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep; delete sections that are no longer instructive.
@@ -31,7 +26,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4040 passing (`uv run pytest`, ~45–60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4332 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -245,150 +240,95 @@ Tests: `tests/test_auth_db.py`, `_manager.py`, `_oauth_exchange.py`,
 the guard `tests/test_auth_facade.py`. Patch through the defining module
 (`auth_helpers.module_of`); `fast_hashing` lowers PBKDF2 rounds.
 
+## Web server (`server/`, #61 slice 16 — keep these contracts)
+
+`create_web_app(host, port, multi_user)` builds the aiohttp app;
+`launch_web` serves it. All per-server state is one `ServerContext` on the
+app under `CTX_KEY`; handlers are module-level and read
+`request.app[CTX_KEY]`. The net (`tests/test_server_*.py`, fixtures in
+`tests/server_helpers.py`, which point `HOME` at a temp dir) drives the real
+middleware through aiohttp's `TestClient`; it found the defects below.
+
+- **A POST to `/api/` or `/auth/` must be JSON or carry `X-Consensus-Request`**
+  (`CSRF_HEADER`). Multipart uploads send the header (`UPLOAD_HEADERS` in
+  `static/api.js`); everything else sends JSON. Before this, uploads, logout
+  (the token was never revoked; a reload signed the user back in) and the
+  embedding test all got 415. `test_frontend_posts_pass_the_csrf_guard`
+  scans `static/*.js` — a new bare `fetch` POST fails it.
+- **Uploads read through `request_io.read_upload`**, which lifts aiohttp's
+  1 MiB default body limit to `MAX_DOCUMENT_BYTES` / `MAX_IMAGE_BYTES` for
+  that read only (everything else stays at 1 MiB). Those constants are
+  imported *inside* the handlers, like `app._init_*_tools`, so a broken
+  optional backend cannot stop the server from starting.
+- **`auth_middleware` resolves the user for `/auth/me`** too (enforces only
+  on `/api/*`); before, both `/auth/me` routes were always 401.
+- Bodies go through `read_json_object` (non-object → 400); malformed ids and
+  `discussion_id`s are 400s, as are non-string credentials and profile
+  fields (`routes_auth.non_string_field`). `session_app()` is the one
+  401/503 preamble for the file routes; `CAPACITY_ERROR` the one capacity
+  message.
+- **The frontend opens the SSE stream after the first `get_state`**
+  (`static/app.js`), so a first `--multi-user` visit's stream joins the
+  session that call created instead of an orphan one (verified by reading
+  only — no JS harness).
+- `SessionManager` expiry and `stop()` share `_close_app()` (expiry used to
+  skip `app.shutdown()`, leaking MCP subprocesses); session ids in logs are
+  truncated. `login_attempts` / `rate_limits` are pruned by `prune_stale()`.
+- Tests patch a setting where it is read (`middleware.RATE_LIMIT_MAX`,
+  `routes_auth.LOGIN_RATE_LIMIT_*`, `routes_misc.SSE_KEEPALIVE_SECONDS`).
+  `tests/test_server_api.py` `DISPATCH` pins every `/api/<method>` entry's
+  forwarded arguments; `tests/test_server_facade.py` pins `__all__`, the one
+  consumer (`__main__.py`) and every route → handler. **A new route goes in
+  `app_factory.py` and that table; a new dispatch entry in `DISPATCH`.**
+
 ## Open work
 
-### Issue #61 — modules over the ~500-line golden rule (in progress)
+### Issue #61 — modules over the ~500-line golden rule (done on this branch)
 
-**Done — fifteen slices** (detail in git history; one PR each):
+Sixteen slices, one PR each (detail in git history and the contract sections
+above): `app_discussion_flow/`, `tools_document/`, `app.py` → `app_api/`
+mixins (**moved code logs under `consensus.app_api.*`**), `tools_memory/`,
+`tools_python/`, `tools_image/` (+ `http_fetch.py`), `methods/base.py` →
+`phase_types.py`, `app_discussion_setup.py` → `app_discussion_roles.py`,
+`evaluation/` (`report.py`, eval_db mixins, `runner_db.py` /
+`runner_common.py`), `mcp_server/`, `desktop/`, `moderator/`, `auth/`,
+`server/`. Eval contracts worth keeping: a failed LLM judgement returns 502
+and never overwrites an earlier score; `/eval/` is **not mounted in
+`--multi-user`**; a run with a failed turn/summary/synthesis is `error`, not
+`done`. `mcp_server` contracts: a failed tool call is an `isError` result
+(#121); `run_discussion` reports `turn_errors`, `error`, `stop_reason`. A new
+desktop bridge method goes in a mixin **and** in `BRIDGE_API`.
 
-1. `app_discussion_flow.py` → `app_discussion_flow/`. **Watch `turns.py`
-   (499)**: the next addition crosses the limit — split then.
-2–8. `tools_document/` (defects → #78); `app.py` → `app_api/` mixins
-   (**moved code logs under `consensus.app_api.*`** — `caplog` on
-   `consensus.app` sees nothing); `tools_memory/` (one shared
-   `ensure_discussion_indexed()`); `tools_python/` (facade exports only
-   `create_python_provider`); `tools_image/` (**URL fetching is one policy in
-   `http_fetch.py`**; every fetch test installs a fake transport);
-   `methods/base.py` → `phase_types.py` (re-exported, guarded by
-   `tests/test_methods_base_facade.py`); `app_discussion_setup.py` → role
-   code in `app_discussion_roles.py` (no re-export).
-9–11. `evaluation/`: `scorer.py` → `report.py`; `eval_db.py` →
-   `CatalogMixin`/`RunsMixin`/`SeedingMixin` siblings (not a package:
-   `_get_migrations_dir` resolves from `__file__`); `runner.py` → web path in
-   `runner_db.py`, shared `runner_common.py` (PR #116). Eval contracts: a
-   failed LLM judgement returns 502 and **never overwrites an earlier score**;
-   `/eval/api/` writes must be `application/json` (415, CSRF) with an object
-   body (400), field types checked in `request_checks.py` (400), known
-   constraint conflicts → 409; **`/eval/` is not mounted in `--multi-user`**;
-   the judge's BYOK key stays in the input field, never `sessionStorage`;
-   every eval-DB write runs in `with self._lock, self.conn`. A run with a
-   failed turn/summary/synthesis, or no AI speaker due, is `error`, not
-   `done`; the BYOK ContextVar is **set even when empty**; a scoring failure
-   keeps the run `done` with `AUTO_SCORE_FAILED_PREFIX` (#114); unstarted runs
-   are closed on cancel/shutdown/crash (#113); `MAX_NUM_ROUNDS = 20` (mirrored
-   in `eval.html`), `MAX_BATCH_RUNS = 1000` (#112). `JUDGE_DIMENSIONS` is
-   mirrored in `eval_scoring.js` and the judge prompt (drift-tested);
-   `evaluation/static/eval.js` (645) is pre-existing over the limit.
-12. `mcp_server.py` (714) → `mcp_server/` mixins (`server.py`,
-   `tool_defs.py`, `handlers_read.py`, `handlers_write.py`, `constants.py`,
-   `errors.py`, `__main__.py`); net `tests/test_mcp_server_handlers.py` +
-   `_robustness.py` (fixtures in `tests/mcp_server_helpers.py`), guard
-   `tests/test_mcp_server_facade.py`. Contracts: **a failed tool call is an
-   `isError` result** — handlers raise `ToolError` (WARNING, no traceback),
-   never return `"Error: ..."` text (#121); a wrong-typed argument still
-   takes the bug path (#124). `run_discussion` reports `turn_errors`,
-   `error` (why it stopped early — a failed `complete_turn` stops the loop),
-   `stop_reason` and whole-round `rounds_completed`; `moderator_id` must be
-   in `entity_ids`. Malformed stdio input gets a JSON-RPC error reply, a
-   dispatch bug `-32603`, a notification never a reply. The temporary
-   `ConsensusApp` is `shutdown()` per call; its DB connection is left to GC
-   (closing it under the pricing thread segfaults — join that first).
-13. `desktop.py` (636) → `desktop/`: `bridge.py` (`DesktopBridge`) composing
-   `catalog.py` / `discussion.py` / `files.py` mixins, `launcher.py`
-   (resolves `pkg_dir` one level up), `constants.py`.
-   `tests/test_desktop_bridge_api.py` pins `BRIDGE_API` against every
-   `pywebview.api.X` call in `static/` (pywebview also exposes `api.app.*`,
-   #125); `tests/test_desktop_bridge.py` uses a `FakeWindow`
-   (`tests/desktop_helpers.py`) and a fake `webview`; guard
-   `tests/test_desktop_facade.py`. **A new bridge method goes in a mixin and
-   in `BRIDGE_API`.**
-14. `moderator.py` (775) → `moderator/` mixins (`core`, `context`, `turn`,
-   `synthesis`, `constants`). Net `tests/test_moderator_turn.py` /
-   `_synthesis.py` driven by `ScriptedLLM` (`tests/moderator_helpers.py`);
-   `use_method` patches `get_active_method` in every mixin module. Guard
-   `tests/test_moderator_facade.py`.
-15. `auth.py` (787, 49% covered) → `auth/` (`constants`, `models`,
-   `passwords`, `database`, `oauth`, `manager`); see the Authentication
-   section above.
+**Watch:** `app_discussion_flow/turns.py` (499) and `pricing.py` (498) — the
+next addition crosses the limit, so split first. `evaluation/static/eval.js`
+(645) is pre-existing JS over the limit.
 
-**Facade guards.** A dropped re-export fails *late*: consumers mostly import
-lazily inside function bodies, and the `app._init_*_tools` methods turn an
-`ImportError` into "feature unavailable" (logged at WARNING). Each
-re-exporting facade has a `tests/test_<name>_facade.py` that pins `__all__`
-by identity and AST-scans every module under `consensus/` for call sites.
-Keep them in step when the public API changes.
+**Facade guards.** Each re-exporting package has a
+`tests/test_<name>_facade.py` that pins `__all__` by identity and AST-scans
+`consensus/` for call sites (consumers import lazily, so a dropped re-export
+fails only in production). Keep them in step with the public API.
 
-**Still over the limit**, with statement coverage from the full suite
-(`uv run --with pytest-cov pytest --cov=consensus`):
-
-| Lines | Cover | File |
-|------:|------:|------|
-| 1241 | **0%** | `consensus/server.py` |
-
-Structural only — no behaviour change — one module per PR, suite green before
-and after.
-
-**Next target: `server.py`, the last one — read this before picking it.** It
-is a single 1170-line `launch_web()` whose middleware and ~35 handlers are all
-closures over `session_manager`, `auth_manager`, `app` and the helpers. There
-is no verbatim move available: extracting them means giving each domain group
-a factory that takes an explicit context object, which is a behaviour-risking
-refactor, not a structural one. Budget for it accordingly, and write the
-missing route tests first.
-
-**Recipe that worked, for the next slice:**
-0. **Check coverage before trusting "suite green before and after."**
-   `uv run --with pytest-cov pytest -q --cov=consensus.<module>
-   --cov-report=term-missing` — `tools_document.py` was at **15%**, so the
-   suite proved nothing about it and the net had to be built first (152
-   characterization tests, 100% coverage, committed *before* a line moved).
-   A split of an untested module is not verified by a green suite.
-1. Move code by line range so it transfers verbatim, with a throwaway
-   script that assembles the new files from `(start, end)` ranges and checks
-   each range back against `git show HEAD:<file>` (known edits undone) plus
-   that every non-blank original line is placed once — one pass did it for
-   `mcp_server` and `desktop`.
-2. Fix relative-import depth for anything nested one level deeper
-   (`from .x` → `from ..x`), **including imports inside function bodies** —
-   these are the ones that fail at runtime rather than at collection.
-3. Re-export the public API from `__init__.py`; point test `patch()` targets
-   at the *defining* submodule (patching the facade has no effect), and import
-   private helpers from their submodule rather than widening the facade.
-   `assertLogs`/`caplog` on the old dotted name keeps working — child loggers
-   propagate to the package logger.
-4. `uvx ruff check --select F <pkg>` for unused/undefined names, then the
-   full suite.
-5. Add the facade guard, then **delete a re-export and watch it fail** before
-   restoring it. An unverified guard is not a guard. Pin `__all__` by
-   *identity* (`td.parse_document is parsing.parse_document`), not by
-   existence — a crossed re-export resolves fine and breaks only in
-   production. Scan every module under `consensus/` for call sites, matching
-   both the relative and absolute spelling of the package; scanning only
-   `app.py` misses the next consumer someone adds. Name consumers by path
-   relative to `consensus/`, not bare filename — the split put a second
-   `server.py` under `consensus/`.
-6. **Mutate the new wiring and watch it fail.** The glue a split *writes* —
-   the factory that forwards dependencies to handlers, the guard conditions
-   duplicated across two call sites, the keyword names production passes — is
-   the code most likely to be got wrong and least likely to be covered, since
-   the characterization tests were written against the old shape. On the
-   `tools_document` slice three such mutations survived the whole suite at 100% coverage.
-   Coverage measures lines executed, not behaviour constrained.
-7. Update the docs and comments that name the old module file
-   (`grep -rn "<name>\.py" --include='*.md' --include='*.py'`: `CLAUDE.md`,
-   `README.md`, `docs/devel/*`, test docstrings,
-   `docs/BUILTIN_TOOLS.md`). Check the *content* beside the name too — the
-   `doc_*` tables and the desktop bridge method list were both wrong in
-   blocks earlier PRs had edited only for the module name.
-
-**Writing the safety net, if the target is untested.** Real `Database`
-(`tmp_db`), fakes only at the network/GUI edges, shared fakes in a
-`tests/*_helpers.py` module. `tests/document_helpers.py`
-`patch_where_defined(monkeypatch, anchor, name, replacement)` patches through
-`sys.modules[anchor.__module__]`, so tests survive the move. Drive code
-through the entry point production uses, not private functions. **Grep for
-duplicated logic while writing the net** — drifted copies of the same
-bookkeeping are the likeliest pre-existing bug.
+**Recipe for the next split** (worked for all sixteen):
+0. Check coverage first (`uv run --with pytest-cov pytest -q
+   --cov=consensus.<module> --cov-report=term-missing`); a green suite over
+   an untested module proves nothing — write the characterization net and
+   commit it *before* a line moves. Fix each defect it finds in its own
+   commit. Grep for duplicated logic while writing it: drifted copies were
+   the likeliest pre-existing bug every time. Use a real `Database`
+   (`tmp_db`), fakes only at the network/GUI edges, shared fakes in a
+   `tests/*_helpers.py`, and drive the entry point production uses.
+1. Move by line range with a throwaway script that checks every moved line
+   reappears once (`server.py` also rewrote closure names to `ctx.<name>`).
+2. Fix relative-import depth, **including imports inside function bodies**,
+   and `__file__`-relative paths.
+3. Re-export from `__init__.py`; point test patches at the submodule that
+   reads the name.
+4. `uvx ruff check --select F <pkg>`, then the full suite.
+5. Add the facade guard; delete a re-export and watch it fail.
+6. **Mutate the new wiring and watch it fail** — coverage measures lines
+   executed, not behaviour constrained (on `server/` a second context and the
+   cookie max-age survived until tests were added).
+7. Update every doc naming the old file *and* the content beside the name.
 
 ### Deferred follow-ups (no issue filed)
 
@@ -416,19 +356,23 @@ bookkeeping are the likeliest pre-existing bug.
   `check_no_shadowed_packages` (`scripts/release_pypi.sh`) rejects a wheel
   shipping both `X.py` and `X/`.
 
-### Open GitHub issues (besides #61)
+### Open GitHub issues
 
-#131 login timing reveals which emails have a password account; #130 an OAuth
-callback has no overall deadline; #128 unverified OAuth sign-up can pre-hijack
-an address; #127 stored password hashes lack their PBKDF2 iteration count;
-#107 a rotation change spans several commits (crash mid-update desyncs members
-and `method_state`); #102 follow-ups from the PR #100 review (Retry-After,
-`doc_add` ingest budget, DNS-rebinding pin, `_init_image_tools` catch, test
-file size); #99 route test for the image-serve CSP (fix landed in PR #100;
-needs a `server.py` route-test harness); #97 Seatbelt profile does not confine
-writes; #96 no UI flag when Python or image tools fail to load; #92 tool error
-results echo raw exception text to the model and UI; #81 persist parse
-fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents.
+#132 non-dispatch routes create a `--multi-user` session without setting its
+cookie (orphaned sessions hold capacity); #131 login timing reveals which
+emails have a password account; #130 an OAuth callback has no overall
+deadline; #128 unverified OAuth sign-up can pre-hijack an address; #127 stored
+password hashes lack their PBKDF2 iteration count; #125 pywebview exposes all
+of `ConsensusApp` to JS; #124 validate MCP tool arguments against
+`inputSchema`; #107 a rotation change spans several commits (crash mid-update
+desyncs members and `method_state`); #102 follow-ups from the PR #100 review
+(Retry-After, `doc_add` ingest budget, DNS-rebinding pin, `_init_image_tools`
+catch, test file size); #97 Seatbelt profile does not confine writes; #96 no
+UI flag when Python or image tools fail to load; #92 tool error results echo
+raw exception text to the model and UI (the `/api/<method>` 500 body does too
+— noted on the issue); #81 persist parse fidelity/notes; #80 pre-#78
+`'(Empty PDF)'` documents. #99 (image-serve CSP route test) is closed by this
+branch.
 
 ### Roadmap
 

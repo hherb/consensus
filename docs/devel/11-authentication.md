@@ -83,7 +83,7 @@ Lookups check that table first and fall back to the `users` columns.
 
 ### `AuthManager`
 
-High-level API used by `server.py`. Methods:
+High-level API used by `server/` (`routes_auth.py`). Methods:
 
 | Method | Purpose |
 |--------|---------|
@@ -132,26 +132,27 @@ not set, falls back to request host with a warning log.
 
 ---
 
-## Server Integration (`server.py`)
+## Server Integration (`server/`)
 
 ### Middleware
 
 | Middleware | Purpose |
 |------------|---------|
-| `csrf_middleware` | Rejects POST requests to `/api/` and `/auth/` without `Content-Type: application/json`. Excludes `/auth/oauth/callback/` (Apple uses `form_post`) |
-| `auth_middleware` | Enforces authentication on `/api/*` routes in multi-user mode. Extracts token from `Authorization: Bearer` header or `consensus_auth` cookie |
+| `csrf_middleware` | Rejects a POST to `/api/` or `/auth/` that is neither `application/json` nor carries the `X-Consensus-Request` header. Excludes `/auth/oauth/callback/` (Apple uses `form_post`) |
+| `auth_middleware` | Enforces authentication on `/api/*` routes in multi-user mode and resolves the user for `/auth/me`. Extracts token from `Authorization: Bearer` header or `consensus_auth` cookie |
 
 ### Login Rate Limiting
 
 Per-email brute-force protection: maximum 5 failed login attempts per email
 address within a 5-minute window. Successful logins do not count against
-the limit. The rate limit state is in-memory (resets on server restart).
+the limit. The rate limit state is in-memory (resets on server restart);
+emails with no attempt inside the window are pruned once per window.
 
 ### Auth Endpoints
 
-All auth endpoints are under `/auth/` (not `/api/`), so they bypass the
-auth middleware. They are protected by the CSRF middleware (except OAuth
-callbacks).
+All auth endpoints are under `/auth/` (not `/api/`), so the auth middleware
+does not enforce sign-in on them (it only resolves the user for `/auth/me`).
+They are protected by the CSRF middleware (except OAuth callbacks).
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -159,7 +160,7 @@ callbacks).
 | `/auth/login` | POST | Login with email/password |
 | `/auth/logout` | POST | Revoke current token, clear cookie |
 | `/auth/status` | GET | Check auth state (returns `auth_required`, `authenticated`, `user`, `oauth_providers`) |
-| `/auth/me` | GET | Get current user profile (requires auth via `/api/` check or cookie) |
+| `/auth/me` | GET | Get current user profile (401 when not signed in) |
 | `/auth/me` | POST | Update profile (display_name, avatar_url only) |
 | `/auth/oauth/providers` | GET | List configured OAuth providers |
 | `/auth/oauth/authorize/{provider}` | GET | Start OAuth flow (redirects to provider) |

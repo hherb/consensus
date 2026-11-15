@@ -111,7 +111,8 @@ consensus/
   app_discussion_flow/     Turn flow package (submissions, turns,
                            method_switch, conclusion, helpers)
   app_discussion_state.py  Discussion state management
-  server.py                aiohttp web server (REST + resource routes, middleware)
+  server/                  aiohttp web server (app_factory, context, middleware,
+                           routes_api/auth/documents/images/misc)
   session.py               Multi-user session manager (per-session app + SQLite)
   auth/                    Authentication package (email/password, OAuth)
   desktop/                 pywebview launcher and JS-Python bridge (bridge,

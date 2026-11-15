@@ -123,7 +123,7 @@ def test_parse_document_returns_a_parsed_document():
 class TestCallSites:
     """Scans every module under ``consensus/``, not just ``app.py``.
 
-    A lazy ``from .tools_document import ...`` added to ``server.py``,
+    A lazy ``from .tools_document import ...`` added to ``server/``,
     ``moderator/`` or anywhere else would otherwise pass CI green and raise
     ``ImportError`` on first call in production — the exact failure class
     these tests exist to prevent.

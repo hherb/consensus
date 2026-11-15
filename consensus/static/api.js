@@ -26,7 +26,7 @@ const GENERATION_CALLS = new Set([
 ]);
 
 // Multipart uploads cannot be JSON, so they carry the header the server's
-// CSRF guard accepts instead (server.py CSRF_HEADER); a cross-site form
+// CSRF guard accepts instead (server/constants.py CSRF_HEADER); a cross-site form
 // cannot set it.
 const UPLOAD_HEADERS = { 'X-Consensus-Request': '1' };
 

@@ -145,60 +145,66 @@ provider data before sending it to the frontend, replacing it with a boolean
 
 ---
 
-## `server.py` -- Web Mode (aiohttp)
+## `server/` -- Web Mode (aiohttp)
 
-The web server is a single async function `launch_web(host, port, multi_user)`
-that:
+`launch_web(host, port, multi_user)` (`app_factory.py`) loads `.env`, builds
+the app with `create_web_app()` and serves it until interrupted.
+`create_web_app()` is also what the route tests drive (`tests/test_server_*`
+through aiohttp's `TestClient`).
 
-1. Creates either a shared `ConsensusApp` (single-user) or a `SessionManager`
-   (multi-user)
-2. Sets up middleware: security headers, CORS, rate limiting
-3. Defines a dispatch-style `handle_api()` handler
-4. Serves static files with path traversal protection
-5. Provides a `GET /health` endpoint for load balancer checks
-6. Blocks until interrupted
+| Module | Contents |
+|--------|----------|
+| `app_factory.py` | `create_web_app()` (route table, `/eval/` mount, `on_startup`/`on_cleanup`), `launch_web()` |
+| `context.py` | `ServerContext` (all per-server state), `CTX_KEY`, `build_context()`, `get_app_for_request()`, `session_app()`, cookie/token/BYOK-header helpers, `prune_stale()` |
+| `middleware.py` | The middleware stack (`MIDDLEWARES`) |
+| `routes_api.py` | `handle_api()`: the `POST /api/{method}` dispatch |
+| `routes_auth.py` | `/auth/*`: password sign-in, profile, OAuth |
+| `routes_documents.py` | `/api/memory/*`, `/api/documents/*` |
+| `routes_images.py` | `/api/images/*` |
+| `routes_misc.py` | `/health`, `/api/events` (SSE), static files |
+| `request_io.py` | `read_json_object()`, `read_upload()` |
+| `constants.py` | Limits, cookie/header names, `IMAGE_SERVE_CSP` |
+
+Handlers are module-level functions; the state they share (the shared app or
+`SessionManager`, `AuthManager`, allowed origins, limiter tables) is one
+`ServerContext` stored on the aiohttp app, read with `request.app[CTX_KEY]`.
+Tests patch a setting in the submodule that reads it (e.g.
+`middleware.RATE_LIMIT_MAX`, `routes_auth.LOGIN_RATE_LIMIT_MAX`).
 
 ### Single-user vs multi-user
 
 When `multi_user=False` (default), a single `ConsensusApp` is shared by all
 clients (suitable for local/desktop use). When `multi_user=True`, each browser
 session gets its own `ConsensusApp` via `SessionManager`, identified by a
-`consensus_sid` cookie.
+`consensus_sid` cookie, and `/api/*` requires a signed-in user.
 
 ### Middleware stack (applied in order)
 
 | Middleware | Purpose |
 |------------|---------|
 | `security_headers_middleware` | Adds `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` |
-| `cors_middleware` | Rejects API requests from unknown origins. Allows local origin in single-user mode; checks `CONSENSUS_ALLOWED_ORIGINS` in multi-user mode |
-| `rate_limit_middleware` | Per-session/IP rate limiting (120 requests per 60s window) on `/api/` routes |
-| `csrf_middleware` | Rejects POST requests to `/api/` and `/auth/` without `Content-Type: application/json`. Excludes OAuth callbacks (`/auth/oauth/callback/`) for Apple's `form_post` |
-| `auth_middleware` | In multi-user mode, enforces authentication on `/api/*` routes. Extracts token from `Authorization: Bearer` header or `consensus_auth` cookie, attaches `User` to `request["auth_user"]` |
+| `cors_middleware` | Rejects `/api/` requests from an unknown `Origin`. The local origin (`http://host:port`) and `CONSENSUS_ALLOWED_ORIGINS` are allowed |
+| `rate_limit_middleware` | Per-peer-IP limit (`RATE_LIMIT_MAX` = 120 per `RATE_LIMIT_WINDOW` = 60 s) on `/api/`; never keyed on a client-supplied cookie |
+| `csrf_middleware` | A `POST` to `/api/` or `/auth/` must be `application/json` **or** carry the `X-Consensus-Request` header (`CSRF_HEADER`, sent by the frontend on multipart uploads). A cross-site form can send neither. Excludes `/auth/oauth/callback/` (Apple's `form_post`) |
+| `auth_middleware` | In multi-user mode, enforces authentication on `/api/*` and resolves the user for `/auth/me`. Token from `Authorization: Bearer` (wins) or the `consensus_auth` cookie; the user goes in `request["auth_user"]` |
 
 ### BYOK request flow
 
-In multi-user mode, the frontend sends API keys via an `X-API-Keys` header
-(JSON-encoded map of `provider_id -> key`). The server:
-1. Extracts keys via `_extract_api_keys(request)`
-2. Sets keys via `app.set_request_api_keys()` before the handler
+The frontend may send API keys via an `X-API-Keys` header (JSON-encoded map
+of `provider_id -> key`). `handle_api`:
+1. Extracts keys via `extract_api_keys(request)` (malformed header → none)
+2. Sets keys via `app.set_request_api_keys()` before the call
 3. Clears keys via `app.clear_request_api_keys()` in a `finally` block
 
 Keys are never logged or persisted.
 
 ### API routing
 
-All API calls are `POST /api/{method}` where `{method}` maps to a key in a
-`handlers` dict. The handler dict maps method names to lambdas that call
-`ConsensusApp` methods with the appropriate arguments from the JSON request
-body.
-
-```python
-handlers = {
-    "get_state": lambda: app.get_state(),
-    "add_provider": lambda: app.add_provider(data["name"], data["base_url"], ...),
-    ...
-}
-```
+All API calls are `POST /api/{method}` where `{method}` maps to a key in the
+`handlers` dict in `handle_api()`, whose lambdas call `ConsensusApp` methods
+with arguments (and defaults) from the JSON body. An unreadable body counts
+as `{}`; an unknown method is a 404; an exception is a 500 carrying its
+message. `tests/test_server_api.py` pins every entry's forwarded arguments.
 
 If a handler returns a coroutine (e.g., `generate_ai_turn`), it is awaited.
 
@@ -209,24 +215,34 @@ If a handler returns a coroutine (e.g., `generate_ai_turn`), it is awaited.
 
 This means the frontend always receives the latest state after any mutation.
 
+The memory/document/image routes start with `session_app(request)`, which
+returns the request's app or the 401/503 response to send instead. Uploads
+go through `read_upload()`, which lifts aiohttp's 1 MiB body limit to
+`MAX_DOCUMENT_BYTES` / `MAX_IMAGE_BYTES` for that read only; malformed ids
+and bodies are 400s.
+
 ### Session cookies
 
-In multi-user mode, responses include a `consensus_sid` cookie (httponly,
-SameSite=Lax). The cookie is validated against a regex pattern and refreshed
-on each request.
+In multi-user mode, `/api/{method}` responses set a `consensus_sid` cookie
+(httponly, SameSite=Lax, `Secure` when `CONSENSUS_ALLOWED_ORIGINS` is set).
+A malformed incoming id is replaced. The frontend opens the SSE stream only
+after its first `get_state` call, so a first visit's stream joins the
+session that call created.
 
 ### Authentication (multi-user mode)
 
-When `multi_user=True`, `launch_web()` creates an `AuthManager` with a
+When `multi_user=True`, `build_context()` creates an `AuthManager` with a
 dedicated `auth.db` database. Auth endpoints are registered under `/auth/*`
 (separate from `/api/*`).
 
 - **Login rate limiting:** Per-email brute-force protection (5 failed attempts
-  per 5-minute window). State is in-memory, resets on restart.
+  per 5-minute window). State is in-memory, resets on restart, and stale
+  entries are pruned once per window.
 - **Token handling:** Auth tokens are set as httpOnly cookies only — never
   returned in JSON response bodies.
-- **Profile updates:** `handle_auth_update_profile` explicitly extracts only
-  `display_name`, `avatar_url`, and `email` from request data.
+- **Profile updates:** `handle_auth_update_profile` accepts only
+  `display_name` and `avatar_url`. Email is never editable (see the
+  Authentication doc).
 - **OAuth redirect URI:** Derived from `CONSENSUS_BASE_URL` env var (not
   request headers) to prevent host header injection.
 
@@ -236,13 +252,14 @@ For full auth endpoint reference, see [Authentication](11-authentication.md).
 
 `GET /api/events` provides a Server-Sent Events stream for real-time updates:
 - Content-Type: `text/event-stream`
-- Emits `tool_progress` events during MCP tool execution
-- 30-second keepalive comments prevent connection timeout
+- Emits `tool_progress` (MCP/tool progress) and `user_input_request`
+  (ask_user) events
+- Keepalive comments every `SSE_KEEPALIVE_SECONDS` (30 s)
 - Queue-based event dispatch per connected client
 - Graceful cleanup on client disconnect
 
-The SSE endpoint listens for events via `ConsensusApp.on("tool_progress", ...)`
-and forwards them to all connected SSE clients.
+The SSE endpoint subscribes with `ConsensusApp.on(...)` and unsubscribes when
+the client goes away.
 
 ### Non-API endpoints
 
@@ -251,6 +268,7 @@ and forwards them to all connected SSE clients.
 | `/health` | GET | Health check (returns `{"status": "ok"}` or `{"status": "ok", "active_sessions": N}` in multi-user mode) |
 | `/api/events` | GET | Server-Sent Events stream for real-time progress updates |
 | `/auth/*` | Various | Authentication endpoints (register, login, logout, OAuth). See [Authentication](11-authentication.md) |
+| `/eval/` | Various | Evaluation UI — single-user only, never mounted in multi-user mode |
 
 ---
 
