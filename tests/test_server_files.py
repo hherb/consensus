@@ -479,3 +479,31 @@ class TestEvents:
         line = await asyncio.wait_for(resp.content.readline(), 5)
         assert line == b": keepalive\n"
         resp.close()
+
+
+class TestMalformedInput:
+    """Bad ids and bodies are a 400 with a message, never a bare 500."""
+
+    @pytest.mark.parametrize("method,path", [
+        ("get", "/api/documents/abc"), ("delete", "/api/documents/abc"),
+        ("delete", "/api/documents/abc/1"), ("delete", "/api/documents/1/abc"),
+    ])
+    async def test_non_numeric_document_id(self, single_client, method, path):
+        resp = await getattr(single_client, method)(path)
+        assert resp.status == 400
+        assert "error" in await resp.json()
+
+    @pytest.mark.parametrize("path", ["/api/documents/add-url",
+                                      "/api/images/add-url"])
+    @pytest.mark.parametrize("body", [["a"], "x", {"url": 5},
+                                      {"url": "https://e.com",
+                                       "discussion_id": "abc"}])
+    async def test_add_url_bad_body(self, single_client, path, body):
+        resp = await single_client.post(path, json=body)
+        assert resp.status == 400
+        assert "error" in await resp.json()
+
+    @pytest.mark.parametrize("body", [["a"], "x"])
+    async def test_memory_config_put_non_object(self, single_client, body):
+        resp = await single_client.put("/api/memory/config", json=body)
+        assert resp.status == 400

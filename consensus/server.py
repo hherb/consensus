@@ -66,6 +66,15 @@ def _generate_session_id() -> str:
     return secrets.token_urlsafe(32)
 
 
+async def read_json_object(request: web.Request) -> dict | None:
+    """Return the request's JSON body if it is an object, else ``None``."""
+    try:
+        data = await request.json()
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 class UploadError(Exception):
     """An upload request that cannot be read; carries the HTTP status."""
 
@@ -314,6 +323,12 @@ def create_web_app(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
 
         # Only /api/* routes require authentication; everything else
         # (static files, /auth/*, /health, OAuth callbacks) is exempt.
+        # /auth/me checks request["auth_user"] itself, so resolve it there.
+        if request.path == "/auth/me":
+            token = _extract_auth_token(request)
+            if token:
+                request["auth_user"] = auth_mgr.get_current_user(token)
+            return await handler(request)
         if not request.path.startswith("/api/"):
             return await handler(request)
 
@@ -584,9 +599,8 @@ def create_web_app(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response(
                 {"error": "Authentication not enabled"}, status=404,
             )
-        try:
-            data = await request.json()
-        except Exception:
+        data = await read_json_object(request)
+        if data is None:
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
         try:
@@ -612,12 +626,15 @@ def create_web_app(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response(
                 {"error": "Authentication not enabled"}, status=404,
             )
-        try:
-            data = await request.json()
-        except Exception:
+        data = await read_json_object(request)
+        if data is None:
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
-        email = data.get("email", "").strip().lower()
+        email = data.get("email", "")
+        if not isinstance(email, str):
+            return web.json_response({"error": "email must be a string"},
+                                     status=400)
+        email = email.strip().lower()
 
         # Per-email brute-force protection
         now = time.time()
@@ -697,9 +714,8 @@ def create_web_app(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         if not user:
             return web.json_response({"error": "Not authenticated"}, status=401)
 
-        try:
-            data = await request.json()
-        except Exception:
+        data = await read_json_object(request)
+        if data is None:
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
         update_fields = {}
@@ -854,9 +870,8 @@ def create_web_app(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                 {"error": "Memory tools failed to load; see the application log for the cause"},
                 status=404,
             )
-        try:
-            data = await request.json()
-        except Exception:
+        data = await read_json_object(request)
+        if data is None:
             return web.json_response({"error": "Invalid JSON body"}, status=400)
 
         allowed_keys = {"embedding_backend", "embedding_model", "embedding_endpoint"}
@@ -939,18 +954,23 @@ def create_web_app(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                 status=404,
             )
 
-        try:
-            data = await request.json()
-        except Exception:
+        data = await read_json_object(request)
+        if data is None:
             return web.json_response({"error": "Invalid JSON body"}, status=400)
 
-        url = data.get("url", "").strip()
+        url = data.get("url", "")
+        url = url.strip() if isinstance(url, str) else ""
         if not url:
             return web.json_response({"error": "url is required"}, status=400)
+        try:
+            discussion_id = int(data.get("discussion_id", 0))
+        except (TypeError, ValueError):
+            return web.json_response(
+                {"error": "discussion_id must be an integer"}, status=400)
 
         result = await app_inst.add_document_from_url(
             url=url,
-            discussion_id=int(data.get("discussion_id", 0)),
+            discussion_id=discussion_id,
             title=data.get("title", ""),
         )
         if "error" in result:
@@ -965,7 +985,10 @@ def create_web_app(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         if app_inst is None:
             return web.json_response({"error": "Server at capacity"}, status=503)
 
-        discussion_id = int(request.match_info["discussion_id"])
+        try:
+            discussion_id = int(request.match_info["discussion_id"])
+        except (ValueError, KeyError):
+            return web.json_response({"error": "Invalid discussion ID"}, status=400)
         docs = app_inst.get_discussion_documents(discussion_id)
         return web.json_response({"documents": docs})
 
@@ -977,8 +1000,11 @@ def create_web_app(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         if app_inst is None:
             return web.json_response({"error": "Server at capacity"}, status=503)
 
-        document_id = int(request.match_info["document_id"])
-        discussion_id = int(request.match_info["discussion_id"])
+        try:
+            document_id = int(request.match_info["document_id"])
+            discussion_id = int(request.match_info["discussion_id"])
+        except (ValueError, KeyError):
+            return web.json_response({"error": "Invalid ID"}, status=400)
         result = app_inst.remove_document(document_id, discussion_id)
         return web.json_response(result)
 
@@ -990,7 +1016,10 @@ def create_web_app(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         if app_inst is None:
             return web.json_response({"error": "Server at capacity"}, status=503)
 
-        document_id = int(request.match_info["document_id"])
+        try:
+            document_id = int(request.match_info["document_id"])
+        except (ValueError, KeyError):
+            return web.json_response({"error": "Invalid document ID"}, status=400)
         result = app_inst.delete_document(document_id)
         return web.json_response(result)
 
@@ -1033,18 +1062,23 @@ def create_web_app(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         if app_inst is None:
             return web.json_response({"error": "Server at capacity"}, status=503)
 
-        try:
-            data = await request.json()
-        except Exception:
+        data = await read_json_object(request)
+        if data is None:
             return web.json_response({"error": "Invalid JSON body"}, status=400)
 
-        url = data.get("url", "").strip()
+        url = data.get("url", "")
+        url = url.strip() if isinstance(url, str) else ""
         if not url:
             return web.json_response({"error": "url is required"}, status=400)
+        try:
+            discussion_id = int(data.get("discussion_id", 0))
+        except (TypeError, ValueError):
+            return web.json_response(
+                {"error": "discussion_id must be an integer"}, status=400)
 
         result = await app_inst.add_image_from_url(
             url=url,
-            discussion_id=int(data.get("discussion_id", 0)),
+            discussion_id=discussion_id,
             title=data.get("title", ""),
         )
         if "error" in result:

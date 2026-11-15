@@ -310,3 +310,55 @@ class TestOAuth:
         assert resp.status == 400
         text = await resp.text()
         assert "bad &lt;b&gt;code&lt;/b&gt;" in text
+
+
+class TestMe:
+    """``/auth/me`` reads and edits the signed-in user's profile."""
+
+    async def test_get_returns_the_user(self, signed_in):
+        resp = await signed_in.get("/auth/me")
+        assert resp.status == 200
+        assert (await resp.json())["user"]["email"] == TEST_EMAIL
+
+    async def test_get_requires_auth(self, multi_client):
+        resp = await multi_client.get("/auth/me")
+        assert resp.status == 401
+
+    async def test_update_changes_only_profile_fields(self, signed_in):
+        resp = await signed_in.post("/auth/me", json={
+            "display_name": "Alice B", "avatar_url": "https://a/x.png",
+            "email": "mallory@example.com", "is_active": False})
+        assert resp.status == 200
+        user = (await resp.json())["user"]
+        assert user["display_name"] == "Alice B"
+        assert user["avatar_url"] == "https://a/x.png"
+        assert user["email"] == TEST_EMAIL
+
+    async def test_update_with_nothing_to_change(self, signed_in):
+        resp = await signed_in.post("/auth/me", json={"email": "x@y.z"})
+        assert resp.status == 200
+        assert (await resp.json())["user"]["email"] == TEST_EMAIL
+
+    async def test_update_bad_json_is_a_400(self, signed_in):
+        resp = await signed_in.post(
+            "/auth/me", data=b"{", headers={"Content-Type": "application/json"})
+        assert resp.status == 400
+
+
+class TestNonObjectBodies:
+    """A JSON body that is not an object is a 400, not a crash."""
+
+    @pytest.mark.parametrize("path", ["/auth/register", "/auth/login"])
+    async def test_auth_routes(self, multi_client, path):
+        resp = await multi_client.post(path, json=["a"])
+        assert resp.status == 400
+        assert (await resp.json()) == {"error": "Invalid JSON"}
+
+    async def test_profile_update(self, signed_in):
+        resp = await signed_in.post("/auth/me", json="x")
+        assert resp.status == 400
+
+    async def test_login_non_string_email(self, multi_client):
+        resp = await multi_client.post("/auth/login",
+                                       json={"email": 5, "password": "x"})
+        assert resp.status == 400
