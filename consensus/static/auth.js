@@ -4,9 +4,6 @@
  */
 
 import { $, show, hide, showToast } from './utils.js';
-import { api } from './api.js';
-import { onStateUpdate } from './state.js';
-import { renderSetupTab } from './setup.js';
 
 /** @type {object|null} Current authenticated user */
 export let authUser = null;
@@ -158,12 +155,9 @@ async function doLogin() {
             showAuthError('auth-error', data.error || 'Login failed');
             return;
         }
-        authUser = data.user;
-        showAppPhase();
-        api.getState().then(s => {
-            onStateUpdate(s);
-            renderSetupTab();
-        });
+        // Reload rather than resume: bootstrap() returned before init() and
+        // the SSE stream for a signed-out page, so neither has run yet.
+        window.location.reload();
     } catch (err) {
         showAuthError('auth-error', 'Connection error. Please try again.');
     }
@@ -194,12 +188,9 @@ async function doRegister() {
             showAuthError('register-error', data.error || 'Registration failed');
             return;
         }
-        authUser = data.user;
-        showAppPhase();
-        api.getState().then(s => {
-            onStateUpdate(s);
-            renderSetupTab();
-        });
+        // Reload rather than resume: bootstrap() returned before init() and
+        // the SSE stream for a signed-out page, so neither has run yet.
+        window.location.reload();
     } catch (err) {
         showAuthError('register-error', 'Connection error. Please try again.');
     }

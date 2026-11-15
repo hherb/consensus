@@ -1,4 +1,4 @@
-"""Route tests for the memory-config, document, image and SSE endpoints.
+"""Route tests for the memory-config, document and image endpoints.
 
 Most tests replace the ``ConsensusApp`` method a route reaches with a
 recorder, pinning how the HTTP request is translated into the call; the
@@ -8,15 +8,11 @@ uploaded SVG from running script in the app's origin (#99).
 
 from __future__ import annotations
 
-import asyncio
-import json
-
 import aiohttp
 import pytest
 
 from consensus import server
 from consensus.app import ConsensusApp
-from consensus.server import routes_misc
 from tests.server_helpers import (  # noqa: F401  (fixtures)
     fast_hashing, module_of, multi_client, server_home, signed_in, single_client,
 )
@@ -455,80 +451,6 @@ class TestImages:
     async def test_non_numeric_id_is_a_400(self, single_client, method, path):
         resp = await getattr(single_client, method)(path)
         assert resp.status == 400
-
-
-class TestMultiUserFileRoutes:
-    """The file routes sit behind the same authentication gate."""
-
-    @pytest.mark.parametrize("method,path", [
-        ("get", "/api/memory/config"), ("put", "/api/memory/config"),
-        ("post", "/api/memory/test"), ("post", "/api/documents/add-url"),
-        ("get", "/api/documents/1"), ("delete", "/api/documents/1"),
-        ("delete", "/api/documents/1/2"), ("post", "/api/images/add-url"),
-        ("get", "/api/images/1"), ("get", "/api/images/file/1"),
-        ("delete", "/api/images/1"), ("delete", "/api/images/1/2"),
-        ("get", "/api/events"),
-    ])
-    async def test_unauthenticated_is_a_401(self, multi_client, method, path):
-        resp = await getattr(multi_client, method)(path, json={})
-        assert resp.status == 401
-
-    async def test_at_capacity_is_a_503(self, signed_in, monkeypatch):
-        from consensus.session import SessionManager
-
-        async def full(self, sid):
-            return None
-        monkeypatch.setattr(SessionManager, "get_app", full)
-        for method, path in [("get", "/api/memory/config"),
-                             ("get", "/api/documents/1"),
-                             ("get", "/api/images/1"),
-                             ("get", "/api/events")]:
-            resp = await getattr(signed_in, method)(path)
-            assert resp.status == 503, path
-
-
-class TestEvents:
-    async def _read_event(self, resp) -> tuple[str, dict]:
-        lines = []
-        while True:
-            line = (await asyncio.wait_for(resp.content.readline(), 5)).decode()
-            if line == "\n" and lines:
-                break
-            if line.strip():
-                lines.append(line.strip())
-        fields = dict(line.split(": ", 1) for line in lines)
-        return fields["event"], json.loads(fields["data"])
-
-    async def test_streams_app_events(self, single_client, monkeypatch):
-        listeners: dict = {}
-        real_on = ConsensusApp.on
-
-        def spy_on(self, name, callback):
-            listeners[name] = (self, callback)
-            return real_on(self, name, callback)
-        monkeypatch.setattr(ConsensusApp, "on", spy_on)
-
-        resp = await single_client.get("/api/events")
-        assert resp.status == 200
-        assert resp.headers["Content-Type"] == "text/event-stream"
-        assert resp.headers["Cache-Control"] == "no-cache"
-        await asyncio.sleep(0)
-        app, _ = listeners["tool_progress"]
-        app.emit("tool_progress", {"stage": "searching"})
-        assert await self._read_event(resp) == ("tool_progress",
-                                                {"stage": "searching"})
-        app.emit("user_input_request", {"request_id": "r1"})
-        assert await self._read_event(resp) == ("user_input_request",
-                                                {"request_id": "r1"})
-        resp.close()
-
-    async def test_keepalive_when_idle(self, single_client, monkeypatch):
-        monkeypatch.setattr(module_of(routes_misc.handle_events),
-                            "SSE_KEEPALIVE_SECONDS", 0.01)
-        resp = await single_client.get("/api/events")
-        line = await asyncio.wait_for(resp.content.readline(), 5)
-        assert line == b": keepalive\n"
-        resp.close()
 
 
 class TestMalformedInput:

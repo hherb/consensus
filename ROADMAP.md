@@ -49,7 +49,7 @@ This document tracks planned and implemented features for Consensus, grouped by 
 | **Authentication & Identity** | | |
 | ✅ Done | Registration and authentication | `auth/`: email/password (PBKDF2-SHA256, 600k iterations), OAuth (GitHub, Google, LinkedIn, Apple), httpOnly bearer tokens, brute-force rate limiting, multiple OAuth identities per user |
 | **Public Service** | | |
-| ✅ Done | Security hardening | `server/`: rate limiting, security headers, CORS, CSRF, path traversal protection, auth middleware; `session.py`: per-session isolated app + SQLite with TTL expiry (`--multi-user`) |
+| ✅ Done | Security hardening | `server/`: rate limiting, security headers, CORS, CSRF, path traversal protection, auth middleware; `session.py`: per-session isolated app + SQLite with TTL expiry (`--multi-user`). Only the JSON dispatch creates a session, and sets its cookie on every reply that has one (#132); an SSE stream ends once its session is evicted, and the frontend tells the user and rebinds it (#135); a missing field, unconvertible number or unknown keyword in an `/api/<method>` body is a 400, not a 500 (#134) |
 | ⬜ Planned | Free hosted instance | Public deployment once hosting costs are resolved |
 | **Distribution** | | |
 | ✅ Done | PyPI package | Published as `consensus-app` (import/CLI stay `consensus`); full feature set installs by default, old extras are empty backward-compat aliases; `scripts/release_pypi.sh` (build → wheel-content verification → publish, `--test`/`--build-only` modes); `evaluation/` moved to `consensus/evaluation/` so the wheel doesn't squat a generic top-level name |

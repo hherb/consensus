@@ -74,3 +74,23 @@ class TestMigrator:
         run_migrations(conn, lock, db_path)
         conn.close()
 
+    def test_recreated_file_at_a_done_path_is_migrated(self, tmp_path):
+        """A deleted and re-created database still gets its schema.
+
+        ``--multi-user`` eviction deletes a session's file; the returning
+        cookie re-creates it at the same path, which the guard had already
+        marked done, so every call on it failed with "no such table".
+        """
+        conn, db_path = self._fresh_conn(tmp_path)
+        lock = threading.Lock()
+        consensus.migrator._migrations_done.discard(db_path)
+        run_migrations(conn, lock, db_path)
+        conn.close()
+        (tmp_path / "mig.db").unlink()
+        conn, _ = self._fresh_conn(tmp_path)
+        run_migrations(conn, lock, db_path)
+        tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "prompts" in tables
+        conn.close()
+

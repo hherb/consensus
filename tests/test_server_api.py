@@ -8,9 +8,13 @@ dropped entry, a crossed argument or a changed default fails here.
 
 from __future__ import annotations
 
+import ast
+import inspect
+
 import pytest
 
 from consensus.app import ConsensusApp
+from consensus.server import routes_api
 from tests.server_helpers import (  # noqa: F401  (fixtures)
     api, fast_hashing, multi_client, server_home, signed_in, single_client,
 )
@@ -34,8 +38,10 @@ DISPATCH = [
     ("delete_entity", {"entity_id": 4}, "delete_entity", (4,), {}),
     ("reactivate_entity", {"entity_id": 4}, "reactivate_entity", (4,), {}),
     ("get_inactive_entities", {}, "get_inactive_entities", (), {}),
-    ("save_prompt", {"name": "p", "content": "c"},
-     "save_prompt", (), {"name": "p", "content": "c"}),
+    ("save_prompt", {"prompt_id": None, "name": "p", "role": "moderator",
+                     "target": "ai", "task": "turn", "content": "c"},
+     "save_prompt", (), {"prompt_id": None, "name": "p", "role": "moderator",
+                         "target": "ai", "task": "turn", "content": "c"}),
     ("delete_prompt", {"prompt_id": 5}, "delete_prompt", (5,), {}),
     ("add_to_discussion", {"entity_id": 4},
      "add_to_discussion", (4, False, False, "standard"), {}),
@@ -148,8 +154,13 @@ DISPATCH = [
 ALL_METHODS = {case[0] for case in DISPATCH}
 
 
-def _recorder(calls: list, result: object, awaitable: bool):
-    """A stand-in for a ``ConsensusApp`` method that records its arguments."""
+def _recorder(calls: list, result: object, awaitable: bool,
+              like: object = None):
+    """A stand-in for a ``ConsensusApp`` method that records its arguments.
+
+    *like* lends it that method's signature, so the dispatch's bind check
+    (#134) judges the forwarded arguments against the real method.
+    """
     if awaitable:
         async def record(self, *args, **kwargs):
             calls.append((args, kwargs))
@@ -158,6 +169,8 @@ def _recorder(calls: list, result: object, awaitable: bool):
         def record(self, *args, **kwargs):
             calls.append((args, kwargs))
             return result
+    if like is not None:
+        record.__signature__ = inspect.signature(like)
     return record
 
 
@@ -178,7 +191,8 @@ async def test_dispatch_forwards_arguments(single_client, monkeypatch, method,
         monkeypatch.setattr(ConsensusApp, attr, record_state)
     else:
         monkeypatch.setattr(ConsensusApp, attr,
-                            _recorder(calls, {"ok": method}, awaitable=False))
+                            _recorder(calls, {"ok": method}, awaitable=False,
+                                      like=getattr(ConsensusApp, attr)))
 
     resp = await api(single_client, method, payload)
     assert resp.status == 200, await resp.text()
@@ -199,12 +213,28 @@ async def test_dispatch_awaits_coroutine_results(single_client, monkeypatch):
     assert (await resp.json())["result"] == {"turn": 1}
 
 
+def _route_table_methods() -> set[str]:
+    """The keys of ``handle_api``'s ``handlers`` dict, read from the source."""
+    tree = ast.parse(inspect.getsource(routes_api))
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "handlers"
+                        for t in node.targets)
+                and isinstance(node.value, ast.Dict)):
+            return {k.value for k in node.value.keys}
+    raise AssertionError("handlers table not found in routes_api")
+
+
 async def test_dispatch_covers_every_route_method(single_client):
-    """An unlisted name is a 404, so ``DISPATCH`` covers the whole table."""
+    """``DISPATCH`` and the route table name the same methods (#136).
+
+    Read from the source, so an entry added to ``routes_api`` without a
+    ``DISPATCH`` case fails here; an unlisted name is a 404.
+    """
+    assert _route_table_methods() == ALL_METHODS
     resp = await api(single_client, "no_such_method")
     assert resp.status == 404
     assert (await resp.json()) == {"error": "Unknown method: no_such_method"}
-    assert len(ALL_METHODS) == 55
 
 
 async def test_result_carries_the_real_state(single_client):
@@ -226,14 +256,56 @@ async def test_app_error_is_a_500_with_its_message(single_client, monkeypatch,
     assert "API error: get_inactive_entities" in caplog.text
 
 
-async def test_missing_required_field_is_a_500(single_client):
-    """A missing required key surfaces as an error, not a crash."""
-    resp = await api(single_client, "delete_entity", {})
+@pytest.mark.parametrize("method,payload,attr,needle", [
+    ("delete_entity", {}, "delete_entity", "entity_id"),
+    ("start_discussion", {"max_rounds": "ten"}, "start_discussion", "ten"),
+    ("set_cost_limit", {"cost_limit": None}, "set_cost_limit", "NoneType"),
+    # json.dumps writes Infinity, which the server's json.loads accepts.
+    ("start_discussion", {"max_rounds": float("inf")}, "start_discussion",
+     "infinity"),
+    ("save_entity", {"name": "A", "entity_type": "ai", "colour": "red"},
+     "save_entity", "colour"),
+    ("save_entity", {"name": "A"}, "save_entity", "entity_type"),
+])
+async def test_bad_arguments_are_a_400(single_client, monkeypatch, caplog,
+                                       method, payload, attr, needle):
+    """A client mistake in the body never reaches the app (#134).
+
+    Missing keys, unconvertible values and unknown or missing keyword
+    arguments are caught before the call, so they are the client's 400,
+    not a logged server fault.
+    """
+    calls: list = []
+    real = getattr(ConsensusApp, attr)
+
+    def record(self, *args, **kwargs):
+        calls.append((args, kwargs))
+    record.__signature__ = inspect.signature(real)
+    monkeypatch.setattr(ConsensusApp, attr, record)
+    resp = await api(single_client, method, payload)
+    assert resp.status == 400, await resp.text()
+    error = (await resp.json())["error"]
+    assert needle in error
+    assert error.startswith(f"Invalid arguments for {method}:")
+    assert calls == []
+    assert "API error" not in caplog.text
+
+
+@pytest.mark.parametrize("exc", [KeyError("k"), TypeError("t"),
+                                 ValueError("v")])
+async def test_same_exception_types_inside_the_app_stay_a_500(
+        single_client, monkeypatch, exc):
+    """The same exception types raised *by* the app are still server faults."""
+    def boom(self):
+        raise exc
+    monkeypatch.setattr(ConsensusApp, "get_inactive_entities", boom)
+    resp = await api(single_client, "get_inactive_entities")
     assert resp.status == 500
-    assert "entity_id" in (await resp.json())["error"]
 
 
-@pytest.mark.parametrize("body", [b"{not json", b"[1, 2]", b"\xff"])
+# The last: an integer past Python's int-string limit is a plain ValueError.
+@pytest.mark.parametrize("body", [b"{not json", b"[1, 2]", b"\xff",
+                                  b'{"cost_limit": ' + b"1" * 5000 + b"}"])
 async def test_unreadable_body_is_a_400(single_client, monkeypatch, body):
     """A body that is not a JSON object never reaches the app.
 
@@ -296,6 +368,17 @@ class TestByokKeys:
                                   fail=True)
         assert events[-1] == ("clear",)
 
+    async def test_bad_arguments_set_no_keys(self, single_client,
+                                             monkeypatch):
+        """A 400 returns before the keys are set, so none are left behind."""
+        events: list = []
+        monkeypatch.setattr(ConsensusApp, "set_request_api_keys",
+                            lambda self, keys: events.append(("set", keys)))
+        resp = await api(single_client, "delete_entity",
+                         headers={"X-API-Keys": '{"1": "k"}'})
+        assert resp.status == 400
+        assert events == []
+
     @pytest.mark.parametrize("header", [None, "", "not json", '["a"]', "42"])
     async def test_absent_or_malformed_header_sets_nothing(
             self, single_client, monkeypatch, header):
@@ -342,3 +425,29 @@ class TestMultiUserSessions:
         resp = await api(signed_in, "get_state")
         assert resp.status == 503
         assert "capacity" in (await resp.json())["error"]
+
+    @pytest.mark.parametrize("method,payload", [
+        ("no_such_method", {}), ("delete_entity", {}),
+    ])
+    async def test_error_replies_still_set_the_cookie(self, signed_in,
+                                                      method, payload):
+        """A session this call created is not orphaned by its error (#132)."""
+        resp = await api(signed_in, method, payload)
+        assert resp.status in (400, 404)
+        assert "consensus_sid" in resp.cookies
+
+    async def test_invalid_json_reply_sets_the_cookie(self, signed_in):
+        resp = await signed_in.post(
+            "/api/get_state", data=b"{bad",
+            headers={"Content-Type": "application/json"})
+        assert resp.status == 400
+        assert "consensus_sid" in resp.cookies
+
+    async def test_app_error_reply_sets_the_cookie(self, signed_in,
+                                                   monkeypatch):
+        def boom(self):
+            raise RuntimeError("x")
+        monkeypatch.setattr(ConsensusApp, "get_inactive_entities", boom)
+        resp = await api(signed_in, "get_inactive_entities")
+        assert resp.status == 500
+        assert "consensus_sid" in resp.cookies

@@ -18,7 +18,7 @@ from ..app import ConsensusApp
 from ..auth import AuthDatabase, AuthManager
 from ..session import SessionManager
 from .constants import (
-    AUTH_COOKIE, AUTH_HEADER, CAPACITY_ERROR, SESSION_COOKIE,
+    AUTH_COOKIE, AUTH_HEADER, NO_SESSION_ERROR, SESSION_COOKIE,
 )
 
 logger = logging.getLogger(__name__)
@@ -139,7 +139,8 @@ async def get_app_for_request(request: web.Request) -> tuple[ConsensusApp | None
 
     Returns (app, session_id). In single-user mode, session_id is empty;
     in ``--multi-user`` mode, app is ``None`` when the server is at capacity
-    (both callers answer 503).
+    (the caller answers 503). Creates the session if need be, so only
+    ``handle_api``, which sets the cookie on its reply, may call it (#132).
     """
     ctx = request.app[CTX_KEY]
     if ctx.shared_app:
@@ -162,16 +163,20 @@ async def session_app(request: web.Request) -> ConsensusApp | web.Response:
 
     The shared preamble of every ``/api/`` route outside the dispatch table:
     401 without a signed-in user where auth is required (``auth_middleware``
-    already answers that; this keeps a route mounted elsewhere safe), 503
-    when ``--multi-user`` has no room for another session.
+    already answers that; this keeps a route mounted elsewhere safe), 400
+    when ``--multi-user`` has no live session for the cookie. These routes
+    never create a session: they cannot set its cookie (#132).
     """
     ctx = request.app[CTX_KEY]
     if ctx.auth_required and not request.get("auth_user"):
         return web.json_response({"error": "Authentication required"},
                                  status=401)
-    app, _sid = await get_app_for_request(request)
+    if ctx.shared_app:
+        return ctx.shared_app
+    assert ctx.session_mgr is not None  # guaranteed when ctx.shared_app is None
+    app = ctx.session_mgr.lookup(request.cookies.get(SESSION_COOKIE, ""))
     if app is None:
-        return web.json_response({"error": CAPACITY_ERROR}, status=503)
+        return web.json_response({"error": NO_SESSION_ERROR}, status=400)
     return app
 
 
