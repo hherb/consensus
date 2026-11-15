@@ -1,12 +1,10 @@
 # HANDOVER
 
 _Last updated: 2026-11-15. `main` is at **v2.0.0** (released 2026-07-20) plus
-the merged #61 slices (through `desktop.py` → `desktop/`, PR #123), the #121
-fix (MCP tool failures are `isError` results, PR #122), the #104 rotation fix,
-the #115/#118 pricing fixes (PRs #117/#119) and `moderator.py` → `moderator/`
-(PR #126). The fifteenth #61 slice (`auth.py` → `auth/`, plus eight auth
-defect fixes and the PR #129 review fixes) is on `refactor/split-auth-61` (PR
-#129, suite at **4040 passing**). The discussion-method review & repair
+the merged #61 slices (through `auth.py` → `auth/`, PR #129), the #121 fix
+(MCP tool failures are `isError` results, PR #122), the #104 rotation fix and
+the #115/#118 pricing fixes (PRs #117/#119). The sixteenth and last #61 slice
+(`server.py` → `server/`) is in progress on `refactor/split-server-61`. The discussion-method review & repair
 campaign (#12–#48, #56–#60) is finished and merged; so is alpha/stable
 distribution (PyPI `consensus-app` + notarized macOS DMG), the public website,
 the flow-error-visibility work (#71–#74, PR #76), and the tools_document

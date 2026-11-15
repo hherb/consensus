@@ -50,6 +50,9 @@ AUTH_HEADER = "Authorization"
 # styles stay so an SVG still renders as drawn.
 IMAGE_SERVE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
 
+# An idle SSE stream gets a keepalive comment this often (seconds).
+SSE_KEEPALIVE_SECONDS = 30
+
 
 
 def _generate_session_id() -> str:
@@ -57,20 +60,24 @@ def _generate_session_id() -> str:
     return secrets.token_urlsafe(32)
 
 
-async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
-                     multi_user: bool = False) -> None:
-    """Start the aiohttp web server and block until interrupted.
+def create_web_app(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
+                   multi_user: bool = False) -> web.Application:
+    """Build the aiohttp application: middleware, routes and lifecycle hooks.
+
+    The session cleanup loop starts with the app and the shared app / session
+    manager shut down with it (``on_startup`` / ``on_cleanup``), so a test
+    client drives the same lifecycle as ``launch_web``.
 
     Args:
-        host: Bind address.
-        port: Bind port.
+        host: Bind address (part of the always-allowed local CORS origin).
+        port: Bind port (likewise).
         multi_user: If True, each browser session gets its own ConsensusApp
                     instance with per-session SQLite. If False (default),
                     all clients share a single ConsensusApp (local/desktop use).
-    """
-    from .config import load_env
-    load_env()
 
+    Returns:
+        The configured, not yet started, ``web.Application``.
+    """
     static_dir = os.path.realpath(os.path.join(os.path.dirname(__file__), "static"))
 
     # Single-user mode: one shared app (preserves original behavior)
@@ -1117,7 +1124,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             while True:
                 try:
                     event_type, data = await asyncio.wait_for(
-                        queue.get(), timeout=30,
+                        queue.get(), timeout=SSE_KEEPALIVE_SECONDS,
                     )
                     event_str = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
                     await resp.write(event_str.encode())
@@ -1220,9 +1227,37 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     webapp.router.add_get("/", serve_index)
     webapp.router.add_get("/{path:.*}", serve_static)
 
-    if session_mgr:
-        session_mgr.start_cleanup_loop()
+    async def _on_startup(_webapp: web.Application) -> None:
+        if session_mgr:
+            session_mgr.start_cleanup_loop()
 
+    async def _on_cleanup(_webapp: web.Application) -> None:
+        # Close MCP providers for the shared app (single-user mode)
+        if shared_app:
+            await shared_app.shutdown()
+        if session_mgr:
+            await session_mgr.stop()
+
+    webapp.on_startup.append(_on_startup)
+    webapp.on_cleanup.append(_on_cleanup)
+    return webapp
+
+
+async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
+                     multi_user: bool = False) -> None:
+    """Start the aiohttp web server and block until interrupted.
+
+    Args:
+        host: Bind address.
+        port: Bind port.
+        multi_user: If True, each browser session gets its own ConsensusApp
+                    instance with per-session SQLite. If False (default),
+                    all clients share a single ConsensusApp (local/desktop use).
+    """
+    from .config import load_env
+    load_env()
+
+    webapp = create_web_app(host, port, multi_user)
     runner = web.AppRunner(webapp)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
@@ -1233,9 +1268,5 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     try:
         await asyncio.Event().wait()
     finally:
-        # Close MCP providers for the shared app (single-user mode)
-        if shared_app:
-            await shared_app.shutdown()
-        if session_mgr:
-            await session_mgr.stop()
+        # Runs the on_cleanup hooks: shared app / session manager shutdown.
         await runner.cleanup()
