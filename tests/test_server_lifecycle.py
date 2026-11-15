@@ -72,16 +72,21 @@ class TestEvalMount:
 
 
 class TestLifecycle:
-    async def test_cleanup_shuts_the_shared_app_down(self, server_home,
-                                                     monkeypatch):
+    async def test_cleanup_shuts_down_the_app_that_served(self, server_home,
+                                                          monkeypatch):
+        """The app shut down on exit is the one requests reached."""
         calls: list = []
+        served: list = []
 
         async def shutdown(self):
             calls.append(self)
         monkeypatch.setattr(ConsensusApp, "shutdown", shutdown)
+        monkeypatch.setattr(ConsensusApp, "list_discussion_methods",
+                            lambda self: served.append(self) or [])
         client = await make_client(multi_user=False)
+        await client.post("/api/list_discussion_methods", json={})
         await client.close()
-        assert len(calls) == 1
+        assert calls == served and len(calls) == 1
 
     async def test_multi_user_starts_and_stops_the_session_manager(
             self, server_home, fast_hashing, monkeypatch):

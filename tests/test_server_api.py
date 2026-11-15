@@ -298,6 +298,8 @@ class TestMultiUserSessions:
         resp = await api(signed_in, "get_state")
         assert resp.status == 200
         cookie = resp.cookies["consensus_sid"]
+        from consensus.session import DEFAULT_SESSION_TTL
+        assert int(cookie["max-age"]) == DEFAULT_SESSION_TTL
         assert cookie["httponly"]
         assert cookie["samesite"] == "Lax"
         assert not cookie["secure"]

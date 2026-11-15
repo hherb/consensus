@@ -16,6 +16,7 @@ import pytest
 
 from consensus import server
 from consensus.app import ConsensusApp
+from consensus.server import routes_misc
 from tests.server_helpers import (  # noqa: F401  (fixtures)
     fast_hashing, module_of, multi_client, server_home, signed_in, single_client,
 )
@@ -473,7 +474,7 @@ class TestEvents:
         resp.close()
 
     async def test_keepalive_when_idle(self, single_client, monkeypatch):
-        monkeypatch.setattr(module_of(server.create_web_app),
+        monkeypatch.setattr(module_of(routes_misc.handle_events),
                             "SSE_KEEPALIVE_SECONDS", 0.01)
         resp = await single_client.get("/api/events")
         line = await asyncio.wait_for(resp.content.readline(), 5)

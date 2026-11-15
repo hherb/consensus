@@ -13,6 +13,7 @@ from pathlib import Path
 import aiohttp
 import pytest
 
+import consensus
 from consensus import server
 from tests.server_helpers import (  # noqa: F401  (fixtures)
     LOCAL_ORIGIN, api, auth_cookie, fast_hashing,
@@ -29,7 +30,8 @@ SECURITY_HEADERS = {
 
 def rate_limit_module():
     """The module whose ``RATE_LIMIT_*`` / ``time`` the limiter reads."""
-    return module_of(server.create_web_app)
+    from consensus.server import middleware
+    return middleware
 
 
 class TestSecurityHeaders:
@@ -205,7 +207,7 @@ class TestAuthGate:
 
 
 
-STATIC_DIR = Path(server.__file__).resolve().parent / "static"
+STATIC_DIR = Path(consensus.__file__).resolve().parent / "static"
 FETCH_CALL = re.compile(r"fetch\((?P<args>[^;]*?)\);", re.S)
 
 

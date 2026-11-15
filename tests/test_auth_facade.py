@@ -79,7 +79,8 @@ class TestPublicApi:
             names = _imported_names(path)
             if names:
                 consumers[str(path.relative_to(REPO_ROOT))] = names
-        assert set(consumers) == {"consensus/server.py"}
+        assert set(consumers) == {"consensus/server/context.py",
+                                  "consensus/server/routes_auth.py"}
         for where, names in consumers.items():
             assert set(names) <= EXPECTED_PUBLIC_API, where
 

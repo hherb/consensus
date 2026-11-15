@@ -22,7 +22,8 @@ from tests.server_helpers import (  # noqa: F401  (fixtures)
 
 def login_limit_module():
     """The module whose ``LOGIN_RATE_LIMIT_*`` the login handler reads."""
-    return module_of(server.create_web_app)
+    from consensus.server import routes_auth
+    return routes_auth
 
 
 async def login(client, email=TEST_EMAIL, password=TEST_PASSWORD):
