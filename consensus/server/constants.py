@@ -18,6 +18,10 @@ RATE_LIMIT_MAX = 120  # requests per window
 # Login brute-force protection
 LOGIN_RATE_LIMIT_MAX = 5  # max login attempts per email per window
 LOGIN_RATE_LIMIT_WINDOW = 300  # 5-minute window
+# Password hashes computed at once in worker threads (#141). The bound keeps
+# a login burst from taking every thread of the default executor, which
+# also serves DNS lookups; later logins wait on the event loop instead.
+PASSWORD_HASH_CONCURRENCY = 4
 
 # Session cookie name
 SESSION_COOKIE = "consensus_sid"

@@ -185,8 +185,50 @@ def test_login_rehash_does_not_undo_a_concurrent_lock_out(manager,
 
     monkeypatch.setattr(module_of(auth.AuthManager), "verify_password",
                         verify_then_lock_out)
-    manager.login("a@example.com", "long-enough")
+    with pytest.raises(ValueError):
+        manager.login("a@example.com", "long-enough")
     assert manager.db.get_user_by_id(user.id).password_hash == ""
+
+
+def test_login_mid_lock_out_gets_no_session(manager, monkeypatch):
+    """Login verifies in a worker thread (#141); an OAuth lock-out landing
+    meanwhile revokes every session, so the login must not mint one."""
+    user, _ = manager.register("a@example.com", "long-enough")
+    real_verify = module_of(auth.AuthManager).verify_password
+
+    def verify_then_lock_out(password, stored):
+        ok = real_verify(password, stored)
+        manager.db.link_oauth(user.id, "github", "1", lock_out_password=True)
+        return ok
+
+    monkeypatch.setattr(module_of(auth.AuthManager), "verify_password",
+                        verify_then_lock_out)
+    with pytest.raises(ValueError, match="Invalid email or password"):
+        manager.login("a@example.com", "long-enough")
+    assert manager.db.conn.execute(
+        "SELECT COUNT(*) FROM auth_tokens WHERE user_id = ?",
+        (user.id,)).fetchone()[0] == 0
+
+
+def test_login_after_disable_mid_verify_gets_no_session(manager,
+                                                        monkeypatch):
+    user, _ = manager.register("a@example.com", "long-enough")
+    manager.db.revoke_all_tokens(user.id)
+    real_verify = module_of(auth.AuthManager).verify_password
+
+    def verify_then_disable(password, stored):
+        ok = real_verify(password, stored)
+        manager.db.conn.execute(
+            "UPDATE users SET is_active = 0 WHERE id = ?", (user.id,))
+        return ok
+
+    monkeypatch.setattr(module_of(auth.AuthManager), "verify_password",
+                        verify_then_disable)
+    with pytest.raises(ValueError):
+        manager.login("a@example.com", "long-enough")
+    assert manager.db.conn.execute(
+        "SELECT COUNT(*) FROM auth_tokens WHERE user_id = ?",
+        (user.id,)).fetchone()[0] == 0
 
 
 def test_login_survives_a_failed_rehash(manager, monkeypatch, caplog):
@@ -381,3 +423,27 @@ async def test_github_email_lookup_outage_asks_to_retry(
         await manager.oauth_callback("github", "code", REDIRECT_URI)
     assert "did not confirm" not in str(exc.value)
     assert manager.db.get_user_by_oauth("github", "9") is None
+
+
+async def test_oauth_exchange_past_the_deadline_is_refused(manager,
+                                                           monkeypatch):
+    """A slow provider must not outlive a proxy's timeout (#130)."""
+    import asyncio
+    mod = module_of(auth.AuthManager)
+
+    async def slow_exchange(provider, code, redirect_uri):
+        await asyncio.sleep(10)
+        return {"email": "late@example.com", "oauth_id": "1"}
+
+    monkeypatch.setattr(mod, "exchange_oauth_code", slow_exchange)
+    monkeypatch.setattr(mod, "SIGN_IN_DEADLINE_SECONDS", 0.01)
+    with pytest.raises(ValueError, match="did not answer in time"):
+        await _google_login(manager)
+    assert manager.db.get_user_by_email("late@example.com") is None
+
+
+def test_sign_in_deadline_fits_under_a_default_proxy_timeout():
+    nginx_proxy_read_timeout = 60
+    deadline = module_of(auth.AuthManager).SIGN_IN_DEADLINE_SECONDS
+    assert (auth.SIGN_IN_HTTP_TIMEOUT < deadline
+            < nginx_proxy_read_timeout)

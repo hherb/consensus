@@ -82,6 +82,17 @@ class AuthDatabase:
                 );
             """)
 
+    def _query_one(self, sql: str,
+                   params: tuple = ()) -> Optional[sqlite3.Row]:
+        """Fetch one row under the lock.
+
+        Login and registration run in worker threads (#141); without the
+        lock a read could land inside another thread's multi-statement
+        write (``link_oauth``) on the shared connection.
+        """
+        with self._lock:
+            return self.conn.execute(sql, params).fetchone()
+
     def _execute_write(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         with self._lock:
             cur = self.conn.execute(sql, params)
@@ -123,32 +134,32 @@ class AuthDatabase:
         )
 
     def get_user_by_email(self, email: str) -> Optional[User]:
-        row = self.conn.execute(
+        row = self._query_one(
             "SELECT * FROM users WHERE email = ?", (email,),
-        ).fetchone()
+        )
         return User.from_db_row(row) if row else None
 
     def get_user_by_id(self, user_id: int) -> Optional[User]:
-        row = self.conn.execute(
+        row = self._query_one(
             "SELECT * FROM users WHERE id = ?", (user_id,),
-        ).fetchone()
+        )
         return User.from_db_row(row) if row else None
 
     def get_user_by_oauth(self, provider: str, oauth_id: str) -> Optional[User]:
         # Check the multi-identity table first
-        row = self.conn.execute(
+        row = self._query_one(
             """SELECT u.* FROM user_oauth_identities oi
                JOIN users u ON u.id = oi.user_id
                WHERE oi.provider = ? AND oi.oauth_id = ?""",
             (provider, oauth_id),
-        ).fetchone()
+        )
         if row:
             return User.from_db_row(row)
         # Fall back to legacy single-identity columns
-        row = self.conn.execute(
+        row = self._query_one(
             "SELECT * FROM users WHERE oauth_provider = ? AND oauth_id = ?",
             (provider, oauth_id),
-        ).fetchone()
+        )
         return User.from_db_row(row) if row else None
 
     def update_last_login(self, user_id: int) -> None:
@@ -238,32 +249,49 @@ class AuthDatabase:
 
     # -- Auth tokens -------------------------------------------------------
 
-    def create_token(self, user_id: int,
-                     ttl: int = AUTH_TOKEN_TTL) -> str:
+    def create_token(self, user_id: int, ttl: int = AUTH_TOKEN_TTL,
+                     password_hash: Optional[str] = None) -> str:
         """Create a new auth token. Returns the raw token string.
 
         Expired tokens are pruned first; nothing else removes them.
+
+        With *password_hash*, the token is issued only while the user is
+        active and still stores that hash, in one statement: a password
+        login verifies off the event loop (#141), and an OAuth lock-out or
+        a disable landing meanwhile must not be followed by a fresh
+        session. Raises ValueError if the condition fails.
         """
         self.cleanup_expired_tokens()
         raw_token = secrets.token_urlsafe(AUTH_TOKEN_BYTES)
         now = time.time()
-        self._execute_write(
-            """INSERT INTO auth_tokens (user_id, token_hash, created_at, expires_at)
-               VALUES (?, ?, ?, ?)""",
-            (user_id, _hash_token(raw_token), now, now + ttl),
-        )
+        params: tuple = (user_id, _hash_token(raw_token), now, now + ttl)
+        if password_hash is None:
+            self._execute_write(
+                """INSERT INTO auth_tokens
+                   (user_id, token_hash, created_at, expires_at)
+                   VALUES (?, ?, ?, ?)""", params)
+            return raw_token
+        cur = self._execute_write(
+            """INSERT INTO auth_tokens
+               (user_id, token_hash, created_at, expires_at)
+               SELECT ?, ?, ?, ? WHERE EXISTS (
+                   SELECT 1 FROM users WHERE id = ? AND password_hash = ?
+                   AND password_hash != '' AND is_active = 1)""",
+            params + (user_id, password_hash))
+        if cur.rowcount == 0:
+            raise ValueError("Invalid email or password")
         return raw_token
 
     def validate_token(self, raw_token: str) -> Optional[User]:
         """Validate a token and return the associated user, or None."""
         th = _hash_token(raw_token)
-        row = self.conn.execute(
+        row = self._query_one(
             """SELECT u.* FROM auth_tokens t
                JOIN users u ON u.id = t.user_id
                WHERE t.token_hash = ? AND t.expires_at > ?
                AND u.is_active = 1""",
             (th, time.time()),
-        ).fetchone()
+        )
         return User.from_db_row(row) if row else None
 
     def revoke_token(self, raw_token: str) -> None:

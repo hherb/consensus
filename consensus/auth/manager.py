@@ -1,10 +1,11 @@
 """High-level authentication operations used by the web server."""
 
+import asyncio
 import logging
 import sqlite3
 from typing import Optional
 
-from .constants import MIN_PASSWORD_LENGTH
+from .constants import MIN_PASSWORD_LENGTH, SIGN_IN_DEADLINE_SECONDS
 from .database import AuthDatabase
 from .models import User
 from .oauth import _coerce_verified, exchange_oauth_code
@@ -69,11 +70,13 @@ class AuthManager:
             raise ValueError("Invalid email or password")
         if not user.is_active:
             raise ValueError("Account is disabled")
+        # Conditional on the hash just verified: a lock-out or disable
+        # during the verify (which runs off the loop, #141) wins.
+        token = self.db.create_token(user.id,
+                                     password_hash=user.password_hash)
+        self.db.update_last_login(user.id)
         if needs_rehash(user.password_hash):
             self._rehash(user, password)
-
-        self.db.update_last_login(user.id)
-        token = self.db.create_token(user.id)
         return user, token
 
     def _rehash(self, user: User, password: str) -> None:
@@ -105,9 +108,18 @@ class AuthManager:
         """Handle OAuth callback: exchange code, find-or-create user.
 
         Returns (user, token) tuple.
-        Raises ValueError on failure.
+        Raises ValueError on failure, including a provider exchange that
+        overruns ``SIGN_IN_DEADLINE_SECONDS`` (#130).
         """
-        userinfo = await exchange_oauth_code(provider, code, redirect_uri)
+        try:
+            async with asyncio.timeout(SIGN_IN_DEADLINE_SECONDS):
+                userinfo = await exchange_oauth_code(provider, code,
+                                                     redirect_uri)
+        except TimeoutError:
+            logger.warning("Sign-in with %s gave up after %s s",
+                           provider, SIGN_IN_DEADLINE_SECONDS)
+            raise ValueError(f"{provider} did not answer in time.  "
+                             "Please try again.") from None
         # Without an id, the identity lookup would match any other account
         # stored with an empty id.
         if (not userinfo or not userinfo.get("email")
