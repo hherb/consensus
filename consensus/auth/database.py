@@ -174,12 +174,20 @@ class AuthDatabase:
             f"UPDATE users SET {set_clause} WHERE id = ?", tuple(values),
         )
 
-    def change_password(self, user_id: int, new_password: str) -> None:
+    def change_password(self, user_id: int, new_password: str,
+                        expected: Optional[str] = None) -> bool:
+        """Store a fresh hash of *new_password*; True if a row changed.
+
+        With *expected*, write only while the stored hash still equals it,
+        so a concurrent change (an OAuth lock-out, say) is not undone.
+        """
         pw_hash = hash_password(new_password)
-        self._execute_write(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
-            (pw_hash, user_id),
-        )
+        sql = "UPDATE users SET password_hash = ? WHERE id = ?"
+        params: tuple = (pw_hash, user_id)
+        if expected is not None:
+            sql += " AND password_hash = ?"
+            params += (expected,)
+        return self._execute_write(sql, params).rowcount > 0
 
     def link_oauth(self, user_id: int, provider: str, oauth_id: str,
                    avatar_url: str = "",

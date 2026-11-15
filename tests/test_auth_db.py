@@ -83,6 +83,8 @@ def test_verify_password_accepts_the_legacy_format(fast_hashing):
     "pbkdf2_sha256$0$aa$bb", "pbkdf2_sha256$-5$aa$bb",
     "pbkdf2_sha256$many$aa$bb", "pbkdf2_sha256$1000$zz$bb",
     "md5$1000$aa$bb", "pbkdf2_sha256$1000$aa", "a$b$c$d$e",
+    "pbkdf2_sha256$1000$aa$zz", "pbkdf2_sha256$1000$aa$\u00e9",
+    "pbkdf2_sha256$1000$$bb", "pbkdf2_sha256$1000$aa$", "$bb",
 ])
 def test_verify_password_rejects_malformed_hash(stored, fast_hashing):
     assert auth.verify_password("pw", stored) is False
@@ -95,8 +97,13 @@ def test_needs_rehash(fast_hashing, monkeypatch):
     monkeypatch.setattr(module_of(auth.hash_password),
                         "PASSWORD_HASH_ITERATIONS", FAST_HASH_ITERATIONS * 2)
     assert auth.needs_rehash(current)
-    assert not auth.needs_rehash(auth.hash_password("pw"))
+    stronger = auth.hash_password("pw")
+    assert not auth.needs_rehash(stronger)
     assert not auth.needs_rehash("garbage")
+    # Lowering the constant never re-hashes downward.
+    monkeypatch.setattr(module_of(auth.hash_password),
+                        "PASSWORD_HASH_ITERATIONS", FAST_HASH_ITERATIONS)
+    assert not auth.needs_rehash(stronger)
 
 
 # -- User ------------------------------------------------------------------
@@ -182,6 +189,16 @@ def test_change_password(auth_db):
     stored = auth_db.get_user_by_id(user.id).password_hash
     assert auth.verify_password("new-pass", stored)
     assert not auth.verify_password("old-pass", stored)
+
+
+def test_change_password_with_expected_hash_is_compare_and_swap(auth_db):
+    user = auth_db.create_user(email="c@example.com", password="old-pass")
+    old = auth_db.get_user_by_id(user.id).password_hash
+    assert not auth_db.change_password(user.id, "new-pass", expected="other")
+    assert auth_db.get_user_by_id(user.id).password_hash == old
+    assert auth_db.change_password(user.id, "new-pass", expected=old)
+    assert auth.verify_password(
+        "new-pass", auth_db.get_user_by_id(user.id).password_hash)
 
 
 # -- OAuth identities ------------------------------------------------------

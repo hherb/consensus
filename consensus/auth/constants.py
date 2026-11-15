@@ -6,7 +6,8 @@ AUTH_TOKEN_BYTES = 32
 AUTH_TOKEN_TTL = 86400 * 30  # 30 days
 PASSWORD_SALT_BYTES = 32
 #: PBKDF2-SHA256 rounds for new hashes (OWASP 2023). Each hash records its
-#: own count, so raising this re-hashes users at their next login (#127).
+#: own count, so raising this re-hashes users at their next successful
+#: login (#127).
 PASSWORD_HASH_ITERATIONS = 600_000
 #: Rounds a pre-#127 ``salt$hash`` value was made with. Never change it.
 LEGACY_PASSWORD_HASH_ITERATIONS = 600_000

@@ -1,6 +1,7 @@
 """High-level authentication operations used by the web server."""
 
 import logging
+import sqlite3
 from typing import Optional
 
 from .constants import MIN_PASSWORD_LENGTH
@@ -53,25 +54,41 @@ class AuthManager:
         """Authenticate with email/password.
 
         Returns (user, token) tuple.
-        Raises ValueError on invalid credentials. Every failure costs one
-        PBKDF2, so timing does not reveal which emails have a password
-        (#131); a hash below the current cost is re-hashed on success (#127).
+        Raises ValueError on invalid credentials. An unknown or
+        password-less email costs one current-cost PBKDF2, as a wrong
+        password on an up-to-date hash does, so timing does not reveal
+        which emails have a password (#131). A hash below the current cost
+        is re-hashed after a successful login of an active user (#127).
         """
         email = email.strip().lower()
         user = self.db.get_user_by_email(email)
         if not user or not user.password_hash:
-            burn_password_check(password)  # same cost as a wrong password
+            burn_password_check(password)  # cost of a wrong password
             raise ValueError("Invalid email or password")
         if not verify_password(password, user.password_hash):
             raise ValueError("Invalid email or password")
         if not user.is_active:
             raise ValueError("Account is disabled")
         if needs_rehash(user.password_hash):
-            self.db.change_password(user.id, password)
+            self._rehash(user, password)
 
         self.db.update_last_login(user.id)
         token = self.db.create_token(user.id)
         return user, token
+
+    def _rehash(self, user: User, password: str) -> None:
+        """Upgrade *user*'s hash to the current cost; never fails a login.
+
+        Compare-and-swap on the hash just verified, so a concurrent
+        lock-out or password change wins. A failed write is logged and
+        retried at the next login.
+        """
+        try:
+            self.db.change_password(user.id, password,
+                                    expected=user.password_hash)
+        except sqlite3.Error:
+            logger.exception("Password rehash failed for user %s; "
+                             "will retry at the next login", user.id)
 
     def logout(self, token: str) -> None:
         """Revoke a single auth token."""

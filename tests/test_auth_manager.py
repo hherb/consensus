@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import sqlite3
 
 import httpx
 import pytest
@@ -148,6 +149,70 @@ def test_login_upgrades_a_legacy_hash(manager):
     stored = manager.db.get_user_by_id(user.id).password_hash
     assert stored.startswith(auth.PASSWORD_HASH_SCHEME + "$")
     assert not auth.needs_rehash(stored)
+    manager.login("a@example.com", "long-enough")  # the new hash works
+
+
+def _raise_hash_cost(monkeypatch) -> int:
+    """Raise the current cost so every existing hash needs a rehash."""
+    raised = FAST_HASH_ITERATIONS * 2
+    monkeypatch.setattr(module_of(auth.hash_password),
+                        "PASSWORD_HASH_ITERATIONS", raised)
+    return raised
+
+
+def test_login_does_not_rehash_a_disabled_account(manager, monkeypatch):
+    user, _ = manager.register("a@example.com", "long-enough")
+    before = manager.db.get_user_by_id(user.id).password_hash
+    manager.db.conn.execute("UPDATE users SET is_active = 0 WHERE id = ?",
+                            (user.id,))
+    _raise_hash_cost(monkeypatch)
+    with pytest.raises(ValueError, match="disabled"):
+        manager.login("a@example.com", "long-enough")
+    assert manager.db.get_user_by_id(user.id).password_hash == before
+
+
+def test_login_rehash_does_not_undo_a_concurrent_lock_out(manager,
+                                                          monkeypatch):
+    """An OAuth link clearing the password mid-login must win (#127)."""
+    user, _ = manager.register("a@example.com", "long-enough")
+    _raise_hash_cost(monkeypatch)
+    real_verify = module_of(auth.AuthManager).verify_password
+
+    def verify_then_lock_out(password, stored):
+        ok = real_verify(password, stored)
+        manager.db.link_oauth(user.id, "github", "1", lock_out_password=True)
+        return ok
+
+    monkeypatch.setattr(module_of(auth.AuthManager), "verify_password",
+                        verify_then_lock_out)
+    manager.login("a@example.com", "long-enough")
+    assert manager.db.get_user_by_id(user.id).password_hash == ""
+
+
+def test_login_survives_a_failed_rehash(manager, monkeypatch, caplog):
+    """The upgrade is optional; a failed write must not refuse a login."""
+    manager.register("a@example.com", "long-enough")
+    _raise_hash_cost(monkeypatch)
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(manager.db, "change_password", locked)
+    with caplog.at_level(logging.ERROR, logger="consensus.auth"):
+        user, token = manager.login("a@example.com", "long-enough")
+    assert token
+    assert "rehash failed" in caplog.text
+
+
+def test_login_logs_an_unreadable_stored_hash(manager, caplog):
+    user, _ = manager.register("a@example.com", "long-enough")
+    manager.db.conn.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                            ("argon2$garbage", user.id))
+    with caplog.at_level(logging.WARNING, logger="consensus.auth"):
+        with pytest.raises(ValueError, match="^Invalid email or password$"):
+            manager.login("a@example.com", "long-enough")
+    assert "not in a recognised format" in caplog.text
+    assert "argon2" not in caplog.text
 
 
 @pytest.mark.parametrize("email", ["nobody@example.com", "o@example.com"])
@@ -164,8 +229,6 @@ def test_login_without_a_password_account_costs_one_hash(
         rounds.append(iterations)
         return real(name, password, salt, iterations, *args)
 
-    with pytest.raises(ValueError):
-        manager.login(email, "long-enough")  # primes the cached dummy hash
     monkeypatch.setattr(hashlib, "pbkdf2_hmac", counting)
     for attempt in (email, "a@example.com"):
         rounds.clear()
