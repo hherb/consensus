@@ -621,7 +621,7 @@ async def launch_web(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
         update_fields = {}
-        for field in ("display_name", "avatar_url", "email"):
+        for field in ("display_name", "avatar_url"):
             if field in data:
                 update_fields[field] = data[field]
         if update_fields:

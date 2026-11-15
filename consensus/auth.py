@@ -309,8 +309,13 @@ class AuthDatabase:
         )
 
     def update_user(self, user_id: int, **kwargs: object) -> None:
-        """Update user fields. Only known safe fields are accepted."""
-        allowed = {"display_name", "avatar_url", "email"}
+        """Update user fields. Only known safe fields are accepted.
+
+        ``email`` is deliberately not editable: nothing verifies a new
+        address, and OAuth sign-in links a verified provider email to the
+        account holding it, so an edit could claim someone else's address.
+        """
+        allowed = {"display_name", "avatar_url"}
         fields = {k: v for k, v in kwargs.items() if k in allowed}
         if not fields:
             return

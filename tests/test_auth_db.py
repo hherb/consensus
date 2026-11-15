@@ -116,6 +116,15 @@ def test_update_user_ignores_unknown_fields(auth_db):
     assert stored.password_hash == ""
 
 
+def test_update_user_cannot_change_email(auth_db):
+    # An unverified email edit plus OAuth auto-linking let an attacker claim
+    # an address before its owner first signed in with a provider.
+    user = auth_db.create_user(email="mine@example.com")
+    auth_db.update_user(user.id, email="victim@example.com")
+    assert auth_db.get_user_by_id(user.id).email == "mine@example.com"
+    assert auth_db.get_user_by_email("victim@example.com") is None
+
+
 def test_update_user_with_no_allowed_fields_is_a_no_op(auth_db):
     user = auth_db.create_user(email="n@example.com")
     auth_db.update_user(user.id, is_active=0)
