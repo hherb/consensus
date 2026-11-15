@@ -5,7 +5,14 @@ from ..http_fetch import FETCH_BASE_DELAY, FETCH_MAX_RETRIES
 AUTH_TOKEN_BYTES = 32
 AUTH_TOKEN_TTL = 86400 * 30  # 30 days
 PASSWORD_SALT_BYTES = 32
-PASSWORD_HASH_ITERATIONS = 600_000  # OWASP 2023 recommendation for PBKDF2-SHA256
+#: PBKDF2-SHA256 rounds for new hashes (OWASP 2023). Each hash records its
+#: own count, so raising this re-hashes users at their next successful
+#: login (#127).
+PASSWORD_HASH_ITERATIONS = 600_000
+#: Rounds a pre-#127 ``salt$hash`` value was made with. Never change it.
+LEGACY_PASSWORD_HASH_ITERATIONS = 600_000
+#: Leading field of a current-format stored password hash.
+PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 OAUTH_STATE_TTL = 600  # 10 minutes: max time for user to complete OAuth flow
 # Names on the provider-request logging path avoid "oauth": CodeQL's
 # password heuristic matches it and flags every log line they reach.

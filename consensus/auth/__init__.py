@@ -19,9 +19,11 @@ their submodule.
 from .constants import (
     AUTH_TOKEN_BYTES,
     AUTH_TOKEN_TTL,
+    LEGACY_PASSWORD_HASH_ITERATIONS,
     MIN_PASSWORD_LENGTH,
     OAUTH_STATE_TTL,
     PASSWORD_HASH_ITERATIONS,
+    PASSWORD_HASH_SCHEME,
     PASSWORD_SALT_BYTES,
     SIGN_IN_HTTP_TIMEOUT,
     SIGN_IN_MAX_RETRIES,
@@ -36,14 +38,16 @@ from .oauth import (
     exchange_oauth_code,
     get_available_oauth_providers,
 )
-from .passwords import hash_password, verify_password
+from .passwords import hash_password, needs_rehash, verify_password
 
 __all__ = [
     "AUTH_TOKEN_BYTES",
     "AUTH_TOKEN_TTL",
+    "LEGACY_PASSWORD_HASH_ITERATIONS",
     "MIN_PASSWORD_LENGTH",
     "OAUTH_STATE_TTL",
     "PASSWORD_HASH_ITERATIONS",
+    "PASSWORD_HASH_SCHEME",
     "PASSWORD_SALT_BYTES",
     "SIGN_IN_HTTP_TIMEOUT",
     "SIGN_IN_MAX_RETRIES",
@@ -57,5 +61,6 @@ __all__ = [
     "exchange_oauth_code",
     "get_available_oauth_providers",
     "hash_password",
+    "needs_rehash",
     "verify_password",
 ]

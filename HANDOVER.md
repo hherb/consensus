@@ -3,9 +3,10 @@
 _Last updated: 2026-11-15. `main` is at **v2.0.0** (released 2026-07-20) plus
 everything merged since, including the whole of #61: every Python module is
 now under the ~500-line golden rule (the last slice, `server.py` →
-`server/`, was PR #133). This branch, `fix/server-followups-132-136`, fixes
-the four server follow-ups from the PR #133 review (#132, #134, #135, #136).
-The suite is at **4389 passing**. The method review & repair campaign
+`server/`, was PR #133, with follow-ups in PR #137). This branch,
+`fix/auth-password-hashing-127-131`, makes password hashes record their
+PBKDF2 iteration count (#127) and equalises login timing (#131). The suite
+is at **4420 passing**. The method review & repair campaign
 (#12–#48, #56–#60), distribution (PyPI `consensus-app` + notarized macOS
 DMG), the website, flow and document failure visibility (#71–#74, #78) and
 the lint gate (#86) are all merged. Their contracts are summarised below._
@@ -23,7 +24,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4396 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4420 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -228,8 +229,22 @@ before the move. Keep these when touching `consensus/auth/`:
   Check with `gh codeql database analyze` on the
   `Security/CWE-312/CleartextLogging.ql` query.
 - `create_token` / `store_oauth_state` prune expired rows (nothing else
-  does); `login` checks the password before saying "disabled". Never change
-  `PASSWORD_HASH_ITERATIONS` before **#127** lands.
+  does); `login` checks the password before saying "disabled".
+- **Password hashes record their cost** (#127):
+  `pbkdf2_sha256$<iterations>$<salt>$<hash>`; `verify_password` uses the
+  stored count, and the legacy `salt$hash` means
+  `LEGACY_PASSWORD_HASH_ITERATIONS` (600k, never change it). After a
+  successful login of an active user, `login` re-hashes when `needs_rehash`
+  says so, so raising `PASSWORD_HASH_ITERATIONS` is now safe. The re-hash is
+  a compare-and-swap (`change_password(..., expected=)`), so it cannot undo
+  a concurrent OAuth lock-out, and a failed write is logged, never a failed
+  login. An unreadable stored hash fails with a warning. An older build
+  cannot read the new format (downgrade locks password users out).
+- **Unknown emails cost a wrong password** (#131): no user or no password
+  → `burn_password_check`, exactly one current-cost PBKDF2 against an
+  all-zero dummy hash. Until a raised count has reached every user, a
+  dormant account's old cheaper hash is still distinguishable. Registration
+  still reveals a taken email (**#139**, needs email verification first).
 
 Tests: `tests/test_auth_db.py`, `_manager.py`, `_oauth_exchange.py`,
 `_oauth.py` (100% coverage; providers faked at the httpx transport via
@@ -378,20 +393,22 @@ fails only in production). Keep them in step with the public API.
 
 ### Open GitHub issues
 
-#131 login timing reveals which emails have a password account; #130 an
-OAuth callback has no overall deadline; #128 unverified OAuth sign-up can
-pre-hijack an address; #127 stored password hashes lack their PBKDF2
-iteration count; #125 pywebview exposes all of `ConsensusApp` to JS; #124
-validate MCP tool arguments against `inputSchema`; #107 a rotation change
-spans several commits (crash mid-update desyncs members and `method_state`);
-#102 follow-ups from the PR #100 review (Retry-After, `doc_add` ingest
-budget, DNS-rebinding pin, `_init_image_tools` catch, test file size); #97
-Seatbelt profile does not confine writes; #96 no UI flag when Python or image
-tools fail to load; #92 tool error results echo raw exception text to the
-model and UI (the `/api/<method>` 500 body does too — noted on the issue);
-#81 persist parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents.
-#132, #134, #135 and #136 are closed by this branch. Suggested next: the
-auth issues (#127, #128, #130, #131), or #125/#124.
+#141 login/registration PBKDF2 blocks the event loop; #139 registration
+reveals that an email has an account; #138 name the field and expected type in
+`/api/<method>` 400s; #130 an OAuth callback has no overall deadline; #128
+unverified OAuth sign-up can pre-hijack an address (#128 and #139 both want an
+email-verification design); #125 pywebview exposes all of `ConsensusApp` to
+JS; #124 validate MCP tool arguments against `inputSchema`; #107 a rotation
+change spans several commits (crash mid-update desyncs members and
+`method_state`); #102 follow-ups from the PR #100 review (Retry-After,
+`doc_add` ingest budget, DNS-rebinding pin, `_init_image_tools` catch, test
+file size); #97 Seatbelt profile does not confine writes; #96 no UI flag when
+Python or image tools fail to load; #92 tool error results echo raw exception
+text to the model and UI (the `/api/<method>` 500 body does too — noted on the
+issue); #81 persist parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'`
+documents. #127 and #131 are closed by this branch. Suggested next: #130,
+#138, or #125/#124; #128/#139 need the repo owner's call on email
+verification.
 
 ### Roadmap
 
