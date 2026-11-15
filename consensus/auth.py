@@ -789,10 +789,10 @@ class AuthManager:
         user = self.db.get_user_by_email(email)
         if not user or not user.password_hash:
             raise ValueError("Invalid email or password")
-        if not user.is_active:
-            raise ValueError("Account is disabled")
         if not verify_password(password, user.password_hash):
             raise ValueError("Invalid email or password")
+        if not user.is_active:
+            raise ValueError("Account is disabled")
 
         self.db.update_last_login(user.id)
         token = self.db.create_token(user.id)

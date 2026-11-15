@@ -112,6 +112,9 @@ def test_login_refused_for_disabled_account(manager):
                             (user.id,))
     with pytest.raises(ValueError, match="disabled"):
         manager.login("a@example.com", "long-enough")
+    # Without the password, the account's status is not revealed.
+    with pytest.raises(ValueError, match="^Invalid email or password$"):
+        manager.login("a@example.com", "wrong-password")
 
 
 def test_logout_revokes_only_that_session(manager):
