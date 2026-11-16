@@ -2,13 +2,15 @@
 
 Its own methods are the event-loop plumbing, ``get_state`` and state
 pushes, image data URLs and the evaluation server; the rest come from
-the mixins, one per area of the UI."""
+the mixins, one per area of the UI. ``exposed_functions`` lists what
+JavaScript may call."""
 
 import asyncio
+import inspect
 import json
 import logging
 import threading
-from typing import Optional
+from typing import Callable, Optional
 
 from ..app import ConsensusApp
 from .catalog import CatalogBridgeMixin
@@ -21,15 +23,16 @@ logger = logging.getLogger(__name__)
 
 class DesktopBridge(CatalogBridgeMixin, DiscussionBridgeMixin,
                     FilesBridgeMixin):
-    """API exposed to JavaScript via pywebview's js_api.
+    """API exposed to JavaScript through pywebview's ``window.expose``.
 
     Each public method (no leading underscore) is callable from the
-    browser via ``window.pywebview.api.<method_name>(...)``.  Async
-    application methods are bridged through a background event loop.
+    browser via ``window.pywebview.api.<method_name>(...)``; see
+    ``exposed_functions``. Async application methods are bridged through
+    a background event loop.
     """
 
     def __init__(self, app: ConsensusApp) -> None:
-        self.app = app
+        self._app = app
         self._window: Optional[object] = None
         self._loop = asyncio.new_event_loop()
         threading.Thread(target=self._loop.run_forever, daemon=True).start()
@@ -79,12 +82,12 @@ class DesktopBridge(CatalogBridgeMixin, DiscussionBridgeMixin,
     # -- State --
     def get_state(self) -> dict:
         """Return full application state."""
-        return self.app.get_state()
+        return self._app.get_state()
 
     def get_image_data_url(self, image_id: int) -> str:
         """Return a base64 data URL for the given image ID (for desktop rendering)."""
         from ..tools_image import image_to_base64_url
-        img = self.app.db.get_image(image_id)
+        img = self._app.db.get_image(image_id)
         if not img:
             return ""
         try:
@@ -132,3 +135,16 @@ class DesktopBridge(CatalogBridgeMixin, DiscussionBridgeMixin,
         import webbrowser
         webbrowser.open(self._eval_server_url)
         return {"url": self._eval_server_url}
+
+
+def exposed_functions(bridge: DesktopBridge) -> list[Callable]:
+    """The bridge's public methods: everything JavaScript may call.
+
+    ``launch_desktop`` passes these to ``window.expose`` instead of handing
+    pywebview the bridge as ``js_api``. pywebview resolves a ``js_api`` call
+    by walking the dotted name with ``getattr``, private names included, so
+    page script could reach ``_app.db`` (#125); an exposed function is
+    looked up by exact name only.
+    """
+    return [attr for name in dir(bridge) if not name.startswith("_")
+            and inspect.ismethod(attr := getattr(bridge, name))]

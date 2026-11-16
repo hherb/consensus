@@ -13,7 +13,7 @@ class FilesBridgeMixin:
         import webview
         if not self._window:
             return {"error": "No window available"}
-        if not self.app.documents_available:
+        if not self._app.documents_available:
             return {"error": "Document tools failed to load; see the application log for the cause"}
 
         result = self._window.create_file_dialog(
@@ -39,7 +39,7 @@ class FilesBridgeMixin:
         with open(filepath, "rb") as f:
             content = f.read()
 
-        return self._run_async(self.app.add_document(
+        return self._run_async(self._app.add_document(
             filename=filename,
             content_bytes=content,
             mime_type=mime_type,
@@ -49,23 +49,23 @@ class FilesBridgeMixin:
     def add_document_from_url(self, url: str, discussion_id: int = 0,
                                title: str = "") -> dict:
         """Add a document by fetching from a URL."""
-        if not self.app.documents_available:
+        if not self._app.documents_available:
             return {"error": "Document tools failed to load; see the application log for the cause"}
-        return self._run_async(self.app.add_document_from_url(
+        return self._run_async(self._app.add_document_from_url(
             url=url, discussion_id=discussion_id, title=title,
         ))
 
     def get_discussion_documents(self, discussion_id: int = 0) -> list:
         """Return documents attached to a discussion."""
-        return self.app.get_discussion_documents(discussion_id)
+        return self._app.get_discussion_documents(discussion_id)
 
     def remove_document(self, document_id: int, discussion_id: int = 0) -> dict:
         """Remove a document from a discussion."""
-        return self.app.remove_document(document_id, discussion_id)
+        return self._app.remove_document(document_id, discussion_id)
 
     def delete_document(self, document_id: int) -> dict:
         """Permanently delete a document."""
-        return self.app.delete_document(document_id)
+        return self._app.delete_document(document_id)
 
     # -- Images --
 
@@ -99,7 +99,7 @@ class FilesBridgeMixin:
         with open(filepath, "rb") as f:
             content = f.read()
 
-        return self._run_async(self.app.add_image(
+        return self._run_async(self._app.add_image(
             filename=filename,
             content_bytes=content,
             mime_type=mime_type,
@@ -109,26 +109,26 @@ class FilesBridgeMixin:
     def add_image_from_url(self, url: str, discussion_id: int = 0,
                             title: str = "") -> dict:
         """Add an image by fetching from a URL."""
-        return self._run_async(self.app.add_image_from_url(
+        return self._run_async(self._app.add_image_from_url(
             url=url, discussion_id=discussion_id, title=title,
         ))
 
     def get_discussion_images(self, discussion_id: int = 0) -> list:
         """Return images attached to a discussion."""
-        return self.app.get_discussion_images(discussion_id)
+        return self._app.get_discussion_images(discussion_id)
 
     def remove_image(self, image_id: int, discussion_id: int = 0) -> dict:
         """Remove an image from a discussion."""
-        return self.app.remove_discussion_image(image_id, discussion_id)
+        return self._app.remove_discussion_image(image_id, discussion_id)
 
     def delete_image(self, image_id: int) -> dict:
         """Permanently delete an image."""
-        return self.app.delete_image(image_id)
+        return self._app.delete_image(image_id)
 
     # -- Export --
     def get_export_data(self, discussion_id: int) -> dict:
         """Get discussion data for export without mutating current state."""
-        return self.app.get_export_data(discussion_id)
+        return self._app.get_export_data(discussion_id)
 
     def save_file(self, content: str, filename: str, file_types: str = "") -> bool:
         """Show a native save dialog and write content to the chosen path."""

@@ -17,6 +17,7 @@ import pytest
 
 from consensus import desktop
 from consensus.desktop import DesktopBridge, launch_desktop
+from consensus.desktop.bridge import exposed_functions
 from tests.desktop_helpers import FakeWindow, bridge, stop_loop  # noqa: F401
 from tests.document_helpers import patch_where_defined
 
@@ -30,12 +31,12 @@ UNAVAILABLE = "Memory tools failed to load; see the application log for the caus
 class TestPushes:
     def test_state_update_reaches_the_window(self, bridge):
         bridge._window = FakeWindow()
-        bridge.app._notify()
+        bridge._app._notify()
         [script] = bridge._window.scripts
         prefix = 'if(typeof onStateUpdate==="function")onStateUpdate('
         assert script.startswith(prefix) and script.endswith(")")
         assert json.loads(script[len(prefix):-1]) == json.loads(
-            json.dumps(bridge.app.get_state()))
+            json.dumps(bridge._app.get_state()))
 
     @pytest.mark.parametrize("event,handler", [
         ("tool_progress", "onToolProgress"),
@@ -43,7 +44,7 @@ class TestPushes:
     ])
     def test_events_reach_the_window(self, bridge, event, handler):
         bridge._window = FakeWindow()
-        bridge.app.emit(event, {"k": "v"})
+        bridge._app.emit(event, {"k": "v"})
         assert bridge._window.scripts == [
             f'if(window.{handler}) {handler}({{"k": "v"}})']
 
@@ -68,7 +69,7 @@ class TestPushes:
 
 class TestMemoryConfig:
     def test_unavailable(self, bridge):
-        bridge.app.memory_available = False
+        bridge._app.memory_available = False
         assert bridge.get_memory_config() == {"error": UNAVAILABLE}
         assert bridge.save_memory_config({"embedding_model": "m"}) == {
             "error": UNAVAILABLE}
@@ -76,7 +77,7 @@ class TestMemoryConfig:
             "ok": False, "message": UNAVAILABLE}
 
     def test_save_keeps_only_known_keys(self, bridge):
-        bridge.app.memory_available = True
+        bridge._app.memory_available = True
         assert bridge.save_memory_config(
             {"embedding_model": "m", "embedding_endpoint": 7,
              "evil": "x"}) == {"ok": True}
@@ -87,7 +88,7 @@ class TestMemoryConfig:
 
     def test_connection_result(self, bridge, monkeypatch):
         import consensus.tools_memory as tm
-        bridge.app.memory_available = True
+        bridge._app.memory_available = True
 
         async def ok(self):
             return True, "fine"
@@ -99,7 +100,7 @@ class TestMemoryConfig:
     def test_connection_failure_is_reported_and_logged(self, bridge,
                                                        monkeypatch, caplog):
         import consensus.tools_memory as tm
-        bridge.app.memory_available = True
+        bridge._app.memory_available = True
 
         async def boom(self):
             raise RuntimeError("no ollama")
@@ -129,12 +130,12 @@ def _record_async(monkeypatch, app, name):
 class TestUploads:
     @pytest.mark.parametrize("method", ["upload_document", "upload_image"])
     def test_no_window(self, bridge, method):
-        bridge.app.documents_available = True
+        bridge._app.documents_available = True
         assert getattr(bridge, method)() == {"error": "No window available"}
 
     def test_document_tools_unavailable(self, bridge):
         bridge._window = FakeWindow()
-        bridge.app.documents_available = False
+        bridge._app.documents_available = False
         assert bridge.upload_document() == {
             "error": "Document tools failed to load; "
                      "see the application log for the cause"}
@@ -146,7 +147,7 @@ class TestUploads:
     @pytest.mark.parametrize("method", ["upload_document", "upload_image"])
     @pytest.mark.parametrize("result", [None, [], ""])
     def test_cancelled(self, bridge, method, result):
-        bridge.app.documents_available = True
+        bridge._app.documents_available = True
         bridge._window = FakeWindow(dialog_result=result)
         assert getattr(bridge, method)() == {"cancelled": True}
 
@@ -156,10 +157,10 @@ class TestUploads:
         import webview
         path = tmp_path / "notes.md"
         path.write_bytes(b"# hi")
-        bridge.app.documents_available = True
+        bridge._app.documents_available = True
         bridge._window = FakeWindow(
             dialog_result=[str(path)] if as_list else str(path))
-        calls = _record_async(monkeypatch, bridge.app, "add_document")
+        calls = _record_async(monkeypatch, bridge._app, "add_document")
         assert bridge.upload_document(4) == {"ok": "add_document"}
         assert calls == [{"filename": "notes.md", "content_bytes": b"# hi",
                           "mime_type": "text/markdown", "discussion_id": 4}]
@@ -175,9 +176,9 @@ class TestUploads:
                                      method, target, fallback):
         path = tmp_path / "blob.zzunknown"
         path.write_bytes(b"x")
-        bridge.app.documents_available = True
+        bridge._app.documents_available = True
         bridge._window = FakeWindow(dialog_result=str(path))
-        calls = _record_async(monkeypatch, bridge.app, target)
+        calls = _record_async(monkeypatch, bridge._app, target)
         getattr(bridge, method)()
         assert calls[0]["mime_type"] == fallback
 
@@ -185,7 +186,7 @@ class TestUploads:
         path = tmp_path / "pic.jpg"
         path.write_bytes(b"\xff\xd8")
         bridge._window = FakeWindow(dialog_result=(str(path),))
-        calls = _record_async(monkeypatch, bridge.app, "add_image")
+        calls = _record_async(monkeypatch, bridge._app, "add_image")
         assert bridge.upload_image() == {"ok": "add_image"}
         assert calls == [{"filename": "pic.jpg", "content_bytes": b"\xff\xd8",
                           "mime_type": "image/jpeg", "discussion_id": 0}]
@@ -193,8 +194,8 @@ class TestUploads:
             "Images (")
 
     def test_document_from_url(self, bridge, monkeypatch):
-        bridge.app.documents_available = True
-        calls = _record_async(monkeypatch, bridge.app, "add_document_from_url")
+        bridge._app.documents_available = True
+        calls = _record_async(monkeypatch, bridge._app, "add_document_from_url")
         assert bridge.add_document_from_url("http://x", 2, "T") == {
             "ok": "add_document_from_url"}
         assert calls == [{"url": "http://x", "discussion_id": 2, "title": "T"}]
@@ -289,8 +290,8 @@ def fake_webview(monkeypatch, app):
     patch_where_defined(monkeypatch, launch_desktop, "ConsensusApp",
                         lambda: app)
     yield mod
-    for args, kwargs in mod.created:
-        stop_loop(kwargs["js_api"])
+    if window.exposed:
+        stop_loop(window.exposed[0].__self__)
 
 
 class TestLaunchDesktop:
@@ -301,8 +302,11 @@ class TestLaunchDesktop:
         assert title == desktop.WINDOW_TITLE
         assert os.path.isfile(html_path)
         assert html_path.endswith(os.path.join("static", "index.html"))
-        bridge = kwargs["js_api"]
-        assert isinstance(bridge, DesktopBridge) and bridge.app is app
+        # The bridge is exposed method by method, never as js_api (#125).
+        assert "js_api" not in kwargs
+        bridge = fake_webview.window.exposed[0].__self__
+        assert isinstance(bridge, DesktopBridge) and bridge._app is app
+        assert fake_webview.window.exposed == exposed_functions(bridge)
         assert bridge._window is fake_webview.window
         assert kwargs["width"] == desktop.WINDOW_WIDTH
         assert kwargs["height"] == desktop.WINDOW_HEIGHT
