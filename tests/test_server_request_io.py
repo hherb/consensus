@@ -25,7 +25,8 @@ def test_int_field_names_the_field(value):
         int_field({"n": value}, "n", 0)
 
 
-@pytest.mark.parametrize("value", ["cheap", None, {"a": 1}])
+# 10**400: float() of a huge JSON integer is an OverflowError.
+@pytest.mark.parametrize("value", ["cheap", None, {"a": 1}, 10**400])
 def test_float_field_names_the_field(value):
     """Any unconvertible value is a ValueError naming field and type."""
     with pytest.raises(ValueError, match=r"^x must be a number$"):
