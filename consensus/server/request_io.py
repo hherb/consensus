@@ -27,6 +27,26 @@ def non_string_field(data: dict, names: tuple[str, ...]) -> web.Response | None:
     return None
 
 
+def _number_field(data: dict, name: str, default: object,
+                  kind: type, expected: str) -> int | float:
+    """``kind(data.get(name, default))``, or a ValueError naming the field."""
+    try:
+        return kind(data.get(name, default))
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: int(float("inf")); the 400 names the field (#138).
+        raise ValueError(f"{name} must be {expected}") from None
+
+
+def int_field(data: dict, name: str, default: int) -> int:
+    """The *name* field of a JSON body as an int; ValueError names it."""
+    return _number_field(data, name, default, int, "an integer")
+
+
+def float_field(data: dict, name: str, default: float) -> float:
+    """The *name* field of a JSON body as a float; ValueError names it."""
+    return _number_field(data, name, default, float, "a number")
+
+
 class UploadError(Exception):
     """An upload request that cannot be read; carries the HTTP status."""
 

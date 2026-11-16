@@ -10,7 +10,7 @@ from .constants import CAPACITY_ERROR
 from .context import (
     CTX_KEY, extract_api_keys, get_app_for_request, set_session_cookie,
 )
-from .request_io import read_json_object
+from .request_io import float_field, int_field, read_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -90,17 +90,17 @@ async def handle_api(request: web.Request) -> web.StreamResponse:
         # Discussion lifecycle
         "start_discussion": lambda: partial(app.start_discussion,
             data.get("moderator_participates", False),
-            int(data.get("max_rounds", 0)),
-            float(data.get("cost_limit", 0.0))),
+            int_field(data, "max_rounds", 0),
+            float_field(data, "cost_limit", 0.0)),
         "set_cost_limit": lambda: partial(app.set_cost_limit,
-            float(data.get("cost_limit", 0.0))),
+            float_field(data, "cost_limit", 0.0)),
         "set_default_context_strategy": lambda: partial(app.set_default_context_strategy,
             data.get("strategy", "sliding_window"),
-            int(data.get("window_size", 20))),
+            int_field(data, "window_size", 20)),
         "set_member_context_strategy": lambda: partial(app.set_member_context_strategy,
             data["entity_id"],
             data.get("strategy", "sliding_window"),
-            int(data.get("window_size", 20))),
+            int_field(data, "window_size", 20)),
         "submit_human_message": lambda: partial(app.submit_human_message,
             data["entity_id"], data["content"]),
         "submit_human_structured_message":
@@ -181,9 +181,9 @@ async def handle_api(request: web.Request) -> web.StreamResponse:
         call = handler()
         inspect.signature(call.func).bind(*call.args, **call.keywords)
     except (KeyError, TypeError, ValueError, OverflowError) as e:
-        # The client's mistake: a missing key, an unconvertible value (an
-        # infinite or huge number overflows), or keyword arguments a
-        # fixed-signature method does not take. Nothing has run yet.
+        # The client's mistake: a missing key, an unconvertible value
+        # (int_field/float_field name the field, #138), or keyword arguments
+        # a fixed-signature method does not take. Nothing has run yet.
         error = (f"missing field {e}" if isinstance(e, KeyError) else str(e))
         logger.warning("API %s: invalid arguments: %s", method, error)
         return reply({"error": f"Invalid arguments for {method}: {error}"},

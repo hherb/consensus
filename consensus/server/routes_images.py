@@ -5,7 +5,7 @@ from aiohttp import web
 from .constants import IMAGE_SERVE_CSP
 from .context import session_app
 from .request_io import (
-    UploadError, non_string_field, read_json_object, read_upload,
+    UploadError, int_field, non_string_field, read_json_object, read_upload,
 )
 
 
@@ -53,10 +53,9 @@ async def handle_image_add_url(request: web.Request) -> web.StreamResponse:
     if not url:
         return web.json_response({"error": "url is required"}, status=400)
     try:
-        discussion_id = int(data.get("discussion_id", 0))
-    except (TypeError, ValueError):
-        return web.json_response(
-            {"error": "discussion_id must be an integer"}, status=400)
+        discussion_id = int_field(data, "discussion_id", 0)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
 
     result = await app_inst.add_image_from_url(
         url=url,

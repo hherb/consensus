@@ -1,14 +1,12 @@
 # HANDOVER
 
-_Last updated: 2026-11-15. `main` is at **v2.0.0** (released 2026-07-20) plus
-everything merged since, including the whole of #61: every Python module is
-now under the ~500-line golden rule (the last slice, `server.py` →
-`server/`, was PR #133, with follow-ups in PR #137). PR #140 (password hashes
-record their PBKDF2 cost, #127; equal login timing, #131) is merged. This
-branch, `fix/auth-event-loop-141-130`, moves password hashing off the event
-loop (#141) and gives an OAuth callback an overall deadline (#130). The suite
-is at **4432 passing**. Merged campaigns and their contracts are summarised
-below._
+_Last updated: 2026-11-16. `main` is at **v2.0.0** (released 2026-07-20) plus
+everything merged since, including the whole of #61 (every Python module is
+under the ~500-line golden rule) and the auth hardening of PRs #140 (#127,
+#131) and #142 (#141, #130). This branch, `fix/api-400-field-names-138`,
+makes an unconvertible number in an `/api/<method>` or add-url body a 400
+that names the field and its type (#138). The suite is at **4452 passing**.
+Merged campaigns and their contracts are summarised below._
 
 This file briefs the next session on what is done, what is still open, and
 the conventions to keep; delete sections that are no longer instructive.
@@ -23,7 +21,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4432 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4452 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -302,6 +300,9 @@ middleware through aiohttp's `TestClient` (sessions and SSE in
   <method>: …`, while the same exception types raised *inside* the app method
   stay a logged 500. A new entry must follow the `lambda: partial(app.x, …)`
   shape. `DISPATCH` cases are bound against the real method signatures.
+  Every JSON body number (here and in the add-url routes) goes through
+  `request_io.int_field` / `float_field`, never bare `int()` / `float()`, so
+  the 400 names the field and its type (`max_rounds must be an integer`).
 - **Only `POST /api/<method>` creates a `--multi-user` session** (#132,
   repo owner's choice). It sets the cookie on every reply that has a session,
   errors included (the capacity 503 has none). Every other `/api/` route goes through `session_app()`, which
@@ -334,30 +335,28 @@ middleware through aiohttp's `TestClient` (sessions and SSE in
   `routes_auth.LOGIN_RATE_LIMIT_*`, `routes_misc.SSE_KEEPALIVE_SECONDS`).
   `tests/test_server_api.py` `DISPATCH` pins every `/api/<method>` entry's
   forwarded arguments and must name exactly the table's keys (read by AST);
-  `tests/test_server_facade.py` pins `__all__`, the one consumer (`__main__.py`) and every route → handler. **A new route goes in
+  `tests/test_server_facade.py` pins `__all__`, the one consumer
+  (`__main__.py`) and every route → handler. **A new route goes in
   `app_factory.py` and that table; a new dispatch entry in `DISPATCH`.**
 
 ## Open work
 
 ### File size (#61 done, keep it that way)
 
-All sixteen oversized Python modules are split, one PR each (git history has
-the detail). Contracts worth keeping: eval — a failed LLM judgement returns
-502 and never overwrites an earlier score; `/eval/` is **not mounted in
-`--multi-user`**; a run with a failed turn/summary/synthesis is `error`, not
-`done`. `mcp_server` — a failed tool call is an `isError` result (#121);
-`run_discussion` reports `turn_errors`, `error`, `stop_reason`. A new desktop
-bridge method goes in a mixin **and** in `BRIDGE_API`. Moved code logs under
-its new module (e.g. `consensus.app_api.*`).
+All sixteen oversized Python modules are split, one PR each. Contracts worth
+keeping: eval — a failed LLM judgement returns 502 and never overwrites an
+earlier score; `/eval/` is **not mounted in `--multi-user`**; a run with a
+failed turn/summary/synthesis is `error`, not `done`. `mcp_server` — a failed
+tool call is an `isError` result (#121); `run_discussion` reports
+`turn_errors`, `error`, `stop_reason`. A new desktop bridge method goes in a
+mixin **and** in `BRIDGE_API`; moved code logs under its new module.
 
-**Watch:** `app_discussion_flow/turns.py` (499) and `pricing.py` (498) — the
-next addition crosses the limit, so split first. `evaluation/static/eval.js`
-(645) is pre-existing JS over the limit.
+**Watch:** `app_discussion_flow/turns.py` (499) and `pricing.py` (498): split
+before the next addition. `evaluation/static/eval.js` (645) is pre-existing JS.
 
-**Facade guards.** Each re-exporting package has a
-`tests/test_<name>_facade.py` that pins `__all__` by identity and AST-scans
-`consensus/` for call sites (consumers import lazily, so a dropped re-export
-fails only in production). Keep them in step with the public API.
+**Facade guards.** Each re-exporting package's `tests/test_<name>_facade.py`
+pins `__all__` by identity and AST-scans `consensus/` for call sites (a
+dropped lazy re-export fails only in production). Keep them in step.
 
 **Recipe for a split** (worked for all sixteen):
 0. Check coverage first (`uv run --with pytest-cov pytest -q
@@ -400,16 +399,13 @@ fails only in production). Keep them in step with the public API.
   `gather_evidence` and ACH `present_evidence`; a richer source-picker UI; a
   live browser click-through of the Attach-evidence button (verified statically
   only — there is no JS test harness in this repo).
-- **Packaging** — `packaging/macos/make_icns.sh`
-  regeneration needs Pillow on system python3; icon bubbles blur at 16–32 px.
-  `check_no_shadowed_packages` (`scripts/release_pypi.sh`) rejects a wheel
-  shipping both `X.py` and `X/`.
+- **Packaging** — `make_icns.sh` needs Pillow on system python3; icon bubbles
+  blur at 16–32 px.
 
 ### Open GitHub issues
 
-#139 registration reveals that an email has an account; #138 name the field and
-expected type in `/api/<method>` 400s; #128 unverified OAuth sign-up can
-pre-hijack an address (#128 and #139 both want an email-verification design);
+#139 registration reveals that an email has an account; #128 unverified OAuth
+sign-up can pre-hijack an address (both want an email-verification design);
 #125 pywebview exposes all of `ConsensusApp` to JS; #124 validate MCP tool
 arguments against `inputSchema`; #107 a rotation change spans several commits
 (crash mid-update desyncs members and `method_state`); #102 follow-ups from the
@@ -418,9 +414,9 @@ PR #100 review (Retry-After, `doc_add` ingest budget, DNS-rebinding pin,
 confine writes; #96 no UI flag when Python or image tools fail to load; #92
 tool error results echo raw exception text to the model and UI (the
 `/api/<method>` 500 body does too — noted on the issue); #81 persist parse
-fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents. #141 and #130 are closed
-by this branch. Suggested next: #138, or #125/#124; #128/#139 need the repo
-owner's call on email verification.
+fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents. #138 is closed by this
+branch. Suggested next: #125 or #124; #128/#139 need the repo owner's call on
+email verification.
 
 ### Roadmap
 

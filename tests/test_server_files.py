@@ -284,6 +284,22 @@ class TestDocuments:
 
     @pytest.mark.parametrize("path", ["/api/documents/add-url",
                                       "/api/images/add-url"])
+    # json.dumps writes Infinity; int() of it is an OverflowError (#138).
+    @pytest.mark.parametrize("discussion_id", ["x", None, float("inf")])
+    async def test_add_url_bad_discussion_id_is_a_400(
+            self, single_client, monkeypatch, path, discussion_id):
+        calls = record(monkeypatch, "add_document_from_url", {},
+                       awaitable=True)
+        record(monkeypatch, "add_image_from_url", {}, awaitable=True)
+        resp = await single_client.post(path, json={
+            "url": "https://example.com/a", "discussion_id": discussion_id})
+        assert resp.status == 400
+        assert (await resp.json()) == {
+            "error": "discussion_id must be an integer"}
+        assert calls == []
+
+    @pytest.mark.parametrize("path", ["/api/documents/add-url",
+                                      "/api/images/add-url"])
     async def test_add_url_body_over_one_mib_is_a_413(self, single_client,
                                                       path):
         """Not "Invalid JSON body": the real cause reaches the client."""
