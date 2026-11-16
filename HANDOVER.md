@@ -3,9 +3,10 @@
 _Last updated: 2026-11-16. `main` is at **v2.0.0** (released 2026-07-20) plus
 everything merged since, including the whole of #61 (every Python module is
 under the ~500-line golden rule) and the auth hardening of PRs #140 (#127,
-#131) and #142 (#141, #130). This branch, `fix/api-400-field-names-138`,
-makes an unconvertible number in an `/api/<method>` or add-url body a 400
-that names the field and its type (#138). The suite is at **4452 passing**.
+#131), #142 (#141, #130) and #143 (#138). This branch,
+`fix/desktop-bridge-exposure-125`, stops pywebview exposing the whole
+`ConsensusApp` and its `Database` to JavaScript (#125). The suite is at
+**4452 passing**.
 Merged campaigns and their contracts are summarised below._
 
 This file briefs the next session on what is done, what is still open, and
@@ -81,10 +82,8 @@ narrative is in git history and PR #76.
   one layer down in `ai_client._post_with_retry`, so the flow layer sees only
   exhausted failures.
 
-**Testing lesson.** #72 stayed green because tests mocked the very method
-under test; mock one layer further out (the `AIClient`). Tests:
-`tests/test_flow_error_*.py`, `_triage_recommender.py`,
-`_moderator_actions.py`.
+**Testing lesson.** Mock one layer out (the `AIClient`), never the method
+under test (#72 stayed green that way). Tests: `tests/test_flow_error_*.py`.
 
 ## Document failure visibility (#78, PR #79 — keep these contracts)
 
@@ -125,9 +124,8 @@ history; keep these before touching the package:
 - Deliberate behaviour changes: non-UTF-8 text documents and image-only
   PDFs are now rejected rather than ingested as garbage.
 
-**Testing lesson.** Several of these were found by *mutating the fix back*
-and watching the suite stay green; two `caplog.at_level(logging.ERROR)`
-assertions were vacuous because the code logs at WARNING.
+**Testing lesson.** Mutate the fix back and watch a test fail; two
+`caplog.at_level(logging.ERROR)` checks were vacuous (the code logs at WARNING).
 
 **Known gaps:** no test for "some rows dimension-mismatched AND the rest
 below threshold" in `doc_ask`; no summary regeneration path; no OCR;
@@ -303,6 +301,13 @@ middleware through aiohttp's `TestClient` (sessions and SSE in
   Every JSON body number (here and in the add-url routes) goes through
   `request_io.int_field` / `float_field`, never bare `int()` / `float()`, so
   the 400 names the field and its type (`max_rounds must be an integer`).
+- **The desktop bridge keeps its app as `_app`** (#125). pywebview's
+  `get_functions` recurses into every public class or non-callable
+  attribute of the `js_api` object, so a public `app` exposed every
+  `ConsensusApp` and `Database` method to JS. `_exposed()` in
+  `tests/test_desktop_bridge_api.py` mirrors that recursion; a new public
+  attribute on `DesktopBridge` fails `BRIDGE_API`. Keep state private (or
+  `_serializable = False`).
 - **Only `POST /api/<method>` creates a `--multi-user` session** (#132,
   repo owner's choice). It sets the cookie on every reply that has a session,
   errors included (the capacity 503 has none). Every other `/api/` route goes through `session_app()`, which
@@ -383,18 +388,13 @@ dropped lazy re-export fails only in production). Keep them in step.
 - **Panel diversity** — family-level model grouping (exact-model only today,
   so `gpt-4o` vs `gpt-4o-mini` read as different estimators) and a "diversify"
   auto-suggest helper.
-- **ToT expansion refines in place; it cannot spawn child thoughts.** Label
-  stability is what makes re-scoring/convergence meaningful. If real
-  transcripts show the beam starving, a child-generation expand variant is the
-  natural extension.
-- **Double Crux identify loop re-runs positions' context, not the phase.**
-  Loop-backs re-enter `hunt_cruxes` only; there is no path back to `positions`
-  if hunting keeps failing because positions were vague.
-- **MCDA free-text weights only parse the `(weight: N)` suffix.**
-  `extract_weighted_criteria` recognises `1. Name (weight: 4)` / `[weight = 4]`;
-  weights written in prose fall back to `DEFAULT_WEIGHT` silently. The AI path
-  is safe (the structured tool enforces weights); a UI hint would close the gap
-  for humans.
+- **ToT expansion refines in place** (stable labels keep re-scoring
+  meaningful); add a child-generation variant if the beam starves.
+- **Double Crux loop-backs re-enter `hunt_cruxes` only**, never `positions`,
+  even when vague positions are why hunting fails.
+- **MCDA free-text weights only parse `(weight: N)` / `[weight = N]`**;
+  prose weights silently become `DEFAULT_WEIGHT` (humans only — the AI path is
+  structured). A UI hint would close the gap.
 - **#28 follow-ups** — per-claim citation mapping; opting in Adversarial Collab
   `gather_evidence` and ACH `present_evidence`; a richer source-picker UI; a
   live browser click-through of the Attach-evidence button (verified statically
@@ -406,17 +406,18 @@ dropped lazy re-export fails only in production). Keep them in step.
 
 #139 registration reveals that an email has an account; #128 unverified OAuth
 sign-up can pre-hijack an address (both want an email-verification design);
-#125 pywebview exposes all of `ConsensusApp` to JS; #124 validate MCP tool
-arguments against `inputSchema`; #107 a rotation change spans several commits
-(crash mid-update desyncs members and `method_state`); #102 follow-ups from the
+#124 validate MCP tool arguments against `inputSchema`; #107 a rotation
+change spans several commits (crash mid-update desyncs members and
+`method_state`); #102 follow-ups from the
 PR #100 review (Retry-After, `doc_add` ingest budget, DNS-rebinding pin,
 `_init_image_tools` catch, test file size); #97 Seatbelt profile does not
 confine writes; #96 no UI flag when Python or image tools fail to load; #92
 tool error results echo raw exception text to the model and UI (the
 `/api/<method>` 500 body does too — noted on the issue); #81 persist parse
-fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents. #138 is closed by this
-branch. Suggested next: #125 or #124; #128/#139 need the repo owner's call on
-email verification.
+fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents. #125 is closed by this
+branch. Suggested next: #124 (needs the repo owner's call: coerce numeric
+strings such as `"5"` or reject them); #128/#139 need the repo owner's call
+on email verification.
 
 ### Roadmap
 

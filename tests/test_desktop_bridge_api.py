@@ -6,8 +6,9 @@ calls them by name, so a method lost in a refactor fails only when a user
 clicks something. These tests pin the top-level method set against the
 frontend's calls and check that each forwarding method reaches the right
 ``ConsensusApp`` method with the right arguments, sync or bridged async.
-pywebview also recurses into public non-callable attributes, so
-``api.app.*`` is reachable too and is not pinned here (#125).
+pywebview also recurses into public classes and non-callable attributes;
+``_exposed`` mirrors that, so a public attribute such as the app would
+expose its whole object graph and fail the pin (#125).
 """
 
 import inspect
@@ -49,14 +50,30 @@ BRIDGE_API = {
 }
 
 
-def _exposed(obj) -> set[str]:
-    """The top-level names pywebview's ``get_functions`` exposes for *obj*.
+def _exposed(obj, base: str = "", seen: set[int] | None = None) -> set[str]:
+    """Every dotted name pywebview's ``get_functions`` exposes for *obj*.
 
-    It also recurses into public attributes such as ``app``; that part is
-    not mirrored here (#125).
+    Mirrors ``webview.util.inject_pywebview.get_functions`` (pywebview 6.1):
+    public methods are exposed, and public classes or non-callable objects
+    with a ``__module__`` are recursed into unless ``_serializable`` is
+    false; each object is visited once (#125).
     """
-    return {n for n in dir(obj)
-            if not n.startswith("_") and inspect.ismethod(getattr(obj, n))}
+    seen = set() if seen is None else seen
+    if id(obj) in seen:
+        return set()
+    seen.add(id(obj))
+    names: set[str] = set()
+    for name in dir(obj):
+        attr = getattr(obj, name)
+        if name.startswith("_") or getattr(attr, "_serializable", True) is False:
+            continue
+        full = f"{base}.{name}" if base else name
+        if inspect.ismethod(attr):
+            names.add(full)
+        elif inspect.isclass(attr) or (
+                not callable(attr) and hasattr(attr, "__module__")):
+            names |= _exposed(attr, full, seen)
+    return names
 
 
 def _js_calls() -> set[str]:
@@ -205,7 +222,7 @@ def _recorder(is_async: bool):
 def test_forwards_to_the_app(bridge, monkeypatch, method, args, kwargs,
                              target, exp_args, exp_kwargs, is_async):
     fake, calls = _recorder(is_async)
-    monkeypatch.setattr(bridge.app, target, fake)
+    monkeypatch.setattr(bridge._app, target, fake)
     assert getattr(bridge, method)(*args, **kwargs) is SENTINEL
     assert calls == [(exp_args, exp_kwargs)]
 
@@ -215,4 +232,4 @@ def test_app_async_methods_are_bridged(bridge):
     returning the coroutine hands JS an object it cannot serialise."""
     for _, _, _, target, _, _, is_async in FORWARDS:
         assert inspect.iscoroutinefunction(
-            getattr(type(bridge.app), target)) == is_async, target
+            getattr(type(bridge._app), target)) == is_async, target

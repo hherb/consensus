@@ -29,7 +29,7 @@ class DesktopBridge(CatalogBridgeMixin, DiscussionBridgeMixin,
     """
 
     def __init__(self, app: ConsensusApp) -> None:
-        self.app = app
+        self._app = app
         self._window: Optional[object] = None
         self._loop = asyncio.new_event_loop()
         threading.Thread(target=self._loop.run_forever, daemon=True).start()
@@ -79,12 +79,12 @@ class DesktopBridge(CatalogBridgeMixin, DiscussionBridgeMixin,
     # -- State --
     def get_state(self) -> dict:
         """Return full application state."""
-        return self.app.get_state()
+        return self._app.get_state()
 
     def get_image_data_url(self, image_id: int) -> str:
         """Return a base64 data URL for the given image ID (for desktop rendering)."""
         from ..tools_image import image_to_base64_url
-        img = self.app.db.get_image(image_id)
+        img = self._app.db.get_image(image_id)
         if not img:
             return ""
         try:
