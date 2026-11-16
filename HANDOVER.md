@@ -4,9 +4,9 @@ _Last updated: 2026-11-16. `main` is at **v2.0.0** (released 2026-07-20) plus
 everything merged since, including the whole of #61 (every Python module is
 under the ~500-line golden rule) and the auth hardening of PRs #140 (#127,
 #131), #142 (#141, #130) and #143 (#138). This branch,
-`fix/desktop-bridge-exposure-125`, stops pywebview exposing the whole
-`ConsensusApp` and its `Database` to JavaScript (#125). The suite is at
-**4452 passing**.
+`fix/desktop-bridge-exposure-125`, stops pywebview letting page script
+reach `ConsensusApp` and its `Database` through the bridge (#125). The
+suite is at **4458 passing**.
 Merged campaigns and their contracts are summarised below._
 
 This file briefs the next session on what is done, what is still open, and
@@ -22,7 +22,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4452 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4458 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -301,13 +301,16 @@ middleware through aiohttp's `TestClient` (sessions and SSE in
   Every JSON body number (here and in the add-url routes) goes through
   `request_io.int_field` / `float_field`, never bare `int()` / `float()`, so
   the 400 names the field and its type (`max_rounds must be an integer`).
-- **The desktop bridge keeps its app as `_app`** (#125). pywebview's
-  `get_functions` recurses into every public class or non-callable
-  attribute of the `js_api` object, so a public `app` exposed every
-  `ConsensusApp` and `Database` method to JS. `_exposed()` in
-  `tests/test_desktop_bridge_api.py` mirrors that recursion; a new public
-  attribute on `DesktopBridge` fails `BRIDGE_API`. Keep state private (or
-  `_serializable = False`).
+- **The desktop bridge is never pywebview's `js_api`** (#125).
+  `launch_desktop` registers `exposed_functions(bridge)` (its public bound
+  methods) with `window.expose`. pywebview resolves a `js_api` call by
+  walking the dotted name with plain `getattr`, private names and dunders
+  included, so with the bridge as `js_api` page script could call
+  `_app.db.<anything>` or `get_state.__self__._app` (a leading underscore and
+  `_serializable = False` only hide a name from the generated
+  `pywebview.api` object). Exposed functions are found by exact name.
+  `TestDispatch` in `tests/test_desktop_bridge_api.py` drives pywebview's
+  real `js_bridge_call` to prove the private paths do not resolve.
 - **Only `POST /api/<method>` creates a `--multi-user` session** (#132,
   repo owner's choice). It sets the cookie on every reply that has a session,
   errors included (the capacity 503 has none). Every other `/api/` route goes through `session_app()`, which

@@ -1,29 +1,39 @@
 """The desktop bridge's JS-facing API and its forwarding to ``ConsensusApp``.
 
-pywebview exposes every public method of the ``js_api`` object
-(``dir()`` + ``inspect.ismethod``, inherited ones included) and the frontend
-calls them by name, so a method lost in a refactor fails only when a user
-clicks something. These tests pin the top-level method set against the
-frontend's calls and check that each forwarding method reaches the right
-``ConsensusApp`` method with the right arguments, sync or bridged async.
-pywebview also recurses into public classes and non-callable attributes;
-``_exposed`` mirrors that, so a public attribute such as the app would
-expose its whole object graph and fail the pin (#125).
+The launcher hands pywebview the bridge's public methods
+(``exposed_functions``) through ``window.expose``, and the frontend calls
+them by name, so a method lost in a refactor fails only when a user clicks
+something. These tests pin that set against the frontend's calls, drive
+pywebview's real dispatcher to check that nothing else is reachable, and
+check that each forwarding method reaches the right ``ConsensusApp`` method
+with the right arguments, sync or bridged async.
+
+The bridge is not passed as ``js_api``: pywebview resolves a ``js_api``
+call by walking any dotted name with ``getattr``, private ones included,
+so ``_app.db.<anything>`` or ``get_state.__self__._app`` would reach the
+app and its database (#125).
 """
 
 import inspect
+import logging
+import queue
 import re
+import threading
+import types
 from pathlib import Path
 
 import pytest
+from webview.util import js_bridge_call
+from webview.window import Window
 
 import consensus
 from consensus.desktop import DesktopBridge
+from consensus.desktop.bridge import exposed_functions
 from tests.desktop_helpers import bridge  # noqa: F401
 
 STATIC_DIR = Path(consensus.__file__).parent / "static"
 
-#: Every method pywebview exposes to JavaScript.
+#: Every function the launcher exposes to JavaScript.
 BRIDGE_API = {
     "add_document_from_url", "add_image_from_url", "add_mcp_server",
     "add_provider", "add_to_discussion", "assign_tool", "complete_turn",
@@ -50,38 +60,17 @@ BRIDGE_API = {
 }
 
 
-def _exposed(obj, base: str = "", seen: set[int] | None = None) -> set[str]:
-    """Every dotted name pywebview's ``get_functions`` exposes for *obj*.
-
-    Mirrors ``webview.util.inject_pywebview.get_functions`` (pywebview 6.1):
-    public methods are exposed, and public classes or non-callable objects
-    with a ``__module__`` are recursed into unless ``_serializable`` is
-    false; each object is visited once (#125).
-    """
-    seen = set() if seen is None else seen
-    if id(obj) in seen:
-        return set()
-    seen.add(id(obj))
-    names: set[str] = set()
-    for name in dir(obj):
-        attr = getattr(obj, name)
-        if name.startswith("_") or getattr(attr, "_serializable", True) is False:
-            continue
-        full = f"{base}.{name}" if base else name
-        if inspect.ismethod(attr):
-            names.add(full)
-        elif inspect.isclass(attr) or (
-                not callable(attr) and hasattr(attr, "__module__")):
-            names |= _exposed(attr, full, seen)
-    return names
-
-
 def _js_calls() -> set[str]:
     names: set[str] = set()
     for path in STATIC_DIR.rglob("*.js"):
         names |= set(re.findall(r"pywebview\.api\.([A-Za-z_]\w*)",
                                 path.read_text(encoding="utf-8")))
     return names
+
+
+def _exposed(bridge: DesktopBridge) -> set[str]:
+    """The names JavaScript can call, as ``window.expose`` registers them."""
+    return {f.__name__ for f in exposed_functions(bridge)}
 
 
 class TestExposedApi:
@@ -92,6 +81,45 @@ class TestExposedApi:
         calls = _js_calls()
         assert calls, "the scan found no pywebview.api calls"
         assert calls - _exposed(bridge) == set()
+
+
+#: Seconds to wait for pywebview's call thread to reply.
+REPLY_TIMEOUT = 10
+
+
+@pytest.fixture
+def window(bridge):
+    """A window in the state ``launch_desktop`` leaves it: no ``js_api``,
+    the bridge's functions registered by pywebview's own ``expose``."""
+    replies: queue.Queue = queue.Queue()
+    win = types.SimpleNamespace(
+        _js_api=None, _functions={}, _expose_lock=threading.Lock(),
+        events=types.SimpleNamespace(loaded=threading.Event()),
+        evaluate_js=replies.put, replies=replies)
+    Window.expose(win, *exposed_functions(bridge))
+    return win
+
+
+class TestDispatch:
+    """pywebview's real dispatcher reaches the exposed set and nothing else."""
+
+    def test_an_exposed_function_answers(self, window):
+        js_bridge_call(window, "get_state", [], "1")
+        assert '"topic"' in window.replies.get(timeout=REPLY_TIMEOUT)
+
+    @pytest.mark.parametrize("name", [
+        "_app.add_provider",
+        "_app.db.get_memory_config",
+        "get_state.__self__._app.get_state",
+        "_run_async",
+        "_window.evaluate_js",
+    ])
+    def test_private_paths_do_not_exist(self, window, bridge, name, caplog):
+        providers = len(bridge._app.get_state().get("providers", []))
+        with caplog.at_level(logging.ERROR, logger="pywebview"):
+            js_bridge_call(window, name, ["evil", "http://evil.example"], "1")
+        assert f"Function {name}() does not exist" in caplog.text
+        assert len(bridge._app.get_state().get("providers", [])) == providers
 
     def test_every_method_is_documented(self):
         for name in BRIDGE_API:

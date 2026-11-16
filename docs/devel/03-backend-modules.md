@@ -345,20 +345,21 @@ The desktop mode uses pywebview to render the same HTML/CSS/JS in a native
 window. The key challenge is bridging pywebview's synchronous JS-to-Python
 calls with the async application methods.
 
-**`DesktopBridge`** (`desktop/bridge.py`) is the JS API object passed to
-pywebview. Every public method (no leading underscore), inherited ones
-included, becomes callable from JavaScript as
+**`DesktopBridge`** (`desktop/bridge.py`) is the JS API. Every public
+method (no leading underscore), inherited ones included, is registered
+with `window.expose` (`exposed_functions()`) and becomes callable from
+JavaScript as
 `window.pywebview.api.<method_name>(...)`. The class holds the event-loop
 plumbing, `get_state` and state pushes, image data URLs and the evaluation
 server; the rest come from one mixin per UI area: `catalog.py` (providers,
 entities, prompts, tools, MCP servers, experts, memory config),
 `discussion.py` (setup, turn lifecycle, history) and `files.py` (documents,
-images, export, native file dialogs). pywebview also recurses into every
-public class or non-callable attribute, so the bridge keeps its
-`ConsensusApp` as `_app`; a public `app` would expose the whole app and its
-`Database` to JavaScript (#125). `tests/test_desktop_bridge_api.py` mirrors
-that recursion and pins the full exposed set against the frontend's
-`pywebview.api` calls.
+images, export, native file dialogs). The bridge is deliberately not
+passed as `js_api`: pywebview dispatches a `js_api` call by walking the
+dotted name with `getattr`, private names included, so page script could
+reach `_app.db` (#125). `tests/test_desktop_bridge_api.py` pins the exposed
+set against the frontend's `pywebview.api` calls and drives pywebview's
+real dispatcher to check that private paths do not resolve.
 
 **Async bridging:** A background `asyncio` event loop runs in a daemon thread.
 Async methods are submitted with `asyncio.run_coroutine_threadsafe()` and

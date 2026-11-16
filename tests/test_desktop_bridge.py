@@ -17,6 +17,7 @@ import pytest
 
 from consensus import desktop
 from consensus.desktop import DesktopBridge, launch_desktop
+from consensus.desktop.bridge import exposed_functions
 from tests.desktop_helpers import FakeWindow, bridge, stop_loop  # noqa: F401
 from tests.document_helpers import patch_where_defined
 
@@ -289,8 +290,8 @@ def fake_webview(monkeypatch, app):
     patch_where_defined(monkeypatch, launch_desktop, "ConsensusApp",
                         lambda: app)
     yield mod
-    for args, kwargs in mod.created:
-        stop_loop(kwargs["js_api"])
+    if window.exposed:
+        stop_loop(window.exposed[0].__self__)
 
 
 class TestLaunchDesktop:
@@ -301,8 +302,11 @@ class TestLaunchDesktop:
         assert title == desktop.WINDOW_TITLE
         assert os.path.isfile(html_path)
         assert html_path.endswith(os.path.join("static", "index.html"))
-        bridge = kwargs["js_api"]
+        # The bridge is exposed method by method, never as js_api (#125).
+        assert "js_api" not in kwargs
+        bridge = fake_webview.window.exposed[0].__self__
         assert isinstance(bridge, DesktopBridge) and bridge._app is app
+        assert fake_webview.window.exposed == exposed_functions(bridge)
         assert bridge._window is fake_webview.window
         assert kwargs["width"] == desktop.WINDOW_WIDTH
         assert kwargs["height"] == desktop.WINDOW_HEIGHT

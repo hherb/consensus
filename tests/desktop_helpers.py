@@ -13,7 +13,8 @@ from consensus.desktop import DesktopBridge
 class FakeWindow:
     """Stand-in for a pywebview window.
 
-    Records ``evaluate_js`` scripts and file-dialog calls; the dialog returns
+    Records ``evaluate_js`` scripts, ``expose``d functions and file-dialog
+    calls; the dialog returns
     ``dialog_result``. With ``fail_js`` set, ``evaluate_js`` raises, as it
     does when the window is closing.
     """
@@ -23,6 +24,10 @@ class FakeWindow:
         self.fail_js = fail_js
         self.scripts: list[str] = []
         self.dialogs: list[tuple] = []
+        self.exposed: list = []
+
+    def expose(self, *functions) -> None:
+        self.exposed.extend(functions)
 
     def evaluate_js(self, script: str) -> None:
         if self.fail_js:

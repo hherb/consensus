@@ -5,7 +5,7 @@ import os
 import sys
 
 from ..app import ConsensusApp
-from .bridge import DesktopBridge
+from .bridge import DesktopBridge, exposed_functions
 from .constants import (
     WINDOW_HEIGHT, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_TITLE,
     WINDOW_WIDTH,
@@ -62,12 +62,13 @@ def launch_desktop(debug: bool = False) -> None:
     window = webview.create_window(
         WINDOW_TITLE,
         html_path,
-        js_api=bridge,
         width=WINDOW_WIDTH,
         height=WINDOW_HEIGHT,
         min_size=(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT),
         text_select=True,
     )
+    # Not js_api=bridge: pywebview would dispatch any dotted name (#125).
+    window.expose(*exposed_functions(bridge))
     bridge._window = window
 
     # icon param in webview.start() works on Linux (GTK/QT)
