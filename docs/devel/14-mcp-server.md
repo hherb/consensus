@@ -84,14 +84,21 @@ line → `-32700` (also logged), a non-object message → `-32600`, non-object
 A tool call the server rejects is an `isError: true` result, never a
 successful one carrying error text (#121); an unknown tool name is a JSON-RPC
 `-32602` error instead, and `run_discussion` reports a turn loop that failed
-after setup in its successful result (see below). A handler raises `ToolError`
-(`errors.py`) for an expected failure — a value it checks and rejects, a
-missing record (including an unknown node in `neighbors` mode), an over-long
-query, the embedding service down — which becomes `Error: <message>`, logged
-at WARNING without a traceback. Any other exception from a handler is a bug:
-`isError: true` with the text `describe_flow_error()` gives it, logged with
-its traceback. That includes an argument of the wrong type or a missing
-required one (`int("x")`, a `KeyError`; #124) and a document whose
+after setup in its successful result (see below). Before a handler runs,
+`validation.validate_arguments` checks the arguments against the tool's
+`inputSchema` (#124): required keys, `type` (`bool` is not an `integer` or
+`number`), array `items` and `enum`. It is lenient where clients are: a
+numeric string (`"5"`) is coerced for an `integer`/`number` argument, and an
+explicit `null` for an optional argument means "not given". A mismatch
+raises `ToolError` naming every bad argument (`discussion_id must be an
+integer`). A tool definition may use only the keywords the validator
+enforces (`SUPPORTED_KEYWORDS`, pinned by a test). A handler raises
+`ToolError` (`errors.py`) for an expected failure — a value it checks and
+rejects, a missing record (including an unknown node in `neighbors` mode),
+an over-long query, the embedding service down — which becomes `Error:
+<message>`, logged at WARNING without a traceback. Any other exception from
+a handler is a bug: `isError: true` with the text `describe_flow_error()`
+gives it, logged with its traceback, for example a document whose
 `sections_json` cannot be parsed. Any other exception during dispatch is
 logged and answered with `-32603` (`_dispatch()`), so a bug in the server
 cannot stop the loop. The codes are named in `constants.py`.

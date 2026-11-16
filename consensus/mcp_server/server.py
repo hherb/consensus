@@ -28,6 +28,7 @@ from .errors import ToolError
 from .handlers_read import ReadHandlersMixin
 from .handlers_write import WriteHandlersMixin
 from .tool_defs import ToolRegistrationMixin
+from .validation import validate_arguments
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +136,8 @@ class ConsensusMCPServer(ToolRegistrationMixin, ReadHandlersMixin,
             return self._make_error(msg_id, INVALID_PARAMS,
                                     f"Unknown tool: {tool_name}")
         try:
+            arguments = validate_arguments(
+                tool["definition"]["inputSchema"], arguments)
             result_text = await tool["handler"](arguments)
             return self._make_response(msg_id, {
                 "content": [{"type": "text", "text": result_text}],
