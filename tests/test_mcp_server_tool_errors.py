@@ -24,7 +24,7 @@ REJECTED_CALLS = [
     ("delete_memory", {"memory_id": ""}, "Error: No memory_id provided."),
     ("delete_memory", {"memory_id": "nope"},
      "Error: Memory not found or does not belong to this agent."),
-    ("assert_knowledge", {"subject": "A", "relation": "r"},
+    ("assert_knowledge", {"subject": "A", "relation": "r", "object": " "},
      "Error: subject, relation, and object are all required."),
     ("read_discussion", {"discussion_id": 999},
      "Error: Discussion not found"),
@@ -61,10 +61,17 @@ async def test_rejection_logs_a_warning_without_traceback(server, caplog):
     assert "store_memory" in record.getMessage()
 
 
-async def test_unexpected_failure_still_logs_its_traceback(server, caplog):
+async def test_unexpected_failure_still_logs_its_traceback(server, caplog,
+                                                           monkeypatch):
+    from consensus import app_discussion_state
+
+    def broken(db, discussion_id):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(app_discussion_state, "get_export_data", broken)
     with caplog.at_level(logging.WARNING, logger=server_module.__name__):
         _, is_error = await call(server, "read_discussion",
-                                 {"discussion_id": "not-a-number"})
+                                 {"discussion_id": 1})
     assert is_error
     [record] = [r for r in caplog.records if r.name == server_module.__name__]
     assert record.levelno == logging.ERROR

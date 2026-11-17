@@ -1,12 +1,13 @@
 # HANDOVER
 
-_Last updated: 2026-11-16. `main` is at **v2.0.0** (released 2026-07-20) plus
+_Last updated: 2026-11-17. `main` is at **v2.0.0** (released 2026-07-20) plus
 everything merged since, including the whole of #61 (every Python module is
-under the ~500-line golden rule) and the auth hardening of PRs #140 (#127,
-#131), #142 (#141, #130) and #143 (#138). This branch,
-`fix/desktop-bridge-exposure-125`, stops pywebview letting page script
-reach `ConsensusApp` and its `Database` through the bridge (#125). The
-suite is at **4458 passing**.
+under the ~500-line golden rule), the auth hardening of PRs #140 (#127,
+#131), #142 (#141, #130) and #143 (#138), and PR #144, which stops pywebview
+letting page script reach `ConsensusApp` and its `Database` through the
+desktop bridge (#125). This branch, `fix/mcp-arg-validation-124`, checks
+`consensus-mcp` tool arguments against each tool's `inputSchema` (#124). The
+suite is at **4498 passing**.
 Merged campaigns and their contracts are summarised below._
 
 This file briefs the next session on what is done, what is still open, and
@@ -22,7 +23,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4458 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4498 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -356,8 +357,11 @@ keeping: eval — a failed LLM judgement returns 502 and never overwrites an
 earlier score; `/eval/` is **not mounted in `--multi-user`**; a run with a
 failed turn/summary/synthesis is `error`, not `done`. `mcp_server` — a failed
 tool call is an `isError` result (#121); `run_discussion` reports
-`turn_errors`, `error`, `stop_reason`. A new desktop bridge method goes in a
-mixin **and** in `BRIDGE_API`; moved code logs under its new module.
+`turn_errors`, `error`, `stop_reason`; `validation.validate_arguments` checks
+every call against the tool's `inputSchema` before the handler runs and coerces
+numeric strings (`"5"`, repo owner's call, #124), so a new tool definition may
+use only its `SUPPORTED_KEYWORDS`. A new desktop bridge method goes in a mixin
+**and** in `BRIDGE_API`; moved code logs under its new module.
 
 **Watch:** `app_discussion_flow/turns.py` (499) and `pricing.py` (498): split
 before the next addition. `evaluation/static/eval.js` (645) is pre-existing JS.
@@ -409,18 +413,15 @@ dropped lazy re-export fails only in production). Keep them in step.
 
 #139 registration reveals that an email has an account; #128 unverified OAuth
 sign-up can pre-hijack an address (both want an email-verification design);
-#124 validate MCP tool arguments against `inputSchema`; #107 a rotation
-change spans several commits (crash mid-update desyncs members and
-`method_state`); #102 follow-ups from the
-PR #100 review (Retry-After, `doc_add` ingest budget, DNS-rebinding pin,
-`_init_image_tools` catch, test file size); #97 Seatbelt profile does not
-confine writes; #96 no UI flag when Python or image tools fail to load; #92
-tool error results echo raw exception text to the model and UI (the
-`/api/<method>` 500 body does too — noted on the issue); #81 persist parse
-fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents. #125 is closed by this
-branch. Suggested next: #124 (needs the repo owner's call: coerce numeric
-strings such as `"5"` or reject them); #128/#139 need the repo owner's call
-on email verification.
+#107 a rotation change spans several commits (crash mid-update desyncs members
+and `method_state`); #102 follow-ups from the PR #100 review (Retry-After,
+`doc_add` ingest budget, DNS-rebinding pin, `_init_image_tools` catch, test
+file size); #97 Seatbelt profile does not confine writes; #96 no UI flag when
+Python or image tools fail to load; #92 tool error results echo raw exception
+text to the model and UI (the `/api/<method>` 500 body does too — noted on the
+issue); #81 persist parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'`
+documents. Suggested next: #107 (no decision needed); #128/#139 need the repo
+owner's call on email verification.
 
 ### Roadmap
 
