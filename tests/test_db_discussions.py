@@ -40,14 +40,6 @@ class TestDiscussions:
         assert sample_ai_entity in member_ids
         assert sample_human_entity in member_ids
 
-    def test_remove_discussion_member(self, tmp_db, sample_ai_entity, sample_human_entity):
-        did = tmp_db.create_discussion("T", sample_ai_entity)
-        tmp_db.add_discussion_member(did, sample_ai_entity, True, False)
-        tmp_db.add_discussion_member(did, sample_human_entity, False, True, 0)
-        tmp_db.remove_discussion_member(did, sample_human_entity)
-        members = tmp_db.get_discussion_members(did)
-        assert len(members) == 1
-
     def test_soft_delete_discussion(self, tmp_db, sample_ai_entity):
         did = tmp_db.create_discussion("ToDelete", sample_ai_entity)
         count = tmp_db.soft_delete_discussions([did])

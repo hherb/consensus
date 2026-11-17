@@ -5,7 +5,7 @@ functions mutate a Discussion in-place and write to the database directly;
 the ConsensusApp wrapper methods handle notification.
 """
 
-from .app_discussion_rotation import LIVE_STATUSES, update_rotation
+from .app_discussion_rotation import update_rotation
 from .database import Database
 from .models import Discussion
 
@@ -48,13 +48,10 @@ def set_participant_role(
     if participant_role == "devils_advocate":
         auto_assign_da_tools(db, entity_id)
 
-    # Keep the DA last in every copy of the rotation (issue #104)
-    update_rotation(discussion, db)
-
-    # Persist role to DB if discussion is live (never a concluded record)
-    if discussion.id and discussion.status in LIVE_STATUSES:
-        db.update_member_role(
-            discussion.id, entity_id, participant_role)
+    # Keep the DA last in every copy of the rotation (issue #104); the
+    # role is persisted with it, and only while live (never a concluded
+    # record)
+    update_rotation(discussion, db, role_of=entity_id)
 
     return entity.to_dict()
 

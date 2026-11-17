@@ -54,6 +54,7 @@ def update_rotation(
     db: Database,
     add: Optional[int] = None,
     remove: Optional[int] = None,
+    role_of: Optional[int] = None,
 ) -> None:
     """Apply a membership or role change to every copy of the rotation.
 
@@ -66,6 +67,10 @@ def update_rotation(
     :func:`carry_turn_index`), and the result is persisted.  No-op unless
     the discussion is live (``LIVE_STATUSES``): ``start_discussion``
     builds the rotation from scratch.
+
+    The member row of ``add`` (inserted) or ``remove`` (deleted), the
+    ``member_roles`` entry of ``add`` or ``role_of``, the turn positions
+    and ``method_state`` are written in one transaction (issue #107).
     """
     if not discussion.id or discussion.status not in LIVE_STATUSES:
         return
@@ -96,6 +101,12 @@ def update_rotation(
     if "_turn_index" in state:
         state["_turn_index"] = discussion.current_turn_index
 
-    db.set_member_turn_positions(discussion.id, discussion.base_turn_order)
-    db.update_discussion(
-        discussion.id, method_state=serialize_method_state(state))
+    role_eid = add if add is not None else role_of
+    db.save_rotation(
+        discussion.id, discussion.base_turn_order,
+        serialize_method_state(state),
+        join=None if add is None else (add, add == discussion.moderator_id),
+        leave=remove,
+        role=None if role_eid is None else (
+            role_eid, discussion.member_roles.get(role_eid, "standard")),
+    )

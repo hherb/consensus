@@ -8,6 +8,9 @@ joiner was skipped, and a reload restored the devil's advocate's old slot
 ``complete_turn`` and ``load_discussion`` paths.
 """
 
+import logging
+import sqlite3
+
 import pytest
 
 from consensus.app_discussion_flow import complete_turn
@@ -22,6 +25,7 @@ from consensus.app_discussion_setup import (
     start_discussion,
 )
 from consensus.app_discussion_state import load_discussion
+from consensus.methods import serialize_method_state
 from consensus.moderator import Moderator
 from consensus.models import Discussion
 from consensus.pricing import PricingCache
@@ -257,3 +261,78 @@ class TestRoleChanges:
         assert disc.current_speaker.id == b
         assert disc.method_state["_turn_index"] == 0
         assert _reload(tmp_db, disc).current_speaker.id == b
+
+
+class TestRotationIsOneTransaction:
+    """A rotation change is one commit (issue #107): a failure partway
+    through used to leave a joiner with no ``turn_position``, or a saved
+    ``_turn_order`` still naming a leaver."""
+
+    @staticmethod
+    def _fail_method_state_writes(db) -> None:
+        """Make the last write of a rotation change fail inside SQLite."""
+        with db._lock:
+            db.conn.execute(
+                "CREATE TRIGGER fail_method_state BEFORE UPDATE OF "
+                "method_state ON discussions "
+                "BEGIN SELECT RAISE(ABORT, 'disk on fire'); END")
+            db.conn.commit()
+
+    def test_failed_join_leaves_no_member_row(self, tmp_db):
+        disc, _mod, (a, b) = _start(tmp_db)
+        c = tmp_db.add_entity("C", "human", "#222222")
+        self._fail_method_state_writes(tmp_db)
+
+        with pytest.raises(sqlite3.DatabaseError, match="disk on fire"):
+            add_to_discussion(disc, tmp_db, c)
+
+        assert tmp_db.get_discussion_member(disc.id, c) is None
+        assert _reload(tmp_db, disc).base_turn_order == [a, b]
+
+    def test_failed_leave_keeps_member_row(self, tmp_db):
+        disc, _mod, (a, b, c) = _start(tmp_db, n=3)
+        disc.turn_order = [a, b]
+        disc.method_state["_turn_order"] = [a, b]
+        tmp_db.update_discussion(
+            disc.id, method_state=serialize_method_state(disc.method_state))
+        self._fail_method_state_writes(tmp_db)
+
+        with pytest.raises(sqlite3.DatabaseError, match="disk on fire"):
+            remove_from_discussion(disc, tmp_db, b)
+
+        assert tmp_db.get_discussion_member(disc.id, b) is not None
+        restored = _reload(tmp_db, disc)
+        assert restored.turn_order == [a, b]
+        assert restored.base_turn_order == [a, b, c]
+
+    def test_failed_role_change_keeps_role_and_slot(self, tmp_db):
+        disc, _mod, (a, b) = _start(tmp_db)
+        self._fail_method_state_writes(tmp_db)
+
+        with pytest.raises(sqlite3.DatabaseError, match="disk on fire"):
+            set_participant_role(disc, tmp_db, a, DA)
+
+        member = tmp_db.get_discussion_member(disc.id, a)
+        assert member["participant_role"] == "standard"
+        assert member["turn_position"] == 0
+
+    def test_joiner_role_is_persisted(self, tmp_db):
+        disc, _mod, (a, b) = _start(tmp_db)
+        c = tmp_db.add_entity("C", "human", "#222222")
+
+        add_to_discussion(disc, tmp_db, c, participant_role=DA)
+
+        assert tmp_db.get_discussion_member(
+            disc.id, c)["participant_role"] == DA
+        restored = _reload(tmp_db, disc)
+        assert restored.member_roles[c] == DA
+        assert restored.base_turn_order == [a, b, c]
+
+    def test_drift_is_logged(self, tmp_db, caplog):
+        disc, _mod, (a, b) = _start(tmp_db)
+        stranger = tmp_db.add_entity("S", "human", "#333333")
+
+        with caplog.at_level(logging.WARNING, logger="consensus.db"):
+            tmp_db.save_rotation(disc.id, [a, stranger, b], "{}")
+
+        assert "names 3 members but only 2" in caplog.text

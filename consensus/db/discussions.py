@@ -1,7 +1,10 @@
 """Database mixin for discussion and discussion member CRUD."""
 
+import logging
 import time
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 MAX_DAYS_KEEP_DELETED = 7
 
@@ -155,29 +158,60 @@ class DiscussionsMixin:
             (role, discussion_id, entity_id),
         )
 
-    def set_member_turn_positions(self, discussion_id: int,
-                                  order: list[int]) -> None:
-        """Set each member's ``turn_position`` to its index in ``order``.
+    def save_rotation(self, discussion_id: int, order: list[int],
+                      method_state: str,
+                      join: Optional[tuple[int, bool]] = None,
+                      leave: Optional[int] = None,
+                      role: Optional[tuple[int, str]] = None) -> None:
+        """Persist one rotation change in a single transaction (issue #107).
 
-        Written in one transaction so a reload never sees a half-applied
-        rotation.  Members not in ``order`` are left untouched.
+        Applies, in order: removing ``leave``'s member row; inserting the
+        ``join`` member ``(entity_id, is_moderator)`` as a participant;
+        setting ``role`` ``(entity_id, participant_role)``; setting each
+        member's ``turn_position`` to its index in ``order``; and writing
+        ``method_state``.  Any failure rolls all of it back, so a reload
+        never sees a joiner without a position or a ``_turn_order`` that
+        still names a leaver.  Members not in ``order`` keep their
+        position; an ``order`` naming a non-member is logged as drift.
         """
         with self._lock:
-            self.conn.executemany(
-                "UPDATE discussion_members SET turn_position=? "
-                "WHERE discussion_id=? AND entity_id=?",
-                [(pos, discussion_id, eid) for pos, eid in enumerate(order)],
-            )
-            self.conn.commit()
-
-    def remove_discussion_member(self, discussion_id: int,
-                                 entity_id: int) -> None:
-        """Remove a member from a discussion."""
-        self._execute_write(
-            "DELETE FROM discussion_members "
-            "WHERE discussion_id=? AND entity_id=?",
-            (discussion_id, entity_id),
-        )
+            try:
+                if leave is not None:
+                    self.conn.execute(
+                        "DELETE FROM discussion_members "
+                        "WHERE discussion_id=? AND entity_id=?",
+                        (discussion_id, leave))
+                if join is not None:
+                    self.conn.execute(
+                        "INSERT INTO discussion_members "
+                        "(discussion_id,entity_id,is_moderator,"
+                        "also_participant) VALUES (?,?,?,1) "
+                        "ON CONFLICT(discussion_id,entity_id) DO UPDATE SET "
+                        "is_moderator=excluded.is_moderator,"
+                        "also_participant=1",
+                        (discussion_id, join[0], int(join[1])))
+                if role is not None:
+                    self.conn.execute(
+                        "UPDATE discussion_members SET participant_role=? "
+                        "WHERE discussion_id=? AND entity_id=?",
+                        (role[1], discussion_id, role[0]))
+                cur = self.conn.executemany(
+                    "UPDATE discussion_members SET turn_position=? "
+                    "WHERE discussion_id=? AND entity_id=?",
+                    [(pos, discussion_id, eid)
+                     for pos, eid in enumerate(order)])
+                if cur.rowcount != len(order):
+                    logger.warning(
+                        "Discussion %s rotation names %d members but only "
+                        "%d have a member row", discussion_id, len(order),
+                        cur.rowcount)
+                self.conn.execute(
+                    "UPDATE discussions SET method_state=? WHERE id=?",
+                    (method_state, discussion_id))
+                self.conn.commit()
+            except BaseException:
+                self.conn.rollback()
+                raise
 
     def update_member_context_strategy(self, discussion_id: int,
                                        entity_id: int,
