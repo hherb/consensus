@@ -316,6 +316,31 @@ class TestRotationIsOneTransaction:
         assert member["participant_role"] == "standard"
         assert member["turn_position"] == 0
 
+    def test_failed_da_swap_keeps_old_da(self, tmp_db):
+        disc, _mod, (a, b) = _start(tmp_db)
+        set_participant_role(disc, tmp_db, a, DA)
+        self._fail_method_state_writes(tmp_db)
+
+        with pytest.raises(sqlite3.DatabaseError, match="disk on fire"):
+            set_participant_role(disc, tmp_db, b, DA)
+
+        assert tmp_db.get_discussion_member(
+            disc.id, a)["participant_role"] == DA
+        assert tmp_db.get_discussion_member(
+            disc.id, b)["participant_role"] == "standard"
+
+    def test_failed_da_join_keeps_old_da(self, tmp_db):
+        disc, _mod, (a, b) = _start(tmp_db)
+        set_participant_role(disc, tmp_db, a, DA)
+        c = tmp_db.add_entity("C", "human", "#222222")
+        self._fail_method_state_writes(tmp_db)
+
+        with pytest.raises(sqlite3.DatabaseError, match="disk on fire"):
+            add_to_discussion(disc, tmp_db, c, participant_role=DA)
+
+        assert tmp_db.get_discussion_member(
+            disc.id, a)["participant_role"] == DA
+
     def test_joiner_role_is_persisted(self, tmp_db):
         disc, _mod, (a, b) = _start(tmp_db)
         c = tmp_db.add_entity("C", "human", "#222222")
@@ -336,3 +361,4 @@ class TestRotationIsOneTransaction:
             tmp_db.save_rotation(disc.id, [a, stranger, b], "{}")
 
         assert "names 3 members but only 2" in caplog.text
+        assert f"missing: [{stranger}]" in caplog.text

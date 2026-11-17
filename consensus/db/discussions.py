@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import Optional
+from typing import Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -162,17 +162,18 @@ class DiscussionsMixin:
                       method_state: str,
                       join: Optional[tuple[int, bool]] = None,
                       leave: Optional[int] = None,
-                      role: Optional[tuple[int, str]] = None) -> None:
+                      roles: Sequence[tuple[int, str]] = ()) -> None:
         """Persist one rotation change in a single transaction (issue #107).
 
         Applies, in order: removing ``leave``'s member row; inserting the
         ``join`` member ``(entity_id, is_moderator)`` as a participant;
-        setting ``role`` ``(entity_id, participant_role)``; setting each
-        member's ``turn_position`` to its index in ``order``; and writing
-        ``method_state``.  Any failure rolls all of it back, so a reload
-        never sees a joiner without a position or a ``_turn_order`` that
-        still names a leaver.  Members not in ``order`` keep their
-        position; an ``order`` naming a non-member is logged as drift.
+        setting each ``(entity_id, participant_role)`` in ``roles``;
+        setting each member's ``turn_position`` to its index in ``order``;
+        and writing ``method_state``.  Any failure rolls all of it back, so
+        a reload never sees a joiner without a position, a ``_turn_order``
+        that still names a leaver, or a devil's-advocate swap with only one
+        of its two roles.  Members not in ``order`` keep their position; an
+        ``order`` naming a non-member is logged as drift, with the ids.
         """
         with self._lock:
             try:
@@ -190,21 +191,24 @@ class DiscussionsMixin:
                         "is_moderator=excluded.is_moderator,"
                         "also_participant=1",
                         (discussion_id, join[0], int(join[1])))
-                if role is not None:
-                    self.conn.execute(
-                        "UPDATE discussion_members SET participant_role=? "
-                        "WHERE discussion_id=? AND entity_id=?",
-                        (role[1], discussion_id, role[0]))
+                self.conn.executemany(
+                    "UPDATE discussion_members SET participant_role=? "
+                    "WHERE discussion_id=? AND entity_id=?",
+                    [(r, discussion_id, eid) for eid, r in roles])
                 cur = self.conn.executemany(
                     "UPDATE discussion_members SET turn_position=? "
                     "WHERE discussion_id=? AND entity_id=?",
                     [(pos, discussion_id, eid)
                      for pos, eid in enumerate(order)])
                 if cur.rowcount != len(order):
+                    members = {r[0] for r in self.conn.execute(
+                        "SELECT entity_id FROM discussion_members "
+                        "WHERE discussion_id=?", (discussion_id,))}
                     logger.warning(
                         "Discussion %s rotation names %d members but only "
-                        "%d have a member row", discussion_id, len(order),
-                        cur.rowcount)
+                        "%d have a member row; missing: %s", discussion_id,
+                        len(order), cur.rowcount,
+                        sorted(set(order) - members))
                 self.conn.execute(
                     "UPDATE discussions SET method_state=? WHERE id=?",
                     (method_state, discussion_id))

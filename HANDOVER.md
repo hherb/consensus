@@ -8,7 +8,7 @@ letting page script reach `ConsensusApp` and its `Database` through the
 desktop bridge (#125), and PR #145, which checks `consensus-mcp` tool
 arguments against each tool's `inputSchema` (#124). This branch,
 `fix/rotation-single-transaction-107`, makes a rotation change one SQLite
-transaction (#107). The suite is at **4502 passing**.
+transaction (#107). The suite is at **4504 passing**.
 Merged campaigns and their contracts are summarised below._
 
 Briefs the next session on what is open and the conventions to keep;
@@ -22,7 +22,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4502 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4504 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -141,9 +141,10 @@ route through it (`reorder_da_in_turn_order` is gone). It keeps four copies in
 step — `turn_order`, `base_turn_order`, `method_state` `_turn_order` /
 `_turn_index`, and `discussion_members.turn_position`. **All the DB writes
 of one change are one transaction** (#107): `update_rotation` hands
-`db.save_rotation` the joiner's insert or the leaver's delete, the changed
-role, the positions and `method_state`, and it rolls back on any failure;
-callers must not write the member row or role themselves. A position update
+`db.save_rotation` the joiner's insert or the leaver's delete, every role
+(so a devil's-advocate swap commits both, and `revert_other_devils_advocates`
+changes memory only), the positions and `method_state`, and it rolls back on
+any failure; callers must not write the member row or role themselves. A position update
 that matches fewer rows than the order names is logged as drift. Rules: the
 devil's advocate is last in both orders; a reorder never changes whose turn
 it is (`carry_turn_index`; a departed holder passes the turn to the next

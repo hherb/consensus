@@ -49,7 +49,7 @@ def add_to_discussion(
         discussion.moderator_id = entity_id
 
     if participant_role == "devils_advocate":
-        revert_other_devils_advocates(discussion, db, entity_id)
+        revert_other_devils_advocates(discussion, entity_id)
         auto_assign_da_tools(db, entity_id)
 
     # Persist to DB if discussion is already started
