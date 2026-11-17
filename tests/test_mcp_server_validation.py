@@ -72,6 +72,13 @@ def test_input_is_not_mutated():
      "mode must be one of: search, neighbors"),
     ({"id": 1, "ids": 3}, "ids must be an array"),
     ({"id": 1, "ids": [1, "y"]}, "ids[1] must be an integer"),
+    # Beyond SQLite's 64-bit INTEGER, or Python's int() digit limit.
+    ({"id": 2**63}, "id must be an integer"),
+    ({"id": -2**63 - 1}, "id must be an integer"),
+    ({"id": "9" * 30}, "id must be an integer"),
+    ({"id": "9" * 5000}, "id must be an integer"),
+    ({"id": 1e300}, "id must be an integer"),
+    ({"id": 1, "cost": 10**400}, "cost must be a number"),
 ])
 def test_invalid_arguments_raise_tool_error(given, message):
     with pytest.raises(ToolError) as exc:
@@ -114,12 +121,20 @@ async def test_numeric_string_reaches_the_handler_as_an_int(server):
     assert '"topic": "T"' in text
 
 
+async def test_handler_gets_the_validated_arguments(server):
+    """The handler sees the coerced copy: a dropped null, not ``int(None)``."""
+    text, is_error = await call(server, "list_discussions", {"limit": None})
+    assert not is_error, text
+
+
 async def test_every_advertised_schema_is_supported(server):
     """A tool def using a keyword or type the validator ignores fails here."""
     from consensus.mcp_server.validation import SUPPORTED_KEYWORDS, TYPE_CHECKS
     for name, tool in server._tools.items():
-        for arg, spec in tool["definition"]["inputSchema"]["properties"].items():
-            assert set(spec) <= SUPPORTED_KEYWORDS, (name, arg)
-            assert spec["type"] in TYPE_CHECKS, (name, arg)
-            if "items" in spec:
-                assert spec["items"]["type"] in TYPE_CHECKS, (name, arg)
+        schema = tool["definition"]["inputSchema"]
+        assert set(schema) <= {"type", "properties", "required"}, name
+        assert set(schema.get("required", [])) <= set(schema["properties"]), name
+        for arg, spec in schema["properties"].items():
+            for s in (spec, spec.get("items", {"type": "string"})):
+                assert set(s) <= SUPPORTED_KEYWORDS, (name, arg)
+                assert s["type"] in TYPE_CHECKS, (name, arg)

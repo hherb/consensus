@@ -15,7 +15,11 @@ from typing import Any, Callable
 
 from .errors import ToolError
 
-_INTEGER_TEXT = re.compile(r"[+-]?[0-9]+")
+#: SQLite's INTEGER range; a larger id would fail in the DB as OverflowError.
+_INT64 = range(-2**63, 2**63)
+#: 19 digits spans int64; the cap also keeps ``int()`` clear of Python's
+#: max-str-digits limit, which raises ValueError.
+_INTEGER_TEXT = re.compile(r"[+-]?[0-9]{1,19}")
 
 
 class _Invalid(Exception):
@@ -23,36 +27,35 @@ class _Invalid(Exception):
 
 
 def _integer(value: Any) -> int:
+    """Return ``value`` as an int64; integral floats and digit strings pass."""
     if isinstance(value, bool):
         raise _Invalid
-    if isinstance(value, int):
-        return value
     if isinstance(value, float) and value.is_integer():
-        return int(value)
-    if isinstance(value, str) and _INTEGER_TEXT.fullmatch(value.strip()):
-        return int(value)
-    raise _Invalid
+        value = int(value)
+    elif isinstance(value, str) and _INTEGER_TEXT.fullmatch(value.strip()):
+        value = int(value)
+    if not isinstance(value, int) or value not in _INT64:
+        raise _Invalid
+    return value
 
 
 def _number(value: Any) -> int | float:
-    if isinstance(value, bool):
+    """Return ``value`` as a finite number, accepting numeric strings."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         raise _Invalid
-    if isinstance(value, (int, float)):
-        number = value
-    elif isinstance(value, str):
-        try:
-            number = float(value)
-        except ValueError:
-            raise _Invalid from None
-    else:
-        raise _Invalid
+    try:
+        number = float(value)  # an int past float range raises OverflowError
+    except (ValueError, OverflowError):
+        raise _Invalid from None
     if not math.isfinite(number):
         raise _Invalid
-    return number
+    return number if isinstance(value, str) else value
 
 
 def _exact(kind: type) -> Callable[[Any], Any]:
+    """Return a check that accepts only instances of ``kind``, uncoerced."""
     def check(value: Any) -> Any:
+        """Return ``value`` unchanged if it is a ``kind``."""
         if not isinstance(value, kind):
             raise _Invalid
         return value
@@ -76,6 +79,7 @@ _ARTICLES = {"integer": "an integer", "array": "an array"}
 
 
 def _expected(kind: str) -> str:
+    """Return ``kind`` with its article, for an error message."""
     return _ARTICLES.get(kind, f"a {kind}")
 
 

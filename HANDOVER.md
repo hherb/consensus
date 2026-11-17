@@ -7,7 +7,7 @@ under the ~500-line golden rule), the auth hardening of PRs #140 (#127,
 letting page script reach `ConsensusApp` and its `Database` through the
 desktop bridge (#125). This branch, `fix/mcp-arg-validation-124`, checks
 `consensus-mcp` tool arguments against each tool's `inputSchema` (#124). The
-suite is at **4491 passing**.
+suite is at **4498 passing**.
 Merged campaigns and their contracts are summarised below._
 
 This file briefs the next session on what is done, what is still open, and
@@ -23,7 +23,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4491 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4498 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -357,11 +357,11 @@ keeping: eval — a failed LLM judgement returns 502 and never overwrites an
 earlier score; `/eval/` is **not mounted in `--multi-user`**; a run with a
 failed turn/summary/synthesis is `error`, not `done`. `mcp_server` — a failed
 tool call is an `isError` result (#121); `run_discussion` reports
-`turn_errors`, `error`, `stop_reason`; `validation.validate_arguments`
-checks every call against the tool's `inputSchema` before the handler runs
-and coerces numeric strings (`"5"`, repo owner's call, #124), so a new tool
-definition may use only its `SUPPORTED_KEYWORDS`. A new desktop bridge method goes in a
-mixin **and** in `BRIDGE_API`; moved code logs under its new module.
+`turn_errors`, `error`, `stop_reason`; `validation.validate_arguments` checks
+every call against the tool's `inputSchema` before the handler runs and coerces
+numeric strings (`"5"`, repo owner's call, #124), so a new tool definition may
+use only its `SUPPORTED_KEYWORDS`. A new desktop bridge method goes in a mixin
+**and** in `BRIDGE_API`; moved code logs under its new module.
 
 **Watch:** `app_discussion_flow/turns.py` (499) and `pricing.py` (498): split
 before the next addition. `evaluation/static/eval.js` (645) is pre-existing JS.
