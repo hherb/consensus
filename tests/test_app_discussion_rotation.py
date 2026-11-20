@@ -380,6 +380,55 @@ class TestRotationIsOneTransaction:
         assert "could not be saved" in disc.messages[-1].content
         assert _reload(tmp_db, disc).base_turn_order == [a, b, c]
 
+    def test_unsaved_leave_notice_keeps_the_saved_change(self, tmp_db):
+        disc, _mod, (a, b, c) = _start(tmp_db, n=3)
+
+        def broken(*_args, **_kwargs):
+            raise sqlite3.OperationalError("disk full")
+        tmp_db.add_message = broken
+
+        assert remove_from_discussion(disc, tmp_db, b) is True
+
+        assert disc.messages[-1].content.startswith(
+            "-- P2 left the discussion --")
+        assert "could not be saved" in disc.messages[-1].content
+        assert tmp_db.get_discussion_member(disc.id, b) is None
+        assert _reload(tmp_db, disc).base_turn_order == [a, c]
+
+    def test_failed_moderator_join_keeps_old_moderator(self, tmp_db):
+        disc, mod, _parts = _start(tmp_db)
+        new_mod = tmp_db.add_entity("M2", "human", "#444444")
+        self._fail_method_state_writes(tmp_db)
+        before = self._memory(disc)
+
+        self._assert_failed(
+            add_to_discussion(disc, tmp_db, new_mod, is_moderator=True),
+            disc, before)
+
+        assert disc.moderator_id == mod
+        assert tmp_db.get_discussion_member(disc.id, new_mod) is None
+
+    @pytest.mark.parametrize("via", ["role", "join"])
+    def test_da_tool_failure_after_save_is_reported(self, tmp_db, via):
+        """The DA tools are assigned after the rotation is committed, so a
+        failed tool write must not report the saved change as failed."""
+        disc, _mod, (a, b) = _start(tmp_db)
+
+        def broken(*_args, **_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+        tmp_db.add_entity_tool = broken
+
+        if via == "role":
+            da, result = a, set_participant_role(disc, tmp_db, a, DA)
+        else:
+            da = tmp_db.add_entity("C", "human", "#222222")
+            result = add_to_discussion(disc, tmp_db, da, participant_role=DA)
+
+        assert "error" not in result
+        assert tmp_db.get_discussion_member(
+            disc.id, da)["participant_role"] == DA
+        assert "database is locked" in disc.messages[-1].content
+
     def test_joiner_role_is_persisted(self, tmp_db):
         disc, _mod, (a, b) = _start(tmp_db)
         c = tmp_db.add_entity("C", "human", "#222222")

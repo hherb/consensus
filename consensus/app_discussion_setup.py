@@ -11,7 +11,7 @@ from typing import Optional
 from .app_discussion_flow import apply_method_turn_order
 from .app_discussion_flow.helpers import post_notice
 from .app_discussion_roles import (
-    auto_assign_da_tools,
+    assign_da_tools,
     revert_other_devils_advocates,
 )
 from .app_discussion_rotation import (
@@ -66,7 +66,7 @@ def add_to_discussion(
                     f"-- {entity.name} joined the discussion --")
 
     if participant_role == "devils_advocate":
-        auto_assign_da_tools(db, entity_id)
+        assign_da_tools(discussion, db, entity)
 
     return entity.to_dict()
 

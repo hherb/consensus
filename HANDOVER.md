@@ -5,7 +5,7 @@ plus everything merged since (the #61 split, auth hardening, the desktop
 bridge fix #125, MCP argument validation #124, one-transaction rotation
 #107 — details in git history). This branch,
 `fix/rotation-memory-after-save-147`, restores the in-memory discussion
-when a rotation save fails (#147). The suite is at **4505 passing**._
+when a rotation save fails (#147). The suite is at **4509 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -18,7 +18,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4505 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4509 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -135,27 +135,28 @@ is the only code that changes the rotation of a started discussion;
 `add_to_discussion`, `remove_from_discussion` and `set_participant_role` all
 route through it (`reorder_da_in_turn_order` is gone). It keeps four copies in
 step — `turn_order`, `base_turn_order`, `method_state` `_turn_order` /
-`_turn_index`, and `discussion_members.turn_position`. **All the DB writes
-of one change are one transaction** (#107): `update_rotation` hands
-`db.save_rotation` the joiner's insert or the leaver's delete, every role
-(so a devil's-advocate swap commits both, and `revert_other_devils_advocates`
+`_turn_index`, and `discussion_members.turn_position`. **All the DB writes of
+one change are one transaction** (#107): `update_rotation` hands
+`db.save_rotation` the joiner's insert or the leaver's delete, every role (so
+a devil's-advocate swap commits both, and `revert_other_devils_advocates`
 changes memory only), the positions and `method_state`, and it rolls back on
-any failure; callers must not write the member row or role themselves.
-**A failed save leaves memory as it was** (#147): callers take
+any failure; callers must not write the member row or role themselves. **A
+failed save leaves memory as it was** (#147): callers take
 `restore = snapshot_rotation(discussion)` *before* their first edit and pass
 it in; on failure `update_rotation` calls it, logs, and returns an error
 string the caller returns as `{"error": ...}` (the setup UI toasts it). Side
-effects outside the rotation (devil's-advocate tools, the join/leave notice
-via `post_notice`) run only after a successful save. A position update
-that matches fewer rows than the order names is logged as drift. Rules: the
-devil's advocate is last in both orders; a reorder never changes whose turn
-it is (`carry_turn_index`; a departed holder passes the turn to the next
-remaining member); the `_turn_index` stamp is re-pointed at the carried live
-index, not dropped, so a reload still restores a #19 mid-round reset; a
-joiner enters the current phase only when that phase runs the whole roster —
-a narrowed phase (moderator-only, red team) is left alone until the method
-next derives the order (normally the next transition); a removal that would
-empty the current phase falls back to the roster, as
+effects outside the rotation (devil's-advocate tools via `assign_da_tools`,
+the join/leave notice via `post_notice`) run only after a successful save, and
+a failure there is a transcript notice, never an error for the saved change. A
+position update that matches fewer rows than the order names is logged as
+drift. Rules: the devil's advocate is last in both orders; a reorder never
+changes whose turn it is (`carry_turn_index`; a departed holder passes the
+turn to the next remaining member); the `_turn_index` stamp is re-pointed at
+the carried live index, not dropped, so a reload still restores a #19
+mid-round reset; a joiner enters the current phase only when that phase runs
+the whole roster — a narrowed phase (moderator-only, red team) is left alone
+until the method next derives the order (normally the next transition); a
+removal that would empty the current phase falls back to the roster, as
 `apply_method_turn_order` does. Only a **live** (active/paused) discussion
 persists any of this (`LIVE_STATUSES`): edits to a concluded discussion still
 in memory come from the setup screen after a refresh and are input for the
