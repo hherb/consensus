@@ -5,7 +5,7 @@ functions mutate a Discussion in-place and write to the database directly;
 the ConsensusApp wrapper methods handle notification.
 """
 
-from .app_discussion_rotation import update_rotation
+from .app_discussion_rotation import snapshot_rotation, update_rotation
 from .database import Database
 from .models import Discussion
 
@@ -39,19 +39,22 @@ def set_participant_role(
     if entity_id == discussion.moderator_id:
         return {"error": "Cannot assign a role to the moderator"}
 
+    restore = snapshot_rotation(discussion)
     if participant_role == "devils_advocate":
         revert_other_devils_advocates(discussion, entity_id)
 
     discussion.member_roles[entity_id] = participant_role
 
+    # Keep the DA last in every copy of the rotation (issue #104); the
+    # roles are persisted with it, and only while live (never a concluded
+    # record). A failed save restores memory (issue #147).
+    error = update_rotation(discussion, db, restore)
+    if error:
+        return {"error": error}
+
     # Auto-assign tools for DA
     if participant_role == "devils_advocate":
         auto_assign_da_tools(db, entity_id)
-
-    # Keep the DA last in every copy of the rotation (issue #104); the
-    # roles are persisted with it, and only while live (never a concluded
-    # record)
-    update_rotation(discussion, db)
 
     return entity.to_dict()
 

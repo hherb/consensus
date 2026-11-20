@@ -9,11 +9,16 @@ import time
 from typing import Optional
 
 from .app_discussion_flow import apply_method_turn_order
+from .app_discussion_flow.helpers import post_notice
 from .app_discussion_roles import (
     auto_assign_da_tools,
     revert_other_devils_advocates,
 )
-from .app_discussion_rotation import LIVE_STATUSES, update_rotation
+from .app_discussion_rotation import (
+    LIVE_STATUSES,
+    snapshot_rotation,
+    update_rotation,
+)
 from .database import Database
 from .methods import get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole
@@ -42,6 +47,7 @@ def add_to_discussion(
     if discussion.get_entity(entity_id):
         return {"error": f"{entity.name} is already in the discussion"}
 
+    restore = snapshot_rotation(discussion)
     discussion.entities.append(entity)
     discussion.member_roles[entity_id] = participant_role
 
@@ -50,23 +56,17 @@ def add_to_discussion(
 
     if participant_role == "devils_advocate":
         revert_other_devils_advocates(discussion, entity_id)
-        auto_assign_da_tools(db, entity_id)
 
     # Persist to DB if discussion is already started
     if discussion.id and discussion.status in LIVE_STATUSES:
-        update_rotation(discussion, db, add=entity_id)
+        error = update_rotation(discussion, db, restore, add=entity_id)
+        if error:
+            return {"error": error}
+        post_notice(discussion, db, entity,
+                    f"-- {entity.name} joined the discussion --")
 
-        sys_msg = Message(
-            entity_id=entity_id, entity_name=entity.name,
-            content=f"-- {entity.name} joined the discussion --",
-            role=MessageRole.SYSTEM,
-        )
-        discussion.messages.append(sys_msg)
-        db.add_message(
-            discussion.id, entity_id,
-            f"-- {entity.name} joined the discussion --",
-            "system", turn_number=discussion.turn_number,
-        )
+    if participant_role == "devils_advocate":
+        auto_assign_da_tools(db, entity_id)
 
     return entity.to_dict()
 
@@ -92,8 +92,8 @@ def remove_from_discussion(
     entity = discussion.get_entity(entity_id)
     if not entity:
         return {"error": "Entity not in discussion"}
-    entity_name = entity.name
 
+    restore = snapshot_rotation(discussion)
     discussion.entities = [
         e for e in discussion.entities if e.id != entity_id
     ]
@@ -103,19 +103,11 @@ def remove_from_discussion(
 
     # Persist to DB if discussion is already started
     if discussion.id and discussion.status in LIVE_STATUSES:
-        update_rotation(discussion, db, remove=entity_id)
-
-        sys_msg = Message(
-            entity_id=entity_id, entity_name=entity_name,
-            content=f"-- {entity_name} left the discussion --",
-            role=MessageRole.SYSTEM,
-        )
-        discussion.messages.append(sys_msg)
-        db.add_message(
-            discussion.id, entity_id,
-            f"-- {entity_name} left the discussion --",
-            "system", turn_number=discussion.turn_number,
-        )
+        error = update_rotation(discussion, db, restore, remove=entity_id)
+        if error:
+            return {"error": error}
+        post_notice(discussion, db, entity,
+                    f"-- {entity.name} left the discussion --")
 
     return True
 
