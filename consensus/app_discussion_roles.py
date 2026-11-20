@@ -5,7 +5,7 @@ functions mutate a Discussion in-place and write to the database directly;
 the ConsensusApp wrapper methods handle notification.
 """
 
-from .app_discussion_rotation import LIVE_STATUSES, update_rotation
+from .app_discussion_rotation import update_rotation
 from .database import Database
 from .models import Discussion
 
@@ -40,7 +40,7 @@ def set_participant_role(
         return {"error": "Cannot assign a role to the moderator"}
 
     if participant_role == "devils_advocate":
-        revert_other_devils_advocates(discussion, db, entity_id)
+        revert_other_devils_advocates(discussion, entity_id)
 
     discussion.member_roles[entity_id] = participant_role
 
@@ -48,30 +48,26 @@ def set_participant_role(
     if participant_role == "devils_advocate":
         auto_assign_da_tools(db, entity_id)
 
-    # Keep the DA last in every copy of the rotation (issue #104)
+    # Keep the DA last in every copy of the rotation (issue #104); the
+    # roles are persisted with it, and only while live (never a concluded
+    # record)
     update_rotation(discussion, db)
-
-    # Persist role to DB if discussion is live (never a concluded record)
-    if discussion.id and discussion.status in LIVE_STATUSES:
-        db.update_member_role(
-            discussion.id, entity_id, participant_role)
 
     return entity.to_dict()
 
 
 def revert_other_devils_advocates(
-    discussion: Discussion, db: Database, entity_id: int,
+    discussion: Discussion, entity_id: int,
 ) -> None:
     """Enforce a single devil's advocate: demote every DA but ``entity_id``.
 
-    The demotion is persisted once the discussion has a DB record, or a
-    reload would restore two devil's advocates.
+    Changes memory only: the caller's ``update_rotation`` persists every
+    role in the same transaction as the new DA (issue #107), so a failed
+    swap cannot leave the record with no devil's advocate.
     """
     for eid, role in list(discussion.member_roles.items()):
         if role == "devils_advocate" and eid != entity_id:
             discussion.member_roles[eid] = "standard"
-            if discussion.id:
-                db.update_member_role(discussion.id, eid, "standard")
 
 
 def auto_assign_da_tools(db: Database, entity_id: int) -> None:

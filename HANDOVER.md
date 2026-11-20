@@ -3,17 +3,16 @@
 _Last updated: 2026-11-17. `main` is at **v2.0.0** (released 2026-07-20) plus
 everything merged since, including the whole of #61 (every Python module is
 under the ~500-line golden rule), the auth hardening of PRs #140 (#127,
-#131), #142 (#141, #130) and #143 (#138), and PR #144, which stops pywebview
+#131), #142 (#141, #130) and #143 (#138), PR #144, which stops pywebview
 letting page script reach `ConsensusApp` and its `Database` through the
-desktop bridge (#125). This branch, `fix/mcp-arg-validation-124`, checks
-`consensus-mcp` tool arguments against each tool's `inputSchema` (#124). The
-suite is at **4498 passing**.
+desktop bridge (#125), and PR #145, which checks `consensus-mcp` tool
+arguments against each tool's `inputSchema` (#124). This branch,
+`fix/rotation-single-transaction-107`, makes a rotation change one SQLite
+transaction (#107). The suite is at **4504 passing**.
 Merged campaigns and their contracts are summarised below._
 
-This file briefs the next session on what is done, what is still open, and
-the conventions to keep; delete sections that are no longer instructive.
-Per-PR detail lives in git history and `docs/superpowers/` — do not
-re-narrate it here.
+Briefs the next session on what is open and the conventions to keep;
+per-PR detail lives in git history and `docs/superpowers/`.
 
 ## Where the project stands
 
@@ -23,7 +22,7 @@ re-narrate it here.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4498 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4504 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -39,9 +38,7 @@ visibility (#71–#74, #78) and the lint gate (#86) — contracts below.
 
 ## Flow error visibility (#71–#74, merged — keep these contracts)
 
-Three flow paths used to swallow caught errors. The repairs established
-contracts worth knowing before touching `app_discussion_flow` again; the
-narrative is in git history and PR #76.
+Three flow paths used to swallow caught errors (narrative: PR #76).
 
 - **Failures are classified into three kinds, not two.**
   `helpers.classify_flow_error` is the single classifier, returning
@@ -83,15 +80,14 @@ narrative is in git history and PR #76.
   one layer down in `ai_client._post_with_retry`, so the flow layer sees only
   exhausted failures.
 
-**Testing lesson.** Mock one layer out (the `AIClient`), never the method
-under test (#72 stayed green that way). Tests: `tests/test_flow_error_*.py`.
+**Testing lesson:** mock the `AIClient`, never the method under test (#72
+stayed green that way). Tests: `tests/test_flow_error_*.py`.
 
 ## Document failure visibility (#78, PR #79 — keep these contracts)
 
 Ten `tools_document/` defects shared one shape: an error became
-plausible-looking content in a non-error `ToolResult` (rendered with a ✅),
-was read by the AI as fact, and once was persisted. Narrative is in git
-history; keep these before touching the package:
+plausible-looking content in a non-error `ToolResult`, read by the AI as
+fact. Keep these before touching the package:
 
 - **Errors are typed at the fault site** (`tools_document/errors.py`:
   `DocumentError` → `DocumentParseError` / `DocumentInterpretationError` /
@@ -136,12 +132,6 @@ does not render `summary_status`/`fidelity` (**#81**); pre-#78
 by `tests/test_tools_document_failures.py`, `tests/test_background.py` and
 `tests/test_tools_document*.py`.
 
-## Lint gate (#86 — keep in mind)
-
-`tests/test_lint.py` fails on any `ruff --select F` finding in `consensus/`
-(not `tests/`). `pytest-asyncio` 1.x runs in `asyncio_mode = auto`: write
-async tests as `async def`.
-
 ## Speaking rotation after start (#104 — keep this contract)
 
 `app_discussion_rotation.update_rotation(discussion, db, add=, remove=)` is
@@ -149,9 +139,13 @@ the only code that changes the rotation of a started discussion;
 `add_to_discussion`, `remove_from_discussion` and `set_participant_role` all
 route through it (`reorder_da_in_turn_order` is gone). It keeps four copies in
 step — `turn_order`, `base_turn_order`, `method_state` `_turn_order` /
-`_turn_index`, and `discussion_members.turn_position` (the positions in one
-transaction via `db.set_member_turn_positions`; the member row and
-`method_state` are separate commits — #107). Rules: the
+`_turn_index`, and `discussion_members.turn_position`. **All the DB writes
+of one change are one transaction** (#107): `update_rotation` hands
+`db.save_rotation` the joiner's insert or the leaver's delete, every role
+(so a devil's-advocate swap commits both, and `revert_other_devils_advocates`
+changes memory only), the positions and `method_state`, and it rolls back on
+any failure; callers must not write the member row or role themselves. A position update
+that matches fewer rows than the order names is logged as drift. Rules: the
 devil's advocate is last in both orders; a reorder never changes whose turn
 it is (`carry_turn_index`; a departed holder passes the turn to the next
 remaining member); the `_turn_index` stamp is re-pointed at the carried live
@@ -313,10 +307,10 @@ middleware through aiohttp's `TestClient` (sessions and SSE in
   `TestDispatch` in `tests/test_desktop_bridge_api.py` drives pywebview's
   real `js_bridge_call` to prove the private paths do not resolve.
 - **Only `POST /api/<method>` creates a `--multi-user` session** (#132,
-  repo owner's choice). It sets the cookie on every reply that has a session,
-  errors included (the capacity 503 has none). Every other `/api/` route goes through `session_app()`, which
-  uses `SessionManager.lookup()` (never creates) and answers 401 or 400
-  `NO_SESSION_ERROR`.
+  repo owner's choice). It sets the cookie on every reply that has a
+  session, errors included (the capacity 503 has none). Every other `/api/`
+  route goes through `session_app()`, which uses `SessionManager.lookup()`
+  (never creates) and answers 401 or 400 `NO_SESSION_ERROR`.
 - **The SSE stream ends once its session is evicted** (#135): each keepalive
   tick checks `lookup(sid, touch=False) is app_instance`. `touch=False`
   matters: an open tab alone must not keep a session alive. The stream sends
@@ -406,22 +400,21 @@ dropped lazy re-export fails only in production). Keep them in step.
   `gather_evidence` and ACH `present_evidence`; a richer source-picker UI; a
   live browser click-through of the Attach-evidence button (verified statically
   only — there is no JS test harness in this repo).
-- **Packaging** — `make_icns.sh` needs Pillow on system python3; icon bubbles
-  blur at 16–32 px.
+- **Packaging** — `make_icns.sh` needs Pillow on system python3; icons blur
+  at 16–32 px.
 
 ### Open GitHub issues
 
-#139 registration reveals that an email has an account; #128 unverified OAuth
-sign-up can pre-hijack an address (both want an email-verification design);
-#107 a rotation change spans several commits (crash mid-update desyncs members
-and `method_state`); #102 follow-ups from the PR #100 review (Retry-After,
-`doc_add` ingest budget, DNS-rebinding pin, `_init_image_tools` catch, test
-file size); #97 Seatbelt profile does not confine writes; #96 no UI flag when
-Python or image tools fail to load; #92 tool error results echo raw exception
-text to the model and UI (the `/api/<method>` 500 body does too — noted on the
-issue); #81 persist parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'`
-documents. Suggested next: #107 (no decision needed); #128/#139 need the repo
-owner's call on email verification.
+- Need the repo owner's call: #146 stricter `consensus-mcp` argument
+  validation (unknown args, `null` identity args, numeric bounds); #139
+  registration reveals a taken email and #128 an unverified OAuth sign-up
+  can pre-hijack an address (both want an email-verification design).
+- No decision needed: #147 a failed rotation write leaves the in-memory
+  `Discussion` ahead of the (consistent) DB record; #102 PR #100 review
+  follow-ups; #97 Seatbelt does not confine writes; #96 no UI flag when
+  Python/image tools fail to load; #92 tool errors echo raw exception text;
+  #81 persist parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents.
+  Suggested next: #147 (fresh context), then #96 or #81.
 
 ### Roadmap
 
@@ -486,6 +479,9 @@ Superforecasting, token-aware context windowing, lazy message loading.
   - `submit_human_structured_message` keeps a full `is_active` check: a
     structured payload writes into `method_state`, so it is unambiguously a
     turn — and the form is never mounted while paused anyway.
+- **Lint gate (#86):** `tests/test_lint.py` fails on any `ruff --select F`
+  finding in `consensus/` (not `tests/`). `pytest-asyncio` 1.x runs in
+  `asyncio_mode = auto`: write async tests as `async def`.
 - **The suite is offline.** `tests/conftest.py`'s autouse `offline_pricing`
   stubs `PricingCache.refresh`; a test of the refresh itself patches the
   instance. Fake LLMs at `AIClient._post_with_retry`

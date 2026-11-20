@@ -66,6 +66,11 @@ def update_rotation(
     :func:`carry_turn_index`), and the result is persisted.  No-op unless
     the discussion is live (``LIVE_STATUSES``): ``start_discussion``
     builds the rotation from scratch.
+
+    The member row of ``add`` (inserted) or ``remove`` (deleted), every
+    ``member_roles`` entry (so a devil's-advocate swap commits both
+    roles), the turn positions and ``method_state`` are written in one
+    transaction (issue #107).
     """
     if not discussion.id or discussion.status not in LIVE_STATUSES:
         return
@@ -96,6 +101,10 @@ def update_rotation(
     if "_turn_index" in state:
         state["_turn_index"] = discussion.current_turn_index
 
-    db.set_member_turn_positions(discussion.id, discussion.base_turn_order)
-    db.update_discussion(
-        discussion.id, method_state=serialize_method_state(state))
+    db.save_rotation(
+        discussion.id, discussion.base_turn_order,
+        serialize_method_state(state),
+        join=None if add is None else (add, add == discussion.moderator_id),
+        leave=remove,
+        roles=list(discussion.member_roles.items()),
+    )

@@ -49,17 +49,11 @@ def add_to_discussion(
         discussion.moderator_id = entity_id
 
     if participant_role == "devils_advocate":
-        revert_other_devils_advocates(discussion, db, entity_id)
+        revert_other_devils_advocates(discussion, entity_id)
         auto_assign_da_tools(db, entity_id)
 
     # Persist to DB if discussion is already started
     if discussion.id and discussion.status in LIVE_STATUSES:
-        db.add_discussion_member(
-            discussion.id, entity_id,
-            is_moderator=is_moderator,
-            also_participant=True,
-            participant_role=participant_role,
-        )
         update_rotation(discussion, db, add=entity_id)
 
         sys_msg = Message(
@@ -109,7 +103,6 @@ def remove_from_discussion(
 
     # Persist to DB if discussion is already started
     if discussion.id and discussion.status in LIVE_STATUSES:
-        db.remove_discussion_member(discussion.id, entity_id)
         update_rotation(discussion, db, remove=entity_id)
 
         sys_msg = Message(
