@@ -9,12 +9,15 @@ from).  Membership and role changes go through :func:`update_rotation`
 so the four cannot drift apart.
 """
 
-from typing import Optional
+import logging
+from typing import Callable, Optional
 
-from .app_discussion_flow.helpers import method_roster
+from .app_discussion_flow.helpers import describe_internal_error, method_roster
 from .database import Database
 from .methods import serialize_method_state
 from .models import Discussion
+
+logger = logging.getLogger(__name__)
 
 DEVILS_ADVOCATE = "devils_advocate"
 
@@ -49,12 +52,44 @@ def carry_turn_index(
     return 0
 
 
+def snapshot_rotation(discussion: Discussion) -> Callable[[], None]:
+    """Capture what a membership or role change edits in memory.
+
+    Returns a function that puts ``entities``, ``member_roles``,
+    ``moderator_id``, both orders, the turn index and ``method_state``
+    back as they were.  Callers take it before their first edit and pass
+    it to :func:`update_rotation`, which calls it when the save fails.
+    """
+    entities = list(discussion.entities)
+    roles = dict(discussion.member_roles)
+    moderator_id = discussion.moderator_id
+    turn_order = list(discussion.turn_order)
+    base_turn_order = list(discussion.base_turn_order)
+    turn_index = discussion.current_turn_index
+    # Shallow is enough: update_rotation replaces the top-level stamps.
+    state = dict(discussion.method_state)
+
+    def restore() -> None:
+        discussion.entities = entities
+        discussion.member_roles.clear()
+        discussion.member_roles.update(roles)
+        discussion.moderator_id = moderator_id
+        discussion.turn_order = turn_order
+        discussion.base_turn_order = base_turn_order
+        discussion.current_turn_index = turn_index
+        discussion.method_state.clear()
+        discussion.method_state.update(state)
+
+    return restore
+
+
 def update_rotation(
     discussion: Discussion,
     db: Database,
+    restore: Callable[[], None],
     add: Optional[int] = None,
     remove: Optional[int] = None,
-) -> None:
+) -> Optional[str]:
     """Apply a membership or role change to every copy of the rotation.
 
     ``remove`` leaves both orders; ``add`` joins the roster at once but the
@@ -70,10 +105,34 @@ def update_rotation(
     The member row of ``add`` (inserted) or ``remove`` (deleted), every
     ``member_roles`` entry (so a devil's-advocate swap commits both
     roles), the turn positions and ``method_state`` are written in one
-    transaction (issue #107).
+    transaction (issue #107).  If that fails, ``restore`` (from
+    :func:`snapshot_rotation`, taken before the caller's own edits) puts
+    the in-memory discussion back, so the live session never keeps a
+    change the record lacks (issue #147).
+
+    Returns ``None`` on success (or when not live), else a user-facing
+    description of the failure, which is also logged.
     """
     if not discussion.id or discussion.status not in LIVE_STATUSES:
-        return
+        return None
+    try:
+        _apply_and_save(discussion, db, add, remove)
+    except Exception as e:
+        restore()
+        logger.exception(
+            "Could not save a rotation change for discussion %s",
+            discussion.id)
+        return f"The change was not saved: {describe_internal_error(e)}"
+    return None
+
+
+def _apply_and_save(
+    discussion: Discussion,
+    db: Database,
+    add: Optional[int],
+    remove: Optional[int],
+) -> None:
+    """Compute the new rotation in place and commit it (see update_rotation)."""
     roster = method_roster(discussion)
     old_order = list(discussion.turn_order)
     joins_phase = set(old_order) == set(roster)
