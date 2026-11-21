@@ -99,13 +99,18 @@ def get_active_method(discussion) -> Optional[DiscussionMethod]:
 
 
 def serialize_method_state(method_state: dict) -> str:
-    """Safely serialize method_state to JSON for DB persistence."""
+    """Serialize method_state to JSON for DB persistence.
+
+    Raises:
+        ValueError: ``method_state`` holds a value JSON cannot encode.  It
+            used to fall back to ``"{}"``, which every save path then
+            committed over the stored state (issue #150); raising lets each
+            caller's error handling report the failure instead.
+    """
     try:
         return json.dumps(method_state)
-    except (TypeError, ValueError):
-        logger.error("Failed to serialize method_state, resetting to {}",
-                     exc_info=True)
-        return "{}"
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"method_state is not JSON-encodable: {e}") from e
 
 
 __all__ = [
