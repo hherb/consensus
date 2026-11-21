@@ -266,7 +266,10 @@ class TestRoleChanges:
 class TestRotationIsOneTransaction:
     """A rotation change is one commit (issue #107): a failure partway
     through used to leave a joiner with no ``turn_position``, or a saved
-    ``_turn_order`` still naming a leaver."""
+    ``_turn_order`` still naming a leaver.  A failed commit also leaves the
+    in-memory ``Discussion`` as it was and is reported as an ``error``
+    (issue #147): it used to raise after memory had already changed, so the
+    live session kept a joiner the record never got."""
 
     @staticmethod
     def _fail_method_state_writes(db) -> None:
@@ -278,13 +281,25 @@ class TestRotationIsOneTransaction:
                 "BEGIN SELECT RAISE(ABORT, 'disk on fire'); END")
             db.conn.commit()
 
+    @staticmethod
+    def _memory(disc: Discussion) -> tuple:
+        """Everything a rotation change touches in memory."""
+        return ([e.id for e in disc.entities], dict(disc.member_roles),
+                disc.moderator_id, list(disc.turn_order),
+                list(disc.base_turn_order), disc.current_turn_index,
+                dict(disc.method_state), len(disc.messages))
+
+    def _assert_failed(self, result, disc: Discussion, before: tuple) -> None:
+        assert "disk on fire" in result["error"]
+        assert self._memory(disc) == before
+
     def test_failed_join_leaves_no_member_row(self, tmp_db):
         disc, _mod, (a, b) = _start(tmp_db)
         c = tmp_db.add_entity("C", "human", "#222222")
         self._fail_method_state_writes(tmp_db)
+        before = self._memory(disc)
 
-        with pytest.raises(sqlite3.DatabaseError, match="disk on fire"):
-            add_to_discussion(disc, tmp_db, c)
+        self._assert_failed(add_to_discussion(disc, tmp_db, c), disc, before)
 
         assert tmp_db.get_discussion_member(disc.id, c) is None
         assert _reload(tmp_db, disc).base_turn_order == [a, b]
@@ -296,9 +311,10 @@ class TestRotationIsOneTransaction:
         tmp_db.update_discussion(
             disc.id, method_state=serialize_method_state(disc.method_state))
         self._fail_method_state_writes(tmp_db)
+        before = self._memory(disc)
 
-        with pytest.raises(sqlite3.DatabaseError, match="disk on fire"):
-            remove_from_discussion(disc, tmp_db, b)
+        self._assert_failed(
+            remove_from_discussion(disc, tmp_db, b), disc, before)
 
         assert tmp_db.get_discussion_member(disc.id, b) is not None
         restored = _reload(tmp_db, disc)
@@ -308,21 +324,24 @@ class TestRotationIsOneTransaction:
     def test_failed_role_change_keeps_role_and_slot(self, tmp_db):
         disc, _mod, (a, b) = _start(tmp_db)
         self._fail_method_state_writes(tmp_db)
+        before = self._memory(disc)
 
-        with pytest.raises(sqlite3.DatabaseError, match="disk on fire"):
-            set_participant_role(disc, tmp_db, a, DA)
+        self._assert_failed(
+            set_participant_role(disc, tmp_db, a, DA), disc, before)
 
         member = tmp_db.get_discussion_member(disc.id, a)
         assert member["participant_role"] == "standard"
         assert member["turn_position"] == 0
+        assert tmp_db.get_entity_tool(a, "web_search") is None
 
     def test_failed_da_swap_keeps_old_da(self, tmp_db):
         disc, _mod, (a, b) = _start(tmp_db)
         set_participant_role(disc, tmp_db, a, DA)
         self._fail_method_state_writes(tmp_db)
+        before = self._memory(disc)
 
-        with pytest.raises(sqlite3.DatabaseError, match="disk on fire"):
-            set_participant_role(disc, tmp_db, b, DA)
+        self._assert_failed(
+            set_participant_role(disc, tmp_db, b, DA), disc, before)
 
         assert tmp_db.get_discussion_member(
             disc.id, a)["participant_role"] == DA
@@ -334,12 +353,81 @@ class TestRotationIsOneTransaction:
         set_participant_role(disc, tmp_db, a, DA)
         c = tmp_db.add_entity("C", "human", "#222222")
         self._fail_method_state_writes(tmp_db)
+        before = self._memory(disc)
 
-        with pytest.raises(sqlite3.DatabaseError, match="disk on fire"):
-            add_to_discussion(disc, tmp_db, c, participant_role=DA)
+        self._assert_failed(
+            add_to_discussion(disc, tmp_db, c, participant_role=DA),
+            disc, before)
 
         assert tmp_db.get_discussion_member(
             disc.id, a)["participant_role"] == DA
+        assert tmp_db.get_entity_tool(c, "web_search") is None
+
+    def test_unsaved_join_notice_keeps_the_saved_change(self, tmp_db):
+        """The rotation is committed before the join notice is written, so
+        a failed notice write must not report the join as failed."""
+        disc, _mod, (a, b) = _start(tmp_db)
+        c = tmp_db.add_entity("C", "human", "#222222")
+
+        def broken(*_args, **_kwargs):
+            raise sqlite3.OperationalError("disk full")
+        tmp_db.add_message = broken
+
+        result = add_to_discussion(disc, tmp_db, c)
+
+        assert "error" not in result
+        assert disc.messages[-1].content.startswith("-- C joined")
+        assert "could not be saved" in disc.messages[-1].content
+        assert _reload(tmp_db, disc).base_turn_order == [a, b, c]
+
+    def test_unsaved_leave_notice_keeps_the_saved_change(self, tmp_db):
+        disc, _mod, (a, b, c) = _start(tmp_db, n=3)
+
+        def broken(*_args, **_kwargs):
+            raise sqlite3.OperationalError("disk full")
+        tmp_db.add_message = broken
+
+        assert remove_from_discussion(disc, tmp_db, b) is True
+
+        assert disc.messages[-1].content.startswith(
+            "-- P2 left the discussion --")
+        assert "could not be saved" in disc.messages[-1].content
+        assert tmp_db.get_discussion_member(disc.id, b) is None
+        assert _reload(tmp_db, disc).base_turn_order == [a, c]
+
+    def test_failed_moderator_join_keeps_old_moderator(self, tmp_db):
+        disc, mod, _parts = _start(tmp_db)
+        new_mod = tmp_db.add_entity("M2", "human", "#444444")
+        self._fail_method_state_writes(tmp_db)
+        before = self._memory(disc)
+
+        self._assert_failed(
+            add_to_discussion(disc, tmp_db, new_mod, is_moderator=True),
+            disc, before)
+
+        assert disc.moderator_id == mod
+        assert tmp_db.get_discussion_member(disc.id, new_mod) is None
+
+    @pytest.mark.parametrize("via", ["role", "join"])
+    def test_da_tool_failure_after_save_is_reported(self, tmp_db, via):
+        """The DA tools are assigned after the rotation is committed, so a
+        failed tool write must not report the saved change as failed."""
+        disc, _mod, (a, b) = _start(tmp_db)
+
+        def broken(*_args, **_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+        tmp_db.add_entity_tool = broken
+
+        if via == "role":
+            da, result = a, set_participant_role(disc, tmp_db, a, DA)
+        else:
+            da = tmp_db.add_entity("C", "human", "#222222")
+            result = add_to_discussion(disc, tmp_db, da, participant_role=DA)
+
+        assert "error" not in result
+        assert tmp_db.get_discussion_member(
+            disc.id, da)["participant_role"] == DA
+        assert "database is locked" in disc.messages[-1].content
 
     def test_joiner_role_is_persisted(self, tmp_db):
         disc, _mod, (a, b) = _start(tmp_db)

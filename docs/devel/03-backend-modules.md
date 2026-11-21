@@ -20,7 +20,10 @@ to keep file sizes manageable:
 - `app_discussion_rotation.py` — `update_rotation()`: every mid-discussion
   membership or role change goes through it, so `turn_order`,
   `base_turn_order`, the `_turn_order`/`_turn_index` bookkeeping and
-  `discussion_members.turn_position` stay in step (issue #104)
+  `discussion_members.turn_position` stay in step (issue #104); the
+  writes are one transaction (#107), and a failed save restores the
+  in-memory discussion from `snapshot_rotation()` and returns an error
+  (#147)
 - `app_discussion_flow/` — turn flow package: `submissions.py` (human and
   moderator message submission), `turns.py` (AI generation, turn
   completion, reassignment), `method_switch.py` (the Triage handoff and

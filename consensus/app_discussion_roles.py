@@ -5,9 +5,18 @@ functions mutate a Discussion in-place and write to the database directly;
 the ConsensusApp wrapper methods handle notification.
 """
 
-from .app_discussion_rotation import update_rotation
+import logging
+
+from .app_discussion_flow.helpers import describe_internal_error, post_notice
+from .app_discussion_rotation import (
+    LIVE_STATUSES,
+    snapshot_rotation,
+    update_rotation,
+)
 from .database import Database
-from .models import Discussion
+from .models import Discussion, Entity
+
+logger = logging.getLogger(__name__)
 
 # Tools auto-assigned to a devil's advocate entity
 _DA_TOOL_NAMES = [
@@ -39,19 +48,21 @@ def set_participant_role(
     if entity_id == discussion.moderator_id:
         return {"error": "Cannot assign a role to the moderator"}
 
+    restore = snapshot_rotation(discussion)
     if participant_role == "devils_advocate":
         revert_other_devils_advocates(discussion, entity_id)
 
     discussion.member_roles[entity_id] = participant_role
 
-    # Auto-assign tools for DA
-    if participant_role == "devils_advocate":
-        auto_assign_da_tools(db, entity_id)
-
     # Keep the DA last in every copy of the rotation (issue #104); the
     # roles are persisted with it, and only while live (never a concluded
-    # record)
-    update_rotation(discussion, db)
+    # record). A failed save restores memory (issue #147).
+    error = update_rotation(discussion, db, restore)
+    if error:
+        return {"error": error}
+
+    if participant_role == "devils_advocate":
+        assign_da_tools(discussion, db, entity)
 
     return entity.to_dict()
 
@@ -68,6 +79,26 @@ def revert_other_devils_advocates(
     for eid, role in list(discussion.member_roles.items()):
         if role == "devils_advocate" and eid != entity_id:
             discussion.member_roles[eid] = "standard"
+
+
+def assign_da_tools(discussion: Discussion, db: Database, entity: Entity) -> None:
+    """Give a new devil's advocate its tools, after its role is saved.
+
+    In a live discussion the role and rotation are already committed, so a
+    failed tool write must not undo or misreport them: it is logged and
+    shown as a transcript notice instead (golden rule 6).  Before start
+    nothing is saved yet, so the error propagates to the caller.
+    """
+    try:
+        auto_assign_da_tools(db, entity.id)
+    except Exception as e:
+        if not discussion.id or discussion.status not in LIVE_STATUSES:
+            raise
+        logger.exception(
+            "Could not assign devil's-advocate tools to entity %s", entity.id)
+        post_notice(discussion, db, entity,
+                    f"-- Could not assign all devil's-advocate tools to "
+                    f"{entity.name}: {describe_internal_error(e)} --")
 
 
 def auto_assign_da_tools(db: Database, entity_id: int) -> None:
