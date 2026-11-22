@@ -165,11 +165,14 @@ concluded record. Removing a non-member is an error. Tests:
 `tests/test_app_discussion_rotation.py` (each rule mutation-checked).
 
 **`serialize_method_state` raises `ValueError`** on a value JSON cannot
-encode (#150); it used to return `"{}"`, which every save path committed
-over the stored state. Never add a fallback there: the rotation rollback,
+encode (#150); it used to return `"{}"`, which its callers committed over
+the stored state. Never add a fallback there: the rotation rollback,
 `generate_ai_turn`'s internal-error notice and the API's 500 → `{error}`
-are what report it. Store only JSON types in `method_state` (no sets).
-Tests: `tests/test_method_state_serialization.py`.
+(desktop: a rejected promise, which `completeTurnFlow` must treat as a
+stop, or the auto-run loop repeats paid turns) are what report it. Store
+only JSON types in `method_state` (no sets). Other flows leave memory
+ahead of the DB when the save raises (#152). Tests:
+`tests/test_method_state_serialization.py`.
 
 ## Pricing downloads (#115, #118 — keep this contract)
 
