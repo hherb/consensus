@@ -184,8 +184,12 @@ async function completeTurnFlow() {
             else onStateUpdate(await api.getState());
             if (await handleTurnLimitFlags(result)) return false;
         } catch (e) {
+            // Desktop rejects the promise where web returns {error}; stop
+            // the same way, or processCurrentTurn loops on paid AI turns.
             showToast('Summary failed: ' + e.message);
             onStateUpdate(await api.getState());
+            renderDiscussion();
+            return false;
         }
         renderDiscussion();
         return state.is_active && state.status !== 'concluded';

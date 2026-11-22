@@ -1,11 +1,11 @@
 # HANDOVER
 
-_Last updated: 2026-11-20. `main` is at **v2.0.0** (released 2026-07-20)
+_Last updated: 2026-11-22. `main` is at **v2.0.0** (released 2026-07-20)
 plus everything merged since (the #61 split, auth hardening, the desktop
 bridge fix #125, MCP argument validation #124, one-transaction rotation
-#107 — details in git history). This branch,
-`fix/rotation-memory-after-save-147`, restores the in-memory discussion
-when a rotation save fails (#147). The suite is at **4509 passing**._
+#107, rotation rollback #147 — details in git history). This branch,
+`fix/method-state-serialize-150`, makes `serialize_method_state` raise
+instead of saving `{}` (#150). The suite is at **4513 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -18,7 +18,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4509 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4513 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -163,6 +163,16 @@ in memory come from the setup screen after a refresh and are input for the
 next `start_discussion`, so they stay in memory and never rewrite the
 concluded record. Removing a non-member is an error. Tests:
 `tests/test_app_discussion_rotation.py` (each rule mutation-checked).
+
+**`serialize_method_state` raises `ValueError`** on a value JSON cannot
+encode (#150); it used to return `"{}"`, which its callers committed over
+the stored state. Never add a fallback there: the rotation rollback,
+`generate_ai_turn`'s internal-error notice and the API's 500 → `{error}`
+(desktop: a rejected promise, which `completeTurnFlow` must treat as a
+stop, or the auto-run loop repeats paid turns) are what report it. Store
+only JSON types in `method_state` (no sets). Other flows leave memory
+ahead of the DB when the save raises (#152). Tests:
+`tests/test_method_state_serialization.py`.
 
 ## Pricing downloads (#115, #118 — keep this contract)
 
