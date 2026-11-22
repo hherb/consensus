@@ -384,12 +384,14 @@ class TestCaughtErrorsAreLogged:
             bridge._loop.call_soon_threadsafe(bridge._loop.stop)
         assert f"image {iid}" in caplog.text
 
-    @pytest.mark.parametrize("module, flag", [
-        ("consensus.tools_memory", "memory_available"),
-        ("consensus.tools_document", "documents_available"),
+    @pytest.mark.parametrize("module, flag, label", [
+        ("consensus.tools_memory", "memory_available", "Memory"),
+        ("consensus.tools_document", "documents_available", "Document"),
+        ("consensus.tools_image", "images_available", "Image"),
+        ("consensus.tools_python", "python_tools_available", "Python execution"),
     ])
     def test_tool_package_that_fails_to_import_is_a_warning(
-        self, tmp_path, monkeypatch, caplog, module, flag,
+        self, tmp_path, monkeypatch, caplog, module, flag, label,
     ):
         """A broken package import used to disable the feature at INFO level.
 
@@ -406,6 +408,12 @@ class TestCaughtErrorsAreLogged:
             r.levelno == logging.WARNING and "failed to load" in r.getMessage()
             for r in caplog.records
         )
+        # #96: the profile tool list reads this to say why tools are missing.
+        assert label in app.get_state()["tool_load_failures"]
+
+    def test_no_tool_load_failures_on_a_healthy_install(self, app):
+        assert app.python_tools_available is True
+        assert app.get_state()["tool_load_failures"] == []
 
 
 # --- Discussion setup --------------------------------------------------------

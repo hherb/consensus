@@ -53,6 +53,7 @@ class ConsensusApp(
         self.memory_available = False
         self.documents_available = False
         self.images_available = False
+        self.python_tools_available = False
         # Cache embedding availability (static for session lifetime)
         try:
             mem_cfg = self.db.get_memory_config()
@@ -170,6 +171,7 @@ class ConsensusApp(
             provider = create_python_provider(app=self)
             self.tool_registry.register_provider(provider)
             self.db.add_tool_provider("python_exec", "python")
+            self.python_tools_available = True
             logger.debug("Python execution tools registered")
         except Exception:
             # No optional deps here, so any failure is a real fault.
@@ -304,6 +306,16 @@ class ConsensusApp(
             }
         # Whether embedding service is configured (for semantic strategy availability)
         state["embedding_available"] = self._embedding_available
+        # Tool packages that failed to load (#96): their tools are simply
+        # absent from list_tools, so the profile tool list says why.
+        state["tool_load_failures"] = [
+            label for label, ok in (
+                ("Memory", self.memory_available),
+                ("Document", self.documents_available),
+                ("Image", self.images_available),
+                ("Python execution", self.python_tools_available),
+            ) if not ok
+        ]
         # Whether the active phase tracks evidence (#28) — lets the frontend
         # gate the "Attach evidence" button to phases where a citation marker
         # is actually classified, rather than showing it on every human turn.

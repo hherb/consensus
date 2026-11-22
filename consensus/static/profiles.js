@@ -181,6 +181,18 @@ function _toolCategory(tool) {
     return 'other';
 }
 
+/**
+ * Warn that some tool packages failed to load (#96), since their tools are
+ * simply absent from the list below.
+ * @returns {string} HTML for the notice, or '' when every package loaded.
+ */
+function _toolLoadNotice() {
+    const failed = state.tool_load_failures || [];
+    if (!failed.length) return '';
+    return `<p class="method-advisory">⚠ ${escHtml(failed.join(', '))} tools failed to load; `
+        + 'see the application log for the cause.</p>';
+}
+
 export async function loadEntityTools(entityId) {
     const container = $('#entity-tools-list');
     try {
@@ -195,8 +207,9 @@ export async function loadEntityTools(entityId) {
         _entityToolAssignments = {};
     }
 
+    const notice = _toolLoadNotice();
     if (!_availableTools.length) {
-        container.innerHTML = '<span class="text-muted">No tools available</span>';
+        container.innerHTML = notice + '<span class="text-muted">No tools available</span>';
         return;
     }
 
@@ -209,7 +222,7 @@ export async function loadEntityTools(entityId) {
     }
 
     // Build category-based UI
-    let html = '<div class="tool-categories-bar">';
+    let html = notice + '<div class="tool-categories-bar">';
     html += '<button type="button" class="tool-cat-btn" data-action="all">Select All</button>';
     html += '<button type="button" class="tool-cat-btn" data-action="none">None</button>';
     for (const [cat, info] of Object.entries(TOOL_CATEGORIES)) {
