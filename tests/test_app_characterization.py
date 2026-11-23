@@ -384,14 +384,16 @@ class TestCaughtErrorsAreLogged:
             bridge._loop.call_soon_threadsafe(bridge._loop.stop)
         assert f"image {iid}" in caplog.text
 
-    @pytest.mark.parametrize("module, flag, label", [
-        ("consensus.tools_memory", "memory_available", "Memory"),
-        ("consensus.tools_document", "documents_available", "Document"),
-        ("consensus.tools_image", "images_available", "Image"),
-        ("consensus.tools_python", "python_tools_available", "Python execution"),
+    @pytest.mark.parametrize("module, flag, expected", [
+        # Document tools import tools_memory, so a broken memory package
+        # disables both — pinned here because HANDOVER documents it.
+        ("consensus.tools_memory", "memory_available", ["Memory", "Document"]),
+        ("consensus.tools_document", "documents_available", ["Document"]),
+        ("consensus.tools_image", "images_available", ["Image"]),
+        ("consensus.tools_python", "python_tools_available", ["Python execution"]),
     ])
     def test_tool_package_that_fails_to_import_is_a_warning(
-        self, tmp_path, monkeypatch, caplog, module, flag, label,
+        self, tmp_path, monkeypatch, caplog, module, flag, expected,
     ):
         """A broken package import used to disable the feature at INFO level.
 
@@ -409,7 +411,38 @@ class TestCaughtErrorsAreLogged:
             for r in caplog.records
         )
         # #96: the profile tool list reads this to say why tools are missing.
-        assert label in app.get_state()["tool_load_failures"]
+        assert app.get_state()["tool_load_failures"] == expected
+
+    @pytest.mark.parametrize("module, factory, flag, label", [
+        ("consensus.tools_memory", "create_memory_provider",
+         "memory_available", "Memory"),
+        ("consensus.tools_document", "create_document_provider",
+         "documents_available", "Document"),
+        ("consensus.tools_image", "create_image_provider",
+         "images_available", "Image"),
+        ("consensus.tools_python", "create_python_provider",
+         "python_tools_available", "Python execution"),
+    ])
+    def test_tool_provider_that_raises_is_listed_not_fatal(
+        self, tmp_path, monkeypatch, caplog, module, factory, flag, label,
+    ):
+        """A non-import fault in a provider factory must not crash startup.
+
+        Memory and document init used to catch only ImportError, so any
+        other fault took down ConsensusApp construction instead of landing
+        in ``tool_load_failures`` (#96 review).
+        """
+        import importlib
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("provider exploded")
+
+        monkeypatch.setattr(importlib.import_module(module), factory, boom)
+        with caplog.at_level(logging.WARNING, logger="consensus.app"):
+            app = ConsensusApp(db_path=str(tmp_path / "broken.db"))
+        assert getattr(app, flag) is False
+        assert "provider exploded" in caplog.text
+        assert app.get_state()["tool_load_failures"] == [label]
 
     def test_no_tool_load_failures_on_a_healthy_install(self, app):
         assert app.python_tools_available is True

@@ -130,9 +130,10 @@ class ConsensusApp(
             self.db.add_tool_provider("memory", "python")
             self.memory_available = True
             logger.debug("Institutional memory tools registered")
-        except ImportError as e:
+        except Exception as e:
             # A default install always has the deps, so this is a broken
-            # install or a broken import inside the package: say so loudly.
+            # install or a fault inside the package: say so loudly, but
+            # don't take the app down — get_state() lists it (#96).
             logger.warning("Memory tools failed to load: %s", e, exc_info=e)
 
     def _init_document_tools(self) -> None:
@@ -145,7 +146,7 @@ class ConsensusApp(
             self.db.add_tool_provider("documents", "python")
             self.documents_available = True
             logger.debug("Document RAG tools registered")
-        except ImportError as e:
+        except Exception as e:
             logger.warning("Document tools failed to load: %s", e, exc_info=e)
 
     def _init_image_tools(self) -> None:
