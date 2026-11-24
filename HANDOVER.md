@@ -397,7 +397,7 @@ numeric strings (`"5"`, repo owner's call, #124), so a new tool definition may
 use only its `SUPPORTED_KEYWORDS`. A new desktop bridge method goes in a mixin
 **and** in `BRIDGE_API`; moved code logs under its new module.
 
-**Watch:** `pricing.py` (498) and `app_discussion_state.py` (487): split
+**Watch:** `pricing.py` (498) and `app_discussion_state.py` (488): split
 before the next addition. `static/discussion-actions.js` (506) and
 `evaluation/static/eval.js` (645) are over the cap; split them when next
 touched.
