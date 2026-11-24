@@ -53,6 +53,7 @@ class ConsensusApp(
         self.memory_available = False
         self.documents_available = False
         self.images_available = False
+        self.python_tools_available = False
         # Cache embedding availability (static for session lifetime)
         try:
             mem_cfg = self.db.get_memory_config()
@@ -129,9 +130,10 @@ class ConsensusApp(
             self.db.add_tool_provider("memory", "python")
             self.memory_available = True
             logger.debug("Institutional memory tools registered")
-        except ImportError as e:
+        except Exception as e:
             # A default install always has the deps, so this is a broken
-            # install or a broken import inside the package: say so loudly.
+            # install or a fault inside the package: say so loudly, but
+            # don't take the app down — get_state() lists it (#96).
             logger.warning("Memory tools failed to load: %s", e, exc_info=e)
 
     def _init_document_tools(self) -> None:
@@ -144,7 +146,7 @@ class ConsensusApp(
             self.db.add_tool_provider("documents", "python")
             self.documents_available = True
             logger.debug("Document RAG tools registered")
-        except ImportError as e:
+        except Exception as e:
             logger.warning("Document tools failed to load: %s", e, exc_info=e)
 
     def _init_image_tools(self) -> None:
@@ -170,6 +172,7 @@ class ConsensusApp(
             provider = create_python_provider(app=self)
             self.tool_registry.register_provider(provider)
             self.db.add_tool_provider("python_exec", "python")
+            self.python_tools_available = True
             logger.debug("Python execution tools registered")
         except Exception:
             # No optional deps here, so any failure is a real fault.
@@ -304,6 +307,16 @@ class ConsensusApp(
             }
         # Whether embedding service is configured (for semantic strategy availability)
         state["embedding_available"] = self._embedding_available
+        # Tool packages that failed to load (#96): their tools are simply
+        # absent from list_tools, so the profile tool list says why.
+        state["tool_load_failures"] = [
+            label for label, ok in (
+                ("Memory", self.memory_available),
+                ("Document", self.documents_available),
+                ("Image", self.images_available),
+                ("Python execution", self.python_tools_available),
+            ) if not ok
+        ]
         # Whether the active phase tracks evidence (#28) — lets the frontend
         # gate the "Attach evidence" button to phases where a citation marker
         # is actually classified, rather than showing it on every human turn.

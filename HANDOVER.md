@@ -3,9 +3,10 @@
 _Last updated: 2026-11-22. `main` is at **v2.0.0** (released 2026-07-20)
 plus everything merged since (the #61 split, auth hardening, the desktop
 bridge fix #125, MCP argument validation #124, one-transaction rotation
-#107, rotation rollback #147 — details in git history). This branch,
-`fix/method-state-serialize-150`, makes `serialize_method_state` raise
-instead of saving `{}` (#150). The suite is at **4513 passing**._
+#107, rotation rollback #147, `serialize_method_state` raising #150 —
+details in git history). This branch, `fix/python-tools-flag-96`, reports
+tool packages that failed to load in the profile tool list (#96). The suite
+is at **4520 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -18,19 +19,18 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4513 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4520 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
 
-Method review & repair (#12–#30, #42, #48, #56); new methods NGT (#24), MCDA
-(#25), Double Crux (#27), Tree of Thoughts (#26); evidence-tracked phases
-(#28, soft by design — see `memory/evidence-gating-philosophy.md`);
-structured-phase human input (#57, #59, #60); method-flow E2E tests
-(`tests/test_method_flow_e2e.py`); provider resilience (PR #64, #65 — see
-ROADMAP); distribution (runbook in
-`memory/alpha-distribution-release-process.md`); flow and document failure
-visibility (#71–#74, #78) and the lint gate (#86) — contracts below.
+Method review & repair (#12–#30, #42, #48, #56); NGT, MCDA, Double Crux, ToT
+(#24–#27); evidence-tracked phases (#28, soft by design —
+`memory/evidence-gating-philosophy.md`); structured human input (#57, #59,
+#60); method-flow E2E tests (`tests/test_method_flow_e2e.py`); provider
+resilience (PR #64, #65 — see ROADMAP); distribution
+(`memory/alpha-distribution-release-process.md`); failure visibility
+(#71–#74, #78); lint gate (#86) — contracts below.
 
 ## Flow error visibility (#71–#74, merged — keep these contracts)
 
@@ -121,11 +121,11 @@ fact. Keep these before touching the package:
 `caplog.at_level(logging.ERROR)` checks were vacuous (the code logs at WARNING).
 
 **Known gaps:** no test for "some rows dimension-mismatched AND the rest
-below threshold" in `doc_ask`; no summary regeneration path; no OCR;
-no charset detection; `INDEXING_RETRY_INTERVAL` hardcoded at 60 s; panel
-does not render `summary_status`/`fidelity` (**#81**); pre-#78
-`'(Empty PDF)'` documents remain answerable (**#80**). Contracts are covered
-by `tests/test_tools_document_failures.py`, `tests/test_background.py` and
+below threshold" in `doc_ask`; no summary regeneration, OCR or charset
+detection; `INDEXING_RETRY_INTERVAL` hardcoded at 60 s; the panel does not
+render `summary_status`/`fidelity` (#81); pre-#78 `'(Empty PDF)'` documents
+remain answerable (#80).
+Tests: `tests/test_tools_document_failures.py`, `tests/test_background.py`,
 `tests/test_tools_document*.py`.
 
 ## Speaking rotation after start (#104 — keep this contract)
@@ -173,6 +173,19 @@ stop, or the auto-run loop repeats paid turns) are what report it. Store
 only JSON types in `method_state` (no sets). Other flows leave memory
 ahead of the DB when the save raises (#152). Tests:
 `tests/test_method_state_serialization.py`.
+
+## Tool packages that fail to load (#96 — keep this contract)
+
+`ConsensusApp` sets `memory_available`, `documents_available`,
+`images_available` and `python_tools_available` in its `_init_*_tools`;
+`get_state()["tool_load_failures"]` lists the labels of those that are
+`False`, and `static/profiles.js` `_toolLoadNotice()` renders it above the
+profile tool list (their tools are otherwise just absent). A new tool
+package adds its flag to that tuple. All four `_init_*_tools` catch
+`Exception`, so a faulty provider is listed rather than crashing startup.
+Document tools import `tools_memory`, so a broken memory package lists both.
+Tests: `tests/test_app_characterization.py` (`tool_package` / `tool_load` /
+`tool_provider`).
 
 ## Pricing downloads (#115, #118 — keep this contract)
 
@@ -373,48 +386,43 @@ use only its `SUPPORTED_KEYWORDS`. A new desktop bridge method goes in a mixin
 **Watch:** `app_discussion_flow/turns.py` (499) and `pricing.py` (498): split
 before the next addition. `evaluation/static/eval.js` (645) is pre-existing JS.
 
-**Facade guards.** Each re-exporting package's `tests/test_<name>_facade.py`
-pins `__all__` by identity and AST-scans `consensus/` for call sites (a
-dropped lazy re-export fails only in production). Keep them in step.
+**Facade guards** (`tests/test_<name>_facade.py`) pin each package's `__all__`
+by identity and AST-scan call sites (a dropped lazy re-export fails only in
+production); keep them in step.
 
-**Recipe for a split** (worked for all sixteen):
-0. Check coverage first (`uv run --with pytest-cov pytest -q
-   --cov=consensus.<module> --cov-report=term-missing`); a green suite over
-   an untested module proves nothing — write the characterization net and
-   commit it *before* a line moves, and fix each defect it finds in its own
-   commit. Drifted duplicate logic was the likeliest pre-existing bug every
-   time. Use a real `Database` (`tmp_db`), fakes only at the network/GUI
-   edges, and drive the entry point production uses.
-1. Move by line range with a throwaway script that checks every moved line
-   reappears once.
-2. Fix relative-import depth, **including imports inside function bodies**,
-   and `__file__`-relative paths.
-3. Re-export from `__init__.py`; point test patches at the submodule that
-   reads the name.
-4. `uvx ruff check --select F <pkg>`, then the full suite.
-5. Add the facade guard; delete a re-export and watch it fail.
-6. **Mutate the new wiring and watch it fail** — coverage measures lines
-   executed, not behaviour constrained.
-7. Update every doc naming the old file *and* the content beside the name.
+**Recipe for a split** (worked for all sixteen): (0) check coverage
+(`uv run --with pytest-cov pytest -q --cov=consensus.<module> --cov-report=term-missing`;
+a green suite over an untested module proves nothing) and commit a
+characterization net — real `Database` (`tmp_db`), fakes only at network/GUI
+edges, driving the entry point production uses — *before* a line moves, fixing
+each defect it finds in its own commit (drifted duplicate logic was the usual
+bug); (1) move by line range with a script that checks every moved line
+reappears once; (2) fix relative-import depth, **including imports inside
+function bodies**, and `__file__` paths; (3) re-export from `__init__.py` and
+point test patches at the submodule that reads the name; (4)
+`uvx ruff check --select F <pkg>`, full suite; (5) add the facade guard and
+watch a dropped re-export fail; (6) **mutate the new wiring and watch it
+fail** (coverage measures lines executed, not behaviour constrained); (7)
+update every doc naming the old file *and* the content beside the name.
 
 ### Deferred follow-ups (no issue filed)
 
-- **Panel diversity** — family-level model grouping (exact-model only today,
-  so `gpt-4o` vs `gpt-4o-mini` read as different estimators) and a "diversify"
-  auto-suggest helper.
-- **ToT expansion refines in place** (stable labels keep re-scoring
-  meaningful); add a child-generation variant if the beam starves.
-- **Double Crux loop-backs re-enter `hunt_cruxes` only**, never `positions`,
-  even when vague positions are why hunting fails.
-- **MCDA free-text weights only parse `(weight: N)` / `[weight = N]`**;
-  prose weights silently become `DEFAULT_WEIGHT` (humans only — the AI path is
-  structured). A UI hint would close the gap.
-- **#28 follow-ups** — per-claim citation mapping; opting in Adversarial Collab
-  `gather_evidence` and ACH `present_evidence`; a richer source-picker UI; a
-  live browser click-through of the Attach-evidence button (verified statically
-  only — there is no JS test harness in this repo).
-- **Packaging** — `make_icns.sh` needs Pillow on system python3; icons blur
-  at 16–32 px.
+- Panel diversity: family-level model grouping (`gpt-4o` vs `gpt-4o-mini`
+  count as different estimators today) and a "diversify" auto-suggest.
+- ToT expansion refines in place (stable labels keep re-scoring meaningful);
+  add child generation if the beam starves.
+- Double Crux loop-backs re-enter `hunt_cruxes` only, never `positions`, even
+  when vague positions are why hunting fails.
+- MCDA free-text weights parse only `(weight: N)` / `[weight = N]`; prose
+  weights silently become `DEFAULT_WEIGHT` (humans only — the AI path is
+  structured). A UI hint would close it.
+- #28: per-claim citation mapping; opting Adversarial Collab
+  `gather_evidence` and ACH `present_evidence` into evidence tracking; richer
+  source picker.
+- Packaging: `make_icns.sh` needs Pillow on system python3; icons blur at
+  16–32 px.
+- No JS test harness: UI-only behaviour (Attach-evidence button, SSE reopen,
+  the #96 tool-load notice) is verified by reading only.
 
 ### Open GitHub issues
 
@@ -422,14 +430,15 @@ dropped lazy re-export fails only in production). Keep them in step.
   validation (unknown args, `null` identity args, numeric bounds); #139
   registration reveals a taken email and #128 an unverified OAuth sign-up
   can pre-hijack an address (both want an email-verification design).
-- No decision needed: #102 PR #100 review follow-ups; #97 Seatbelt does not
-  confine writes; #96 no UI flag when Python/image tools fail to load; #92
+- No decision needed: #152 memory and DB diverge when a `method_state` save
+  fails mid-flow (follow-up to #150; only reachable via a future method bug);
+  #102 PR #100 review follow-ups; #97 Seatbelt does not confine writes; #92
   tool errors echo raw exception text; #81 persist parse fidelity/notes; #80
-  pre-#78 `'(Empty PDF)'` documents. Suggested next: #96 or #81.
+  pre-#78 `'(Empty PDF)'` documents. Suggested next: #81 or #152.
 
 ### Roadmap
 
-`ROADMAP.md`: nearest ⬜ items are Argument Mapping, Tournament /
+Nearest ⬜ items in `ROADMAP.md` are Argument Mapping, Tournament /
 Superforecasting, token-aware context windowing, lazy message loading.
 
 ## Conventions and gotchas for the next session
@@ -480,16 +489,14 @@ Superforecasting, token-aware context windowing, lazy message loading.
   intentionally separate — it has no turn/status gate.
 - **A paused discussion still accepts free-text human input** (issue #60 — do
   not "tighten" this into an `is_active` rejection without changing the UI in
-  the same commit). The composer stays open while paused, and the paused branch
-  posts to `submit_human_message`. The two paths diverge **deliberately**:
-  - `submit_human_message` records the message but skips the
-    `get_active_method` / `process_response` block while paused. The turn does
-    not advance, so the composer accepts repeated sends, and re-running
-    `process_response` would let a non-idempotent handler double-record a
-    vote. The real contribution is processed once, on the turn after Resume.
-  - `submit_human_structured_message` keeps a full `is_active` check: a
-    structured payload writes into `method_state`, so it is unambiguously a
-    turn — and the form is never mounted while paused anyway.
+  the same commit). The composer stays open while paused and posts to
+  `submit_human_message`, which records the message but deliberately skips
+  `get_active_method` / `process_response` while paused: the turn does not
+  advance, so the composer accepts repeated sends, and a re-run could
+  double-record a vote. The contribution is processed after Resume.
+  `submit_human_structured_message` keeps a full `is_active` check: a
+  structured payload writes `method_state`, and its form is never mounted
+  while paused.
 - **Lint gate (#86):** `tests/test_lint.py` fails on any `ruff --select F`
   finding in `consensus/` (not `tests/`). `pytest-asyncio` 1.x runs in
   `asyncio_mode = auto`: write async tests as `async def`.
