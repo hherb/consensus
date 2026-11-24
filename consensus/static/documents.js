@@ -44,9 +44,14 @@ export async function renderDocumentPanel() {
     let docs;
     try {
         const result = await api.getDiscussionDocuments(discussionId);
+        if (result?.error) throw new Error(result.error);
         docs = Array.isArray(result) ? result : (result?.documents || []);
-    } catch {
-        docs = [];
+    } catch (e) {
+        // A failed list must not read as "no documents": that hides the
+        // fidelity warnings this panel exists to keep visible (#81).
+        console.error('Could not list documents:', e);
+        container.innerHTML = `<p class="document-warning">Could not load documents: ${_escHtml(e?.message || String(e))}</p>`;
+        return;
     }
 
     if (docs.length === 0) {
@@ -60,6 +65,7 @@ export async function renderDocumentPanel() {
                 <strong>${_escHtml(doc.title || doc.filename)}</strong>
                 <span class="text-muted">${_formatSize(doc.char_count)} chars</span>
                 ${doc.summary ? `<p class="document-summary">${_escHtml(doc.summary.slice(0, 200))}${doc.summary.length > 200 ? '…' : ''}</p>` : ''}
+                ${_docWarnings(doc).map(w => `<p class="document-warning">${_escHtml(w)}</p>`).join('')}
             </div>
             <button class="btn btn-ghost btn-sm doc-remove-btn" data-doc-id="${doc.id}" title="Remove from discussion">✕</button>
         </div>
@@ -171,6 +177,27 @@ export async function removeDocument(docId, discussionId) {
     } catch (e) {
         showToast('Remove failed: ' + e.message);
     }
+}
+
+/**
+ * List what is wrong with a stored document, for the panel (issue #81).
+ *
+ * The warnings the upload toast shows once, read back from the stored row,
+ * so a degraded extraction or a failed summary stays visible after the
+ * toast is gone. The wording copies `handlers_rag._extraction_warning`.
+ *
+ * @param {object} doc - A document row from `getDiscussionDocuments`.
+ * @returns {string[]} The warnings, empty when there are none.
+ */
+function _docWarnings(doc) {
+    const warnings = [];
+    if (doc.fidelity === 'degraded') {
+        warnings.push(`Degraded extraction: ${(doc.parse_notes || []).join(' ')}`);
+    }
+    if (doc.summary_status === 'failed') {
+        warnings.push('The summary could not be generated.');
+    }
+    return warnings;
 }
 
 /** Format character count for display */

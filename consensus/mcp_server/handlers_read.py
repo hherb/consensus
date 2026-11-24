@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..tools_document.constants import FIDELITY_DEGRADED
+from ..tools_document.handlers_rag import _with_warning
 from .errors import ToolError
 
 
@@ -67,6 +69,8 @@ class ReadHandlersMixin:
                 "filename": r.get("filename", ""),
                 "summary": r.get("summary", ""),
                 "char_count": r.get("char_count", 0),
+                "fidelity": r["fidelity"],
+                "parse_notes": r["parse_notes"],
             })
         return json.dumps(results, indent=2)
 
@@ -90,13 +94,13 @@ class ReadHandlersMixin:
                 chunks = self._db.get_chunks_in_range(
                     doc_id, target["from_char"], target["to_char"])
                 text = "\n".join(c["content"] for c in chunks)
-                return text or "Section found but no content."
+                return _with_warning(text or "Section found but no content.", doc)
             raise ToolError(f"Section '{section}' not found. "
                             f"Available: {[s['header'] for s in sections]}")
         markdown = self._db.get_document_markdown(doc_id)
         if markdown is None:
             raise ToolError("Document not found.")
-        return markdown
+        return _with_warning(markdown, self._db.get_document(doc_id))
 
     # -----------------------------------------------------------------------
     # Tool handlers — semantic search
@@ -170,7 +174,10 @@ class ReadHandlersMixin:
         lines = [f"Found {len(top)} relevant chunks:\n"]
         for i, row in enumerate(top, 1):
             title = row.get("doc_title") or row.get("doc_filename") or "?"
-            lines.append(f"{i}. [Document: {title}]\n   {row['content'][:400]}")
+            # The notes are per document: read_document gives them in full.
+            tag = (" (degraded extraction)"
+                   if row["doc_fidelity"] == FIDELITY_DEGRADED else "")
+            lines.append(f"{i}. [Document: {title}]{tag}\n   {row['content'][:400]}")
         return "\n".join(lines)
 
     async def _handle_query_knowledge_graph(self, args: dict) -> str:

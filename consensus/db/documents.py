@@ -1,9 +1,10 @@
 """Database mixin for document storage and retrieval (RAG support)."""
 
+import json
 import time
-from typing import Optional
+from typing import Optional, Sequence
 
-from ..models import SummaryStatus
+from ..models import ParseFidelity, SummaryStatus
 
 
 def _validate_summary_status(status: str) -> None:
@@ -21,6 +22,39 @@ def _validate_summary_status(status: str) -> None:
         raise ValueError(
             f"summary_status must be one of {sorted(valid)}, got {status!r}"
         )
+
+
+def _validate_fidelity(fidelity: str, notes: Sequence[str]) -> None:
+    """Reject a ``fidelity`` outside its domain, or degraded with no reason.
+
+    Args:
+        fidelity: The candidate ``documents.fidelity`` value.
+        notes: The notes explaining it.
+
+    Raises:
+        ValueError: If ``fidelity`` is not ``'full'`` or ``'degraded'``, or
+            is ``'degraded'`` with no note (a warning that cannot say why).
+    """
+    valid = {f.value for f in ParseFidelity}
+    if fidelity not in valid:
+        raise ValueError(
+            f"fidelity must be one of {sorted(valid)}, got {fidelity!r}"
+        )
+    if fidelity == ParseFidelity.DEGRADED.value and not notes:
+        raise ValueError("a degraded fidelity needs at least one note")
+
+
+def _fidelity_fields(fidelity: str, notes_json: str) -> dict:
+    """Decode a row's ``fidelity`` and ``parse_notes`` columns (issue #81).
+
+    Args:
+        fidelity: The stored ``documents.fidelity``.
+        notes_json: The stored ``documents.parse_notes`` JSON list.
+
+    Returns:
+        ``{"fidelity": ..., "parse_notes": [...]}`` for a document dict.
+    """
+    return {"fidelity": fidelity, "parse_notes": json.loads(notes_json)}
 
 
 class DocumentsMixin:
@@ -46,6 +80,8 @@ class DocumentsMixin:
         char_count: int,
         sections_json: str,
         summary_status: str = SummaryStatus.OK.value,
+        fidelity: str = ParseFidelity.FULL.value,
+        parse_notes: Sequence[str] = (),
     ) -> int:
         """Insert a new document and return its ID.
 
@@ -61,27 +97,34 @@ class DocumentsMixin:
             sections_json: JSON-encoded list of extracted section headers.
             summary_status: Why ``summary`` holds what it holds — ``'ok'``,
                 ``'failed'`` or ``'pending'`` (issue #78 defect 1).
+            fidelity: ``'full'`` or ``'degraded'`` — whether a fallback
+                extractor produced ``markdown`` (issue #81).
+            parse_notes: Why a degraded extraction is degraded.
 
         Returns:
             The new document's row ID.
 
         Raises:
             ValueError: If ``summary_status`` is not one of the three known
-                values. SQLite cannot add a CHECK constraint to an existing
-                column, so this single INSERT path is where the column's
-                domain is enforced — without it, a status column added to
+                values, or ``fidelity`` is unknown or degraded without a
+                note. SQLite cannot add a CHECK constraint to an existing
+                column, so this single INSERT path is where the columns'
+                domains are enforced — without it, a status column added to
                 stop failure looking like success would itself accept an
                 error message.
         """
         _validate_summary_status(summary_status)
+        _validate_fidelity(fidelity, parse_notes)
         cur = self._execute_write(
             "INSERT INTO documents "
             "(filename, title, summary, mime_type, source_type, source_url, "
-            "markdown, char_count, sections_json, created_at, summary_status) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "markdown, char_count, sections_json, created_at, summary_status, "
+            "fidelity, parse_notes) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (filename, title, summary, mime_type, source_type, source_url,
              markdown, char_count, sections_json, time.time(),
-             summary_status),
+             summary_status, fidelity,
+             json.dumps(list(parse_notes), ensure_ascii=False)),
         )
         return cur.lastrowid
 
@@ -90,7 +133,7 @@ class DocumentsMixin:
         row = self.conn.execute(
             "SELECT id, filename, title, summary, mime_type, source_type, "
             "source_url, char_count, sections_json, created_at, "
-            "summary_status "
+            "summary_status, fidelity, parse_notes "
             "FROM documents WHERE id=?",
             (doc_id,),
         ).fetchone()
@@ -102,6 +145,7 @@ class DocumentsMixin:
             "source_url": row[6], "char_count": row[7],
             "sections_json": row[8], "created_at": row[9],
             "summary_status": row[10],
+            **_fidelity_fields(row[11], row[12]),
         }
 
     def get_document_markdown(self, doc_id: int) -> Optional[str]:
@@ -146,7 +190,7 @@ class DocumentsMixin:
         rows = self.conn.execute(
             "SELECT id, filename, title, summary, mime_type, source_type, "
             "source_url, char_count, sections_json, created_at, "
-            "summary_status "
+            "summary_status, fidelity, parse_notes "
             "FROM documents ORDER BY created_at DESC",
         ).fetchall()
         return [
@@ -156,6 +200,7 @@ class DocumentsMixin:
                 "source_url": r[6], "char_count": r[7],
                 "sections_json": r[8], "created_at": r[9],
                 "summary_status": r[10],
+                **_fidelity_fields(r[11], r[12]),
             }
             for r in rows
         ]
@@ -182,7 +227,7 @@ class DocumentsMixin:
         rows = self.conn.execute(
             "SELECT d.id, d.filename, d.title, d.summary, d.mime_type, "
             "d.source_type, d.source_url, d.char_count, d.created_at, "
-            "d.summary_status "
+            "d.summary_status, d.fidelity, d.parse_notes "
             "FROM documents d "
             "JOIN discussion_documents dd ON dd.document_id = d.id "
             "WHERE dd.discussion_id=? ORDER BY dd.added_at",
@@ -194,6 +239,7 @@ class DocumentsMixin:
                 "summary": r[3], "mime_type": r[4], "source_type": r[5],
                 "source_url": r[6], "char_count": r[7], "created_at": r[8],
                 "summary_status": r[9],
+                **_fidelity_fields(r[10], r[11]),
             }
             for r in rows
         ]
@@ -302,7 +348,7 @@ class DocumentsMixin:
         rows = self.conn.execute(
             "SELECT c.id, c.document_id, c.chunk_index, c.content, "
             "c.from_char, c.to_char, c.section_header, e.embedding, "
-            "d.title, d.filename "
+            "d.title, d.filename, d.fidelity "
             "FROM document_chunks c "
             "JOIN document_chunk_embeddings e ON e.chunk_id = c.id "
             "JOIN documents d ON d.id = c.document_id "
@@ -313,7 +359,7 @@ class DocumentsMixin:
                 "id": r[0], "document_id": r[1], "chunk_index": r[2],
                 "content": r[3], "from_char": r[4], "to_char": r[5],
                 "section_header": r[6], "embedding": r[7],
-                "doc_title": r[8], "doc_filename": r[9],
+                "doc_title": r[8], "doc_filename": r[9], "doc_fidelity": r[10],
             }
             for r in rows
         ]

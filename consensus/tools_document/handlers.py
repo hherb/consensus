@@ -18,7 +18,7 @@ from .constants import (
 )
 from .embedding import _rank_by_similarity
 from .errors import DocumentError
-from .handlers_rag import _reindex_message
+from .handlers_rag import _extraction_warning, _reindex_message, _with_warning
 from .ingestion import ingest_document
 from .parsing import fetch_url_content
 from .validation import chapter_range, resolve_range
@@ -53,6 +53,20 @@ def _summary_snippet(summary: Optional[str], status: str) -> str:
         # Distinct from a failure and from an empty 'ok': nobody tried.
         return "(no summary generated)"
     return "(no summary)"
+
+
+def _warning_line(doc: dict) -> str:
+    """Return a ``doc_list`` entry's extraction-warning line, or ``""``.
+
+    Args:
+        doc: The document dict being listed.
+
+    Returns:
+        A newline and an indented ``Degraded extraction: ...`` line for a
+        degraded document (#81).
+    """
+    warning = _extraction_warning(doc)
+    return f"\n    {warning}" if warning else ""
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +179,8 @@ async def _doc_list_handler(
                         ),
                         "filename": doc["filename"],
                         "char_count": doc["char_count"],
+                        "fidelity": doc["fidelity"],
+                        "parse_notes": doc["parse_notes"],
                         "best_score": score,
                     }
 
@@ -185,6 +201,7 @@ async def _doc_list_handler(
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars, "
                 f"score: {doc['best_score']:.2f})\n    {summary_snippet}"
+                + _warning_line(doc)
             )
         if ranking.skipped_dim_mismatch:
             # Some documents were excluded from the search entirely. Silence
@@ -204,7 +221,7 @@ async def _doc_list_handler(
             )
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars)\n"
-                f"    {summary_snippet}"
+                f"    {summary_snippet}" + _warning_line(doc)
             )
         return ToolResult(content="\n".join(lines), metadata={"count": len(docs)})
 
@@ -220,7 +237,7 @@ async def _doc_list_handler(
             )
             lines.append(
                 f"  [ID {doc['id']}] {doc['title']} ({doc['char_count']} chars)\n"
-                f"    {summary_snippet}"
+                f"    {summary_snippet}" + _warning_line(doc)
             )
         return ToolResult(content="\n".join(lines), metadata={"count": len(docs)})
 
@@ -267,7 +284,7 @@ async def _doc_get_text_handler(
     text = markdown[from_char:to_char]
 
     return ToolResult(
-        content=text,
+        content=_with_warning(text, db.get_document(int(doc_id))),
         metadata={"from_char": from_char, "to_char": to_char, "length": len(text)},
     )
 
@@ -361,7 +378,7 @@ async def _doc_get_chapter_handler(
     text = markdown[from_char:to_char]
 
     return ToolResult(
-        content=text,
+        content=_with_warning(text, doc),
         metadata={
             "header": sections[best_index]["header"],
             "from_char": from_char,
