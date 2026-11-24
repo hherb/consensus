@@ -5,8 +5,8 @@ bookkeeping.
 These are the leaf of the ``app_discussion_flow`` package: they depend on
 no other flow module, so submissions, turns, method switching and
 conclusion can all import from here without a cycle.  Most are pure;
-``post_notice`` is the deliberate exception, since a notice has to reach
-both the in-memory transcript and the database to be of any use.
+``post_notice`` and ``save_method_state`` are the deliberate exceptions,
+since each has to keep memory and the database in step.
 """
 
 import json
@@ -15,8 +15,9 @@ import re
 
 import httpx
 
+from ..app_discussion_state import discussion_from_db
 from ..database import Database
-from ..methods import get_active_method
+from ..methods import get_active_method, serialize_method_state
 from ..models import Discussion, Entity, Message, MessageRole
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,49 @@ def post_notice(
         msg.content += UNSAVED_NOTICE_SUFFIX
         return msg, False
     return msg, True
+
+
+#: The fields a flow can change before its ``method_state`` save, so what
+#: a failed save puts back as a reload rebuilds them (#152).  Messages stay
+#: as they are: an unsaved notice is meant to stay visible.
+_DB_BACKED_FIELDS = (
+    "method_state", "discussion_method", "turn_order", "base_turn_order",
+    "current_turn_index", "turn_number", "status", "is_active",
+    "max_rounds", "cost_limit",
+)
+
+
+def save_method_state(discussion: Discussion, db: Database, **fields) -> None:
+    """Write ``method_state`` (and any other ``fields``) to the discussion row.
+
+    When the state holds a value JSON cannot encode, nothing is written:
+    the DB-backed fields go back to what a reload would rebuild, so memory
+    never claims what the database does not hold (issue #152), and the
+    ``ValueError`` propagates to the flow's error reporting.  Callers must
+    therefore save before they post anything that announces the change.
+    If the reload itself fails, that is logged and memory is left as is;
+    the ``ValueError`` is still what propagates.
+
+    Raises:
+        ValueError: ``method_state`` cannot be encoded as JSON.
+    """
+    try:
+        encoded = serialize_method_state(discussion.method_state)
+    except ValueError:
+        try:
+            stored = discussion_from_db(db, discussion.id)
+        except Exception:
+            logger.exception("Reloading discussion %s failed", discussion.id)
+            stored = None
+        if stored is None:
+            logger.error(
+                "Discussion %s: memory not restored after a failed "
+                "method_state save", discussion.id)
+        else:
+            for name in _DB_BACKED_FIELDS:
+                setattr(discussion, name, getattr(stored, name))
+        raise
+    db.update_discussion(discussion.id, method_state=encoded, **fields)
 
 
 def describe_turn_error(e: Exception) -> str:

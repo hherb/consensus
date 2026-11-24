@@ -13,7 +13,7 @@ from typing import Callable
 
 from ..database import Database
 from ..evidence import record_and_annotate_evidence
-from ..methods import get_active_method, serialize_method_state
+from ..methods import get_active_method
 from ..models import (
     Discussion, EntityType, Message, MessageRole, StoryboardEntry,
 )
@@ -22,7 +22,8 @@ from ..pricing import PricingCache
 from .helpers import (
     ERROR_KIND_CONFIG, ERROR_KIND_INTERNAL, ERROR_KIND_PROVIDER,
     apply_method_turn_order, calculate_discussion_cost, classify_flow_error,
-    describe_flow_error, is_pass, post_notice, stamp_turn_index,
+    describe_flow_error, is_pass, post_notice, save_method_state,
+    stamp_turn_index,
 )
 from .method_switch import (
     RECOMMENDER_FAILURE_NOTICE, handle_triage_handoff, run_triage_recommender,
@@ -112,12 +113,6 @@ async def generate_ai_turn(
                 content = record_and_annotate_evidence(
                     discussion, current, discussion.turn_number, content,
                     resp.tool_calls)
-            # Persist updated method_state
-            if discussion.id:
-                db.update_discussion(
-                    discussion.id,
-                    method_state=serialize_method_state(discussion.method_state),
-                )
             # Triage recommend phase: run async MethodRecommender
             in_recommend_phase = (
                 discussion.discussion_method == "triage"
@@ -144,11 +139,10 @@ async def generate_ai_turn(
                     # been, and it persists with the message below.
                     content += RECOMMENDER_FAILURE_NOTICE.format(
                         detail=rec_error)
-                if discussion.id:
-                    db.update_discussion(
-                        discussion.id,
-                        method_state=serialize_method_state(discussion.method_state),
-                    )
+            # One save after the recommender: a failure here skips the
+            # turn, so nothing it recorded may be stored (#152).
+            if discussion.id:
+                save_method_state(discussion, db)
         else:
             content = resp.content
 
@@ -375,7 +369,9 @@ async def complete_turn(
             # transition.  Static handlers return the order unchanged.
             apply_method_turn_order(discussion)
 
-        # Check for phase transition
+        # Check for phase transition.  Announcements are posted only once
+        # the state they announce is saved (#152).
+        transition_msg = ""
         if method.should_advance_phase(discussion):
             new_phase = method.advance_phase(discussion)
             if new_phase:
@@ -383,20 +379,8 @@ async def complete_turn(
                 # transition is a rotation boundary, so restart at index 0
                 # even when the order is unchanged (issue #19).
                 apply_method_turn_order(discussion, reset_index=True)
-
-                # Post phase transition message
                 transition_msg = method.get_phase_transition_message(
                     new_phase, discussion)
-                if transition_msg and mod:
-                    sys_msg = Message(
-                        entity_id=mod.id, entity_name=mod.name,
-                        content=transition_msg, role=MessageRole.SYSTEM,
-                    )
-                    discussion.messages.append(sys_msg)
-                    db.add_message(
-                        discussion.id, mod.id, transition_msg, "system",
-                        turn_number=discussion.turn_number,
-                    )
             else:
                 # Method ended: linear order exhausted, or a next_phase
                 # hook aborted it early.  Post the method's explanation
@@ -413,21 +397,11 @@ async def complete_turn(
                            else method.get_method_complete_message(discussion))
                 if end_msg and mod:
                     discussion.method_state["_complete_message_posted"] = True
-                    sys_msg = Message(
-                        entity_id=mod.id, entity_name=mod.name,
-                        content=end_msg, role=MessageRole.SYSTEM,
-                    )
-                    discussion.messages.append(sys_msg)
-                    db.add_message(
-                        discussion.id, mod.id, end_msg, "system",
-                        turn_number=discussion.turn_number,
-                    )
                 if discussion.id:
                     stamp_turn_index(discussion)
-                    db.update_discussion(
-                        discussion.id,
-                        method_state=serialize_method_state(discussion.method_state),
-                    )
+                    save_method_state(discussion, db)
+                if end_msg and mod:
+                    post_notice(discussion, db, mod, end_msg)
                 # Triage's final act is to hand the discussion over to the
                 # method it chose; a blocked handoff pauses for recovery.
                 handoff = handle_triage_handoff(
@@ -447,10 +421,9 @@ async def complete_turn(
         # (issue #16).
         if discussion.id:
             stamp_turn_index(discussion)
-            db.update_discussion(
-                discussion.id,
-                method_state=serialize_method_state(discussion.method_state),
-            )
+            save_method_state(discussion, db)
+        if transition_msg and mod:
+            post_notice(discussion, db, mod, transition_msg)
 
     # Check if max_rounds has been reached
     max_r = discussion.max_rounds

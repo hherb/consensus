@@ -1,12 +1,12 @@
 # HANDOVER
 
-_Last updated: 2026-11-22. `main` is at **v2.0.0** (released 2026-07-20)
+_Last updated: 2026-11-24. `main` is at **v2.0.0** (released 2026-07-20)
 plus everything merged since (the #61 split, auth hardening, the desktop
 bridge fix #125, MCP argument validation #124, one-transaction rotation
-#107, rotation rollback #147, `serialize_method_state` raising #150 —
-details in git history). This branch, `fix/python-tools-flag-96`, reports
-tool packages that failed to load in the profile tool list (#96). The suite
-is at **4520 passing**._
+#107, rotation rollback #147, `serialize_method_state` raising #150, failed
+tool packages shown in the UI #96 — details in git history). This branch,
+`fix/method-state-save-consistency-152`, keeps memory equal to the DB when a
+`method_state` save fails (#152). The suite is at **4535 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -19,7 +19,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4520 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4535 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -170,9 +170,23 @@ the stored state. Never add a fallback there: the rotation rollback,
 `generate_ai_turn`'s internal-error notice and the API's 500 → `{error}`
 (desktop: a rejected promise, which `completeTurnFlow` must treat as a
 stop, or the auto-run loop repeats paid turns) are what report it. Store
-only JSON types in `method_state` (no sets). Other flows leave memory
-ahead of the DB when the save raises (#152). Tests:
-`tests/test_method_state_serialization.py`.
+only JSON types in `method_state` (no sets).
+
+**Every live-discussion save goes through `helpers.save_method_state`**
+(#152), incl. `_increase_budgets`; rotation keeps its own rollback, and a
+`start_discussion` whose method init or save raises anything soft-deletes
+its row, clears `method_state` and keeps setup images pending. On a
+`ValueError` the helper writes nothing, resets `_DB_BACKED_FIELDS` (state,
+method, orders, turn position, status, budgets) to what
+`app_discussion_state.discussion_from_db` (a reload) builds, and re-raises
+(a failed reload is logged, never raised over it); messages stay, so an
+unsaved notice stays visible. So **post your own notice only after the
+save**: `complete_turn` and the blocked Triage handoff do;
+`generate_ai_turn` saves once, after the recommender. (The successful
+handoff and retry save after `switch_discussion_method` has already
+announced and saved the switch.) Tests:
+`tests/test_method_state_save_failure.py` (mutation-checked for every site
+but the retry's blocked re-pause, whose record is JSON-safe).
 
 ## Tool packages that fail to load (#96 — keep this contract)
 
@@ -383,8 +397,10 @@ numeric strings (`"5"`, repo owner's call, #124), so a new tool definition may
 use only its `SUPPORTED_KEYWORDS`. A new desktop bridge method goes in a mixin
 **and** in `BRIDGE_API`; moved code logs under its new module.
 
-**Watch:** `app_discussion_flow/turns.py` (499) and `pricing.py` (498): split
-before the next addition. `evaluation/static/eval.js` (645) is pre-existing JS.
+**Watch:** `pricing.py` (498) and `app_discussion_state.py` (488): split
+before the next addition. `static/discussion-actions.js` (506) and
+`evaluation/static/eval.js` (645) are over the cap; split them when next
+touched.
 
 **Facade guards** (`tests/test_<name>_facade.py`) pin each package's `__all__`
 by identity and AST-scan call sites (a dropped lazy re-export fails only in
@@ -430,11 +446,10 @@ update every doc naming the old file *and* the content beside the name.
   validation (unknown args, `null` identity args, numeric bounds); #139
   registration reveals a taken email and #128 an unverified OAuth sign-up
   can pre-hijack an address (both want an email-verification design).
-- No decision needed: #152 memory and DB diverge when a `method_state` save
-  fails mid-flow (follow-up to #150; only reachable via a future method bug);
-  #102 PR #100 review follow-ups; #97 Seatbelt does not confine writes; #92
-  tool errors echo raw exception text; #81 persist parse fidelity/notes; #80
-  pre-#78 `'(Empty PDF)'` documents. Suggested next: #81 or #152.
+- No decision needed: #102 PR #100 review follow-ups; #97 Seatbelt does
+  not confine writes; #92 tool errors echo raw exception text; #81 persist
+  parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents. Suggested
+  next: #81.
 
 ### Roadmap
 
