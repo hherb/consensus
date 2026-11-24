@@ -6,7 +6,7 @@ This document tracks planned and implemented features for Consensus, grouped by 
 |--------|---------|---------|
 | **Discussion Continuity** | | |
 | ✅ Done | Resume previous discussions | `app.load_discussion()`, `app.resume_discussion()`, `app.reopen_discussion()`; exposed via desktop bridge and REST API |
-| ✅ Done | Dynamic participation | Entities can be added or removed from an ongoing discussion mid-session; every roster/role change goes through `app_discussion_rotation.update_rotation`, so the change survives phase transitions and reloads (#104) and is persisted in one transaction (#107); a failed save leaves the live session unchanged and tells the user (#147), and a `method_state` JSON cannot encode is reported, never saved as `{}` (#150), with memory put back to what the DB holds (#152) |
+| ✅ Done | Dynamic participation | Entities can be added or removed from an ongoing discussion mid-session; every roster/role change goes through `app_discussion_rotation.update_rotation`, so the change survives phase transitions and reloads (#104) and is persisted in one transaction (#107); a failed save leaves the live session unchanged and tells the user (#147), and a `method_state` JSON cannot encode is reported, never saved as `{}` (#150) |
 | **Institutional Memory** | | |
 | ✅ Done | Long-term memory for AI participants | Persistent memory across discussions so AIs can build on prior reasoning and positions |
 | ✅ Done  | Semantic search over past discussions | Embedding-based retrieval of relevant passages from the corpus of past discussions |

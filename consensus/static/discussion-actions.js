@@ -262,7 +262,15 @@ export async function onConfirmModeratorInput() {
     hide('#moderator-dialog');
 
     if (mode === 'summary') {
-        const result = await api.completeTurn(content);
+        // Desktop rejects where web returns {error}; stop on either, as
+        // completeTurnFlow does, or processCurrentTurn runs a paid AI turn.
+        const result = await api.completeTurn(content)
+            .catch(e => ({ error: 'Summary failed: ' + e.message }));
+        if (result?.error) {
+            showToast(result.error, 8000, 'warning');
+            onStateUpdate(await api.getState());
+            return renderDiscussion();
+        }
         if (result?.state) onStateUpdate(result.state);
         else onStateUpdate(await api.getState());
         if (await handleTurnLimitFlags(result)) return;

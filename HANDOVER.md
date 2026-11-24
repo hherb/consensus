@@ -6,7 +6,7 @@ bridge fix #125, MCP argument validation #124, one-transaction rotation
 #107, rotation rollback #147, `serialize_method_state` raising #150, failed
 tool packages shown in the UI #96 — details in git history). This branch,
 `fix/method-state-save-consistency-152`, keeps memory equal to the DB when a
-`method_state` save fails (#152). The suite is at **4528 passing**._
+`method_state` save fails (#152). The suite is at **4535 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -19,7 +19,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4528 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4535 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -172,15 +172,21 @@ the stored state. Never add a fallback there: the rotation rollback,
 stop, or the auto-run loop repeats paid turns) are what report it. Store
 only JSON types in `method_state` (no sets).
 
-**Every flow saves through `helpers.save_method_state`** (#152; rotation
-keeps its own rollback). On that `ValueError` it writes nothing, resets
-`_DB_BACKED_FIELDS` (state, method, orders, turn position, status) to what
-`app_discussion_state.discussion_from_db` (a reload) builds, and re-raises;
-messages stay, so an unsaved notice stays visible. So **save before you
-announce**: `complete_turn` and the blocked Triage handoff post their notice
-only after the save; `generate_ai_turn` saves once, after the recommender. A
-start whose initial state cannot be saved soft-deletes its row. Tests:
-`tests/test_method_state_save_failure.py` (each site mutation-checked).
+**Every live-discussion save goes through `helpers.save_method_state`**
+(#152), incl. `_increase_budgets`; rotation keeps its own rollback, and a
+`start_discussion` whose method init or save raises anything soft-deletes
+its row, clears `method_state` and keeps setup images pending. On a
+`ValueError` the helper writes nothing, resets `_DB_BACKED_FIELDS` (state,
+method, orders, turn position, status, budgets) to what
+`app_discussion_state.discussion_from_db` (a reload) builds, and re-raises
+(a failed reload is logged, never raised over it); messages stay, so an
+unsaved notice stays visible. So **post your own notice only after the
+save**: `complete_turn` and the blocked Triage handoff do;
+`generate_ai_turn` saves once, after the recommender. (The successful
+handoff and retry save after `switch_discussion_method` has already
+announced and saved the switch.) Tests:
+`tests/test_method_state_save_failure.py` (mutation-checked for every site
+but the retry's blocked re-pause, whose record is JSON-safe).
 
 ## Tool packages that fail to load (#96 — keep this contract)
 
@@ -391,8 +397,10 @@ numeric strings (`"5"`, repo owner's call, #124), so a new tool definition may
 use only its `SUPPORTED_KEYWORDS`. A new desktop bridge method goes in a mixin
 **and** in `BRIDGE_API`; moved code logs under its new module.
 
-**Watch:** `pricing.py` (498): split before the next addition;
-`app_discussion_state.py` is at 487. `evaluation/static/eval.js` (645) is pre-existing JS.
+**Watch:** `pricing.py` (498) and `app_discussion_state.py` (487): split
+before the next addition. `static/discussion-actions.js` (506) and
+`evaluation/static/eval.js` (645) are over the cap; split them when next
+touched.
 
 **Facade guards** (`tests/test_<name>_facade.py`) pin each package's `__all__`
 by identity and AST-scan call sites (a dropped lazy re-export fails only in

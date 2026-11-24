@@ -5,6 +5,7 @@ directly. They do NOT call _notify(); the ConsensusApp wrapper methods handle
 notification after calling each function.
 """
 
+import logging
 import time
 from typing import Optional
 
@@ -24,6 +25,8 @@ from .methods import get_method, serialize_method_state
 from .models import Discussion, Entity, EntityType, Message, MessageRole
 from .moderator import Moderator
 from .structured_output import _validate_structured_output_support
+
+logger = logging.getLogger(__name__)
 
 
 def add_to_discussion(
@@ -261,11 +264,6 @@ def start_discussion(
     discussion.id = did
     db.update_discussion(did, status="active", started_at=time.time())
 
-    # Link images uploaded during setup to the new discussion
-    for image_id in discussion.pending_image_ids:
-        db.add_discussion_image(did, image_id)
-    discussion.pending_image_ids.clear()
-
     # Build turn order -- DA goes last
     da_entity = None
     turn_pos = 0
@@ -331,29 +329,42 @@ def start_discussion(
     # Initialise method state
     try:
         method = get_method(discussion.discussion_method)
-        discussion.method_state = method.init_state(discussion)
-        # Apply the first phase's turn order so phase-1 ordering (e.g. red
-        # team exclusion, humans-only intake) takes effect from turn 1
-        # rather than only after the first round completes (issue #13).
-        # Must run before the persist below: deriving the order can write
-        # method_state (``_turn_order``, red-team designation) that has to
-        # survive a reload before the first turn completes (issue #16).
-        apply_method_turn_order(discussion)
-        db.update_discussion(
-            did,
-            discussion_method=discussion.discussion_method,
-            method_state=serialize_method_state(discussion.method_state),
-        )
     except KeyError:
-        pass  # open_discussion — no special state needed
-    except ValueError:
-        # The method's initial state cannot be saved (#152): start nothing,
-        # rather than leave a live row with no opening message behind.
-        db.soft_delete_discussions([did])
+        method = None  # unregistered name: no special state needed
+    try:
+        if method is not None:
+            discussion.method_state = method.init_state(discussion)
+            # Apply the first phase's turn order so phase-1 ordering (e.g.
+            # red team exclusion, humans-only intake) takes effect from
+            # turn 1 rather than only after the first round completes
+            # (issue #13).  Must run before the persist below: deriving the
+            # order can write method_state (``_turn_order``, red-team
+            # designation) that has to survive a reload before the first
+            # turn completes (issue #16).
+            apply_method_turn_order(discussion)
+            db.update_discussion(
+                did,
+                discussion_method=discussion.discussion_method,
+                method_state=serialize_method_state(discussion.method_state),
+            )
+    except Exception:
+        # The method's initial state cannot be built or saved (#152): start
+        # nothing, rather than leave a live row with no opening message.
+        # Memory first, so a failing delete cannot leave it half-started.
         discussion.id = None
         discussion.is_active = False
         discussion.status = "setup"
+        discussion.method_state = {}
+        try:
+            db.soft_delete_discussions([did])
+        except Exception:
+            logger.exception("Could not discard failed discussion %s", did)
         raise
+
+    # Link images uploaded during setup, now that the start will stand.
+    for image_id in discussion.pending_image_ids:
+        db.add_discussion_image(did, image_id)
+    discussion.pending_image_ids.clear()
 
     # Opening message from moderator
     target_type = "ai" if mod.entity_type == EntityType.AI else "human"

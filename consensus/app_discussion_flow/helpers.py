@@ -182,12 +182,13 @@ def post_notice(
     return msg, True
 
 
-#: What a reload rebuilds from the discussion row and members, so what a
-#: failed ``method_state`` save must put back (#152).  Messages stay as
-#: they are: an unsaved notice is meant to stay visible.
+#: The fields a flow can change before its ``method_state`` save, so what
+#: a failed save puts back as a reload rebuilds them (#152).  Messages stay
+#: as they are: an unsaved notice is meant to stay visible.
 _DB_BACKED_FIELDS = (
     "method_state", "discussion_method", "turn_order", "base_turn_order",
     "current_turn_index", "turn_number", "status", "is_active",
+    "max_rounds", "cost_limit",
 )
 
 
@@ -199,6 +200,8 @@ def save_method_state(discussion: Discussion, db: Database, **fields) -> None:
     never claims what the database does not hold (issue #152), and the
     ``ValueError`` propagates to the flow's error reporting.  Callers must
     therefore save before they post anything that announces the change.
+    If the reload itself fails, that is logged and memory is left as is;
+    the ``ValueError`` is still what propagates.
 
     Raises:
         ValueError: ``method_state`` cannot be encoded as JSON.
@@ -206,8 +209,16 @@ def save_method_state(discussion: Discussion, db: Database, **fields) -> None:
     try:
         encoded = serialize_method_state(discussion.method_state)
     except ValueError:
-        stored = discussion_from_db(db, discussion.id)
-        if stored is not None:
+        try:
+            stored = discussion_from_db(db, discussion.id)
+        except Exception:
+            logger.exception("Reloading discussion %s failed", discussion.id)
+            stored = None
+        if stored is None:
+            logger.error(
+                "Discussion %s: memory not restored after a failed "
+                "method_state save", discussion.id)
+        else:
             for name in _DB_BACKED_FIELDS:
                 setattr(discussion, name, getattr(stored, name))
         raise

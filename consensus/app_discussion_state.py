@@ -283,8 +283,9 @@ def _increase_budgets(discussion: Discussion, db: Database) -> None:
             discussion.cost_limit = original_cost_limit * continuation_count
             updates["cost_limit"] = discussion.cost_limit
 
-    updates["method_state"] = json.dumps(discussion.method_state)
-    db.update_discussion(discussion.id, **updates)
+    # Lazy: helpers imports this module.
+    from .app_discussion_flow.helpers import save_method_state
+    save_method_state(discussion, db, **updates)
 
 
 def resume_discussion(discussion: Discussion, db: Database) -> dict:
