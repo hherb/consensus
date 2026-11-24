@@ -328,7 +328,7 @@ class WebAPI {
     }
     async getDiscussionDocuments(discussionId) {
         const resp = await fetch(`/api/documents/${discussionId || 0}`);
-        if (!resp.ok) return { documents: [] };
+        if (!resp.ok) { const d = await resp.json().catch(() => ({})); return { error: d.error || `Failed (${resp.status})` }; }
         const data = await resp.json();
         return data.documents || [];
     }

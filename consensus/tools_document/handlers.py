@@ -18,7 +18,7 @@ from .constants import (
 )
 from .embedding import _rank_by_similarity
 from .errors import DocumentError
-from .handlers_rag import _extraction_warning, _reindex_message
+from .handlers_rag import _extraction_warning, _reindex_message, _with_warning
 from .ingestion import ingest_document
 from .parsing import fetch_url_content
 from .validation import chapter_range, resolve_range
@@ -62,7 +62,8 @@ def _warning_line(doc: dict) -> str:
         doc: The document dict being listed.
 
     Returns:
-        ``"\n    Degraded extraction: ..."`` for a degraded document (#81).
+        A newline and an indented ``Degraded extraction: ...`` line for a
+        degraded document (#81).
     """
     warning = _extraction_warning(doc)
     return f"\n    {warning}" if warning else ""
@@ -283,7 +284,7 @@ async def _doc_get_text_handler(
     text = markdown[from_char:to_char]
 
     return ToolResult(
-        content=text,
+        content=_with_warning(text, db.get_document(int(doc_id))),
         metadata={"from_char": from_char, "to_char": to_char, "length": len(text)},
     )
 
@@ -377,7 +378,7 @@ async def _doc_get_chapter_handler(
     text = markdown[from_char:to_char]
 
     return ToolResult(
-        content=text,
+        content=_with_warning(text, doc),
         metadata={
             "header": sections[best_index]["header"],
             "from_char": from_char,

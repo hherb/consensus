@@ -44,9 +44,14 @@ export async function renderDocumentPanel() {
     let docs;
     try {
         const result = await api.getDiscussionDocuments(discussionId);
+        if (result?.error) throw new Error(result.error);
         docs = Array.isArray(result) ? result : (result?.documents || []);
-    } catch {
-        docs = [];
+    } catch (e) {
+        // A failed list must not read as "no documents": that hides the
+        // fidelity warnings this panel exists to keep visible (#81).
+        console.error('Could not list documents:', e);
+        container.innerHTML = `<p class="document-warning">Could not load documents: ${_escHtml(e?.message || String(e))}</p>`;
+        return;
     }
 
     if (docs.length === 0) {
@@ -177,9 +182,9 @@ export async function removeDocument(docId, discussionId) {
 /**
  * List what is wrong with a stored document, for the panel (issue #81).
  *
- * The same warnings the upload toast shows once, read back from the stored
- * row, so a degraded extraction or a failed summary stays visible after
- * the toast is gone.
+ * The warnings the upload toast shows once, read back from the stored row,
+ * so a degraded extraction or a failed summary stays visible after the
+ * toast is gone. The wording copies `handlers_rag._extraction_warning`.
  *
  * @param {object} doc - A document row from `getDiscussionDocuments`.
  * @returns {string[]} The warnings, empty when there are none.

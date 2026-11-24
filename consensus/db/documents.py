@@ -348,7 +348,7 @@ class DocumentsMixin:
         rows = self.conn.execute(
             "SELECT c.id, c.document_id, c.chunk_index, c.content, "
             "c.from_char, c.to_char, c.section_header, e.embedding, "
-            "d.title, d.filename "
+            "d.title, d.filename, d.fidelity "
             "FROM document_chunks c "
             "JOIN document_chunk_embeddings e ON e.chunk_id = c.id "
             "JOIN documents d ON d.id = c.document_id "
@@ -359,7 +359,7 @@ class DocumentsMixin:
                 "id": r[0], "document_id": r[1], "chunk_index": r[2],
                 "content": r[3], "from_char": r[4], "to_char": r[5],
                 "section_header": r[6], "embedding": r[7],
-                "doc_title": r[8], "doc_filename": r[9],
+                "doc_title": r[8], "doc_filename": r[9], "doc_fidelity": r[10],
             }
             for r in rows
         ]
