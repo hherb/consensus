@@ -15,6 +15,7 @@ from consensus.tools_document import (
 )
 from consensus.tools_document.provider import create_document_provider
 from consensus.tools import TOOL_FETCH_DEADLINE, ToolContext
+from consensus.tools_memory.embedding import MemoryUnavailableError
 
 from .document_helpers import (
     FakeApp, FakeEmbedClient, embed_all, patch_where_defined,
@@ -159,7 +160,7 @@ class TestDocAddHandler:
             {"url": "http://x.test/gone"}, ctx, tmp_db, None, None,
         )
         assert result.is_error
-        assert "404 not found" in result.content
+        assert result.content == "Failed to add document (RuntimeError)"
 
     @pytest.mark.asyncio
     async def test_empty_document_is_surfaced_as_a_tool_error(
@@ -300,7 +301,7 @@ class TestDocListHandler:
     ):
         result = await handlers._doc_list_handler(
             {"full_library": True, "query": "q"}, ctx, tmp_db,
-            FakeEmbedClient(error=RuntimeError("ollama down")), None,
+            FakeEmbedClient(error=MemoryUnavailableError("ollama down")), None,
         )
         assert result.is_error
         assert "ollama down" in result.content
@@ -587,9 +588,23 @@ class TestDocAskHandler:
         embed_all(tmp_db, doc_id)
         result = await handlers_rag._doc_ask_handler(
             {"document_id": doc_id, "question": "why?"}, ctx, tmp_db,
-            FakeEmbedClient(error=RuntimeError("ollama down")), None,
+            FakeEmbedClient(error=MemoryUnavailableError("ollama down")), None,
         )
         assert result.is_error and "ollama down" in result.content
+
+    @pytest.mark.asyncio
+    async def test_an_unexpected_embed_failure_hides_its_text(
+        self, tmp_db, ctx, doc_id,
+    ):
+        """Only our own outage text is shown; anything else is named by
+        class, because its message may carry a URL or a path (#92)."""
+        embed_all(tmp_db, doc_id)
+        result = await handlers_rag._doc_ask_handler(
+            {"document_id": doc_id, "question": "why?"}, ctx, tmp_db,
+            FakeEmbedClient(error=RuntimeError("/srv/a.db?token=s3cret")), None,
+        )
+        assert result.is_error
+        assert result.content == "Embedding service unavailable (RuntimeError)"
 
     @pytest.mark.asyncio
     async def test_answer_and_passages_are_returned(

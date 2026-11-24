@@ -17,6 +17,7 @@ import json
 import logging
 from typing import Optional
 
+from ..error_text import public_error
 from ..tools import ToolContext, ToolResult
 from .constants import (
     FIDELITY_DEGRADED, MIN_SIMILARITY_THRESHOLD, PASSAGE_PREVIEW_CHARS,
@@ -279,7 +280,8 @@ async def _doc_ask_handler(
             "doc_ask could not embed the question for document %d", doc_id,
         )
         return ToolResult(
-            content=f"Embedding service unavailable: {e}", is_error=True,
+            content=public_error("Embedding service unavailable", e),
+            is_error=True,
         )
 
     # Retrieve and rank chunks
@@ -335,10 +337,11 @@ async def _doc_ask_handler(
             ),
         )
     except DocumentInterpretationError as e:
-        # Caught explicitly, rather than left to ToolRegistry's generic
+        # Caught explicitly, rather than left to the provider's generic
         # `except Exception`, so the failure names the model and provider
-        # that failed instead of a bare "Tool error: ..." — and so an
-        # expected provider failure logs a warning, not a full traceback.
+        # that failed instead of a bare "Tool doc_ask failed (<class>)" —
+        # and so an expected provider failure logs a warning, not a full
+        # traceback.
         entity = db.get_entity(context.caller_entity_id) or {}
         model = entity.get("model") or "unknown model"
         provider = entity.get("provider_name") or "unknown provider"
@@ -450,12 +453,12 @@ async def _doc_summary_handler(
                 user_prompt=combined,
             )
     except DocumentInterpretationError as e:
-        # Caught explicitly, rather than left to ToolRegistry's generic
+        # Caught explicitly, rather than left to the provider's generic
         # `except Exception`, so the failure names the model and provider
-        # that failed instead of a bare "Tool error: ..." — the same
-        # treatment _doc_ask_handler already received. Covers all three
-        # _call_interpretation_llm call sites above: the direct path and
-        # both map-reduce calls.
+        # that failed instead of a bare "Tool doc_summary failed (<class>)"
+        # — the same treatment _doc_ask_handler already received. Covers
+        # all three _call_interpretation_llm call sites above: the direct
+        # path and both map-reduce calls.
         entity = db.get_entity(context.caller_entity_id) or {}
         model = entity.get("model") or "unknown model"
         provider = entity.get("provider_name") or "unknown provider"

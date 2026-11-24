@@ -1,13 +1,13 @@
 # HANDOVER
 
-_Last updated: 2026-11-24. `main` is at **v2.0.0** (released 2026-07-20)
+_Last updated: 2026-11-25. `main` is at **v2.0.0** (released 2026-07-20)
 plus everything merged since (the #61 split, auth hardening, the desktop
 bridge fix #125, MCP argument validation #124, one-transaction rotation
 #107, rotation rollback #147, `serialize_method_state` raising #150, failed
-tool packages shown in the UI #96, `method_state` save consistency #152 —
-details in git history). This branch, `fix/document-fidelity-81`, persists a
-degraded extraction so every reader warns about it (#81, and flags the #80
-rows). The suite is at **4561 passing**._
+tool packages shown in the UI #96, `method_state` save consistency #152,
+degraded-extraction warnings #81 — details in git history). This branch,
+`fix/tool-error-text-92`, stops tool errors and the API's 500 echoing raw
+exception text (#92). The suite is at **4571 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -20,7 +20,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4561 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4571 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -143,6 +143,36 @@ detection; `INDEXING_RETRY_INTERVAL` hardcoded at 60 s; pre-#78
 Tests: `tests/test_tools_document_failures.py`, `tests/test_document_fidelity.py`
 (each wiring mutation-checked), `tests/test_background.py`,
 `tests/test_tools_document*.py`.
+
+## Unexpected errors name only their class (#92 — keep this contract)
+
+An exception's message can carry an endpoint URL with a credential in its
+query string (httpx) or an internal file path (SQLite; matters in
+`--multi-user`). So a catch-all that answers the model, the transcript or
+the browser shows `error_text.public_error(summary, exc)` and logs the full
+exception. That is `"<summary> (<ExceptionClass>)"`, plus `, HTTP <code>`
+for an `httpx.HTTPStatusError`; a `PublicMessageError` — a message we word
+ourselves — shows as `"<summary>: <message>"`. Repo owner's call
+(2026-11-25): the same in every mode, local ones included.
+
+- Covered: both `Tool <name> failed` fallbacks in `tools.py`, `handle_api`'s
+  500 (`<method> failed (…)`), `tools_memory` `_tool_failure`, the `doc_*`
+  embed and indexing failures (`last_error` reaches the transcript), the
+  interpretation LLM wrapper, `doc_add`, the image, MCP (stdio and HTTP),
+  `fetch_webpage`, web search and sandbox-launch catch-alls.
+- `MemoryUnavailableError` is a `PublicMessageError`: `embed()` builds its
+  text from `redact_url(endpoint)` and `public_error`, never `{e}`, so it
+  stays actionable ("Cannot connect … (ConnectError)", "… HTTP 404"). A new
+  raise site of a `PublicMessageError` must keep to that.
+- Errors we word ourselves (validation 400s, auth replies, `FetchError`,
+  typed `DocumentError`s with their hint) keep their text.
+- Still open, **#157**: memory config and connection-test routes, the
+  desktop connection test, `recommend_method`, and the MCP server's generic
+  `Error: …`.
+
+Tests: `tests/test_error_text.py`, `tests/test_tools.py` (`SECRET`),
+`tests/test_server_api.py`, `tests/test_tools_memory_*.py`
+(`TestErrorTextIsSafe`), `tests/test_mcp_http_client.py`.
 
 ## Speaking rotation after start (#104 — keep this contract)
 
@@ -414,7 +444,7 @@ use only its `SUPPORTED_KEYWORDS`. A new desktop bridge method goes in a mixin
 **and** in `BRIDGE_API`; moved code logs under its new module.
 
 **Watch:** `pricing.py` (498), `app_discussion_state.py` (488) and
-`tools_document/handlers_rag.py` (481): split
+`tools_document/handlers_rag.py` (484): split
 before the next addition. `static/discussion-actions.js` (506) and
 `evaluation/static/eval.js` (645) are over the cap; split them when next
 touched.
@@ -460,7 +490,9 @@ update every doc naming the old file *and* the content beside the name.
 
 ### Open GitHub issues
 
-- Need the repo owner's call: #80 whether to drop the chunks of the flagged
+- Need the repo owner's call: #156 whether to flag pre-017 rows holding
+  U+FFFD as degraded, and whether `add_document`'s `fidelity` becomes
+  required; #80 whether to drop the chunks of the flagged
   pre-#78 `'(Empty PDF)'` documents so `doc_ask` stops answering from them
   (the rows now warn; deleting stored content was left to the repo owner);
   #146 stricter `consensus-mcp` argument validation (unknown args, `null`
@@ -468,8 +500,7 @@ update every doc naming the old file *and* the content beside the name.
   and #128 an unverified OAuth sign-up can pre-hijack an address (both want
   an email-verification design).
 - No decision needed: #102 PR #100 review follow-ups; #97 Seatbelt does
-  not confine writes; #92 tool errors echo raw exception text. Suggested
-  next: #92.
+  not confine writes; #157 the catch-alls #92 left. Suggested next: #157.
 
 ### Roadmap
 

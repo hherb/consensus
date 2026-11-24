@@ -72,7 +72,7 @@ async def test_vision_failure_is_an_error_and_never_cached(
         result = await _describe(tmp_db, FakeApp(tmp_db), stored_image,
                                  sample_ai_entity)
     assert result.is_error
-    assert "provider down" in result.content
+    assert result.content == "Vision LLM call failed (RuntimeError)"
     assert tmp_db.get_image(stored_image)["description"] == ""
     assert "provider down" in caplog.text
     assert vision_client.instances[0].closed

@@ -6,6 +6,7 @@ from functools import partial
 
 from aiohttp import web
 
+from ..error_text import public_error
 from .constants import CAPACITY_ERROR
 from .context import (
     CTX_KEY, extract_api_keys, get_app_for_request, set_session_cookie,
@@ -201,7 +202,7 @@ async def handle_api(request: web.Request) -> web.StreamResponse:
         return reply({"result": result, "state": app.get_state()})
     except Exception as e:
         logger.exception("API error: %s", method)
-        return reply({"error": str(e)}, 500)
+        return reply({"error": public_error(f"{method} failed", e)}, 500)
     finally:
         # Clear per-request keys after use
         if api_keys:

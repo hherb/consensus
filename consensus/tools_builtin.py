@@ -11,6 +11,7 @@ from typing import Optional
 
 import httpx
 
+from .error_text import public_error
 from .http_fetch import FetchError, fetch_capped, redact_url, require_public_host
 from .tools import (
     TOOL_FETCH_DEADLINE, PythonToolProvider, ToolContext, ToolDefinition,
@@ -157,7 +158,7 @@ async def _ddg_search(query: str, num_results: int) -> str:
 
     except Exception as e:
         logger.warning("DuckDuckGo search failed: %s", e)
-        return f"Web search failed: {e}"
+        return public_error("Web search failed", e)
 
 
 async def web_search_handler(arguments: dict,
@@ -240,7 +241,8 @@ async def fetch_webpage_handler(arguments: dict,
     except Exception as e:
         logger.exception("fetch_webpage failed unexpectedly for %s",
                          redact_url(url))
-        return ToolResult(content=f"Failed to fetch {url}: {e}", is_error=True)
+        return ToolResult(content=public_error("Failed to fetch page", e),
+                          is_error=True)
 
 
 def create_web_search_provider() -> PythonToolProvider:

@@ -73,7 +73,7 @@ class TestEmbedSingleChunk:
         assert ok is False
         # The embedder's own message is returned, not just a count: it is
         # the half the user can act on (issue #78 whole-branch review).
-        assert "endpoint down" in error
+        assert error == f"chunk {chunk['id']} (RuntimeError)"
         assert tmp_db.get_chunks_with_embeddings(doc_id) == []
 
     @pytest.mark.asyncio
@@ -144,7 +144,7 @@ class TestEmbedSingleChunk:
             chunk, doc_id, tmp_db, client,
         )
         assert ok is False
-        assert "sub failed" in error
+        assert error.startswith("chunk ") and error.endswith("(RuntimeError)")
         assert len(tmp_db.get_chunks_with_embeddings(doc_id)) == 2
         # The oversized parent is removed even when a sub-chunk fails.
         assert big_id not in [c["id"] for c in tmp_db.get_document_chunks(doc_id)]
@@ -261,7 +261,8 @@ class TestEmbedDocumentChunks:
             assert key not in embedding._embedding_docs
             failure = embedding.get_indexing_failure(db, doc_id)
             assert failure is not None
-            assert "database is locked" in failure.last_error
+            assert "database is locked" not in failure.last_error  # #92
+            assert "OperationalError" in failure.last_error
         finally:
             embedding._embedding_docs.discard(key)
             embedding._indexing_failures.pop(key, None)
@@ -407,7 +408,7 @@ class TestCallInterpretationLlm:
             await llm._call_interpretation_llm(
                 app, ToolContext(caller_entity_id=entity_id, discussion_id=1), "s", "u",
             )
-        assert "provider exploded" in str(exc.value)
+        assert "failed (RuntimeError)" in str(exc.value)
         assert FakeAIClient.closed is True
 
 

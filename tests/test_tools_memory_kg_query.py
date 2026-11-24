@@ -72,8 +72,9 @@ async def test_neighbors_db_failure_is_logged_and_reported(
         result = await _query(tmp_db, query="free will", mode="neighbors")
 
     assert result.is_error
-    assert "disk I/O error" in result.content
+    assert result.content == "Knowledge graph query failed (RuntimeError)"
     [rec] = [r for r in caplog.records if "Knowledge graph query failed" in r.getMessage()]
+    assert "disk I/O error" in rec.getMessage()  # the detail stays in the log (#92)
     assert rec.exc_info is not None
 
 
@@ -91,8 +92,9 @@ async def test_search_embedder_outage_is_a_warning_without_traceback(
         )
 
     assert result.is_error
-    assert "Memory service unavailable: connection refused" in result.content
+    assert result.content == "Memory service unavailable: connection refused"
     [rec] = [r for r in caplog.records if "Memory service unavailable" in r.getMessage()]
+    assert "connection refused" in rec.getMessage()
     assert rec.levelno == logging.WARNING
     assert rec.exc_info is None
 

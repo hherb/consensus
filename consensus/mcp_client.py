@@ -13,6 +13,7 @@ import logging
 import uuid
 from typing import Any, Callable, Optional
 
+from consensus.error_text import public_error
 from consensus.tools import ToolContext, ToolDefinition, ToolProvider, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -314,7 +315,9 @@ class MCPToolProvider(ToolProvider):
 
         except Exception as e:
             logger.exception("MCP tool execution failed: %s", tool_name)
-            return ToolResult(content=f"MCP tool error: {e}", is_error=True)
+            return ToolResult(
+                content=public_error(f"MCP tool {tool_name} failed", e),
+                is_error=True)
 
     async def close(self) -> None:
         """Cancel the reader task and terminate the subprocess."""

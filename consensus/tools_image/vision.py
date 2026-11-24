@@ -3,6 +3,7 @@
 import logging
 
 from ..ai_client import AIClient
+from ..error_text import PublicMessageError
 from ..models import AIConfig
 from ..tools import ToolContext
 from .constants import VISION_IMAGE_TYPES
@@ -93,6 +94,10 @@ def build_image_content_blocks(
 # LLM helper for image description
 # ---------------------------------------------------------------------------
 
+class CallerNotFoundError(PublicMessageError, LookupError):
+    """The calling entity is not in the database; its message is ours."""
+
+
 async def _call_vision_llm(
     app, context: ToolContext,
     image_data_url: str,
@@ -106,12 +111,12 @@ async def _call_vision_llm(
     provider refusal is reported to the caller as an error.
 
     Raises:
-        LookupError: The calling entity is not in the database.
+        CallerNotFoundError: The calling entity is not in the database.
         Exception: Whatever the AI client raises; the caller reports it.
     """
     entity = app.db.get_entity(context.caller_entity_id)
     if not entity:
-        raise LookupError("could not resolve the caller entity")
+        raise CallerNotFoundError("could not resolve the caller entity")
 
     ai_config = AIConfig.from_db_row(entity)
 

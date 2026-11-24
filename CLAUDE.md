@@ -70,6 +70,7 @@ ConsensusApp (app.py) — orchestrator, state management, event emitter
 - `models.py` — dataclasses: `Entity`, `AIConfig`, `Message`, `Discussion`, `StoryboardEntry`
 - `config.py` — platform-aware data dirs (macOS: `~/Library/Application Support/consensus`)
 - `background.py` — `spawn_background()`: fire-and-forget asyncio tasks that keep a strong reference and log their exception (used by `tools_document/embedding.py` and `tools_memory/`)
+- `error_text.py` — `public_error()`: what a catch-all shows the model, transcript or browser — a summary plus the exception class (and HTTP status), never its message, which may hold a credentialed URL or a file path; a `PublicMessageError` (e.g. `MemoryUnavailableError`) is worded by us and keeps its message (#92)
 - `dbkey.py` — `scoped_key()`: scopes a row id to its database file, so process-global bookkeeping cannot collide across `--multi-user` sessions where every session's first row is id 1
 - `moderator/` — `Moderator` (`core.py`: prompt lookup, AI clients, turn bookkeeping) composed of mixins: `context.py` (per-participant context strategy → OpenAI message array, images), `turn.py` (`generate_turn`: prompt selection, structured-output path, tool execution loop), `synthesis.py` (summary, conclusion, mediation); `constants.py` holds the moderator's generation settings
 - `desktop/` — `DesktopBridge` (`bridge.py`) exposes async Python to JS via pywebview and runs a background event loop; its methods come from the `catalog`, `discussion` and `files` mixins; `launcher.py` holds `launch_desktop`
