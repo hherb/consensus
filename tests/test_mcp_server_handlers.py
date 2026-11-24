@@ -66,7 +66,8 @@ class TestDocuments:
         doc_id = _add_doc(server._db, "[]")
         rows = json.loads((await call(server, "list_documents", {}))[0])
         assert rows == [{"id": doc_id, "title": "Doc", "filename": "d.md",
-                         "summary": "sum", "char_count": 10}]
+                         "summary": "sum", "char_count": 10,
+                         "fidelity": "full", "parse_notes": []}]
 
     async def test_section_is_read_from_its_chunks(self, server):
         db = server._db

@@ -67,6 +67,8 @@ class ReadHandlersMixin:
                 "filename": r.get("filename", ""),
                 "summary": r.get("summary", ""),
                 "char_count": r.get("char_count", 0),
+                "fidelity": r["fidelity"],
+                "parse_notes": r["parse_notes"],
             })
         return json.dumps(results, indent=2)
 

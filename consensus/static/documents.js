@@ -60,6 +60,7 @@ export async function renderDocumentPanel() {
                 <strong>${_escHtml(doc.title || doc.filename)}</strong>
                 <span class="text-muted">${_formatSize(doc.char_count)} chars</span>
                 ${doc.summary ? `<p class="document-summary">${_escHtml(doc.summary.slice(0, 200))}${doc.summary.length > 200 ? '…' : ''}</p>` : ''}
+                ${_docWarnings(doc).map(w => `<p class="document-warning">${_escHtml(w)}</p>`).join('')}
             </div>
             <button class="btn btn-ghost btn-sm doc-remove-btn" data-doc-id="${doc.id}" title="Remove from discussion">✕</button>
         </div>
@@ -171,6 +172,27 @@ export async function removeDocument(docId, discussionId) {
     } catch (e) {
         showToast('Remove failed: ' + e.message);
     }
+}
+
+/**
+ * List what is wrong with a stored document, for the panel (issue #81).
+ *
+ * The same warnings the upload toast shows once, read back from the stored
+ * row, so a degraded extraction or a failed summary stays visible after
+ * the toast is gone.
+ *
+ * @param {object} doc - A document row from `getDiscussionDocuments`.
+ * @returns {string[]} The warnings, empty when there are none.
+ */
+function _docWarnings(doc) {
+    const warnings = [];
+    if (doc.fidelity === 'degraded') {
+        warnings.push(`Degraded extraction: ${(doc.parse_notes || []).join(' ')}`);
+    }
+    if (doc.summary_status === 'failed') {
+        warnings.push('The summary could not be generated.');
+    }
+    return warnings;
 }
 
 /** Format character count for display */

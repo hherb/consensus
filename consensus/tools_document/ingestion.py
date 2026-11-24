@@ -114,6 +114,8 @@ async def ingest_document(
         char_count=char_count,
         sections_json=sections_json,
         summary_status=summary_status,
+        fidelity=parsed.fidelity,
+        parse_notes=parsed.notes,
     )
 
     # Associate with discussion

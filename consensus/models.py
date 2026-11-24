@@ -73,6 +73,17 @@ class SummaryStatus(str, Enum):
     PENDING = "pending"
 
 
+class ParseFidelity(str, Enum):
+    """How faithfully a document's stored text reflects its source (#81).
+
+    ``FULL`` a real extractor produced the text (or the row predates the
+    column), ``DEGRADED`` a fallback did, and ``documents.parse_notes`` says
+    why. Here, beside ``SummaryStatus``, so the ``db`` layer can validate it.
+    """
+    FULL = "full"
+    DEGRADED = "degraded"
+
+
 @dataclass
 class AIConfig:
     """Configuration for an AI entity, resolved from DB + environment."""

@@ -15,10 +15,11 @@ maths and the background embedding pass.
 
 import json
 import logging
+from typing import Optional
 
 from ..tools import ToolContext, ToolResult
 from .constants import (
-    MIN_SIMILARITY_THRESHOLD, PASSAGE_PREVIEW_CHARS,
+    FIDELITY_DEGRADED, MIN_SIMILARITY_THRESHOLD, PASSAGE_PREVIEW_CHARS,
     RAG_TOP_K, SUMMARY_CHUNK_LIMIT,
 )
 from .embedding import (
@@ -166,6 +167,21 @@ def _post_indexing_notice(app, db, doc_id: int, detail: str) -> None:
             "Could not post the indexing-failure notice for document %d",
             doc_id,
         )
+
+
+def _extraction_warning(doc: Optional[dict]) -> Optional[str]:
+    """Say why a document's stored text is not a faithful extraction (#81).
+
+    Args:
+        doc: A document dict from the ``db`` readers, or ``None``.
+
+    Returns:
+        ``"Degraded extraction: <notes>"`` for a degraded document, else
+        ``None``.
+    """
+    if not doc or doc.get("fidelity") != FIDELITY_DEGRADED:
+        return None
+    return "Degraded extraction: " + " ".join(doc.get("parse_notes") or [])
 
 
 async def _doc_ask_handler(
@@ -346,6 +362,9 @@ async def _doc_ask_handler(
         # document, and saying nothing would make that indistinguishable
         # from a complete one (issue #78 whole-branch review).
         result["incomplete_retrieval"] = _reindex_message(ranking)
+    warning = _extraction_warning(doc)
+    if warning:
+        result["extraction_warning"] = warning
     return ToolResult(
         content=json.dumps(result, indent=2),
         metadata=result,
@@ -443,7 +462,9 @@ async def _doc_summary_handler(
             is_error=True,
         )
 
-    return ToolResult(
-        content=json.dumps({"summary": summary}),
-        metadata={"summary": summary, "from_char": from_char, "to_char": to_char},
-    )
+    content = {"summary": summary}
+    metadata = {"summary": summary, "from_char": from_char, "to_char": to_char}
+    warning = _extraction_warning(db.get_document(int(doc_id)))
+    if warning:
+        content["extraction_warning"] = metadata["extraction_warning"] = warning
+    return ToolResult(content=json.dumps(content), metadata=metadata)

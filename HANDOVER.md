@@ -4,9 +4,10 @@ _Last updated: 2026-11-24. `main` is at **v2.0.0** (released 2026-07-20)
 plus everything merged since (the #61 split, auth hardening, the desktop
 bridge fix #125, MCP argument validation #124, one-transaction rotation
 #107, rotation rollback #147, `serialize_method_state` raising #150, failed
-tool packages shown in the UI #96 — details in git history). This branch,
-`fix/method-state-save-consistency-152`, keeps memory equal to the DB when a
-`method_state` save fails (#152). The suite is at **4535 passing**._
+tool packages shown in the UI #96, `method_state` save consistency #152 —
+details in git history). This branch, `fix/document-fidelity-81`, persists a
+degraded extraction so every reader warns about it (#81, and flags the #80
+rows). The suite is at **4546 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -19,7 +20,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4535 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4546 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -105,6 +106,16 @@ fact. Keep these before touching the package:
   (`(db_path, id)`), never the bare id: in `--multi-user` every session's
   first row is id 1. This bit twice — in `tools_document` (#78) and again in
   `context_strategies` vs `tools_memory` (fixed in the #61 tools_memory slice).
+- **A degraded extraction is persisted and shown on every read** (#81):
+  `documents.fidelity` (`models.ParseFidelity`: `full`/`degraded`) and
+  `parse_notes` (JSON list), migration 017; `add_document` rejects an unknown
+  value or `degraded` without a note. `handlers_rag._extraction_warning` is
+  the one wording: `doc_list` prints it under the entry (all three modes —
+  the search mode copies fields, so add new ones there), `doc_ask` and
+  `doc_summary` return it as `extraction_warning`, the MCP `list_documents`
+  returns both fields, and `static/documents.js` `_docWarnings` shows it and
+  a failed summary in the Documents panel. Migration 018 flags the pre-#78
+  `'(Empty PDF)'` rows degraded, leaving their text and chunks alone (#80).
 - **Retrieval has a relevance floor** (`MIN_SIMILARITY_THRESHOLD`) and
   reports embedding-dimension mismatches as errors, not silence.
 - **`validation.chapter_range()` owns chapter extent**; `extract_sections`
@@ -122,10 +133,11 @@ fact. Keep these before touching the package:
 
 **Known gaps:** no test for "some rows dimension-mismatched AND the rest
 below threshold" in `doc_ask`; no summary regeneration, OCR or charset
-detection; `INDEXING_RETRY_INTERVAL` hardcoded at 60 s; the panel does not
-render `summary_status`/`fidelity` (#81); pre-#78 `'(Empty PDF)'` documents
-remain answerable (#80).
-Tests: `tests/test_tools_document_failures.py`, `tests/test_background.py`,
+detection; `INDEXING_RETRY_INTERVAL` hardcoded at 60 s; pre-#78
+`'(Empty PDF)'` documents are flagged but still answerable (#80);
+`doc_get_text` / `doc_get_chapter` return raw text with no fidelity warning.
+Tests: `tests/test_tools_document_failures.py`, `tests/test_document_fidelity.py`
+(each wiring mutation-checked), `tests/test_background.py`,
 `tests/test_tools_document*.py`.
 
 ## Speaking rotation after start (#104 — keep this contract)
@@ -397,7 +409,8 @@ numeric strings (`"5"`, repo owner's call, #124), so a new tool definition may
 use only its `SUPPORTED_KEYWORDS`. A new desktop bridge method goes in a mixin
 **and** in `BRIDGE_API`; moved code logs under its new module.
 
-**Watch:** `pricing.py` (498) and `app_discussion_state.py` (488): split
+**Watch:** `pricing.py` (498), `app_discussion_state.py` (488) and
+`tools_document/handlers_rag.py` (470): split
 before the next addition. `static/discussion-actions.js` (506) and
 `evaluation/static/eval.js` (645) are over the cap; split them when next
 touched.
@@ -438,18 +451,21 @@ update every doc naming the old file *and* the content beside the name.
 - Packaging: `make_icns.sh` needs Pillow on system python3; icons blur at
   16–32 px.
 - No JS test harness: UI-only behaviour (Attach-evidence button, SSE reopen,
-  the #96 tool-load notice) is verified by reading only.
+  the #96 tool-load notice, the #81 Documents-panel warnings) is verified by
+  reading only.
 
 ### Open GitHub issues
 
-- Need the repo owner's call: #146 stricter `consensus-mcp` argument
-  validation (unknown args, `null` identity args, numeric bounds); #139
-  registration reveals a taken email and #128 an unverified OAuth sign-up
-  can pre-hijack an address (both want an email-verification design).
+- Need the repo owner's call: #80 whether to drop the chunks of the flagged
+  pre-#78 `'(Empty PDF)'` documents so `doc_ask` stops answering from them
+  (the rows now warn; deleting stored content was left to the repo owner);
+  #146 stricter `consensus-mcp` argument validation (unknown args, `null`
+  identity args, numeric bounds); #139 registration reveals a taken email
+  and #128 an unverified OAuth sign-up can pre-hijack an address (both want
+  an email-verification design).
 - No decision needed: #102 PR #100 review follow-ups; #97 Seatbelt does
-  not confine writes; #92 tool errors echo raw exception text; #81 persist
-  parse fidelity/notes; #80 pre-#78 `'(Empty PDF)'` documents. Suggested
-  next: #81.
+  not confine writes; #92 tool errors echo raw exception text. Suggested
+  next: #92.
 
 ### Roadmap
 

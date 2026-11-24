@@ -4,7 +4,7 @@ Kept in their own module so that every other module in the package can import
 them without depending on the package ``__init__``.
 """
 
-from ..models import SummaryStatus
+from ..models import ParseFidelity, SummaryStatus
 
 # Chunking defaults
 DEFAULT_CHUNK_SIZE = 500  # characters
@@ -48,9 +48,10 @@ SUMMARY_STATUS_OK = SummaryStatus.OK.value
 SUMMARY_STATUS_FAILED = SummaryStatus.FAILED.value
 SUMMARY_STATUS_PENDING = SummaryStatus.PENDING.value
 
-# Extraction fidelity reported by parse_document
-FIDELITY_FULL = "full"
-FIDELITY_DEGRADED = "degraded"
+# Extraction fidelity reported by parse_document and stored in
+# documents.fidelity; the values live on models.ParseFidelity.
+FIDELITY_FULL = ParseFidelity.FULL.value
+FIDELITY_DEGRADED = ParseFidelity.DEGRADED.value
 
 # Above this share of U+FFFD replacement characters, a "text" document is
 # really binary that was decoded with errors="replace" (issue #78 defect 7).
