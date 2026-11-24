@@ -2,6 +2,7 @@
 
 import json
 
+import httpx
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -118,3 +119,22 @@ class TestMCPHTTPSessionManagement:
     def test_session_id_initially_none(self):
         provider = MCPHTTPToolProvider(name="test", url="https://example.com/mcp")
         assert provider._session_id is None
+
+
+@pytest.mark.asyncio
+async def test_execute_failure_does_not_echo_the_server_url(caplog):
+    """httpx puts the request URL, query string included, into its message;
+    the model gets the status and class, the log the rest (#92)."""
+    url = "https://mcp.example/mcp?api_key=s3cret"
+    provider = MCPHTTPToolProvider(name="test", url=url)
+    provider._connected = True
+    request = httpx.Request("POST", url)
+    provider._send_request = AsyncMock(side_effect=httpx.HTTPStatusError(
+        f"Client error '401 Unauthorized' for url '{url}'", request=request,
+        response=httpx.Response(401, request=request)))
+    result = await provider.execute("search", {}, ToolContext(1, 1))
+    assert result.is_error is True
+    assert result.content == (
+        "MCP tool search failed (HTTPStatusError, HTTP 401)")
+    assert "s3cret" in caplog.text
+    await provider.close()

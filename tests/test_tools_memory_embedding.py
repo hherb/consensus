@@ -129,7 +129,7 @@ class TestEmbed:
     ):
         transport.responder = _responses(httpx.Response(404, text="no model"))
 
-        with pytest.raises(MemoryUnavailableError, match="Embedding request failed"):
+        with pytest.raises(MemoryUnavailableError, match="Embedding request to .* failed"):
             await EmbeddingClient(tmp_db).embed("x")
         assert len(transport.requests) == 1
         assert sleeps == []
@@ -188,7 +188,7 @@ class TestEmbed:
     ):
         transport.responder = _responses(httpx.ReadError("reset"))
 
-        with pytest.raises(MemoryUnavailableError, match="reset"):
+        with pytest.raises(MemoryUnavailableError, match=r"failed \(ReadError\)"):
             await EmbeddingClient(tmp_db).embed("x")
         assert sleeps == []
 
@@ -198,7 +198,7 @@ class TestEmbed:
         transport.responder = _responses(httpx.Response(200, json={"vec": []}))
 
         with caplog.at_level(logging.ERROR, logger=LOGGER):
-            with pytest.raises(MemoryUnavailableError, match="embedding"):
+            with pytest.raises(MemoryUnavailableError, match="KeyError"):
                 await EmbeddingClient(tmp_db).embed("x")
 
         [rec] = [r for r in caplog.records if "Unexpected embedding failure" in r.getMessage()]
@@ -247,3 +247,47 @@ class TestVectorHelpers:
         ]
         top = _rank_by_similarity([1.0, 0.0], rows, 2)
         assert [r["id"] for r in top] == ["near", "mid"]
+
+
+class TestErrorTextIsSafe:
+    """The error's text reaches the model and the UI, so it must not carry
+    the endpoint's credential or the httpx message, which embeds the URL
+    with its query string (#92)."""
+
+    ENDPOINT = "http://user:pw@embed.local:11434/?token=s3cret"
+
+    @pytest.fixture(autouse=True)
+    def _credentialed_endpoint(self, tmp_db):
+        tmp_db.set_memory_config("embedding_endpoint", self.ENDPOINT)
+
+    def _assert_safe(self, exc: Exception) -> None:
+        text = str(exc)
+        assert "pw" not in text and "s3cret" not in text
+        assert "embed.local:11434" in text  # still says which service
+
+    async def test_connect_error_names_the_redacted_endpoint(
+        self, tmp_db, transport, sleeps,
+    ):
+        transport.responder = _responses(httpx.ConnectError("refused"))
+        with pytest.raises(MemoryUnavailableError) as info:
+            await EmbeddingClient(tmp_db).embed("x")
+        self._assert_safe(info.value)
+        assert "ConnectError" in str(info.value)
+
+    async def test_client_error_names_its_status(
+        self, tmp_db, transport, sleeps,
+    ):
+        transport.responder = _responses(httpx.Response(404, text="no model"))
+        with pytest.raises(MemoryUnavailableError) as info:
+            await EmbeddingClient(tmp_db).embed("x")
+        self._assert_safe(info.value)
+        assert "HTTP 404" in str(info.value)
+
+    async def test_exhausted_retries_name_the_last_status(
+        self, tmp_db, transport, sleeps,
+    ):
+        transport.responder = lambda request: httpx.Response(503)
+        with pytest.raises(MemoryUnavailableError) as info:
+            await EmbeddingClient(tmp_db).embed("x")
+        self._assert_safe(info.value)
+        assert "HTTP 503" in str(info.value)

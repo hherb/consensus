@@ -191,7 +191,7 @@ class TestMemoryRecall:
         with caplog.at_level(logging.WARNING, logger=LOGGER):
             result = await run("memory_recall", query="q")
         assert result.is_error
-        assert result.content == "Memory service unavailable (MemoryUnavailableError)"
+        assert result.content == "Memory service unavailable: down"
         # An expected outage logs without a traceback.
         assert not _failure_record(caplog, "Memory service unavailable").exc_info
 
@@ -300,7 +300,7 @@ class TestDiscussionSearch:
         embedder.error = MemoryUnavailableError("down")
         result = await run("discussion_search", query="q")
         assert result.is_error
-        assert result.content == "Memory service unavailable (MemoryUnavailableError)"
+        assert result.content == "Memory service unavailable: down"
 
     async def test_db_failure_is_an_error(self, run, tmp_db, monkeypatch):
         monkeypatch.setattr(tmp_db, "get_messages_with_embeddings", _boom)
@@ -486,7 +486,7 @@ class TestKgQuerySearch:
         embedder.error = MemoryUnavailableError("down")
         result = await run("kg_query", query="q")
         assert result.is_error
-        assert result.content == "Memory service unavailable (MemoryUnavailableError)"
+        assert result.content == "Memory service unavailable: down"
 
     async def test_db_failure_is_an_error(self, run, tmp_db, monkeypatch):
         monkeypatch.setattr(tmp_db, "get_kg_nodes_with_embeddings", _boom)

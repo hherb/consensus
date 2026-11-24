@@ -19,6 +19,7 @@ from consensus.tools_document.errors import (
     DocumentError, DocumentInterpretationError, DocumentParseError,
 )
 from consensus.tools import ToolContext
+from consensus.tools_memory.embedding import MemoryUnavailableError
 from consensus.models import Discussion, Entity, EntityType, MessageRole
 from tests.document_helpers import image_only_pdf_bytes, patch_where_defined
 
@@ -62,7 +63,10 @@ async def test_completion_failure_raises(tmp_db, sample_ai_entity, monkeypatch):
             pass
 
         async def complete(self, **kwargs):
-            raise RuntimeError("401 Unauthorized")
+            request = httpx.Request("POST", "https://llm.test/v1?key=s3cret")
+            raise httpx.HTTPStatusError(
+                "401 Unauthorized for url https://llm.test/v1?key=s3cret",
+                request=request, response=httpx.Response(401, request=request))
 
         async def close(self):
             return None
@@ -80,7 +84,9 @@ async def test_completion_failure_raises(tmp_db, sample_ai_entity, monkeypatch):
         await llm._call_interpretation_llm(
             App(), context, system_prompt="s", user_prompt="u",
         )
-    assert "401 Unauthorized" in str(exc.value)
+    # The status is what the user acts on; the URL may hold a key (#92).
+    assert "HTTP 401" in str(exc.value)
+    assert "s3cret" not in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -589,7 +595,9 @@ async def test_pass_crash_is_logged_not_swallowed(tmp_db, caplog):
     failure = embedding.get_indexing_failure(db, 7)
     assert failure is not None
     assert failure.consecutive_failures == 1
-    assert "database is locked" in failure.last_error
+    # The detail reaches the transcript, so only the log keeps it (#92).
+    assert "database is locked" not in failure.last_error
+    assert "RuntimeError" in failure.last_error
     assert embedding.doc_key(db, 7) not in embedding._embedding_docs
 
 
@@ -724,10 +732,11 @@ async def test_doc_ask_reports_an_interpretation_failure_explicitly(
 ):
     """doc_ask names the model, provider and document id on an LLM failure.
 
-    Previously ``DocumentInterpretationError`` fell through to
-    ``ToolRegistry``'s generic ``except Exception``, which produces a bare
-    "Tool <name> failed (<class>)" message and always logs a full traceback — even
-    though a failing provider here is an expected, not exceptional, case.
+    Previously ``DocumentInterpretationError`` fell through to the
+    provider's generic ``except Exception``, which produces a bare
+    "Tool <name> failed (<class>)" message and always logs a full
+    traceback — even though a failing provider here is an expected, not
+    exceptional, case.
     """
     from tests.document_helpers import FakeApp, FakeEmbedClient, embed_all
 
@@ -1229,10 +1238,11 @@ async def test_doc_summary_reports_an_interpretation_failure_explicitly(
     """doc_summary names the model, provider and document id on an LLM
     failure, matching the treatment doc_ask already received.
 
-    Previously ``DocumentInterpretationError`` fell through to
-    ``ToolRegistry``'s generic ``except Exception``, which produces a bare
-    "Tool <name> failed (<class>)" message and always logs a full traceback — even
-    though a failing provider here is an expected, not exceptional, case.
+    Previously ``DocumentInterpretationError`` fell through to the
+    provider's generic ``except Exception``, which produces a bare
+    "Tool <name> failed (<class>)" message and always logs a full
+    traceback — even though a failing provider here is an expected, not
+    exceptional, case.
     """
     from tests.document_helpers import FakeApp
 
@@ -1568,7 +1578,7 @@ async def test_embedder_error_reaches_the_recorded_failure(tmp_db):
     )
     tmp_db.add_document_chunk(doc_id, 0, "Body.", 0, 5, None)
 
-    client = FakeEmbedClient(error=RuntimeError(
+    client = FakeEmbedClient(error=MemoryUnavailableError(
         "Cannot connect to embedding service at http://localhost:11434",
     ))
     await embedding._embed_document_chunks(doc_id, tmp_db, client)

@@ -438,7 +438,8 @@ async def test_describe_unloadable_file(tmp_db, images_dir, stored_image):
     result = await _run(tmp_db, None, "describe_image",
                         {"image_id": stored_image}, _ctx())
     assert result.is_error
-    assert result.content.startswith("Failed to load image: ")
+    # The OSError names the storage path, so only the log keeps it (#92).
+    assert result.content == "Failed to load image (FileNotFoundError)"
 
 
 async def test_describe_uses_vision_capable_caller(tmp_db, stored_image,

@@ -92,8 +92,9 @@ async def test_search_embedder_outage_is_a_warning_without_traceback(
         )
 
     assert result.is_error
-    assert result.content == "Memory service unavailable (MemoryUnavailableError)"
+    assert result.content == "Memory service unavailable: connection refused"
     [rec] = [r for r in caplog.records if "Memory service unavailable" in r.getMessage()]
+    assert "connection refused" in rec.getMessage()
     assert rec.levelno == logging.WARNING
     assert rec.exc_info is None
 

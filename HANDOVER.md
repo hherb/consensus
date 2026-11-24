@@ -7,7 +7,7 @@ bridge fix #125, MCP argument validation #124, one-transaction rotation
 tool packages shown in the UI #96, `method_state` save consistency #152,
 degraded-extraction warnings #81 — details in git history). This branch,
 `fix/tool-error-text-92`, stops tool errors and the API's 500 echoing raw
-exception text (#92). The suite is at **4563 passing**._
+exception text (#92). The suite is at **4571 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -20,7 +20,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4563 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4571 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -35,33 +35,50 @@ resilience (PR #64, #65 — see ROADMAP); distribution
 
 ## Flow error visibility (#71–#74, merged — keep these contracts)
 
-- **Three kinds, one classifier.** `helpers.classify_flow_error` returns
-  `ERROR_KIND_PROVIDER` / `_CONFIG` / `_INTERNAL` (`is_provider_error` is a
-  predicate over it); only `internal`, the default, asks the user to file a
-  bug. Catch `ConnectionError`, never its `OSError` base (a missing file is
-  our fault), and **type the fault where it happens** — `AIClient` raises
-  `AIResponseFormatError` at its parse sites (an HTTP 200 HTML body is
-  otherwise a bare `KeyError`); `models.ConfigurationError` means "set up
-  wrong". **Add new failure modes to the classifier, not to the wording**
-  (`turns._SKIP_NOTICES` and `static/turn-notices.js` are keyed by kind).
-- **`helpers.post_notice`** appends the in-memory `Message` first, guards
-  `db.add_message`, returns `(message, persisted)` and appends
-  `UNSAVED_NOTICE_SUFFIX` on a failed write; callers surface `notice_unsaved`.
-- `conclude_discussion` returns `conclusion_error` and posts a notice (the
-  discussion still concludes); `mediate` posts one too.
-- **A failed Triage recommendation is never presented as one**:
-  `MethodRecommender.recommend` raises `RecommenderError`; both failure paths
-  in `run_triage_recommender` go through `_record_recommender_failure`.
-- Non-UI consumers keep the error: `mcp_server.run_discussion` returns
-  `conclusion_error` (matching the synthesis on `MessageRole.MODERATOR`);
-  `evaluation/runner` sets `result.error`.
-- **Every new result key has a production consumer** — a key only tests
-  read is a contract nobody honours.
-- Retries with backoff live in `ai_client._post_with_retry`; the flow layer
-  sees only exhausted failures.
+Three flow paths used to swallow caught errors (narrative: PR #76).
 
-**Testing lesson:** mock the `AIClient`, never the method under test.
-Tests: `tests/test_flow_error_*.py`.
+- **Failures are classified into three kinds, not two.**
+  `helpers.classify_flow_error` is the single classifier, returning
+  `ERROR_KIND_PROVIDER` / `ERROR_KIND_CONFIG` / `ERROR_KIND_INTERNAL`;
+  `is_provider_error` is a thin predicate over it. `internal` is the default
+  bucket and only it asks the user to file a bug, so a misclassification is
+  never merely cosmetic. Two rules keep it honest: catch `ConnectionError`,
+  never its `OSError` base (a document tool reading a missing file also raises
+  `OSError`, and that is our fault); and **type the fault where it happens** —
+  `AIClient` raises `AIResponseFormatError` (`consensus/ai_response.py`) at
+  its parse sites, because a gateway answering HTTP 200 with an HTML body
+  otherwise surfaces as a bare `KeyError` reported to the user as our bug.
+  `models.ConfigurationError` marks "this deployment is set up wrong".
+  **Add new failure modes to the classifier, not to the notice wording** —
+  notices live in `turns._SKIP_NOTICES` keyed by kind, and the toast wording
+  in `static/turn-notices.js` is keyed by the result's `error_kind`.
+- **`helpers.post_notice` is how a notice reaches the transcript.** It
+  appends the in-memory `Message` first and guards `db.add_message` (a failed
+  DB otherwise raised a second exception and the user saw nothing); it
+  returns `(message, persisted)`, appends `UNSAVED_NOTICE_SUFFIX` on a failed
+  write, and callers surface `notice_unsaved`.
+- **`conclude_discussion` returns `conclusion_error`** and posts a notice;
+  the discussion still concludes. `synthesis_shown` picks
+  `_CONCLUSION_NOT_SAVED_NOTICE` over `_CONCLUSION_FAILURE_NOTICE`. `mediate`
+  posts an equivalent notice.
+- **A failed Triage recommendation is never presented as one.**
+  `MethodRecommender.recommend` **raises `RecommenderError`** and callers own
+  the fallback; both failure paths in `run_triage_recommender` go through
+  `_record_recommender_failure`, with key resolution and client construction
+  inside the `try` and a guarded `finally` close.
+- **Non-UI consumers must not drop the error either.**
+  `mcp_server.run_discussion` returns `conclusion_error` as its own field and
+  matches the synthesis on `MessageRole.MODERATOR`, not a substring scan;
+  `evaluation/runner` sets `result.error`.
+- **Every new result key has a consumer.** `error_kind`, `notice_unsaved`,
+  `conclusion_error` and `recommender_error` are each read by production code.
+  A key that only tests read is a contract nobody honours.
+- Golden rule 5 holds for these paths: retries with exponential backoff live
+  one layer down in `ai_client._post_with_retry`, so the flow layer sees only
+  exhausted failures.
+
+**Testing lesson:** mock the `AIClient`, never the method under test (#72
+stayed green that way). Tests: `tests/test_flow_error_*.py`.
 
 ## Document failure visibility (#78, PR #79 — keep these contracts)
 
@@ -131,16 +148,31 @@ Tests: `tests/test_tools_document_failures.py`, `tests/test_document_fidelity.py
 
 An exception's message can carry an endpoint URL with a credential in its
 query string (httpx) or an internal file path (SQLite; matters in
-`--multi-user`). So the generic catch-alls show `error_text.public_error`
-(`"<summary> (<ExceptionClass>)"`) and log the full exception: the two
-`Tool <name> failed` fallbacks in `tools.py`, `tools_memory` `_tool_failure`,
-and `handle_api`'s 500 (`<method> failed (…)`). Repo owner's call
-(2026-11-25): the same in every mode, local ones included. Errors we word
-ourselves (validation 400s, auth replies, typed `DocumentError`s with their
-hint) keep their text. The remaining catch-alls (memory config and
-connection test, `recommend_method`, the MCP server's generic `Error: …`)
-are **#157**. Tests: `tests/test_tools.py`
-(`SECRET`), `tests/test_server_api.py`, `tests/test_tools_memory_*.py`.
+`--multi-user`). So a catch-all that answers the model, the transcript or
+the browser shows `error_text.public_error(summary, exc)` and logs the full
+exception. That is `"<summary> (<ExceptionClass>)"`, plus `, HTTP <code>`
+for an `httpx.HTTPStatusError`; a `PublicMessageError` — a message we word
+ourselves — shows as `"<summary>: <message>"`. Repo owner's call
+(2026-11-25): the same in every mode, local ones included.
+
+- Covered: both `Tool <name> failed` fallbacks in `tools.py`, `handle_api`'s
+  500 (`<method> failed (…)`), `tools_memory` `_tool_failure`, the `doc_*`
+  embed and indexing failures (`last_error` reaches the transcript), the
+  interpretation LLM wrapper, `doc_add`, the image, MCP (stdio and HTTP),
+  `fetch_webpage`, web search and sandbox-launch catch-alls.
+- `MemoryUnavailableError` is a `PublicMessageError`: `embed()` builds its
+  text from `redact_url(endpoint)` and `public_error`, never `{e}`, so it
+  stays actionable ("Cannot connect … (ConnectError)", "… HTTP 404"). A new
+  raise site of a `PublicMessageError` must keep to that.
+- Errors we word ourselves (validation 400s, auth replies, `FetchError`,
+  typed `DocumentError`s with their hint) keep their text.
+- Still open, **#157**: memory config and connection-test routes, the
+  desktop connection test, `recommend_method`, and the MCP server's generic
+  `Error: …`.
+
+Tests: `tests/test_error_text.py`, `tests/test_tools.py` (`SECRET`),
+`tests/test_server_api.py`, `tests/test_tools_memory_*.py`
+(`TestErrorTextIsSafe`), `tests/test_mcp_http_client.py`.
 
 ## Speaking rotation after start (#104 — keep this contract)
 
@@ -241,90 +273,160 @@ download thread before closing the DB** — otherwise it segfaults).
 
 ## Authentication (`auth/`, #61 slice 15 — keep these contracts)
 
-- **Email is never user-editable** (`update_user`: `display_name` /
-  `avatar_url` only). Nothing verifies a new address and OAuth auto-links a
-  verified email, so an edit is an account-takeover path.
-- **A verified OAuth link to a password account clears the password and
-  revokes every session** in the link's transaction
-  (`link_oauth(..., lock_out_password=True)`; repo owner, 2026-11-15). An
-  unverified provider email never links; an unverified OAuth *sign-up* can
-  still squat an address (**#128**).
-- An OAuth reply without an email *or* provider user id is refused; ids go
-  through `oauth._provider_id` (a JSON `null` stays empty, not `"None"`).
-  `link_oauth` keeps the legacy-column identity in `user_oauth_identities`.
-- Provider requests use `oauth._send_with_retry` (shared `http_fetch`
-  policy). A failed GitHub email lookup sets `email_lookup_failed` (user is
-  told to retry). Providers are offered only with client ID *and* secret.
-- **No `oauth` in names that reach a log call** (`SIGN_IN_PROVIDERS`, …):
-  CodeQL's password heuristic matches it and blocks merging (PR #129); check
-  with the `Security/CWE-312/CleartextLogging.ql` query.
-- `create_token` / `store_oauth_state` prune expired rows; `login` checks
-  the password before saying "disabled".
-- **Hashes record their cost** (#127): `pbkdf2_sha256$<iter>$<salt>$<hash>`;
-  legacy `salt$hash` means `LEGACY_PASSWORD_HASH_ITERATIONS` (600k, never
-  change). `login` re-hashes on `needs_rehash` via compare-and-swap
-  (`change_password(..., expected=)`); a failed write is logged, never a
-  failed login. Downgrading locks password users out.
-- **Unknown emails cost a wrong password** (#131): `burn_password_check`.
-  Registration still reveals a taken email (**#139**).
-- **Hashing runs off the event loop** (#141): `routes_auth._hash_off_loop`,
-  at most `PASSWORD_HASH_CONCURRENCY` (`ServerContext.password_slots`). The
-  handler **counts an attempt before hashing** and removes it on success.
-  `AuthDatabase` reads use `_query_one` under the write lock; login's
-  `create_token(password_hash=...)` requires the verified hash and
-  `is_active` in one statement.
-- **An OAuth exchange has a deadline** (#130): `SIGN_IN_DEADLINE_SECONDS`
-  (45 s, under nginx's 60 s), raised before any user or token is written.
+The characterization net found eight defects, each fixed in its own commit
+before the move. Keep these when touching `consensus/auth/`:
 
-Tests: `tests/test_auth_*.py` (100% coverage; providers faked at the httpx
-transport via `tests/auth_helpers.install_routes`; patch through
-`auth_helpers.module_of`; `fast_hashing` lowers PBKDF2 rounds).
+- **Email is never user-editable.** `update_user` allows only
+  `display_name`/`avatar_url`. Nothing verifies a new address, and OAuth
+  auto-links a provider-verified email to the account holding it, so an
+  edit (or any future "change email" feature without verification) is an
+  account-takeover path.
+- **A verified OAuth link to a password account clears the password and
+  revokes every session**, in the same transaction as the link
+  (`link_oauth(..., lock_out_password=True)`). Registration never verifies
+  the email, so the password may belong to a squatter. Repo owner's
+  decision (2026-11-15). An unverified provider email never links; an
+  unverified OAuth *sign-up* can still squat an address (**#128**).
+- **An OAuth reply without an email *or* provider user id is refused** —
+  an empty id would match another empty-id account via the legacy columns.
+  Ids go through `oauth._provider_id`, so a JSON `null` id stays empty
+  rather than becoming the shared string `"None"`.
+- **`link_oauth` preserves the legacy-column identity** in
+  `user_oauth_identities` before overwriting it, in one transaction.
+- **Provider requests go through `oauth._send_with_retry`** (shared
+  `http_fetch` retry policy, golden rule 5). A GitHub email-lookup failure is
+  logged, means "unverified" and sets `email_lookup_failed`, so the user is
+  told to retry rather than to use another sign-in method.
+- Providers are offered only with both client ID and secret set.
+- **No `oauth` in names that reach a log call** (`SIGN_IN_PROVIDERS`,
+  `SIGN_IN_MAX_RETRIES`, …): CodeQL's password heuristic matches `oauth` and
+  raised high-severity clear-text-logging alerts that block merging (PR #129).
+  Check with `gh codeql database analyze` on the
+  `Security/CWE-312/CleartextLogging.ql` query.
+- `create_token` / `store_oauth_state` prune expired rows (nothing else
+  does); `login` checks the password before saying "disabled".
+- **Password hashes record their cost** (#127):
+  `pbkdf2_sha256$<iterations>$<salt>$<hash>`; `verify_password` uses the
+  stored count, and the legacy `salt$hash` means
+  `LEGACY_PASSWORD_HASH_ITERATIONS` (600k, never change it). After a
+  successful login of an active user, `login` re-hashes when `needs_rehash`
+  says so, so raising `PASSWORD_HASH_ITERATIONS` is now safe. The re-hash is
+  a compare-and-swap (`change_password(..., expected=)`), so it cannot undo
+  a concurrent OAuth lock-out, and a failed write is logged, never a failed
+  login. An unreadable stored hash fails with a warning. An older build
+  cannot read the new format (downgrade locks password users out).
+- **Unknown emails cost a wrong password** (#131): no user or no password
+  → `burn_password_check`, exactly one current-cost PBKDF2 against an
+  all-zero dummy hash. Until a raised count has reached every user, a
+  dormant account's old cheaper hash is still distinguishable. Registration
+  still reveals a taken email (**#139**, needs email verification first).
+- **Login and registration hash off the event loop** (#141):
+  `routes_auth._hash_off_loop` runs `AuthManager.login` / `register` via
+  `asyncio.to_thread`, at most `PASSWORD_HASH_CONCURRENCY` at once
+  (`ServerContext.password_slots`), so a burst cannot take the default
+  executor that DNS lookups share. Because the rate-limit check and the
+  result are now split by an await, **the handler counts an attempt before
+  hashing** and removes it on success. `AuthDatabase` reads go through
+  `_query_one` under the write lock, so a worker-thread read never lands
+  inside `link_oauth`'s transaction on the shared connection. Login issues
+  its token with `create_token(password_hash=...)`, one statement that
+  requires the verified hash and `is_active`, so an OAuth lock-out or a
+  disable during the verify leaves no session; the rehash runs after it.
+- **An OAuth exchange has a deadline** (#130): `oauth_callback` wraps
+  `exchange_oauth_code` in `asyncio.timeout(SIGN_IN_DEADLINE_SECONDS)` (45 s,
+  under nginx's default 60 s `proxy_read_timeout`). On expiry it logs and
+  raises "did not answer in time" before any user or token is written.
+
+Tests: `tests/test_auth_db.py`, `_manager.py`, `_oauth_exchange.py`,
+`_oauth.py` (100% coverage; providers faked at the httpx transport via
+`tests/auth_helpers.install_routes`, which scripts retries with a list), and
+the guard `tests/test_auth_facade.py`. Patch through the defining module
+(`auth_helpers.module_of`); `fast_hashing` lowers PBKDF2 rounds.
 
 ## Web server (`server/`, #61 slice 16 — keep these contracts)
 
-`create_web_app(host, port, multi_user)` builds the app, `launch_web` serves
-it; all per-server state is one `ServerContext` under `CTX_KEY`, read by
-module-level handlers. Tests drive the real middleware through aiohttp's
-`TestClient` (`tests/test_server_*.py`, fixtures in `tests/server_helpers.py`).
+`create_web_app(host, port, multi_user)` builds the aiohttp app;
+`launch_web` serves it. All per-server state is one `ServerContext` on the
+app under `CTX_KEY`; handlers are module-level and read
+`request.app[CTX_KEY]`. The net (`tests/test_server_*.py`, fixtures in
+`tests/server_helpers.py`, which point `HOME` at a temp dir) drives the real
+middleware through aiohttp's `TestClient` (sessions and SSE in
+`tests/test_server_sessions.py`); it found the defects below.
 
-- **CSRF:** a POST to `/api/` or `/auth/` must be JSON or carry
-  `X-Consensus-Request` (`UPLOAD_HEADERS` in `static/api.js`);
-  `test_frontend_posts_pass_the_csrf_guard` fails on a new bare `fetch` POST.
-  PUT/DELETE carry no check by design (no preflight is ever granted).
-- **Uploads read through `request_io.read_upload`**, lifting the 1 MiB body
-  limit for that read only; its size constants are imported inside the
-  handlers so a broken optional backend cannot stop startup.
-- `auth_middleware` resolves the user for `/auth/me` too (enforces only on
-  `/api/*`).
-- Bodies go through `read_json_object` (non-object → 400); malformed ids,
-  non-string credentials/profile fields/titles are 400s
-  (`request_io.non_string_field`); `CAPACITY_ERROR` is the one capacity text.
-- **`/api/<method>` entries build a `functools.partial`, never call** (#134):
-  `handle_api` binds it against the signature first, so bad arguments are a
-  400 `Invalid arguments for <method>: …` and only an exception *inside* the
-  method is a logged 500 (wording: #92 above). Numbers go through
-  `request_io.int_field` / `float_field`.
-- **The desktop bridge is never pywebview's `js_api`** (#125): its dotted-name
-  `getattr` walk reached `_app.db`. `launch_desktop` registers
-  `exposed_functions(bridge)` with `window.expose`; `TestDispatch` in
-  `tests/test_desktop_bridge_api.py` proves private paths do not resolve.
-- **Only `POST /api/<method>` creates a `--multi-user` session** (#132) and
-  sets the cookie on every reply that has one; other `/api/` routes use
-  `session_app()` → `SessionManager.lookup()` (401 / `NO_SESSION_ERROR`).
-- **SSE ends once its session is evicted** (#135): each keepalive checks
-  `lookup(sid, touch=False) is app_instance` (an open tab must not keep a
-  session alive), sends `session_expired`, and `static/app.js` re-creates the
-  session via `get_state` with backoff from `SSE_REOPEN_DELAY_MS` up to
-  `SSE_REOPEN_MAX_ATTEMPTS` (verified by reading only).
-- `run_migrations` re-checks the file (an evicted session's DB re-created at
-  the same path used to come back schema-less).
-- `SessionManager` expiry and `stop()` share `_close_app()`; apps close after
-  the lock is released; session ids in logs are truncated; `prune_stale()`
-  prunes `login_attempts` / `rate_limits`.
-- Tests patch a setting where it is read (`middleware.RATE_LIMIT_MAX`, …).
-  **A new route goes in `app_factory.py` and `tests/test_server_facade.py`'s
-  table; a new dispatch entry in `tests/test_server_api.py` `DISPATCH`**
-  (read by AST, must name exactly the table's keys).
+- **A POST to `/api/` or `/auth/` must be JSON or carry `X-Consensus-Request`**
+  (`CSRF_HEADER`). Multipart uploads send the header (`UPLOAD_HEADERS` in
+  `static/api.js`); everything else sends JSON. Before this, uploads, logout
+  (the token was never revoked; a reload signed the user back in) and the
+  embedding test all got 415. `test_frontend_posts_pass_the_csrf_guard`
+  scans `static/*.js` — a new bare `fetch` POST fails it.
+- **Uploads read through `request_io.read_upload`**, which lifts aiohttp's
+  1 MiB default body limit to `MAX_DOCUMENT_BYTES` / `MAX_IMAGE_BYTES` for
+  that read only (everything else stays at 1 MiB). Those constants are
+  imported *inside* the handlers, like `app._init_*_tools`, so a broken
+  optional backend cannot stop the server from starting.
+- **`auth_middleware` resolves the user for `/auth/me`** too (enforces only
+  on `/api/*`); before, both `/auth/me` routes were always 401.
+- Bodies go through `read_json_object` (non-object → 400, `/api/<method>`
+  included; an oversized body stays a 413); malformed ids and
+  `discussion_id`s are 400s, as are non-string credentials, profile fields
+  and add-url titles (`request_io.non_string_field`). `CAPACITY_ERROR` is the
+  one capacity message.
+- **`/api/<method>` entries build a `functools.partial`; they never call**
+  (#134). `handle_api` binds it against the method's signature before
+  running it, so a missing key, an unconvertible or overflowing number, or a
+  kwarg a fixed-signature method does not take (`**kwargs` methods such as
+  `update_provider` ignore unknown keys) is a 400 `Invalid arguments for
+  <method>: …`, while the same exception types raised *inside* the app method
+  stay a logged 500. A new entry must follow the `lambda: partial(app.x, …)`
+  shape. `DISPATCH` cases are bound against the real method signatures.
+  Every JSON body number (here and in the add-url routes) goes through
+  `request_io.int_field` / `float_field`, never bare `int()` / `float()`, so
+  the 400 names the field and its type (`max_rounds must be an integer`).
+- **The desktop bridge is never pywebview's `js_api`** (#125).
+  `launch_desktop` registers `exposed_functions(bridge)` (its public bound
+  methods) with `window.expose`. pywebview resolves a `js_api` call by
+  walking the dotted name with plain `getattr`, private names and dunders
+  included, so with the bridge as `js_api` page script could call
+  `_app.db.<anything>` or `get_state.__self__._app` (a leading underscore and
+  `_serializable = False` only hide a name from the generated
+  `pywebview.api` object). Exposed functions are found by exact name.
+  `TestDispatch` in `tests/test_desktop_bridge_api.py` drives pywebview's
+  real `js_bridge_call` to prove the private paths do not resolve.
+- **Only `POST /api/<method>` creates a `--multi-user` session** (#132,
+  repo owner's choice). It sets the cookie on every reply that has a
+  session, errors included (the capacity 503 has none). Every other `/api/`
+  route goes through `session_app()`, which uses `SessionManager.lookup()`
+  (never creates) and answers 401 or 400 `NO_SESSION_ERROR`.
+- **The SSE stream ends once its session is evicted** (#135): each keepalive
+  tick checks `lookup(sid, touch=False) is app_instance`. `touch=False`
+  matters: an open tab alone must not keep a session alive. The stream sends
+  `session_expired` (the page shows a notice) before it ends. If a dispatch
+  call has already re-created the session, the reconnect joins it; otherwise
+  it gets the 400 and closes, and `static/app.js` reacts to `CLOSED` by
+  calling `get_state` (which creates the next session) and reopening, with
+  exponential backoff from `SSE_REOPEN_DELAY_MS` and a notice after
+  `SSE_REOPEN_MAX_ATTEMPTS` (verified by reading only; there is no JS
+  harness). An in-page sign-in reloads the page, so `init()` and the stream
+  run for the signed-in user.
+- **`run_migrations` re-checks the file**: its per-path guard skips only when
+  the `migrations` table is still there. Eviction deletes a session's DB and
+  a returning cookie re-creates it at the same path; it used to come back
+  schema-less (`no such table: prompts` on every call).
+- **PUT/DELETE carry no CSRF check by design**: a cross-site form cannot send
+  them, and a cross-origin fetch needs a preflight the server never grants
+  (`test_preflight_is_never_granted` pins the other half).
+- `SessionManager` expiry and `stop()` share `_close_app()` (expiry used to
+  skip `app.shutdown()`, leaking MCP subprocesses). Expiry deletes the DB
+  under the lock but closes apps after releasing it (`_close_apps`): an MCP
+  shutdown can take seconds. Session ids in logs are truncated.
+  `login_attempts` / `rate_limits` are pruned by `prune_stale()`.
+- Tests patch a setting where it is read (`middleware.RATE_LIMIT_MAX`,
+  `routes_auth.LOGIN_RATE_LIMIT_*`, `routes_misc.SSE_KEEPALIVE_SECONDS`).
+  `tests/test_server_api.py` `DISPATCH` pins every `/api/<method>` entry's
+  forwarded arguments and must name exactly the table's keys (read by AST);
+  `tests/test_server_facade.py` pins `__all__`, the one consumer
+  (`__main__.py`) and every route → handler. **A new route goes in
+  `app_factory.py` and that table; a new dispatch entry in `DISPATCH`.**
 
 ## Open work
 
@@ -342,7 +444,7 @@ use only its `SUPPORTED_KEYWORDS`. A new desktop bridge method goes in a mixin
 **and** in `BRIDGE_API`; moved code logs under its new module.
 
 **Watch:** `pricing.py` (498), `app_discussion_state.py` (488) and
-`tools_document/handlers_rag.py` (481): split
+`tools_document/handlers_rag.py` (484): split
 before the next addition. `static/discussion-actions.js` (506) and
 `evaluation/static/eval.js` (645) are over the cap; split them when next
 touched.

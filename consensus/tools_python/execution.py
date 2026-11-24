@@ -10,6 +10,7 @@ import shutil
 import tempfile
 from typing import Optional
 
+from ..error_text import public_error
 from ..frozen import worker_command
 from ..tools import ToolContext, ToolResult
 from .constants import (
@@ -212,7 +213,8 @@ async def execute_python_handler(
         except Exception as e:
             logger.error("Failed to launch sandbox worker: %s", e)
             return ToolResult(
-                content=f"Failed to start code execution environment: {e}",
+                content=public_error(
+                    "Failed to start code execution environment", e),
                 is_error=True,
             )
 

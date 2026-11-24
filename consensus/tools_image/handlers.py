@@ -3,6 +3,7 @@
 import json
 import logging
 
+from ..error_text import public_error
 from ..http_fetch import FetchError, redact_url
 from ..tools import TOOL_FETCH_DEADLINE, ToolContext, ToolResult
 from .constants import VISION_IMAGE_TYPES
@@ -40,7 +41,8 @@ async def _describe_image_handler(
         data_url = image_to_base64_url(image["storage_path"], image["mime_type"])
     except Exception as e:
         logger.warning("Could not load image %s: %s", image_id, e)
-        return ToolResult(content=f"Failed to load image: {e}", is_error=True)
+        return ToolResult(content=public_error("Failed to load image", e),
+                          is_error=True)
 
     try:
         description = await _call_vision_llm(app, context, data_url, question)
@@ -51,7 +53,7 @@ async def _describe_image_handler(
         # traceback, which the registry would otherwise have logged.
         logger.warning("Vision LLM call failed for image %s: %s", image_id, e,
                        exc_info=True)
-        return ToolResult(content=f"Vision LLM call failed: {e}",
+        return ToolResult(content=public_error("Vision LLM call failed", e),
                           is_error=True)
 
     # Cache the description if it was a general describe request
@@ -121,7 +123,8 @@ async def _add_image_url_handler(
         # A bug in the fetch path, not a bad URL: keep the traceback.
         logger.exception("Image fetch failed unexpectedly for %s",
                          redact_url(url))
-        return ToolResult(content=f"Failed to fetch image: {e}", is_error=True)
+        return ToolResult(content=public_error("Failed to fetch image", e),
+                          is_error=True)
 
     result = await ingest_image(
         db=db,

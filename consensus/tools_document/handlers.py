@@ -9,6 +9,7 @@ import json
 import logging
 from typing import Optional
 
+from ..error_text import public_error
 from ..http_fetch import redact_url
 from ..tools import TOOL_FETCH_DEADLINE, ToolContext, ToolResult
 from .constants import (
@@ -127,7 +128,8 @@ async def _doc_add_handler(
     except Exception as e:
         logger.exception("doc_add failed unexpectedly for %s",
                          redact_url(url) if url else filename)
-        return ToolResult(content=f"Failed to add document: {e}", is_error=True)
+        return ToolResult(content=public_error("Failed to add document", e),
+                          is_error=True)
 
 
 async def _doc_list_handler(
@@ -150,7 +152,8 @@ async def _doc_list_handler(
                 "Library search could not embed the query %r", query,
             )
             return ToolResult(
-                content=f"Embedding service unavailable: {e}", is_error=True,
+                content=public_error("Embedding service unavailable", e),
+                is_error=True,
             )
 
         rows = db.get_all_chunks_with_embeddings()

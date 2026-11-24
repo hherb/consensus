@@ -2,6 +2,7 @@
 
 import logging
 
+from ..error_text import public_error
 from ..ai_client import AIClient
 from ..models import AIConfig
 from ..tools import ToolContext
@@ -74,7 +75,8 @@ async def _call_interpretation_llm(
     except Exception as e:
         logger.warning("Interpretation LLM call failed: %s", e)
         raise DocumentInterpretationError(
-            f"The interpretation model {ai_config.model} failed: {e}",
+            public_error(f"The interpretation model {ai_config.model} failed",
+                         e),
             hint="check the provider's API key, quota and base URL",
         ) from e
     finally:

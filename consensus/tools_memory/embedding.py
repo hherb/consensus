@@ -10,14 +10,20 @@ import struct
 
 import httpx
 
+from ..error_text import PublicMessageError, public_error
+from ..http_fetch import redact_url
 from ..models import DEFAULT_EMBEDDING_ENDPOINT, DEFAULT_EMBEDDING_MODEL
 from .constants import EMBED_BASE_DELAY, EMBED_MAX_RETRIES, EMBED_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
 
-class MemoryUnavailableError(Exception):
-    """Raised when the embedding service is unreachable or persistently failing."""
+class MemoryUnavailableError(PublicMessageError):
+    """Raised when the embedding service is unreachable or persistently failing.
+
+    Its message is shown to the model and the UI, so it names the endpoint
+    redacted and the httpx failure by class and status only (#92).
+    """
 
 
 class EmbeddingContextLengthError(Exception):
@@ -53,6 +59,7 @@ class EmbeddingClient:
         endpoint = config.get("embedding_endpoint", DEFAULT_EMBEDDING_ENDPOINT)
         model = config.get("embedding_model", DEFAULT_EMBEDDING_MODEL)
         url = endpoint.rstrip("/") + "/api/embeddings"
+        where = redact_url(endpoint)
 
         last_exc: Exception | None = None
         for attempt in range(EMBED_MAX_RETRIES):
@@ -67,13 +74,13 @@ class EmbeddingClient:
                     return data["embedding"]
             except httpx.ConnectError as e:
                 raise MemoryUnavailableError(
-                    f"Cannot connect to embedding service at {endpoint}: {e}"
+                    public_error(f"Cannot connect to embedding service at {where}", e)
                 ) from e
             except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
                 last_exc = e
                 if isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500:
                     raise MemoryUnavailableError(
-                        f"Embedding request failed: {e}"
+                        public_error(f"Embedding request to {where} failed", e)
                     ) from e
                 # Detect non-transient context length errors from Ollama
                 if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 500:
@@ -96,19 +103,21 @@ class EmbeddingClient:
                 await asyncio.sleep(delay)
             except httpx.HTTPError as e:  # remaining transport faults (read/protocol errors)
                 raise MemoryUnavailableError(
-                    f"Embedding request failed: {e}"
+                    public_error(f"Embedding request to {where} failed", e)
                 ) from e
             except Exception as e:
                 # A malformed response or a bug, not an outage: callers log
                 # MemoryUnavailableError as a routine warning, so keep the traceback here.
-                logger.exception("Unexpected embedding failure from %s", endpoint)
+                logger.exception("Unexpected embedding failure from %s",
+                                 redact_url(endpoint))
                 raise MemoryUnavailableError(
-                    f"Embedding request failed: {e}"
+                    public_error(f"Embedding request to {where} failed", e)
                 ) from e
 
-        raise MemoryUnavailableError(
-            f"Embedding request failed after {EMBED_MAX_RETRIES} attempts: {last_exc}"
-        ) from last_exc
+        raise MemoryUnavailableError(public_error(
+            f"Embedding request to {where} failed after {EMBED_MAX_RETRIES} attempts",
+            last_exc,
+        )) from last_exc
 
     async def test_connection(self) -> tuple[bool, str]:
         """Return (success, message) for connection test."""

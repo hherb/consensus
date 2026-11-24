@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+from ..error_text import public_error
 from ..background import spawn_background
 from ..dbkey import ScopedKey, scoped_key
 from .constants import (
@@ -347,7 +348,7 @@ async def _embed_single_chunk(
                     "of doc %d: %s", sub_id, chunk["id"], doc_id, e,
                 )
                 all_ok = False
-                last_error = str(e)
+                last_error = public_error(f"chunk {sub_id}", e)
 
         # Remove the original oversized chunk since it's been replaced
         db.delete_document_chunk(chunk["id"])
@@ -358,7 +359,7 @@ async def _embed_single_chunk(
             "Embed chunk %d of doc %d failed: %s",
             chunk["id"], doc_id, e,
         )
-        return False, str(e)
+        return False, public_error(f"chunk {chunk['id']}", e)
 
 
 async def _embed_document_chunks(doc_id: int, db, embed_client) -> None:
@@ -423,6 +424,7 @@ async def _embed_document_chunks(doc_id: int, db, embed_client) -> None:
         # A sibling `except` inside _embed_single_chunk cannot catch what
         # its own handler raises, and a locked database raises right here.
         logger.exception("Embedding pass for doc %d failed", doc_id)
-        _record_indexing_failure(db, doc_id, str(e))
+        _record_indexing_failure(
+            db, doc_id, public_error("Embedding pass failed", e))
     finally:
         _embedding_docs.discard(key)
