@@ -346,6 +346,14 @@ def start_discussion(
         )
     except KeyError:
         pass  # open_discussion — no special state needed
+    except ValueError:
+        # The method's initial state cannot be saved (#152): start nothing,
+        # rather than leave a live row with no opening message behind.
+        db.soft_delete_discussions([did])
+        discussion.id = None
+        discussion.is_active = False
+        discussion.status = "setup"
+        raise
 
     # Opening message from moderator
     target_type = "ai" if mod.entity_type == EntityType.AI else "human"

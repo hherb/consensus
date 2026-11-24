@@ -70,9 +70,28 @@ def load_discussion(
     Returns:
         ``(Discussion, Moderator)`` on success, or ``{"error": ...}`` dict.
     """
+    discussion = discussion_from_db(db, discussion_id)
+    if discussion is None:
+        return {"error": "Discussion not found"}
+    moderator = Moderator(
+        discussion, db,
+        key_resolver=key_resolver,
+        tool_registry=tool_registry,
+        progress_callback=progress_callback,
+    )
+    return (discussion, moderator)
+
+
+def discussion_from_db(db: Database, discussion_id: int) -> Optional[Discussion]:
+    """Rebuild a discussion from its stored rows, turn position included.
+
+    This is what a reload shows; ``helpers.save_method_state`` also uses it
+    to put memory back after a failed save (#152).  Returns ``None`` when
+    the discussion does not exist.
+    """
     disc = db.get_discussion(discussion_id)
     if not disc:
-        return {"error": "Discussion not found"}
+        return None
 
     members = db.get_discussion_members(discussion_id)
     messages = db.get_messages(discussion_id)
@@ -147,7 +166,7 @@ def load_discussion(
         for m in members
     }
 
-    discussion = Discussion(
+    return Discussion(
         id=discussion_id,
         topic=disc["topic"],
         entities=entities,
@@ -168,13 +187,6 @@ def load_discussion(
         default_context_strategy=disc.get("default_context_strategy", "sliding_window"),
         default_context_window_size=disc.get("default_context_window_size", 20),
     )
-    moderator = Moderator(
-        discussion, db,
-        key_resolver=key_resolver,
-        tool_registry=tool_registry,
-        progress_callback=progress_callback,
-    )
-    return (discussion, moderator)
 
 
 def delete_discussions(db: Database, discussion_ids: list[int]) -> dict:

@@ -27,13 +27,14 @@ from typing import Callable
 
 from ..app_discussion_state import pause_discussion, resume_discussion
 from ..database import Database
-from ..methods import get_method, serialize_method_state
+from ..methods import get_method
 from ..models import Discussion, Entity, EntityType, Message, MessageRole
 from ..structured_output import (
     _format_tool_block_error, find_tool_blocked_entities,
 )
 from .helpers import (
-    apply_method_turn_order, describe_flow_error, stamp_turn_index,
+    apply_method_turn_order, describe_flow_error, post_notice,
+    save_method_state, stamp_turn_index,
 )
 
 logger = logging.getLogger(__name__)
@@ -198,11 +199,8 @@ def switch_discussion_method(
     discussion.method_state.update(preserved)
 
     if discussion.id:
-        db.update_discussion(
-            discussion.id,
-            discussion_method=method_name,
-            method_state=serialize_method_state(discussion.method_state),
-        )
+        save_method_state(
+            discussion, db, discussion_method=method_name)
 
     # System message announcing the transition
     first_phase = method.default_phases[0] if method.default_phases else None
@@ -284,10 +282,7 @@ def retry_method_switch(
             "switch_error": switch_error,
             "blocked_entities": blocked_entities,
         }
-        db.update_discussion(
-            discussion.id,
-            method_state=serialize_method_state(discussion.method_state),
-        )
+        save_method_state(discussion, db)
         # A manually-resumed discussion must not keep running behind
         # the recovery dialog — re-pause it (final-review finding #2).
         if discussion.status == "active":
@@ -310,10 +305,7 @@ def retry_method_switch(
     # first phase reorders turns from the full roster.
     apply_method_turn_order(discussion, reset_index=True)
     stamp_turn_index(discussion)
-    db.update_discussion(
-        discussion.id,
-        method_state=serialize_method_state(discussion.method_state),
-    )
+    save_method_state(discussion, db)
     return {
         "method_switched": True,
         "new_method": switch_result,
@@ -351,10 +343,7 @@ def handle_triage_handoff(
         apply_method_turn_order(discussion, reset_index=True)
         if discussion.id:
             stamp_turn_index(discussion)
-            db.update_discussion(
-                discussion.id,
-                method_state=serialize_method_state(discussion.method_state),
-            )
+            save_method_state(discussion, db)
         return {
             "method_switched": True,
             "new_method": switch_result,
@@ -387,25 +376,16 @@ def handle_triage_handoff(
     # switch to a different method, re-notifying about an earlier target
     # again is new information, not spam.
     already_notified = discussion.method_state.get("_switch_error_posted")
-    if mod and discussion.id and already_notified != chosen:
+    notify = bool(mod and discussion.id and already_notified != chosen)
+    if notify:
         discussion.method_state["_switch_error_posted"] = chosen
-        notice = (
-            f"**The recommended method could not be adopted.** {switch_error}"
-        )
-        sys_msg = Message(
-            entity_id=mod.id, entity_name=mod.name,
-            content=notice, role=MessageRole.SYSTEM,
-        )
-        discussion.messages.append(sys_msg)
-        db.add_message(
-            discussion.id, mod.id, notice, "system",
-            turn_number=discussion.turn_number,
-        )
+    # Saved before the notice: an unsaved state must not be announced (#152).
     if discussion.id:
-        db.update_discussion(
-            discussion.id,
-            method_state=serialize_method_state(discussion.method_state),
-        )
+        save_method_state(discussion, db)
+    if notify:
+        post_notice(discussion, db, mod, (
+            f"**The recommended method could not be adopted.** {switch_error}"
+        ))
     # Pause instead of concluding: the frontend shows a recovery dialog
     # and retries via retry_method_switch.
     if discussion.status == "active":

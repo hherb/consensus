@@ -8,15 +8,16 @@ participant paths share one precondition gate
 (issue #59).
 """
 
+import copy
 import logging
 from typing import TYPE_CHECKING
 
 from ..database import Database
 from ..evidence import record_and_annotate_evidence
-from ..methods import get_active_method, serialize_method_state
+from ..methods import get_active_method
 from ..methods.parsing import check_payload_schema, extract_json_block
 from ..models import Discussion, Entity, Message, MessageRole
-from .helpers import is_pass
+from .helpers import is_pass, save_method_state
 
 if TYPE_CHECKING:
     from ..methods.base import DiscussionMethod, OutputToolSpec
@@ -169,13 +170,15 @@ def submit_human_message(
         # structural shape rather than the handler's full semantic
         # ``validate_output``.
         spec = method.get_output_tool(entity, discussion)
-        before = (serialize_method_state(discussion.method_state)
+        # A dict copy, not JSON: an unencodable result must reach the save
+        # below, which puts memory back before it raises (#152).
+        before = (copy.deepcopy(discussion.method_state)
                   if spec is not None else None)
         raw_content = content
         processed = method.process_response(content, entity, discussion)
         content = processed.display_content
         if (spec is not None
-                and serialize_method_state(discussion.method_state) == before
+                and discussion.method_state == before
                 and _structured_freetext_unreadable(
                     method, spec, entity, discussion, raw_content)):
             # Structured phase, but free-text extraction recorded nothing
@@ -193,10 +196,7 @@ def submit_human_message(
                 discussion, entity, discussion.turn_number, content,
                 tool_calls=[])
         if discussion.id:
-            db.update_discussion(
-                discussion.id,
-                method_state=serialize_method_state(discussion.method_state),
-            )
+            save_method_state(discussion, db)
 
     msg = Message(
         entity_id=entity_id, entity_name=entity.name,
@@ -232,10 +232,7 @@ def _record_structured_human_turn(
     processed = method.process_structured_response(payload, entity, discussion)
     content = processed.display_content
     if discussion.id:
-        db.update_discussion(
-            discussion.id,
-            method_state=serialize_method_state(discussion.method_state),
-        )
+        save_method_state(discussion, db)
     msg = Message(
         entity_id=entity.id, entity_name=entity.name,
         content=content, role=MessageRole.PARTICIPANT,
