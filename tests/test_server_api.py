@@ -244,16 +244,24 @@ async def test_result_carries_the_real_state(single_client):
     assert body["state"]["topic"] == "Tea or coffee"
 
 
-async def test_app_error_is_a_500_with_its_message(single_client, monkeypatch,
-                                                   caplog):
-    """A raising app method answers 500 with the message, and is logged."""
+async def test_app_error_is_a_500_naming_only_its_class(single_client,
+                                                        monkeypatch, caplog):
+    """A raising app method answers 500 without its message, which is logged.
+
+    The message can carry a file path or an endpoint URL with a credential
+    in its query string (#92), so only the log keeps it.
+    """
+    secret = "unable to open /srv/sessions/abc.db?token=s3cret"
+
     def boom(self):
-        raise RuntimeError("database is locked")
+        raise RuntimeError(secret)
     monkeypatch.setattr(ConsensusApp, "get_inactive_entities", boom)
     resp = await api(single_client, "get_inactive_entities")
     assert resp.status == 500
-    assert (await resp.json()) == {"error": "database is locked"}
+    assert (await resp.json()) == {
+        "error": "get_inactive_entities failed (RuntimeError)"}
     assert "API error: get_inactive_entities" in caplog.text
+    assert secret in caplog.text
 
 
 @pytest.mark.parametrize("method,payload,attr,needle", [

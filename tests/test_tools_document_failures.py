@@ -726,7 +726,7 @@ async def test_doc_ask_reports_an_interpretation_failure_explicitly(
 
     Previously ``DocumentInterpretationError`` fell through to
     ``ToolRegistry``'s generic ``except Exception``, which produces a bare
-    "Tool error: ..." message and always logs a full traceback — even
+    "Tool <name> failed (<class>)" message and always logs a full traceback — even
     though a failing provider here is an expected, not exceptional, case.
     """
     from tests.document_helpers import FakeApp, FakeEmbedClient, embed_all
@@ -1231,7 +1231,7 @@ async def test_doc_summary_reports_an_interpretation_failure_explicitly(
 
     Previously ``DocumentInterpretationError`` fell through to
     ``ToolRegistry``'s generic ``except Exception``, which produces a bare
-    "Tool error: ..." message and always logs a full traceback — even
+    "Tool <name> failed (<class>)" message and always logs a full traceback — even
     though a failing provider here is an expected, not exceptional, case.
     """
     from tests.document_helpers import FakeApp

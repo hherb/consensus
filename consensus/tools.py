@@ -14,6 +14,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from .error_text import public_error
+
 logger = logging.getLogger(__name__)
 
 # Safety limits
@@ -162,7 +164,8 @@ class PythonToolProvider(ToolProvider):
             return ToolResult(content=str(result))
         except Exception as e:
             logger.exception("Tool %s execution failed", tool_name)
-            return ToolResult(content=f"Tool error: {e}", is_error=True)
+            return ToolResult(content=public_error(f"Tool {tool_name} failed", e),
+                              is_error=True)
 
 
 class ToolRegistry:
@@ -351,7 +354,8 @@ class ToolRegistry:
             )
         except Exception as e:
             logger.exception("Tool execution failed: %s", tool_name)
-            return ToolResult(content=f"Tool error: {e}", is_error=True)
+            return ToolResult(content=public_error(f"Tool {tool_name} failed", e),
+                              is_error=True)
 
     async def close(self) -> None:
         """Close all providers."""

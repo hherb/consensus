@@ -6,6 +6,7 @@ from typing import Callable, Optional
 
 from ..background import spawn_background
 from ..dbkey import ScopedKey, scoped_key
+from ..error_text import public_error
 from ..tools import ToolContext, ToolResult
 from .constants import (
     MESSAGE_EMBED_MAX_CHARS, SEARCH_DEFAULT_LIMIT, SEARCH_SNIPPET_CHARS,
@@ -36,7 +37,7 @@ def _tool_failure(message: str, exc: Exception) -> ToolResult:
         logger.warning("%s: %s", message, exc)
     else:
         logger.error("%s: %s", message, exc, exc_info=exc)
-    return ToolResult(content=f"{message}: {exc}", is_error=True)
+    return ToolResult(content=public_error(message, exc), is_error=True)
 
 
 async def _memory_store_handler(

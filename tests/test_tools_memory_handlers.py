@@ -138,7 +138,7 @@ class TestMemoryStore:
         with caplog.at_level(logging.ERROR, logger=LOGGER):
             result = await run("memory_store", content="x")
         assert result.is_error
-        assert result.content == "Failed to store memory: disk I/O error"
+        assert result.content == "Failed to store memory (RuntimeError)"
         assert _failure_record(caplog, "Failed to store memory").exc_info
 
     @pytest.mark.parametrize("error, expected", [
@@ -191,7 +191,7 @@ class TestMemoryRecall:
         with caplog.at_level(logging.WARNING, logger=LOGGER):
             result = await run("memory_recall", query="q")
         assert result.is_error
-        assert result.content == "Memory service unavailable: down"
+        assert result.content == "Memory service unavailable (MemoryUnavailableError)"
         # An expected outage logs without a traceback.
         assert not _failure_record(caplog, "Memory service unavailable").exc_info
 
@@ -212,7 +212,7 @@ class TestMemoryRecall:
         monkeypatch.setattr(tmp_db, "get_entity_memories_with_embeddings", _boom)
         result = await run("memory_recall", query="q")
         assert result.is_error
-        assert result.content == "Failed to retrieve memories: disk I/O error"
+        assert result.content == "Failed to retrieve memories (RuntimeError)"
 
 
 class TestMemoryForget:
@@ -240,7 +240,7 @@ class TestMemoryForget:
         monkeypatch.setattr(tmp_db, "delete_entity_memory", _boom)
         result = await run("memory_forget", memory_id="m1")
         assert result.is_error
-        assert result.content == "Failed to delete memory: disk I/O error"
+        assert result.content == "Failed to delete memory (RuntimeError)"
 
 
 class TestDiscussionSearch:
@@ -300,13 +300,13 @@ class TestDiscussionSearch:
         embedder.error = MemoryUnavailableError("down")
         result = await run("discussion_search", query="q")
         assert result.is_error
-        assert result.content == "Memory service unavailable: down"
+        assert result.content == "Memory service unavailable (MemoryUnavailableError)"
 
     async def test_db_failure_is_an_error(self, run, tmp_db, monkeypatch):
         monkeypatch.setattr(tmp_db, "get_messages_with_embeddings", _boom)
         result = await run("discussion_search", query="q")
         assert result.is_error
-        assert result.content == "Failed to search discussions: disk I/O error"
+        assert result.content == "Failed to search discussions (RuntimeError)"
 
     async def test_index_check_failure_is_logged_and_search_proceeds(
         self, run, tmp_db, monkeypatch, caplog,
@@ -422,7 +422,7 @@ class TestKgAssert:
         monkeypatch.setattr(tmp_db, "add_kg_edge", _boom)
         result = await run("kg_assert", subject="a", relation="r", object="b")
         assert result.is_error
-        assert result.content == "Failed to assert knowledge triple: disk I/O error"
+        assert result.content == "Failed to assert knowledge triple (RuntimeError)"
 
     async def test_embedder_down_stops_node_embedding_and_says_so(
         self, run, tmp_db, embedder, caplog,
@@ -486,13 +486,13 @@ class TestKgQuerySearch:
         embedder.error = MemoryUnavailableError("down")
         result = await run("kg_query", query="q")
         assert result.is_error
-        assert result.content == "Memory service unavailable: down"
+        assert result.content == "Memory service unavailable (MemoryUnavailableError)"
 
     async def test_db_failure_is_an_error(self, run, tmp_db, monkeypatch):
         monkeypatch.setattr(tmp_db, "get_kg_nodes_with_embeddings", _boom)
         result = await run("kg_query", query="q")
         assert result.is_error
-        assert result.content == "Knowledge graph query failed: disk I/O error"
+        assert result.content == "Knowledge graph query failed (RuntimeError)"
 
     async def test_empty_query_is_an_error(self, run):
         result = await run("kg_query", query=" ", mode="search")

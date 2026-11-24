@@ -337,7 +337,7 @@ async def _doc_ask_handler(
     except DocumentInterpretationError as e:
         # Caught explicitly, rather than left to ToolRegistry's generic
         # `except Exception`, so the failure names the model and provider
-        # that failed instead of a bare "Tool error: ..." — and so an
+        # that failed instead of a bare "Tool doc_ask failed (...)" — and so an
         # expected provider failure logs a warning, not a full traceback.
         entity = db.get_entity(context.caller_entity_id) or {}
         model = entity.get("model") or "unknown model"
@@ -452,7 +452,7 @@ async def _doc_summary_handler(
     except DocumentInterpretationError as e:
         # Caught explicitly, rather than left to ToolRegistry's generic
         # `except Exception`, so the failure names the model and provider
-        # that failed instead of a bare "Tool error: ..." — the same
+        # that failed instead of a bare "Tool doc_summary failed (...)" — the same
         # treatment _doc_ask_handler already received. Covers all three
         # _call_interpretation_llm call sites above: the direct path and
         # both map-reduce calls.

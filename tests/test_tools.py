@@ -10,6 +10,10 @@ from consensus.tools import (
 )
 
 
+#: Text an exception may carry that must never reach the model or the UI (#92).
+SECRET = "http://embed.local/api?token=s3cret at /srv/sessions/abc.db"
+
+
 # --- ToolDefinition ---
 
 class TestToolDefinition:
@@ -83,7 +87,19 @@ class TestPythonToolProvider:
         ctx = ToolContext(caller_entity_id=1, discussion_id=1)
         result = await p.execute("fail", {}, ctx)
         assert result.is_error is True
-        assert "error" in result.content.lower()
+        assert result.content == "Tool fail failed (ZeroDivisionError)"
+
+    @pytest.mark.asyncio
+    async def test_handler_exception_text_stays_in_the_log(self, caplog):
+        """The model and the UI get the class name, never the message (#92)."""
+        def leak(args, ctx):
+            raise RuntimeError(SECRET)
+        p = PythonToolProvider("test")
+        p.register(ToolDefinition(name="leak", description="Leaks",
+                                  parameters={"type": "object"}), leak)
+        result = await p.execute("leak", {}, ToolContext(1, 1))
+        assert SECRET not in result.content
+        assert SECRET in caplog.text
 
     @pytest.mark.asyncio
     async def test_execute_async_handler(self):
@@ -223,6 +239,25 @@ class TestToolRegistry:
             assert "timed out" in result.content.lower()
         finally:
             consensus.tools.TOOL_EXECUTION_TIMEOUT = orig
+
+    @pytest.mark.asyncio
+    async def test_provider_exception_text_stays_in_the_log(self, caplog):
+        """A provider that raises is reported by class name only (#92)."""
+        class Raising(PythonToolProvider):
+            async def execute(self, tool_name, arguments, context,
+                              progress_callback=None):
+                raise OSError(SECRET)
+        p = Raising("raising")
+        p.register(ToolDefinition(name="leak", description="Leaks",
+                                  parameters={"type": "object"}),
+                   lambda args, ctx: ToolResult(content="unused"))
+        registry = ToolRegistry()
+        registry.register_provider(p)
+        result = await registry.execute("leak", {}, caller_entity_id=1,
+                                        discussion_id=1)
+        assert result.is_error is True
+        assert result.content == "Tool leak failed (OSError)"
+        assert SECRET in caplog.text
 
     @pytest.mark.asyncio
     async def test_execute_no_db(self):
