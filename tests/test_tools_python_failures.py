@@ -73,9 +73,11 @@ class FakeSpawner:
     def __init__(self, *results) -> None:
         self.results = list(results)
         self.calls: list[tuple] = []
+        self.kwargs: list[dict] = []
 
     async def __call__(self, *argv, **kwargs):
         self.calls.append(argv)
+        self.kwargs.append(kwargs)
         result = self.results.pop(0)
         if isinstance(result, BaseException):
             raise result

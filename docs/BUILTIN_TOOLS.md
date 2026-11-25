@@ -129,7 +129,7 @@ Code is executed in an isolated subprocess with multiple defense layers:
 | **Memory limit** | `RLIMIT_AS` set to 70% of available (free) system RAM (minimum 256 MB) |
 | **CPU time limit** | `RLIMIT_CPU` set to `num_cores × 30s × 0.70` (minimum 10s) |
 | **Wall-clock timeout** | Process killed after `CPU_limit × 1.5` seconds (minimum 30s); also killed if the turn is cancelled |
-| **macOS sandbox-exec** | On macOS, wraps the subprocess with a Seatbelt profile that denies network access. It allows reads everywhere and writes under `/private/tmp`, so per-execution write confinement comes from the sandboxed `open()` above, not from the OS ([#97](https://github.com/hherb/consensus/issues/97)) |
+| **macOS sandbox-exec** | On macOS, wraps the subprocess with a Seatbelt profile that denies network access and allows writes only under the per-execution directory, which the worker gets as `TMPDIR` (so library caches land there too, and are deleted with it). Reads are allowed everywhere ([#97](https://github.com/hherb/consensus/issues/97)) |
 
 ### Allowed modules
 

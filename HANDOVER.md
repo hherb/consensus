@@ -6,9 +6,9 @@ bridge fix #125, MCP argument validation #124, one-transaction rotation
 #107, rotation rollback #147, `serialize_method_state` raising #150, failed
 tool packages shown in the UI #96, `method_state` save consistency #152,
 degraded-extraction warnings #81, safe tool and API error text #92 and
-#157 — details in git history). This branch, `fix/pr100-followups-102`,
-closes the PR #100 review follow-ups (#102). The suite is at
-**4610 passing**._
+#157, URL-fetch pinning #102 — details in git history). This branch,
+`fix/seatbelt-confinement-97`, confines the macOS sandbox worker's writes
+to its per-run directory (#97). The suite is at **4615 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -21,7 +21,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4610 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4615 passing (`uv run pytest`, ~90 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -223,6 +223,18 @@ Tests: `tests/test_http_fetch.py`, `_pinning.py`, `_guard.py`,
 `tests/test_tools_document_doc_add_budget.py`, `tests/test_app_characterization.py`
 (`failed_provider_record`); each new branch was mutation-checked.
 
+## Sandbox worker writes (#97 — keep this contract)
+
+`execute_python_handler` makes one per-run directory and passes it to the
+worker as `TMPDIR` (and `MPLCONFIGDIR`), so the worker's own `mkdtemp` and
+any library cache land in it and are deleted with it. The macOS Seatbelt
+profile names it by `os.path.realpath` (Seatbelt matches `/private/var/...`,
+never `/var/...`) as the only writable path; the blanket `/private/tmp/` rule
+is gone. Checked on macOS 27 with numpy, scipy, pandas, matplotlib, sympy,
+scikit-learn, networkx, Pillow and torch. Reads are still allowed everywhere
+(#163). Tests: `tests/test_tools_python_seatbelt.py` (real `sandbox-exec`
+on macOS, skipped elsewhere; each wiring mutation-checked).
+
 ## Speaking rotation after start (#104 — keep this contract)
 
 `app_discussion_rotation.update_rotation(discussion, db, restore, add=, remove=)`
@@ -322,13 +334,10 @@ unknown model in a populated cache still passes on its first setup. Tests:
 `tests/test_pricing_background.py`, `_capability_wait.py` (**join the
 download thread before closing the DB** — otherwise it segfaults).
 
-## Authentication and web server (#61 slices 15–16 — contracts moved)
+## Authentication and web server
 
-The `auth/` and `server/` contract lists (email never editable, OAuth
-lock-out, password-hash format and off-loop hashing, CSRF header, upload
-limits, `/api/<method>` partial-binding, `window.expose` desktop bridge,
-session creation and SSE eviction, test-table rules) now live in
-[`docs/devel/contracts.md`](docs/devel/contracts.md). Read it before
+The `auth/` and `server/` contracts live in
+[`docs/devel/contracts.md`](docs/devel/contracts.md); read it before
 touching either package.
 
 ## Open work
@@ -403,8 +412,9 @@ update every doc naming the old file *and* the content beside the name.
   and #128 an unverified OAuth sign-up can pre-hijack an address (both want
   an email-verification design); #160 (follow-up to #157) how MCP HTTP
   connection errors and bare class-name notices should read.
-- No decision needed: #97 Seatbelt does not confine writes. Suggested next:
-  #97, or ask the repo owner about #160.
+- No decision needed: #162 real-pipeline tests for the `doc_add` budget.
+  Suggested next: #162, or ask the repo owner about #160 or #163 (which read
+  paths the Seatbelt profile may allow).
 
 ### Roadmap
 
