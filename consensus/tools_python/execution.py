@@ -131,16 +131,16 @@ def _build_macos_sandbox_cmd(
         return None
 
     # Seatbelt profile: deny network; allow all reads, writes only under
-    # sandbox_dir and /private/tmp (the worker's scratch dir lands in the
-    # latter, not in sandbox_dir — tightening tracked in issue #97).
+    # sandbox_dir (the worker's TMPDIR, so its scratch dir lands there).
+    # Seatbelt matches resolved paths: /var/folders/... is /private/var/...
+    # on macOS, so an unresolved path would never match (issue #97).
     profile = f"""
 (version 1)
 (deny default)
 (allow process-exec)
 (allow process-fork)
 (allow file-read*)
-(allow file-write* (subpath "{sandbox_dir}"))
-(allow file-write* (subpath "/private/tmp/"))
+(allow file-write* (subpath "{os.path.realpath(sandbox_dir)}"))
 (allow file-write* (subpath "/dev/null"))
 (allow file-write-data (literal "/dev/fd/1"))
 (allow file-write-data (literal "/dev/fd/2"))
@@ -186,9 +186,12 @@ async def execute_python_handler(
     # Compute wall-clock timeout that scales with the dynamic CPU limit
     wall_timeout = _compute_wall_timeout()
 
-    # Writable path named in the macOS Seatbelt profile. The worker does not
-    # use it — it makes its own scratch dir (issue #97).
+    # The only writable path: the worker gets it as TMPDIR, so its scratch dir
+    # and any library cache that falls back to the temp dir land inside it,
+    # and the macOS Seatbelt profile confines writes to it (issue #97).
     sandbox_dir = tempfile.mkdtemp(prefix="consensus-sandbox-")
+    # MPLCONFIGDIR: matplotlib otherwise warns that ~/.matplotlib is read-only.
+    worker_env = {**os.environ, "TMPDIR": sandbox_dir, "MPLCONFIGDIR": sandbox_dir}
 
     process = None
     try:
@@ -209,6 +212,7 @@ async def execute_python_handler(
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=worker_env,
             )
         except Exception as e:
             logger.error("Failed to launch sandbox worker: %s", e)
