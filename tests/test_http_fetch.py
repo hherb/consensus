@@ -6,6 +6,7 @@ redirects, request hooks and streaming behave as in production.
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -296,3 +297,49 @@ async def test_extra_headers_are_sent(monkeypatch):
     seen = install_transport(monkeypatch, lambda r: httpx.Response(200))
     await _fetch(headers={"User-Agent": "TestBot/1"})
     assert seen[0].headers["user-agent"] == "TestBot/1"
+
+
+# --- Retry-After (#102) ----------------------------------------------------------
+
+@pytest.mark.parametrize("value, expected", [
+    ("7", 7.0), (" 0 ", 0.0), ("Wed, 25 Nov 2026 12:00:30 GMT", 30.0),
+    ("Wed, 25 Nov 2026 11:59:00 GMT", 0.0), ("-3", None), ("soon", None),
+    ("", None), (None, None),
+])
+def test_retry_after_seconds(value, expected):
+    now = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)
+    assert http_fetch.retry_after_seconds(value, now) == expected
+
+
+async def test_retry_after_sets_the_backoff(monkeypatch, no_sleep):
+    answers = iter([httpx.Response(429, headers={"retry-after": "4"}),
+                    httpx.Response(503, headers={"retry-after": "0"}),
+                    httpx.Response(200, content=b"ok")])
+    install_transport(monkeypatch, lambda r: next(answers))
+    assert (await _fetch())[0] == b"ok"
+    # The server's wait, never shorter than our own exponential backoff.
+    assert no_sleep == [4.0, 2 * http_fetch.FETCH_BASE_DELAY]
+
+
+async def test_retry_after_past_the_deadline_gives_up_at_once(monkeypatch,
+                                                              no_sleep):
+    seen = install_transport(monkeypatch, lambda r: httpx.Response(
+        429, headers={"retry-after": "60"}))
+    with pytest.raises(FetchUnavailable,
+                       match=r"after 1 attempt: HTTP 429 \(retry after 60s\)"):
+        await _fetch(deadline=20.0)
+    assert len(seen) == 1 and no_sleep == []
+
+
+async def test_retry_after_beyond_the_cap_gives_up(monkeypatch, no_sleep):
+    wait = http_fetch.FETCH_MAX_RETRY_AFTER + 1
+    install_transport(monkeypatch, lambda r: httpx.Response(
+        503, headers={"retry-after": f"{wait:g}"}))
+    with pytest.raises(FetchUnavailable, match=f"retry after {wait:g}s"):
+        await _fetch()
+    assert no_sleep == []
+
+
+async def test_zero_attempts_is_refused():
+    with pytest.raises(ValueError, match="max_retries"):
+        await _fetch(max_retries=0)

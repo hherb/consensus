@@ -20,6 +20,11 @@ URL_FETCH_TIMEOUT = 30.0
 # Timeout for interpretation LLM calls
 LLM_TIMEOUT = 120.0
 
+# Budget for one doc_add call: fetch, parse, summary call and storage. It is
+# self-timed (tools.SELF_TIMED_TOOL_NAMES) because the summary alone may take
+# LLM_TIMEOUT, far past the registry's generic tool timeout (#102).
+DOC_ADD_DEADLINE = 180.0  # seconds
+
 # Sampling temperature for interpretation LLM calls (summaries, RAG answers)
 INTERPRETATION_TEMPERATURE = 0.3
 

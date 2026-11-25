@@ -8,6 +8,7 @@ throughout; fakes only at the network edges (MCP providers, URL fetchers).
 
 import asyncio
 import logging
+import sqlite3
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -443,6 +444,31 @@ class TestCaughtErrorsAreLogged:
         assert getattr(app, flag) is False
         assert "provider exploded" in caplog.text
         assert app.get_state()["tool_load_failures"] == [label]
+
+    @pytest.mark.parametrize("init, provider", [
+        ("_init_memory_tools", "memory"),
+        ("_init_document_tools", "documents"),
+        ("_init_image_tools", "images"),
+        ("_init_python_tools", "python_exec"),
+    ])
+    def test_a_failed_provider_record_registers_nothing(
+        self, app, monkeypatch, init, provider,
+    ):
+        """A DB fault is not a broken package, so it propagates (#102).
+
+        The broad ``except`` used to wrap registration too: a failed
+        ``add_tool_provider`` left the provider registered with its tools
+        live while the flag said the package had failed to load.
+        """
+        app.tool_registry._providers.pop(provider)
+
+        def db_down(*args, **kwargs):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(app.db, "add_tool_provider", db_down)
+        with pytest.raises(sqlite3.OperationalError):
+            getattr(app, init)()
+        assert provider not in app.tool_registry._providers
 
     def test_no_tool_load_failures_on_a_healthy_install(self, app):
         assert app.python_tools_available is True

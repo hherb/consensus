@@ -36,7 +36,7 @@ INTERACTIVE_TOOL_NAMES = {"ask_user", "install_python_package"}
 # Tools that enforce their own internal timeout / resource limits.  They are
 # expected to run longer than TOOL_EXECUTION_TIMEOUT and must not be capped by
 # the registry's generic timeout (which would cancel them mid-flight).
-SELF_TIMED_TOOL_NAMES = {"execute_python", "doc_ask", "doc_summary"}
+SELF_TIMED_TOOL_NAMES = {"execute_python", "doc_add", "doc_ask", "doc_summary"}
 
 
 @dataclass
