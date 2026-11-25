@@ -4,7 +4,7 @@ _Last updated: 2026-11-25. `main` is at **v2.0.0** (released 2026-07-20)
 plus everything merged since (git history; contracts below). This branch,
 `fix/seatbelt-reads-163` (stacked on PR #164, `fix/seatbelt-confinement-97`,
 #97), confines the macOS sandbox worker's reads as well as its writes. The
-suite is at **4622 passing**._
+suite is at **4629 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -17,7 +17,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4622 passing (`uv run pytest`, ~90 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4629 passing (`uv run pytest`, ~90 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -229,7 +229,10 @@ writes only to the run dir; `(deny file-read-data …)` over
 `worker_read_paths()` (prefixes, `sys.path[1:]`, editable `MAPPING`s, a frozen
 bundle's `Contents`) and the run dir. The re-allow **must name
 `file-read-data`**; a later `file-read*` does not override it. The parent's
-`sys.path[0]` stays out (it may be `$HOME` or the repo with its `.env`).
+`sys.path[0]` and cwd stay out (either may be `$HOME` or the repo with its
+`.env`), and so does any entry that is or contains `$HOME` or a root (logged).
+A run dir the profile cannot quote refuses the run; a worker the profile
+blocks returns a worded error and logs the traceback (it holds host paths).
 Checked on macOS 27 with the scientific stack, torch and a locally built
 frozen worker; joblib still runs serially (no POSIX semaphores). Tests:
 `tests/test_tools_python_seatbelt.py` (real `sandbox-exec`, skipped off

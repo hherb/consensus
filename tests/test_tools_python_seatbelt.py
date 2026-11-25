@@ -1,9 +1,11 @@
-"""The worker's one writable directory and the macOS Seatbelt profile (#97).
+"""The worker's files and the macOS Seatbelt profile (#97, #163).
 
 The handler makes a per-run directory, hands it to the worker as ``TMPDIR``
-and names it, resolved, as the profile's only writable path. The real-macOS
-tests run ``sandbox-exec`` with the profile the handler builds; elsewhere
-they are skipped.
+and ``cwd``, and names it, resolved, as the profile's only writable path.
+Under the user-data roots the profile allows reads only of that directory and
+the interpreter's own (``worker_read_paths``). The real-macOS tests run
+``sandbox-exec`` with the profile the handler builds; elsewhere they are
+skipped.
 """
 
 import asyncio
@@ -12,10 +14,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
 from consensus.tools_python import create_python_provider
+from consensus.tools_python.constants import SEATBELT_PRIVATE_ROOTS
 from consensus.tools_python.execution import _build_macos_sandbox_cmd
 
 from .test_tools_python_failures import CTX, FakeProc, FakeSpawner
@@ -190,22 +194,89 @@ except PermissionError:
 
 
 @needs_seatbelt
-@pytest.mark.parametrize("where", ["private_tmp", "other_var_folders_dir"])
-def test_seatbelt_denies_reads_outside_the_interpreter(sandbox_dir, tmp_path, where):
-    """Files in /private/tmp or another /var/folders dir are not readable."""
-    if where == "private_tmp":
-        target = tempfile.mkdtemp(prefix="consensus-sb163-", dir="/private/tmp")
-    else:
-        target = str(tmp_path)  # pytest's own dir under /private/var/folders
-    secret = os.path.join(target, "secret.txt")
-    with open(secret, "w") as f:
-        f.write("s3cret")
+@pytest.mark.parametrize("base", [
+    "/private/tmp", "/private/var/tmp", str(Path.home()), tempfile.gettempdir(),
+], ids=["private_tmp", "var_tmp", "home", "other_var_folders_dir"])
+def test_seatbelt_denies_reads_outside_the_interpreter(sandbox_dir, base):
+    """Files in home, the shared temp dirs or another /var/folders dir are not readable."""
+    target = tempfile.mkdtemp(prefix="consensus-sb163-", dir=base)
     try:
+        if (base == tempfile.gettempdir()
+                and not os.path.realpath(target).startswith("/private/var/folders/")):
+            pytest.skip(f"TMPDIR is not under /var/folders: {target}")
+        secret = os.path.join(target, "secret.txt")
+        with open(secret, "w") as f:
+            f.write("s3cret")
         for path in (secret, target):
             result = _run_in_profile(sandbox_dir, READ_PROBE.format(path=path))
             assert result.stdout.strip() == "DENIED", (path, result.stderr)
         own = _run_in_profile(sandbox_dir, READ_PROBE.format(path=sandbox_dir))
         assert own.stdout.strip() == "READ", own.stderr
     finally:
-        if where == "private_tmp":
-            shutil.rmtree(target, ignore_errors=True)
+        shutil.rmtree(target, ignore_errors=True)
+
+
+def test_read_paths_drop_the_launch_dir_and_broad_entries(tmp_path, monkeypatch):
+    """A path inserted before the launch dir, or one covering home, must not re-allow it."""
+    from consensus.tools_python.execution import worker_read_paths
+
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    inserted, narrow = tmp_path / "inserted", tmp_path / "narrow"
+    inserted.mkdir()
+    narrow.mkdir()
+    monkeypatch.setattr(sys, "path", [
+        str(inserted), str(cwd), "", str(Path.home()), "/", str(narrow), *sys.path[1:],
+    ])
+    paths = worker_read_paths()
+    assert os.path.realpath(cwd) not in paths, "the launch dir moved off sys.path[0]"
+    covered = [os.path.realpath(Path.home()), *SEATBELT_PRIVATE_ROOTS]
+    for path in paths:
+        assert not any(c == path or c.startswith(path.rstrip(os.sep) + os.sep)
+                       for c in covered), path
+    assert os.path.realpath(narrow) in paths, "a narrow entry is kept"
+
+
+def test_unquotable_run_dir_is_refused(monkeypatch):
+    monkeypatch.setattr("consensus.tools_python.execution.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("consensus.tools_python.execution.os.path.exists", lambda p: True)
+    with pytest.raises(ValueError):
+        _build_macos_sandbox_cmd("/usr/bin/python3", [], '/sb"x')
+
+
+async def test_unquotable_run_dir_returns_an_error(monkeypatch):
+    def refuse(*_args):
+        raise ValueError("unquotable")
+
+    monkeypatch.setattr("consensus.tools_python.execution._build_macos_sandbox_cmd", refuse)
+    spawner = FakeSpawner(FakeProc(stdout=b'{"stdout": "x"}'))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawner)
+    result = await create_python_provider().execute("execute_python", {"code": "1"}, CTX)
+    assert result.is_error
+    assert not spawner.kwargs, "nothing runs without the sandbox it asked for"
+
+
+async def test_profile_blocking_the_worker_gives_a_worded_error(monkeypatch, caplog):
+    """A worker the profile stops from loading its files must not leak host paths."""
+    stderr = (b"Traceback ...\nPermissionError: [Errno 1] Operation not permitted: "
+              b"'/Users/someone/src/consensus/consensus/__init__.py'")
+    monkeypatch.setattr("consensus.tools_python.execution._build_macos_sandbox_cmd",
+                        lambda *a: ["/usr/bin/sandbox-exec", "-p", "x", *a[:1], *a[1]])
+    spawner = FakeSpawner(FakeProc(returncode=1, stderr=stderr))
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawner)
+    with caplog.at_level("ERROR", logger="consensus.tools_python"):
+        result = await create_python_provider().execute("execute_python", {"code": "1"}, CTX)
+    assert result.is_error
+    assert "/Users/someone" not in result.content
+    assert "not an error in your code" in result.content
+    assert any("/Users/someone" in r.getMessage() for r in caplog.records), "the log keeps it"
+
+
+@needs_seatbelt
+async def test_real_worker_imports_a_compiled_package_under_seatbelt():
+    pytest.importorskip("numpy")
+    code = "import numpy\nprint(numpy.arange(3).sum())"
+    result = await create_python_provider().execute("execute_python", {"code": code}, CTX)
+    assert not result.is_error, result.content
+    assert "3" in result.content

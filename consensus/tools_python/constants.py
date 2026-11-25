@@ -21,9 +21,9 @@ INSTALL_APPROVAL_WORDS = frozenset({"yes", "y", "approve", "ok"})
 INSTALL_DENIAL_WORDS = frozenset({"no", "n", "deny"})
 # Directories holding user data on macOS. The Seatbelt profile lets the
 # worker stat paths under them but read no file or listing there, except the
-# directories its interpreter needs (issue #163).
+# directories its interpreter needs and its run directory (issue #163).
 SEATBELT_PRIVATE_ROOTS: tuple[str, ...] = (
-    "/Users", "/Volumes", "/private/tmp", "/private/var/folders",
+    "/Users", "/Volumes", "/private/tmp", "/private/var/tmp", "/private/var/folders",
 )
 # Characters that would end or escape a string in a Seatbelt profile.
 SEATBELT_UNSAFE_PATH_CHARS = frozenset('"\\')

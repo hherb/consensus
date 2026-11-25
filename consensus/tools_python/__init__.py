@@ -7,8 +7,9 @@ to write and run code during discussions. Uses multi-layered security:
 2. Subprocess isolation — code runs in a separate process
 3. Resource limits — RLIMIT_AS (memory), RLIMIT_CPU (CPU time)
 4. Restricted builtins and import whitelist in the worker process
-5. Optional macOS sandbox-exec: OS-level network denial and a loose write
-   restriction (writes allowed under /private/tmp; see issue #97)
+5. Optional macOS sandbox-exec: no network; writes only to the per-run
+   directory (#97); no reads under the user-data roots except the
+   interpreter's own directories and the run directory (#163)
 
 Also provides an install_python_package tool that lets participants
 request library installation with user approval.

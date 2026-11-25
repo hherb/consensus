@@ -116,8 +116,11 @@ def worker_read_paths() -> list[str]:
     the prefixes and every ``sys.path`` entry (``consensus`` is in
     site-packages or, installed editable, in its finder's ``MAPPING``). The
     parent's ``sys.path[0]`` (the launch directory or script directory) is
-    left out: the worker computes its own, inside its run directory. A frozen
-    app needs its bundle's ``Contents`` directory.
+    left out: the non-frozen worker computes its own, inside its run
+    directory. So is the parent's cwd, wherever it sits in ``sys.path``, and
+    any entry that is or contains ``$HOME`` or a ``SEATBELT_PRIVATE_ROOTS``
+    root (logged), since re-allowing it would undo the deny. A frozen app
+    needs its bundle's ``Contents`` directory.
 
     Returns:
         Sorted, de-duplicated real paths that exist.
@@ -130,7 +133,19 @@ def worker_read_paths() -> list[str]:
             paths.update(getattr(module, "MAPPING", {}).values())
     if is_frozen():
         paths.add(str(Path(sys.executable).resolve().parents[1]))
-    return sorted({os.path.realpath(p) for p in paths if p and os.path.exists(p)})
+    real = {os.path.realpath(p) for p in paths if p and os.path.exists(p)}
+    real.discard(os.path.realpath(os.getcwd()))
+    covered = [os.path.realpath(Path.home()), *SEATBELT_PRIVATE_ROOTS]
+    broad = {p for p in real if any(_is_same_or_ancestor(p, c) for c in covered)}
+    for path in sorted(broad):
+        logger.warning("Sandbox profile will not re-allow reads under %r: it "
+                       "covers the home directory or a user-data root", path)
+    return sorted(real - broad)
+
+
+def _is_same_or_ancestor(path: str, other: str) -> bool:
+    """Return True if *path* is *other* or one of its parent directories."""
+    return other == path or other.startswith(path.rstrip(os.sep) + os.sep)
 
 
 def _seatbelt_subpaths(paths: Iterable[str]) -> str:
@@ -169,6 +184,9 @@ def _build_macos_sandbox_cmd(
     Returns:
         Command list wrapped with sandbox-exec, or None if not on macOS
         or sandbox-exec is not available.
+
+    Raises:
+        ValueError: *sandbox_dir* resolves to a path the profile cannot quote.
     """
     if platform.system() != "Darwin":
         return None
@@ -186,7 +204,9 @@ def _build_macos_sandbox_cmd(
     # /private/var/...), and the re-allow must name file-read-data: a later
     # file-read* does not override an earlier file-read-data deny.
     sandbox_real = os.path.realpath(sandbox_dir)
-    readable = _seatbelt_subpaths(worker_read_paths() + [sandbox_real])
+    if SEATBELT_UNSAFE_PATH_CHARS.intersection(sandbox_real):
+        raise ValueError(f"sandbox profile cannot quote the run directory {sandbox_real!r}")
+    readable =_seatbelt_subpaths(worker_read_paths() + [sandbox_real])
     private = _seatbelt_subpaths(SEATBELT_PRIVATE_ROOTS)
     profile = f"""
 (version 1)
@@ -252,7 +272,16 @@ async def execute_python_handler(
     process = None
     try:
         # Try macOS sandbox-exec wrapper
-        sandbox_cmd = _build_macos_sandbox_cmd(python_exe, worker_args, sandbox_dir)
+        try:
+            sandbox_cmd = _build_macos_sandbox_cmd(python_exe, worker_args, sandbox_dir)
+        except ValueError as e:
+            logger.error("Cannot build the sandbox profile: %s", e)
+            return ToolResult(
+                content=("Code execution is unavailable: the sandbox cannot run "
+                         "from a temp directory whose path holds a quote or "
+                         "backslash. The operator should check the server log."),
+                is_error=True,
+            )
 
         if sandbox_cmd:
             cmd = sandbox_cmd
@@ -270,7 +299,8 @@ async def execute_python_handler(
                 stderr=asyncio.subprocess.PIPE,
                 env=worker_env,
                 # The worker calls os.getcwd(), which fails in a directory the
-                # profile cannot read; it is also the worker's sys.path[0].
+                # profile cannot read; it is also the sys.path[0] of a
+                # non-frozen (python -m) worker.
                 cwd=sandbox_dir,
             )
         except Exception as e:
@@ -308,7 +338,18 @@ async def execute_python_handler(
                 process.returncode, stderr_str[:WORKER_DIAGNOSTIC_MAX_CHARS],
             )
             error_msg = stderr_str.strip() or f"Process exited with code {process.returncode}"
-            if "MemoryError" in error_msg:
+            if sandbox_cmd and "Operation not permitted" in error_msg:
+                # The profile stopped the worker loading its own files; the
+                # traceback holds host paths, so it stays in the log (#163).
+                logger.error("Seatbelt profile blocked the sandbox worker: %s",
+                             stderr_str[:WORKER_DIAGNOSTIC_MAX_CHARS])
+                error_msg = (
+                    "The macOS sandbox stopped the code runner from loading "
+                    "its own files. This is a server configuration problem, "
+                    "not an error in your code; the operator should check the "
+                    "server log."
+                )
+            elif "MemoryError" in error_msg:
                 error_msg = "Code execution exceeded the memory limit."
             elif process.returncode == -9:
                 # RLIMIT_AS raises MemoryError; a bare SIGKILL is usually the OS
