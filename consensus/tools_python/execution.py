@@ -7,15 +7,18 @@ import logging
 import os
 import platform
 import shutil
+import sys
 import tempfile
-from typing import Optional
+from pathlib import Path
+from typing import Iterable, Optional
 
 from ..error_text import public_error
-from ..frozen import worker_command
+from ..frozen import is_frozen, worker_command
 from ..tools import ToolContext, ToolResult
 from .constants import (
     BLOCKED_ATTRS, BLOCKED_BUILTINS, BLOCKED_MODULES, FALLBACK_CPU_LIMIT_SECONDS,
-    MIN_WALL_TIMEOUT_SECONDS, PYTHON_MAX_OUTPUT, WALL_TIMEOUT_MULTIPLIER,
+    MIN_WALL_TIMEOUT_SECONDS, PYTHON_MAX_OUTPUT, SEATBELT_PRIVATE_ROOTS,
+    SEATBELT_UNSAFE_PATH_CHARS, WALL_TIMEOUT_MULTIPLIER,
     WORKER_DIAGNOSTIC_MAX_CHARS,
 )
 
@@ -106,6 +109,51 @@ def _analyze_ast(code: str) -> list[str]:
     return violations
 
 
+def worker_read_paths() -> list[str]:
+    """Return the resolved directories the sandbox worker's interpreter reads.
+
+    The worker runs this interpreter with this ``site`` setup, so it needs
+    the prefixes and every ``sys.path`` entry (``consensus`` is in
+    site-packages or, installed editable, in its finder's ``MAPPING``). The
+    parent's ``sys.path[0]`` (the launch directory or script directory) is
+    left out: the worker computes its own, inside its run directory. A frozen
+    app needs its bundle's ``Contents`` directory.
+
+    Returns:
+        Sorted, de-duplicated real paths that exist.
+    """
+    paths = {sys.prefix, sys.base_prefix, sys.exec_prefix, sys.base_exec_prefix}
+    paths.update(sys.path[1:])
+    # setuptools editable installs map a package to its source dir in a finder.
+    for name, module in list(sys.modules.items()):
+        if name.startswith("__editable__"):
+            paths.update(getattr(module, "MAPPING", {}).values())
+    if is_frozen():
+        paths.add(str(Path(sys.executable).resolve().parents[1]))
+    return sorted({os.path.realpath(p) for p in paths if p and os.path.exists(p)})
+
+
+def _seatbelt_subpaths(paths: Iterable[str]) -> str:
+    """Render *paths* as Seatbelt ``(subpath ...)`` filters.
+
+    A path holding a quote or backslash would break out of the profile
+    string, so it is left out and logged; its imports then fail visibly.
+
+    Args:
+        paths: Resolved directory paths.
+
+    Returns:
+        The filters, space-separated.
+    """
+    safe = []
+    for path in paths:
+        if SEATBELT_UNSAFE_PATH_CHARS.intersection(path):
+            logger.warning("Sandbox profile skips a path it cannot quote: %r", path)
+        else:
+            safe.append(f'(subpath "{path}")')
+    return " ".join(safe)
+
+
 def _build_macos_sandbox_cmd(
     python_executable: str,
     worker_module_args: list[str],
@@ -130,17 +178,25 @@ def _build_macos_sandbox_cmd(
     if not os.path.exists(sandbox_exec):
         return None
 
-    # Seatbelt profile: deny network; allow all reads, writes only under
-    # sandbox_dir (the worker's TMPDIR, so its scratch dir lands there).
-    # Seatbelt matches resolved paths: /var/folders/... is /private/var/...
-    # on macOS, so an unresolved path would never match (issue #97).
+    # Seatbelt profile: deny network; writes only under sandbox_dir (the
+    # worker's TMPDIR, so its scratch dir lands there, issue #97); no file
+    # contents or listings under the user-data roots except what the
+    # interpreter needs (issue #163). Stat stays allowed everywhere, so path
+    # resolution works. Seatbelt matches resolved paths (/var/folders/... is
+    # /private/var/...), and the re-allow must name file-read-data: a later
+    # file-read* does not override an earlier file-read-data deny.
+    sandbox_real = os.path.realpath(sandbox_dir)
+    readable = _seatbelt_subpaths(worker_read_paths() + [sandbox_real])
+    private = _seatbelt_subpaths(SEATBELT_PRIVATE_ROOTS)
     profile = f"""
 (version 1)
 (deny default)
 (allow process-exec)
 (allow process-fork)
 (allow file-read*)
-(allow file-write* (subpath "{os.path.realpath(sandbox_dir)}"))
+(deny file-read-data {private})
+(allow file-read-data {readable})
+(allow file-write* (subpath "{sandbox_real}"))
 (allow file-write* (subpath "/dev/null"))
 (allow file-write-data (literal "/dev/fd/1"))
 (allow file-write-data (literal "/dev/fd/2"))
@@ -213,6 +269,9 @@ async def execute_python_handler(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=worker_env,
+                # The worker calls os.getcwd(), which fails in a directory the
+                # profile cannot read; it is also the worker's sys.path[0].
+                cwd=sandbox_dir,
             )
         except Exception as e:
             logger.error("Failed to launch sandbox worker: %s", e)
