@@ -235,6 +235,23 @@ class TestLlmJudgeScore:
         r = await llm_judge_score("p", GOLD, "c", "http://j/v1", "m")
         assert r == {"scores": {}, "error": "down"}
 
+    async def test_errors_hide_urls_and_raw_text(self, judge_calls):
+        """A provider body or our own wording, never a URL or path (#157)."""
+        import httpx
+        req = httpx.Request("POST", "http://j/v1?key=SECRET")
+        judge_calls.error = httpx.HTTPStatusError(
+            "401 for http://j/v1?key=SECRET", request=req,
+            response=httpx.Response(401, text="Bad key", request=req))
+        r = await llm_judge_score("p", GOLD, "c", "http://j/v1", "m")
+        assert r["error"] == "HTTP 401: Bad key"
+        judge_calls.error = None
+        judge_calls.reply = "[]"
+        r = await llm_judge_score("p", GOLD, "c", "http://j/v1", "m")
+        assert r["error"] == "JudgeReplyError: judge reply is not a JSON object"
+        judge_calls.reply = "not json"
+        r = await llm_judge_score("p", GOLD, "c", "http://j/v1", "m")
+        assert r["error"] == "JSONDecodeError"
+
 
 class TestLlmJudgeRunFromDb:
     async def test_writes_llm_judge_score(self, eval_db, judge_calls):

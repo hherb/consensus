@@ -64,7 +64,7 @@ async def execute_batch(eval_db, batch_id: int, api_key: str = "") -> None:
             except Exception as e:
                 logger.exception("Auto-scoring run %d failed", run_id)
                 eval_db.update_run(
-                    run_id, error_text=f"{AUTO_SCORE_FAILED_PREFIX}{e}")
+                    run_id, error_text=AUTO_SCORE_FAILED_PREFIX + describe_flow_error(e))
 
         eval_db.update_batch_status(batch_id, "done", time.time())
 

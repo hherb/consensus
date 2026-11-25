@@ -9,6 +9,7 @@ import logging
 from typing import Optional
 
 from ..http_fetch import FetchError, redact_url
+from ..error_text import public_error
 
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ class ImagesMixin:
             # A bug in the fetch path, not a bad URL: keep the traceback.
             logger.exception("Image fetch failed unexpectedly for %s",
                              redact_url(url))
-            return {"error": f"Failed to fetch image: {e}"}
+            return {"error": public_error("Failed to fetch image", e)}
 
         return await self.add_image(
             filename=filename, content_bytes=content_bytes,

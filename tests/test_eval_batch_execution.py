@@ -64,7 +64,7 @@ class TestExecuteBatch:
         assert run["status"] == "done"
         assert run["conclusion"] == "Reply 1"
         assert run["error_text"].startswith(AUTO_SCORE_FAILED_PREFIX)
-        assert "scorer broke" in run["error_text"]
+        assert run["error_text"] == AUTO_SCORE_FAILED_PREFIX + "RuntimeError"
         assert eval_db.get_batch(batch_id)["status"] == "done"
 
         monkeypatch.undo()

@@ -8,7 +8,7 @@ tool packages shown in the UI #96, `method_state` save consistency #152,
 degraded-extraction warnings #81, safe tool and API error text #92 —
 details in git history). This branch, `fix/remaining-catchalls-157`, closes
 the raw-exception-text catch-alls #92 left (#157). The suite is at
-**4577 passing**._
+**4578 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -21,7 +21,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4577 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4578 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -171,12 +171,15 @@ ourselves — shows as `"<summary>: <message>"`. Repo owner's call
   class alone unless the error is a `PublicMessageError`
   (`ConfigurationError` is one, so the setting to fix still shows), so every
   turn, summary, conclusion and Triage notice, the rotation "not saved"
-  error, MCP `run_discussion`/`Error: …` and eval runs show
-  `OperationalError`, not its path. A provider HTTP error still shows
-  `HTTP <code>: <the provider's own message>` (`describe_turn_error`, repo
-  owner's call). `recommend_method` and the memory config / connection-test
-  routes (web and desktop) go through these too; `RecommenderError` wraps a
-  cause with `public_error`.
+  error, MCP `run_discussion` (turn loop and conclusion) and `Error: …`, and
+  eval runs, auto-scoring and the LLM judge show `OperationalError`, not its
+  path. A provider HTTP error still shows `HTTP <code>: <the provider's own
+  message>` (`describe_turn_error`, repo owner's call). `recommend_method`,
+  the memory config / connection-test routes (web and desktop), and the
+  unexpected-fault branches of the image / URL fetch and MCP connection test
+  go through these or `public_error` too; `RecommenderError` wraps a cause
+  with `public_error`, and the judge's own reply check is a
+  `JudgeReplyError` (a `PublicMessageError`), so its wording stays.
 
 Tests: `tests/test_error_text.py`, `tests/test_tools.py` (`SECRET`),
 `tests/test_flow_error_*.py`, `tests/test_app.py` (`TestRecommendMethodFailure`),

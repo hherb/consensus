@@ -184,7 +184,8 @@ async def test_connection_test_bug_keeps_traceback(app, caplog):
                       return_value=FakeMCPProvider(raises=KeyError("name"))), \
          caplog.at_level(logging.WARNING, logger="consensus.app_api"):
         result = await app.test_mcp_connection(sid)
-    assert result == {"success": False, "error": "'name'"}
+    assert result == {"success": False,
+                      "error": "MCP connection test failed (KeyError)"}
     assert caplog.records[-1].exc_info is not None
 
 
@@ -206,7 +207,7 @@ async def test_image_fetch_bug_keeps_traceback(app, images_dir, caplog):
                AsyncMock(side_effect=TypeError("bad"))), \
          caplog.at_level(logging.WARNING, logger="consensus.app_api"):
         result = await app.add_image_from_url("http://x/a.png")
-    assert result == {"error": "Failed to fetch image: bad"}
+    assert result == {"error": "Failed to fetch image (TypeError)"}
     assert caplog.records[-1].exc_info is not None
 
 
