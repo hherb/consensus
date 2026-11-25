@@ -199,10 +199,14 @@ class TestRecommendAsync:
         catalog = [{"name": "ach", "display_name": "ACH", "description": "d", "phases": []}]
         provider = {"model": "test-model"}
 
-        with pytest.raises(RecommenderError, match="API down"):
+        with pytest.raises(RecommenderError) as caught:
             await recommender.recommend(
                 "test topic", "test type", catalog, mock_client, provider,
             )
+        # The raw text stays in the cause and the log, not the message (#157).
+        assert "API down" not in str(caught.value)
+        assert "(Exception)" in str(caught.value)
+        assert str(caught.value.__cause__) == "API down"
 
     @pytest.mark.asyncio
     async def test_recommend_raises_on_unparseable_reply(self):

@@ -6,6 +6,7 @@ is ``ConsensusApp``, which owns all state.
 
 import logging
 
+from ..app_discussion_flow.helpers import describe_flow_error
 from ..models import EntityType
 from .. import (app_discussion_flow, app_discussion_roles,
                 app_discussion_setup, structured_output)
@@ -121,7 +122,7 @@ class DiscussionMixin:
             return {"recommendations": recs}
         except Exception as e:
             logger.exception("Method recommendation failed")
-            return {"error": str(e)}
+            return {"error": describe_flow_error(e)}
         finally:
             await ai_client.close()
 

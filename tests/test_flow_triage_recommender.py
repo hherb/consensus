@@ -143,7 +143,8 @@ class TestTriageRecommenderFailureIsVisible:
                 disc, moderator, tmp_db, pricing,
                 key_resolver=lambda pid, env: "key")
 
-        assert "classifier exploded" in result["content"]
+        assert "failed.** RuntimeError" in result["content"]
+        assert "classifier exploded" not in result["content"]
         assert "open_discussion" in result["content"]
 
 

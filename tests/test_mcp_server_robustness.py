@@ -128,8 +128,7 @@ class TestRunDiscussionReportsFailures:
 
         _wrap_complete_turn(monkeypatch, locked)
         data = await _run(server)
-        assert data["error"] == ("Turn loop failed: "
-                                 "OperationalError: database is locked")
+        assert data["error"] == "Turn loop failed: OperationalError"
         row = server._db.get_discussion(data["discussion_id"])
         assert row["status"] != "active"
 
@@ -253,3 +252,14 @@ class TestStdioRobustness:
                             handler)
         text, is_error = await call(server, "list_discussions", {})
         assert is_error and text == "Error: TimeoutError"
+
+    async def test_tool_error_hides_the_exception_message(
+            self, server, monkeypatch):
+        """A SQLite message can name a database path (#157)."""
+        async def handler(args):
+            raise sqlite3.OperationalError("unable to open /srv/s/abc.db")
+
+        monkeypatch.setitem(server._tools["list_discussions"], "handler",
+                            handler)
+        text, is_error = await call(server, "list_discussions", {})
+        assert is_error and text == "Error: OperationalError"

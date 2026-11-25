@@ -131,9 +131,9 @@ class TestConclusionFailureIsVisible:
 
         result = await conclude_discussion(disc, moderator, tmp_db, pricing)
 
-        assert "database is locked" in result["conclusion_error"]
+        assert result["conclusion_error"] == "OperationalError"
         assert any(m.role == MessageRole.SYSTEM
-                   and "database is locked" in m.content
+                   and "OperationalError" in m.content
                    for m in disc.messages)
 
     @pytest.mark.asyncio
@@ -236,11 +236,23 @@ class TestDescribeInternalError:
     """A bare KeyError renders as ``'positions'`` — useless on its own."""
 
     def test_names_the_exception_type(self):
-        assert describe_internal_error(KeyError("positions")) == (
-            "KeyError: 'positions'")
+        assert describe_internal_error(KeyError("positions")) == "KeyError"
 
     def test_empty_message_uses_the_type_alone(self):
         assert describe_internal_error(RuntimeError()) == "RuntimeError"
+
+    def test_hides_a_database_path(self):
+        """A SQLite message can name a session's DB file (#157)."""
+        err = sqlite3.OperationalError(
+            "unable to open database file /srv/sessions/abc123.db")
+        assert describe_internal_error(err) == "OperationalError"
+
+    def test_keeps_a_configuration_message(self):
+        """We word it ourselves, and it names the setting to fix."""
+        from consensus.models import ConfigurationError
+        err = ConfigurationError("Assign a provider in the Profiles tab.")
+        assert describe_internal_error(err) == (
+            "ConfigurationError: Assign a provider in the Profiles tab.")
 
 
 class TestTurnErrorWording:
@@ -317,7 +329,8 @@ class TestTurnErrorWording:
         assert result["error_kind"] == "internal"
         assert "API error" not in result["content"]
         assert "internal error" in result["content"]
-        assert "KeyError: 'positions'" in result["content"]
+        assert "(KeyError)" in result["content"]
+        assert "positions" not in result["content"]
 
     @pytest.mark.asyncio
     async def test_provider_failure_keeps_api_wording(
@@ -357,7 +370,7 @@ class TestTurnErrorWording:
 
         assert result["skipped"] is True
         assert result["error_kind"] == "internal"
-        assert "database is locked" in result["content"]
+        assert "(OperationalError)" in result["content"]
         assert disc.messages[-1].content == result["content"]
 
 
@@ -492,7 +505,7 @@ class TestSummaryFailureDetail:
             disc, moderator, tmp_db, pricing, lambda: {})
 
         assert "Summary generation failed" in result["error"]
-        assert "KeyError: 'storyboard'" in result["error"]
+        assert result["error"].endswith(": KeyError")
 
     @pytest.mark.asyncio
     async def test_provider_summary_failure_quotes_the_body(

@@ -4,6 +4,7 @@ import logging
 
 from aiohttp import web
 
+from ..error_text import public_error
 from .context import session_app
 from .request_io import (
     UploadError, int_field, non_string_field, read_json_object, read_upload,
@@ -27,7 +28,9 @@ async def handle_memory_config_get(request: web.Request) -> web.StreamResponse:
         return web.json_response(config)
     except Exception as e:
         logger.exception("Could not read memory config")
-        return web.json_response({"error": str(e)}, status=500)
+        return web.json_response(
+            {"error": public_error("Could not read memory config", e)},
+            status=500)
 
 
 async def handle_memory_config_put(request: web.Request) -> web.StreamResponse:
@@ -74,7 +77,9 @@ async def handle_memory_test(request: web.Request) -> web.StreamResponse:
         return web.json_response({"ok": ok, "message": message})
     except Exception as e:
         logger.exception("Memory connection test failed")
-        return web.json_response({"ok": False, "message": str(e)})
+        return web.json_response(
+            {"ok": False,
+             "message": public_error("Memory connection test failed", e)})
 
 
 async def handle_document_upload(request: web.Request) -> web.StreamResponse:

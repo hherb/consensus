@@ -5,9 +5,10 @@ plus everything merged since (the #61 split, auth hardening, the desktop
 bridge fix #125, MCP argument validation #124, one-transaction rotation
 #107, rotation rollback #147, `serialize_method_state` raising #150, failed
 tool packages shown in the UI #96, `method_state` save consistency #152,
-degraded-extraction warnings #81 — details in git history). This branch,
-`fix/tool-error-text-92`, stops tool errors and the API's 500 echoing raw
-exception text (#92). The suite is at **4571 passing**._
+degraded-extraction warnings #81, safe tool and API error text #92 —
+details in git history). This branch, `fix/remaining-catchalls-157`, closes
+the raw-exception-text catch-alls #92 left (#157). The suite is at
+**4577 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -20,7 +21,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4571 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4577 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -166,11 +167,19 @@ ourselves — shows as `"<summary>: <message>"`. Repo owner's call
   raise site of a `PublicMessageError` must keep to that.
 - Errors we word ourselves (validation 400s, auth replies, `FetchError`,
   typed `DocumentError`s with their hint) keep their text.
-- Still open, **#157**: memory config and connection-test routes, the
-  desktop connection test, `recommend_method`, and the MCP server's generic
-  `Error: …`.
+- **Flow errors too** (#157): `helpers.describe_internal_error` names the
+  class alone unless the error is a `PublicMessageError`
+  (`ConfigurationError` is one, so the setting to fix still shows), so every
+  turn, summary, conclusion and Triage notice, the rotation "not saved"
+  error, MCP `run_discussion`/`Error: …` and eval runs show
+  `OperationalError`, not its path. A provider HTTP error still shows
+  `HTTP <code>: <the provider's own message>` (`describe_turn_error`, repo
+  owner's call). `recommend_method` and the memory config / connection-test
+  routes (web and desktop) go through these too; `RecommenderError` wraps a
+  cause with `public_error`.
 
 Tests: `tests/test_error_text.py`, `tests/test_tools.py` (`SECRET`),
+`tests/test_flow_error_*.py`, `tests/test_app.py` (`TestRecommendMethodFailure`),
 `tests/test_server_api.py`, `tests/test_tools_memory_*.py`
 (`TestErrorTextIsSafe`), `tests/test_mcp_http_client.py`.
 
@@ -500,7 +509,7 @@ update every doc naming the old file *and* the content beside the name.
   and #128 an unverified OAuth sign-up can pre-hijack an address (both want
   an email-verification design).
 - No decision needed: #102 PR #100 review follow-ups; #97 Seatbelt does
-  not confine writes; #157 the catch-alls #92 left. Suggested next: #157.
+  not confine writes. Suggested next: #102.
 
 ### Roadmap
 

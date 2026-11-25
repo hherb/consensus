@@ -5,6 +5,8 @@ the memory configuration."""
 import logging
 from typing import Optional
 
+from ..error_text import public_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -170,4 +172,5 @@ class CatalogBridgeMixin:
             return {"ok": ok, "message": message}
         except Exception as e:
             logger.exception("Memory connection test failed")
-            return {"ok": False, "message": str(e)}
+            return {"ok": False,
+                    "message": public_error("Memory connection test failed", e)}

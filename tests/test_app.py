@@ -66,6 +66,42 @@ class TestRecommendMethodKeyResolution:
         assert calls == [(mod.ai_config.provider_id, "")]
 
 
+class TestRecommendMethodFailure:
+    """A failed recommendation shows no raw exception text (#157)."""
+
+    @staticmethod
+    async def _recommend_failing_with(app, cause):
+        from consensus.methods.recommender import RecommenderError
+
+        async def fail(*args, **kwargs):
+            raise RecommenderError("wrapped") from cause
+
+        with patch("consensus.app_discussion_setup.recommend_method",
+                   new=fail):
+            return await app.recommend_method("topic", "")
+
+    @pytest.mark.asyncio
+    async def test_provider_error_keeps_its_body_not_its_url(
+            self, app_with_entities):
+        import httpx
+        app = app_with_entities[0]
+        request = httpx.Request("POST", "https://api.example.com/v1?key=SECRET")
+        response = httpx.Response(
+            401, text='{"error":{"message":"Invalid key"}}', request=request)
+        cause = httpx.HTTPStatusError("401 for https://api.example.com/v1?key=SECRET",
+                                      request=request, response=response)
+        result = await self._recommend_failing_with(app, cause)
+        assert result == {"error": "HTTP 401: Invalid key"}
+
+    @pytest.mark.asyncio
+    async def test_internal_error_names_only_its_class(self, app_with_entities):
+        import sqlite3
+        app = app_with_entities[0]
+        cause = sqlite3.OperationalError("unable to open /srv/s/abc.db")
+        result = await self._recommend_failing_with(app, cause)
+        assert result == {"error": "OperationalError"}
+
+
 class TestGetState:
     def test_initial_state(self, app):
         state = app.get_state()
