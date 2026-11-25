@@ -7,12 +7,17 @@ changed in between (rebinding) could reach an internal address (#102).
 only to the addresses recorded for each host.
 """
 
+import logging
 from typing import Any
-from urllib.parse import urlsplit
 from urllib.request import getproxies
 
 import httpcore
 import httpx
+
+logger = logging.getLogger(__name__)
+
+#: Whether the "proxy set, not pinned" notice was logged in this process.
+_proxy_notice_logged = False
 
 
 class PinnedBackend(httpcore.AsyncNetworkBackend):
@@ -66,24 +71,35 @@ def socket_backend() -> httpcore.AsyncNetworkBackend:
     return httpcore.AnyIOBackend()
 
 
-def pinned_transport(url: str, pins: dict[str, list[str]]
-                      ) -> httpx.AsyncHTTPTransport | None:
+def pinned_transport(pins: dict[str, list[str]]
+                     ) -> httpx.AsyncHTTPTransport | None:
     """A transport whose connections go only to addresses in *pins*.
 
-    Returns ``None`` when an environment or system proxy applies to *url*'s
+    Returns ``None`` when an environment or system proxy is set for any
     scheme: the client then keeps httpx's stock transport, which honours
     the proxy, and the proxy resolves the name, so there is nothing to pin.
+    Any scheme counts, not only the first URL's, because passing a
+    transport turns off httpx's env proxies for every hop and a redirect
+    can change scheme. The first such fetch logs that pinning is off.
 
-    shortcut: a host exempted by ``NO_PROXY`` while a proxy is set is
-    reached directly and unpinned; mirror httpx's NO_PROXY matching if a
+    shortcut: behind a proxy, a host exempted by ``NO_PROXY`` and a scheme
+    with no proxy of its own are reached directly and unpinned; mount a
+    pinned transport per scheme and mirror httpx's NO_PROXY matching if a
     proxied multi-user deployment needs that closed.
     """
+    global _proxy_notice_logged
     proxies = getproxies()
-    if proxies.get(urlsplit(url).scheme) or proxies.get("all"):
+    if any(proxies.get(scheme) for scheme in ("http", "https", "all")):
+        if not _proxy_notice_logged:
+            _proxy_notice_logged = True
+            logger.info("A proxy is configured: guarded fetches are not "
+                        "pinned to their checked addresses; DNS rebinding "
+                        "is left to the proxy (#102)")
         return None
     transport = httpx.AsyncHTTPTransport()
     # httpx takes no network backend, so its pool is rebuilt with one;
-    # tests/test_http_fetch_pinning.py fails if this stops connecting.
+    # tests/test_http_fetch_pinning.py fails if this stops connecting. The
+    # pool's own limits apply, which is fine for a client used for one fetch.
     transport._pool = httpcore.AsyncConnectionPool(
         ssl_context=httpx.create_ssl_context(),
         network_backend=PinnedBackend(pins, socket_backend()))

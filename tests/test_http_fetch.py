@@ -132,9 +132,11 @@ async def test_streamed_oversize_is_aborted(monkeypatch):
 
 # --- guard (SSRF) --------------------------------------------------------------
 
-def _refuse_internal(url: str) -> None:
+def _refuse_internal(url: str) -> list[str]:
+    """A guard: refuses "internal" hosts, returns a public address for others."""
     if "internal" in url:
         raise FetchRejected("internal address refused")
+    return ["93.184.216.34"]
 
 
 async def test_guard_refuses_first_request(monkeypatch):
@@ -304,7 +306,8 @@ async def test_extra_headers_are_sent(monkeypatch):
 @pytest.mark.parametrize("value, expected", [
     ("7", 7.0), (" 0 ", 0.0), ("Wed, 25 Nov 2026 12:00:30 GMT", 30.0),
     ("Wed, 25 Nov 2026 11:59:00 GMT", 0.0), ("-3", None), ("soon", None),
-    ("", None), (None, None),
+    ("", None), (None, None), ("\xb2", None),
+    ("Wed, 25 Nov 2026 12:00:30 -0000", 30.0),
 ])
 def test_retry_after_seconds(value, expected):
     now = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)

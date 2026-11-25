@@ -246,8 +246,8 @@ Access is checked during `get_tools_for_entity()`:
 
 - **Execution timeout:** 30 seconds per tool call (`TOOL_EXECUTION_TIMEOUT`)
 - **Interactive tools bypass:** Tools listed in `INTERACTIVE_TOOL_NAMES`
-  (currently `ask_user`) are exempt from the 30-second timeout and manage their
-  own timeout internally (5 minutes for `ask_user`)
+  (`ask_user`, `install_python_package`) are exempt from the 30-second timeout
+  and manage their own timeout internally (5 minutes for `ask_user`)
 - **Self-timed tools bypass:** Tools in `SELF_TIMED_TOOL_NAMES`
   (`execute_python`, `doc_add`, `doc_ask`, `doc_summary`) enforce their own
   limit instead; `doc_add` stops after `DOC_ADD_DEADLINE` (180 s), because its
@@ -545,8 +545,8 @@ refused.
   (#98). The guard returns the addresses it checked and the connection is
   pinned to them (`consensus/http_pinning.py`), so a DNS answer that changes
   after the check (rebinding) is never connected to; TLS still verifies the
-  hostname. When an environment or system proxy applies, the stock transport
-  is kept and the proxy resolves the name (#102)
+  hostname. When an environment or system proxy is set for any scheme, the
+  stock transport is kept and the proxy resolves the name (#102)
 - **Retry and size cap:** URL fetches go through the shared
   `consensus/http_fetch.py` (`fetch_capped`, also used by document
   ingestion and `fetch_webpage`). Timeouts, transport errors, DNS failures,

@@ -474,6 +474,11 @@ class TestCaughtErrorsAreLogged:
         assert app.python_tools_available is True
         assert app.get_state()["tool_load_failures"] == []
 
+    def test_each_package_is_recorded_under_its_provider_name(self, app):
+        """Assignments are keyed by these names, once hard-coded (#102)."""
+        names = {row["name"] for row in app.db.get_tool_providers()}
+        assert {"memory", "documents", "images", "python_exec"} <= names
+
 
 # --- Discussion setup --------------------------------------------------------
 

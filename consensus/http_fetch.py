@@ -13,14 +13,15 @@ used to carry its own loop and the image one had no retry at all (issue
   tool call's fetch fails with its own message before the tool timeout;
 * the body is measured *while* it streams, so an oversized response is
   abandoned rather than buffered into memory first;
-* a ``Retry-After`` header sets the wait before the next attempt; a wait
-  longer than ``FETCH_MAX_RETRY_AFTER`` or the time left gives up at once;
+* a ``Retry-After`` header can lengthen the wait before the next attempt
+  (never below our own backoff); a wait longer than
+  ``FETCH_MAX_RETRY_AFTER`` or the time left gives up at once;
 * an optional ``guard`` runs on every request, redirect hops included;
   :func:`require_public_host` is the SSRF guard every caller fetching a
   user- or AI-supplied URL passes, so a public URL cannot redirect the
-  server to an internal address. The connection is pinned to the addresses
-  the guard checked, so a DNS answer that changes after the check
-  (rebinding) is never connected to (#102);
+  server to an internal address. Unless an env or system proxy is set, the
+  connection is pinned to the addresses the guard checked, so a DNS answer
+  that changes after the check (rebinding) is never connected to (#102);
 * URLs in messages and logs pass through :func:`redact_url`, because a
   signed URL's query string is a credential (issue #89).
 
@@ -205,7 +206,7 @@ def retry_after_seconds(value: str | None, now: datetime) -> float | None:
         a missing or unreadable header.
     """
     value = (value or "").strip()
-    if value.isdigit():
+    if value.isascii() and value.isdigit():  # isdigit alone accepts "²"
         return float(value)
     try:
         when = parsedate_to_datetime(value)
@@ -217,7 +218,7 @@ def retry_after_seconds(value: str | None, now: datetime) -> float | None:
 
 
 #: Checks a request URL; returns the addresses it may connect to.
-Guard = Callable[[str], "list[str] | None"]
+Guard = Callable[[str], list[str]]
 
 # Faults no retry can cure. UnsupportedProtocol subclasses TransportError,
 # so this is checked before the retry branch.
@@ -255,10 +256,15 @@ def _guard_hook(guard: Guard, pins: dict[str, list[str]]
     guard may resolve DNS, so it runs in a worker thread rather than
     blocking the event loop. The addresses it returns are recorded in
     *pins* under the request's ``raw_host``, the name httpcore connects to.
+    A guard that returns none is a programming fault, refused at once
+    rather than retried as a connection failure.
     """
     async def hook(request: httpx.Request) -> None:
         addresses = await asyncio.to_thread(guard, str(request.url))
-        pins[request.url.raw_host.decode("ascii")] = list(addresses or [])
+        host = request.url.raw_host.decode("ascii")
+        if not addresses:
+            raise FetchRejected(f"the URL guard returned no address for {host}")
+        pins[host] = list(addresses)
     return hook
 
 
@@ -356,7 +362,7 @@ async def _fetch_with_retries(
     if guard:
         pins: dict[str, list[str]] = {}
         client_kwargs["event_hooks"] = {"request": [_guard_hook(guard, pins)]}
-        transport = pinned_transport(url, pins)
+        transport = pinned_transport(pins)
         if transport is not None:
             client_kwargs["transport"] = transport
     last_fault = ""

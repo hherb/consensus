@@ -61,6 +61,19 @@ async def test_doc_add_reports_its_own_deadline(tmp_db, ctx, monkeypatch):
         "(fetch, parse and summary); nothing was stored")
 
 
+async def test_an_inner_timeout_is_not_reported_as_the_deadline(
+        tmp_db, ctx, monkeypatch):
+    async def ingest(**kwargs):
+        raise TimeoutError("inner")
+
+    patch_where_defined(monkeypatch, handlers._doc_add_handler,
+                        "ingest_document", ingest)
+    result = await handlers._doc_add_handler({"text": "body"}, ctx, tmp_db,
+                                             None, None)
+    assert result.is_error
+    assert result.content == "Failed to add document (TimeoutError)"
+
+
 async def test_parsing_runs_off_the_event_loop(tmp_db, monkeypatch):
     seen: list[bool] = []
     real_parse = ingestion.parse_document

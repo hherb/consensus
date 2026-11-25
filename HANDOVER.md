@@ -8,7 +8,7 @@ tool packages shown in the UI #96, `method_state` save consistency #152,
 degraded-extraction warnings #81, safe tool and API error text #92 and
 #157 — details in git history). This branch, `fix/pr100-followups-102`,
 closes the PR #100 review follow-ups (#102). The suite is at
-**4605 passing**._
+**4610 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -21,7 +21,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4605 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4610 passing (`uv run pytest`, ~60 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -198,10 +198,14 @@ Tests: `tests/test_error_text.py`, `tests/test_tools.py` (`SECRET`),
   takes no network backend, so `pinned_transport` rebuilds the transport's
   `_pool` (private; `tests/test_http_fetch_pinning.py` drives real
   httpx/httpcore over a mock socket backend and fails if it stops
-  connecting). **When `getproxies()` has a proxy for the scheme (or `all`),
-  the stock transport is kept** — repo owner's call: env/system proxies keep
-  working and the proxy resolves the name. `install_transport` in tests drops
-  the pinned transport for its `MockTransport`.
+  connecting). **When `getproxies()` has a proxy for any scheme (`http`,
+  `https` or `all`), the stock transport is kept** — repo owner's call:
+  env/system proxies keep working and the proxy resolves the name. Any
+  scheme counts because a transport switches off httpx's env proxies for
+  every hop and a redirect can change scheme; the first such fetch logs an
+  INFO line. A guard that returns no address is refused at once
+  (`FetchRejected`), not retried. `install_transport` in tests drops the
+  pinned transport for its `MockTransport`.
 - **`Retry-After` sets the wait** (never below our own backoff); a wait past
   `FETCH_MAX_RETRY_AFTER` (30 s) or the deadline's time left gives up at once
   ("after 1 attempt: HTTP 429 (retry after 60s)"). `max_retries < 1` is a
@@ -286,8 +290,10 @@ but the retry's blocked re-pause, whose record is JSON-safe).
 `get_state()["tool_load_failures"]` lists the labels of those that are
 `False`, and `static/profiles.js` `_toolLoadNotice()` renders it above the
 profile tool list (their tools are otherwise just absent). A new tool
-package adds its flag to that tuple. All four `_init_*_tools` catch
-`Exception`, so a faulty provider is listed rather than crashing startup.
+package adds its flag to that tuple. All four `_init_*_tools` go through
+`_load_tool_package`, which catches `Exception` from import and construction
+only, so a faulty package is listed rather than crashing startup (a DB fault
+recording it still propagates, #102).
 Document tools import `tools_memory`, so a broken memory package lists both.
 Tests: `tests/test_app_characterization.py` (`tool_package` / `tool_load` /
 `tool_provider`).
