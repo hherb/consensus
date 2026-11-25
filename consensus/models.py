@@ -7,6 +7,8 @@ from typing import Optional
 import os
 import time
 
+from .error_text import PublicMessageError
+
 # Default configuration values
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_MODEL = "llama3"
@@ -19,7 +21,7 @@ DEFAULT_EMBEDDING_BACKEND = "ollama"
 DEFAULT_EMBEDDING_MODEL = "nomic-embed-text-v2-moe:latest"
 DEFAULT_EMBEDDING_ENDPOINT = "http://localhost:11434"
 
-class ConfigurationError(ValueError):
+class ConfigurationError(PublicMessageError, ValueError):
     """This deployment is set up wrong — not a bug, and not the provider.
 
     Carved out of ``ValueError`` so the flow layer can tell a missing API

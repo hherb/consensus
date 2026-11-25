@@ -13,6 +13,7 @@ import httpx
 
 from ..models import Message, MessageRole
 from ..tools import ToolContext, ToolResult
+from ..error_text import public_error
 
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,8 @@ class MCPExpertsMixin:
             # A bug in the client, not the server: keep the traceback.
             logger.exception("MCP connection test failed unexpectedly for server %r",
                              server["name"])
-            return {"success": False, "error": str(e) or type(e).__name__}
+            return {"success": False,
+                    "error": public_error("MCP connection test failed", e)}
         finally:
             await provider.close()
 

@@ -108,7 +108,8 @@ class TestMemoryConfig:
         monkeypatch.setattr(tm.EmbeddingClient, "test_connection", boom)
         with caplog.at_level(logging.ERROR, logger="consensus.desktop"):
             assert bridge.test_memory_connection() == {
-                "ok": False, "message": "no ollama"}
+                "ok": False,
+                "message": "Memory connection test failed (RuntimeError)"}
         assert caplog.records[-1].exc_info is not None
 
 

@@ -17,6 +17,7 @@ import httpx
 
 from ..app_discussion_state import discussion_from_db
 from ..database import Database
+from ..error_text import PublicMessageError
 from ..methods import get_active_method, serialize_method_state
 from ..models import Discussion, Entity, Message, MessageRole
 
@@ -108,14 +109,17 @@ def is_provider_error(e: Exception) -> bool:
 def describe_internal_error(e: Exception) -> str:
     """Return a user-facing description of a non-provider (internal) error.
 
-    The exception type is always named: ``str(KeyError("positions"))`` is
-    just ``'positions'``, which on its own tells a user nothing about what
-    went wrong (issue #74).  The message is truncated on the same budget
-    as a provider body, since an internal exception can carry a very long
-    repr and it has to stay readable in a transcript notice and a toast.
+    The exception type is always named (issue #74), but its message only
+    when we worded it ourselves (a :class:`PublicMessageError`, such as a
+    ``ConfigurationError``): any other message can carry a database file
+    path or a URL with a credential in it, so it stays in the log (#157).
+    A kept message is truncated on the same budget as a provider body, to
+    stay readable in a transcript notice and a toast.
     """
-    message = str(e).strip()[:_ERROR_DETAIL_LENGTH].strip()
     name = type(e).__name__
+    if not isinstance(e, PublicMessageError):
+        return name
+    message = str(e).strip()[:_ERROR_DETAIL_LENGTH].strip()
     return f"{name}: {message}" if message else name
 
 

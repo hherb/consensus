@@ -348,7 +348,8 @@ class TestRunDiscussionFlow:
         _ai_entities(server._db)
         data = json.loads((await call(server, "run_discussion",
                                       {"topic": "T", "max_rounds": 1}))[0])
-        assert data["conclusion_error"] == "db gone"
+        # The raw text stays in the log (#157).
+        assert data["conclusion_error"] == "RuntimeError"
 
 
 # ---------------------------------------------------------------------------

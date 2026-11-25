@@ -114,7 +114,7 @@ class TestRunCaseCondition:
             raise RuntimeError("kaput")
         monkeypatch.setattr(runner.ConsensusApp, "set_topic", boom)
         result = await run_case_condition(CASE, PAIR, URL, "m1")
-        assert result.error == "RuntimeError: kaput"
+        assert result.error == "RuntimeError"
 
     def test_to_dict(self):
         result = RunResult(CASE, PAIR)
@@ -375,7 +375,7 @@ class TestRunCaseConditionDb:
         run_id = make_db_run(eval_db, participants=TWO)
         await run_case_condition_db(eval_db, run_id)
         run = eval_db.get_run(run_id)
-        assert run["status"] == "error" and run["error_text"] == "RuntimeError: kaput"
+        assert run["status"] == "error" and run["error_text"] == "RuntimeError"
 
 
 

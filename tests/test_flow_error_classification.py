@@ -117,11 +117,11 @@ class TestDescribeFlowError:
 
     def test_internal_error_names_its_type(self):
         """``str(KeyError('x'))`` is just ``'x'`` — useless on its own."""
-        assert describe_flow_error(KeyError("positions")) == "KeyError: 'positions'"
+        assert describe_flow_error(KeyError("positions")) == "KeyError"
 
     def test_internal_detail_is_truncated(self):
         """An internal exception can carry a huge repr; a toast cannot."""
-        detail = describe_flow_error(ValueError("x" * 5000))
+        detail = describe_flow_error(ConfigurationError("x" * 5000))
         assert len(detail) < 300
 
     def test_recommender_error_unwraps_to_the_provider_body(self):
@@ -129,6 +129,12 @@ class TestDescribeFlowError:
         err = RecommenderError("wrapped")
         err.__cause__ = cause
         assert "Invalid key" in describe_flow_error(err)
+
+    def test_recommender_error_hides_an_internal_cause(self):
+        """The cause is described, and an internal one by class alone (#157)."""
+        err = RecommenderError("wrapped")
+        err.__cause__ = OSError("/home/someone/secret.db")
+        assert describe_flow_error(err) == "OSError"
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +321,7 @@ class TestRealRecommenderSurfacesFailure:
         detail = await run_triage_recommender(disc, mod, boom)
 
         assert detail
-        assert "no such provider" in detail
+        assert detail == "RuntimeError"
         assert disc.method_state["recommender_error"]
 
     @pytest.mark.asyncio

@@ -99,7 +99,8 @@ class TestMemoryConfig:
         monkeypatch.setattr(Database, "get_memory_config", boom)
         resp = await single_client.get("/api/memory/config")
         assert resp.status == 500
-        assert (await resp.json()) == {"error": "disk I/O error"}
+        assert (await resp.json()) == {
+            "error": "Could not read memory config (RuntimeError)"}
         assert "Could not read memory config" in caplog.text
 
     async def test_connection_test_reports_the_result(self, single_client,
@@ -121,7 +122,9 @@ class TestMemoryConfig:
         monkeypatch.setattr(EmbeddingClient, "test_connection", boom)
         resp = await single_client.post("/api/memory/test", json={})
         assert resp.status == 200
-        assert (await resp.json()) == {"ok": False, "message": "refused"}
+        assert (await resp.json()) == {
+            "ok": False,
+            "message": "Memory connection test failed (ConnectionError)"}
         assert "Memory connection test failed" in caplog.text
 
 

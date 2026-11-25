@@ -28,6 +28,8 @@ from consensus.evaluation.constants import (
     MIN_PARTIAL_MATCH_CHARS,
     MIN_PARTIAL_MATCH_WORDS,
 )
+from consensus.app_discussion_flow.helpers import describe_flow_error
+from consensus.error_text import PublicMessageError
 from consensus.evaluation.report import print_report
 
 logger = logging.getLogger(__name__)
@@ -214,6 +216,10 @@ def judge_reply_problem(scores: object) -> str:
     return ""
 
 
+class JudgeReplyError(PublicMessageError, ValueError):
+    """The judge's reply parsed, but is not a usable score object."""
+
+
 async def llm_judge_score(
     case_presentation: str,
     gold_diagnosis: str,
@@ -257,13 +263,13 @@ async def llm_judge_score(
         scores = json.loads(content)
         problem = judge_reply_problem(scores)
         if problem:
-            raise ValueError(problem)
+            raise JudgeReplyError(problem)
         return {"scores": scores, "error": ""}
 
     except Exception as e:
-        logger.warning("LLM judge failed: %r", e)
-        # Timeouts stringify to "", and callers treat a blank error as success.
-        return {"scores": {}, "error": str(e) or type(e).__name__}
+        logger.warning("LLM judge failed", exc_info=True)
+        # Never blank (callers treat that as success), and no raw URL (#157).
+        return {"scores": {}, "error": describe_flow_error(e)}
 
 
 # ---------------------------------------------------------------------------

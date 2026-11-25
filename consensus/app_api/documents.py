@@ -9,6 +9,7 @@ import logging
 from ..http_fetch import redact_url
 from ..models import EntityType
 from ..tools import ToolContext
+from ..error_text import public_error
 
 
 logger = logging.getLogger(__name__)
@@ -151,7 +152,7 @@ class DocumentsMixin:
             # this logged with a traceback, not just shown.
             logger.exception("URL fetch failed unexpectedly for %s",
                              redact_url(url))
-            return {"error": f"Failed to fetch URL: {e}"}
+            return {"error": public_error("Failed to fetch URL", e)}
 
         return await self.add_document(
             filename=filename, content_bytes=content_bytes,

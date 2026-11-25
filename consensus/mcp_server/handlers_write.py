@@ -229,7 +229,7 @@ class WriteHandlersMixin:
             conclusion_error = conclude_result.get("conclusion_error", "")
         except Exception as e:
             logger.warning("Conclusion failed: %s", e, exc_info=True)
-            conclusion_error = str(e) or type(e).__name__
+            conclusion_error = describe_flow_error(e)
 
         # Extract results.  Match on the moderator's own message rather
         # than any message containing "Final Synthesis": the #71 failure

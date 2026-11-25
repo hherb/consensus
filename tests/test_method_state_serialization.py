@@ -43,7 +43,7 @@ def test_rotation_change_reports_error_and_keeps_stored_state(tmp_db):
 
     result = add_to_discussion(disc, tmp_db, c)
 
-    assert "method_state" in result["error"]
+    assert result["error"] == "The change was not saved: ValueError"
     assert c not in [e.id for e in disc.entities]
     assert tmp_db.get_discussion_member(disc.id, c) is None
     assert _stored_state(tmp_db, disc) == stored

@@ -265,7 +265,7 @@ class TestAddDocumentFromURL:
         with caplog.at_level(logging.ERROR, logger="consensus.app_api.documents"), \
              patch(fetch, AsyncMock(side_effect=KeyError("oops"))):
             result = await app.add_document_from_url("http://x")
-        assert result["error"] == "Failed to fetch URL: 'oops'"
+        assert result["error"] == "Failed to fetch URL (KeyError)"
         assert "unexpectedly" in caplog.text
 
     @pytest.mark.asyncio

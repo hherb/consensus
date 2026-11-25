@@ -290,7 +290,7 @@ class TestRotationIsOneTransaction:
                 dict(disc.method_state), len(disc.messages))
 
     def _assert_failed(self, result, disc: Discussion, before: tuple) -> None:
-        assert "disk on fire" in result["error"]
+        assert result["error"] == "The change was not saved: IntegrityError"
         assert self._memory(disc) == before
 
     def test_failed_join_leaves_no_member_row(self, tmp_db):
@@ -427,7 +427,8 @@ class TestRotationIsOneTransaction:
         assert "error" not in result
         assert tmp_db.get_discussion_member(
             disc.id, da)["participant_role"] == DA
-        assert "database is locked" in disc.messages[-1].content
+        assert "tools to " in disc.messages[-1].content
+        assert disc.messages[-1].content.endswith(": OperationalError --")
 
     def test_joiner_role_is_persisted(self, tmp_db):
         disc, _mod, (a, b) = _start(tmp_db)

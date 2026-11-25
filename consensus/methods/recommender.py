@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ..error_text import public_error
 from .parsing import extract_json_block
 
 if TYPE_CHECKING:
@@ -247,7 +248,8 @@ class MethodRecommender:
             raise
         except Exception as e:
             logger.exception("MethodRecommender.recommend() failed")
-            raise RecommenderError(str(e) or type(e).__name__) from e
+            raise RecommenderError(
+                public_error("The recommender call failed", e)) from e
 
 
 def downrank_incompatible_recommendations(
