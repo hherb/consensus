@@ -26,6 +26,7 @@ document for detailed coverage.
 | 13 | [MCP Expert Plugins](13-mcp-expert-plugins.md) | MCPToolProvider, expert entities, consult_expert meta-tool, SSE progress events |
 | 14 | [MCP Server](14-mcp-server.md) | ConsensusMCPServer, 13 tools for external AI agents, agent memory, run_discussion |
 | 15 | [Discussion Methods](15-discussion-methods.md) | DiscussionMethod ABC, composable PhaseHandler architecture, method registry, creating new methods |
+| — | [Contracts](contracts.md) | Load-bearing rules for `auth/` and `server/` — keep them when touching those packages |
 
 ## Quick Architecture Diagram
 

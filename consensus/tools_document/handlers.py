@@ -5,6 +5,7 @@
 ``doc_ask`` and ``doc_summary``, live in ``handlers_rag``.
 """
 
+import asyncio
 import json
 import logging
 from typing import Optional
@@ -13,7 +14,8 @@ from ..error_text import public_error
 from ..http_fetch import redact_url
 from ..tools import TOOL_FETCH_DEADLINE, ToolContext, ToolResult
 from .constants import (
-    AVAILABLE_HEADERS_HINT, LIBRARY_SEARCH_LIMIT, MIN_SIMILARITY_THRESHOLD,
+    AVAILABLE_HEADERS_HINT, DOC_ADD_DEADLINE, LIBRARY_SEARCH_LIMIT,
+    MIN_SIMILARITY_THRESHOLD,
     SUMMARY_SNIPPET_CHARS, SUMMARY_STATUS_FAILED, SUMMARY_STATUS_OK,
     SUMMARY_STATUS_PENDING,
 )
@@ -78,7 +80,13 @@ async def _doc_add_handler(
     arguments: dict, context: ToolContext,
     db, embed_client, app,
 ) -> ToolResult:
-    """Add a document by URL or inline text."""
+    """Add a document by URL or inline text, within ``DOC_ADD_DEADLINE``.
+
+    The cancel can land only at an await before storage (fetch, parse,
+    summary call); storing the rows does not await, so a timed-out call
+    stores nothing. A parse still running in its thread finishes there,
+    unused.
+    """
     url = arguments.get("url", "").strip()
     text = arguments.get("text", "").strip()
     title = arguments.get("title", "").strip() or None
@@ -90,29 +98,31 @@ async def _doc_add_handler(
             is_error=True,
         )
 
+    budget = asyncio.timeout(DOC_ADD_DEADLINE)
     try:
-        if url:
-            content_bytes, auto_filename, mime_type = await fetch_url_content(
-                url, deadline=TOOL_FETCH_DEADLINE)
-            filename = filename or auto_filename
-            source_type = "url"
-        else:
-            content_bytes = text.encode("utf-8")
-            filename = filename or "document.txt"
-            mime_type = "text/plain"
-            source_type = "text"
+        async with budget:
+            if url:
+                content_bytes, auto_filename, mime_type = (
+                    await fetch_url_content(url, deadline=TOOL_FETCH_DEADLINE))
+                filename = filename or auto_filename
+                source_type = "url"
+            else:
+                content_bytes = text.encode("utf-8")
+                filename = filename or "document.txt"
+                mime_type = "text/plain"
+                source_type = "text"
 
-        result = await ingest_document(
-            app=app, db=db, embed_client=embed_client,
-            content_bytes=content_bytes,
-            filename=filename,
-            mime_type=mime_type,
-            discussion_id=context.discussion_id,
-            source_url=url or None,
-            title=title,
-            source_type=source_type,
-            context=context,
-        )
+            result = await ingest_document(
+                app=app, db=db, embed_client=embed_client,
+                content_bytes=content_bytes,
+                filename=filename,
+                mime_type=mime_type,
+                discussion_id=context.discussion_id,
+                source_url=url or None,
+                title=title,
+                source_type=source_type,
+                context=context,
+            )
 
         if "error" in result:
             return ToolResult(content=result["error"], is_error=True)
@@ -125,6 +135,21 @@ async def _doc_add_handler(
         logger.warning("doc_add failed for %s: %s",
                        redact_url(url) if url else filename, e)
         return ToolResult(content=f"Failed to add document: {e}", is_error=True)
+    except TimeoutError as e:
+        if not budget.expired():
+            # A TimeoutError of some inner call, not the budget: a fault.
+            logger.exception("doc_add failed unexpectedly for %s",
+                             redact_url(url) if url else filename)
+            return ToolResult(
+                content=public_error("Failed to add document", e),
+                is_error=True)
+        logger.warning("doc_add for %s ran past %gs",
+                       redact_url(url) if url else filename, DOC_ADD_DEADLINE)
+        return ToolResult(
+            content=(f"Failed to add document: it did not finish within "
+                     f"{DOC_ADD_DEADLINE:g}s (fetch, parse and summary); "
+                     "nothing was stored"),
+            is_error=True)
     except Exception as e:
         logger.exception("doc_add failed unexpectedly for %s",
                          redact_url(url) if url else filename)

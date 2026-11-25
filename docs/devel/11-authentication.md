@@ -6,6 +6,8 @@
 
 Authentication is only enforced in **multi-user web mode** (`--web --multi-user`).
 Desktop mode and single-user web mode work without authentication.
+The defects the #61 characterization net found here, and the contracts
+their fixes keep, are listed in [Contracts to keep](contracts.md).
 
 ## Overview
 

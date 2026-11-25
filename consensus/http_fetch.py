@@ -13,10 +13,15 @@ used to carry its own loop and the image one had no retry at all (issue
   tool call's fetch fails with its own message before the tool timeout;
 * the body is measured *while* it streams, so an oversized response is
   abandoned rather than buffered into memory first;
+* a ``Retry-After`` header can lengthen the wait before the next attempt
+  (never below our own backoff); a wait longer than
+  ``FETCH_MAX_RETRY_AFTER`` or the time left gives up at once;
 * an optional ``guard`` runs on every request, redirect hops included;
   :func:`require_public_host` is the SSRF guard every caller fetching a
   user- or AI-supplied URL passes, so a public URL cannot redirect the
-  server to an internal address;
+  server to an internal address. Unless an env or system proxy is set, the
+  connection is pinned to the addresses the guard checked, so a DNS answer
+  that changes after the check (rebinding) is never connected to (#102);
 * URLs in messages and logs pass through :func:`redact_url`, because a
   signed URL's query string is a credential (issue #89).
 
@@ -29,9 +34,14 @@ import ipaddress
 import logging
 import socket
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+
+from .http_pinning import pinned_transport
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +50,9 @@ FETCH_MAX_RETRIES = 3
 
 #: Seconds before the first retry; doubled for each later one.
 FETCH_BASE_DELAY = 1.0
+
+#: Longest ``Retry-After`` wait honoured; a longer one gives up at once.
+FETCH_MAX_RETRY_AFTER = 30.0
 
 #: What :func:`redact_url` shows for a string ``urlsplit`` rejects.
 UNPARSEABLE_URL = "<unparseable URL>"
@@ -135,19 +148,19 @@ def is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return ip.is_global and not ip.is_multicast
 
 
-def require_public_host(url: str) -> None:
+def require_public_host(url: str) -> list[str]:
     """SSRF guard: refuse a URL whose host is not a public address.
 
     Pass it as ``fetch_capped(guard=...)``; it runs on every request of a
     fetch, redirect hops included. A host with several addresses is
-    refused if any one of them is internal.
-
-    shortcut: the host is resolved here and again by httpx, so DNS
-    rebinding between the two lookups is not prevented; pin the resolved
-    address in a custom transport if multi-user deployments need that.
+    refused if any one of them is internal. :func:`fetch_capped` connects
+    only to the addresses returned, so the host is not resolved again.
 
     Args:
         url: The request URL about to be sent.
+
+    Returns:
+        The host's addresses, each once, in resolver order.
 
     Raises:
         FetchRejected: The host resolves to a non-public address, or the
@@ -166,6 +179,7 @@ def require_public_host(url: str) -> None:
                                    socket.SOCK_STREAM)
     except socket.gaierror as e:
         raise FetchUnavailable(f"could not resolve {host}") from e
+    addresses: list[str] = []
     for _family, _type, _proto, _canon, sockaddr in infos:
         try:
             ip = ipaddress.ip_address(sockaddr[0])
@@ -175,7 +189,36 @@ def require_public_host(url: str) -> None:
             raise FetchRejected(
                 f"Refusing to fetch {host}: it resolves to a "
                 "private/internal address")
+        if str(ip) not in addresses:
+            addresses.append(str(ip))
+    return addresses
 
+
+def retry_after_seconds(value: str | None, now: datetime) -> float | None:
+    """Parse a ``Retry-After`` header into seconds from *now*.
+
+    Args:
+        value: The header value: delay-seconds or an HTTP-date.
+        now: The current time (timezone-aware), for an HTTP-date.
+
+    Returns:
+        The wait in seconds (a date in the past is ``0``), or ``None`` for
+        a missing or unreadable header.
+    """
+    value = (value or "").strip()
+    if value.isascii() and value.isdigit():  # isdigit alone accepts "²"
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)  # RFC 9110: HTTP-dates are GMT
+    return max(0.0, (when - now).total_seconds())
+
+
+#: Checks a request URL; returns the addresses it may connect to.
+Guard = Callable[[str], list[str]]
 
 # Faults no retry can cure. UnsupportedProtocol subclasses TransportError,
 # so this is checked before the retry branch.
@@ -205,16 +248,23 @@ def _describe_fault(exc: Exception) -> str:
     return str(exc) or type(exc).__name__
 
 
-def _guard_hook(guard: Callable[[str], None]
+def _guard_hook(guard: Guard, pins: dict[str, list[str]]
                 ) -> Callable[[httpx.Request], Awaitable[None]]:
     """Wrap a blocking *guard* as an httpx request hook.
 
     httpx runs request hooks before every hop of a redirect chain. The
     guard may resolve DNS, so it runs in a worker thread rather than
-    blocking the event loop.
+    blocking the event loop. The addresses it returns are recorded in
+    *pins* under the request's ``raw_host``, the name httpcore connects to.
+    A guard that returns none is a programming fault, refused at once
+    rather than retried as a connection failure.
     """
     async def hook(request: httpx.Request) -> None:
-        await asyncio.to_thread(guard, str(request.url))
+        addresses = await asyncio.to_thread(guard, str(request.url))
+        host = request.url.raw_host.decode("ascii")
+        if not addresses:
+            raise FetchRejected(f"the URL guard returned no address for {host}")
+        pins[host] = list(addresses)
     return hook
 
 
@@ -244,7 +294,7 @@ async def fetch_capped(
     timeout: float,
     max_retries: int = FETCH_MAX_RETRIES,
     base_delay: float = FETCH_BASE_DELAY,
-    guard: Callable[[str], None] | None = None,
+    guard: Guard | None = None,
     deadline: float | None = None,
     headers: dict[str, str] | None = None,
 ) -> tuple[bytes, str]:
@@ -259,7 +309,9 @@ async def fetch_capped(
         guard: Called with each request URL, redirect hops included; raises
             :class:`FetchRejected` to veto the request (or
             :class:`FetchUnavailable` for a transient refusal, which is
-            retried). Usually :func:`require_public_host`.
+            retried) and returns the addresses the request may connect to —
+            nothing else is connected to unless a proxy applies. Usually
+            :func:`require_public_host`.
         deadline: Seconds the whole fetch may take, retries and backoff
             included; ``None`` for no overall limit.
         headers: Extra request headers (e.g. a User-Agent).
@@ -269,19 +321,25 @@ async def fetch_capped(
         or ``""`` when the server sent none.
 
     Raises:
+        ValueError: *max_retries* is below 1.
         FetchRejected: On a non-retryable status, a guard veto, too many
             redirects, or a fault no retry can cure.
         FetchTooLarge: When the body exceeds *max_bytes*.
-        FetchUnavailable: When every attempt failed transiently, or the
+        FetchUnavailable: When every attempt failed transiently, a
+            ``Retry-After`` asked for a longer wait than is left, or the
             deadline passed.
     """
+    if max_retries < 1:
+        raise ValueError(f"max_retries must be at least 1, not {max_retries}")
     shown = redact_url(url)
+    loop = asyncio.get_running_loop()
+    give_up_at = None if deadline is None else loop.time() + deadline
     try:
         async with asyncio.timeout(deadline):
             return await _fetch_with_retries(
                 url, shown, max_bytes=max_bytes, timeout=timeout,
                 max_retries=max_retries, base_delay=base_delay, guard=guard,
-                headers=headers)
+                headers=headers, give_up_at=give_up_at)
     except TimeoutError:
         if deadline is None:
             raise
@@ -292,16 +350,29 @@ async def fetch_capped(
 async def _fetch_with_retries(
     url: str, shown: str, *, max_bytes: int, timeout: float,
     max_retries: int, base_delay: float,
-    guard: Callable[[str], None] | None, headers: dict[str, str] | None,
+    guard: Guard | None, headers: dict[str, str] | None,
+    give_up_at: float | None,
 ) -> tuple[bytes, str]:
-    """The retry loop of :func:`fetch_capped`, without the deadline."""
-    hooks = {"request": [_guard_hook(guard)]} if guard else {}
+    """The retry loop of :func:`fetch_capped`, without the deadline.
+
+    *give_up_at* is the deadline in ``loop.time()`` terms, so a
+    ``Retry-After`` past it fails now instead of sleeping into the timeout.
+    """
+    client_kwargs: dict[str, Any] = {}
+    if guard:
+        pins: dict[str, list[str]] = {}
+        client_kwargs["event_hooks"] = {"request": [_guard_hook(guard, pins)]}
+        transport = pinned_transport(pins)
+        if transport is not None:
+            client_kwargs["transport"] = transport
     last_fault = ""
+    attempts = 0
     async with httpx.AsyncClient(
-        timeout=timeout, follow_redirects=True, event_hooks=hooks,
-        headers=headers,
+        timeout=timeout, follow_redirects=True, headers=headers,
+        **client_kwargs,
     ) as client:
         for attempt in range(max_retries):
+            attempts = attempt + 1
             try:
                 async with client.stream("GET", url) as response:
                     status = response.status_code
@@ -332,6 +403,15 @@ async def _fetch_with_retries(
                 if attempt == max_retries - 1:
                     break
                 delay = base_delay * (2 ** attempt)
+                asked = _asked_wait(e)
+                if asked is not None:
+                    left = (FETCH_MAX_RETRY_AFTER if give_up_at is None else
+                            min(FETCH_MAX_RETRY_AFTER,
+                                give_up_at - asyncio.get_running_loop().time()))
+                    last_fault += f" (retry after {asked:g}s)"
+                    if asked > left:
+                        break
+                    delay = max(delay, asked)
                 logger.warning(
                     "Fetch of %s failed (attempt %d/%d: %s), retrying in "
                     "%.1fs", shown, attempt + 1, max_retries, last_fault,
@@ -340,5 +420,15 @@ async def _fetch_with_retries(
 
     # Not chained: HTTPStatusError's text embeds the unredacted URL, and
     # last_fault already carries the redacted summary.
+    plural = "" if attempts == 1 else "s"
     raise FetchUnavailable(
-        f"Could not fetch {shown} after {max_retries} attempts: {last_fault}")
+        f"Could not fetch {shown} after {attempts} attempt{plural}: "
+        f"{last_fault}")
+
+
+def _asked_wait(exc: Exception) -> float | None:
+    """The ``Retry-After`` wait of a retryable status reply, if it sent one."""
+    if not isinstance(exc, httpx.HTTPStatusError):
+        return None
+    return retry_after_seconds(exc.response.headers.get("retry-after"),
+                               datetime.now(timezone.utc))

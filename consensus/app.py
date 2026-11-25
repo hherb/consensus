@@ -13,7 +13,7 @@ from .app_api import (
 )
 from .app_api.request_keys import _request_api_keys_var
 from .config import get_db_path
-from .tools import PythonToolProvider, ToolDefinition, ToolRegistry
+from .tools import PythonToolProvider, ToolDefinition, ToolProvider, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -120,63 +120,65 @@ class ConsensusApp(
         self.tool_registry.register_provider(provider)
         self.db.add_tool_provider("interactive", "python")
 
+    def _load_tool_package(self, label: str,
+                           build: Callable[[], ToolProvider]) -> bool:
+        """Build a tool package's provider, then record and register it.
+
+        Only the import and construction inside *build* are caught: a
+        default install has every dependency, so a failure there is a
+        broken install or a fault in the package, logged as a warning and
+        listed by ``get_state()`` (#96) rather than crashing startup. The
+        DB record comes before registration and is not caught, so a DB
+        fault cannot leave live tools behind a flag saying they failed to
+        load (#102).
+
+        Args:
+            label: The package's name in the log ("Memory", "Image", ...).
+            build: Imports the package and returns its provider.
+
+        Returns:
+            Whether the package loaded.
+        """
+        try:
+            provider = build()
+        except Exception as e:
+            logger.warning("%s tools failed to load: %s", label, e, exc_info=e)
+            return False
+        self.db.add_tool_provider(provider.name, "python")
+        self.tool_registry.register_provider(provider)
+        logger.debug("%s tools registered", label)
+        return True
+
     def _init_memory_tools(self) -> None:
         """Register institutional memory tool provider (needs sqlite-vec; a default dependency)."""
-        try:
+        def build() -> ToolProvider:
             import sqlite_vec  # noqa: F401
             from .tools_memory import create_memory_provider
-            provider = create_memory_provider(self.db)
-            self.tool_registry.register_provider(provider)
-            self.db.add_tool_provider("memory", "python")
-            self.memory_available = True
-            logger.debug("Institutional memory tools registered")
-        except Exception as e:
-            # A default install always has the deps, so this is a broken
-            # install or a fault inside the package: say so loudly, but
-            # don't take the app down — get_state() lists it (#96).
-            logger.warning("Memory tools failed to load: %s", e, exc_info=e)
+            return create_memory_provider(self.db)
+        self.memory_available = self._load_tool_package("Memory", build)
 
     def _init_document_tools(self) -> None:
         """Register document RAG tool provider (needs sqlite-vec; a default dependency)."""
-        try:
+        def build() -> ToolProvider:
             import sqlite_vec  # noqa: F401
             from .tools_document import create_document_provider
-            provider = create_document_provider(self.db, app=self)
-            self.tool_registry.register_provider(provider)
-            self.db.add_tool_provider("documents", "python")
-            self.documents_available = True
-            logger.debug("Document RAG tools registered")
-        except Exception as e:
-            logger.warning("Document tools failed to load: %s", e, exc_info=e)
+            return create_document_provider(self.db, app=self)
+        self.documents_available = self._load_tool_package("Document", build)
 
     def _init_image_tools(self) -> None:
-        """Register image tool provider."""
-        try:
+        """Register image tool provider (Pillow is imported per call)."""
+        def build() -> ToolProvider:
             from .tools_image import create_image_provider
-            provider = create_image_provider(self.db, app=self)
-            self.tool_registry.register_provider(provider)
-            self.db.add_tool_provider("images", "python")
-            self.images_available = True
-            logger.debug("Image tools registered")
-        except Exception:
-            # Pillow is imported lazily per call, so nothing optional can
-            # fail here: a load failure is a real fault (e.g. a broken
-            # facade after the #61 split), not INFO.
-            self.images_available = False
-            logger.warning("Image tools failed to load", exc_info=True)
+            return create_image_provider(self.db, app=self)
+        self.images_available = self._load_tool_package("Image", build)
 
     def _init_python_tools(self) -> None:
         """Register Python code execution tool provider."""
-        try:
+        def build() -> ToolProvider:
             from .tools_python import create_python_provider
-            provider = create_python_provider(app=self)
-            self.tool_registry.register_provider(provider)
-            self.db.add_tool_provider("python_exec", "python")
-            self.python_tools_available = True
-            logger.debug("Python execution tools registered")
-        except Exception:
-            # No optional deps here, so any failure is a real fault.
-            logger.warning("Python execution tools failed to load", exc_info=True)
+            return create_python_provider(app=self)
+        self.python_tools_available = self._load_tool_package(
+            "Python execution", build)
 
     def _load_mcp_config(self) -> None:
         """Load MCP server definitions from config files on startup."""

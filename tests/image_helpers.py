@@ -95,6 +95,12 @@ def fake_dns(monkeypatch, addresses: dict[str, str | list[str]] | None = None,
     return looked_up
 
 
+def png_response(request: httpx.Request) -> httpx.Response:
+    """A ``MockTransport`` handler answering every request with a 1x1 PNG."""
+    return httpx.Response(200, content=make_image(1, 1),
+                          headers={"content-type": "image/png; charset=x"})
+
+
 def install_transport(monkeypatch, handler) -> list[httpx.Request]:
     """Route every ``httpx.AsyncClient`` through a ``MockTransport``.
 
@@ -112,6 +118,8 @@ def install_transport(monkeypatch, handler) -> list[httpx.Request]:
         return handler(request)
 
     def factory(**kwargs):
+        # The mock replaces the wire, so a pinned transport (#102) is dropped.
+        kwargs.pop("transport", None)
         return real_client(transport=httpx.MockTransport(recording), **kwargs)
 
     monkeypatch.setattr(httpx, "AsyncClient", factory)

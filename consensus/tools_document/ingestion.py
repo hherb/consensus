@@ -1,5 +1,6 @@
 """The document ingestion pipeline: parse, chunk, store, embed."""
 
+import asyncio
 import json
 import logging
 from typing import Optional
@@ -58,7 +59,10 @@ async def ingest_document(
     """
     # Parse to markdown.  Parsing raises rather than returning placeholder
     # text, so a scanned PDF no longer ingests as a real document.
-    parsed = parse_document(content_bytes, filename, mime_type)
+    # In a worker thread: a large PDF would otherwise stall the event loop
+    # (every session, in --multi-user) and no deadline could interrupt it.
+    parsed = await asyncio.to_thread(parse_document, content_bytes, filename,
+                                     mime_type)
     markdown = parsed.markdown
     if not markdown.strip():
         return {"error": "Document is empty after parsing."}
