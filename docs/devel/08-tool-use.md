@@ -697,7 +697,7 @@ ConsensusApp._init_python_tools()
 | **5. File I/O sandbox** | `_make_sandboxed_open()` restricts `open()` to temp dir; `io.open`/`io.FileIO` patched | No filesystem access outside the per-execution temp directory |
 | **6. Resource limits** | `RLIMIT_AS` (memory) and `RLIMIT_CPU` (CPU time) via `resource.setrlimit()` | Dynamic: 70% of free RAM, 70% of CPU cores × 30s base. Floors: 256 MB, 10s |
 | **7. Wall-clock timeout** | `asyncio.wait_for()` with `CPU_limit × 1.5` (min 30s) | Kills runaway processes even if RLIMIT_CPU isn't reached |
-| **8. macOS sandbox-exec** | Optional Seatbelt profile denying network; writes allowed only under the per-run sandbox dir (passed to the worker as `TMPDIR` and `MPLCONFIGDIR`, named in the profile by its resolved `/private/var/...` path), reads everywhere (#97) | OS-level enforcement on macOS; graceful fallback on other platforms |
+| **8. macOS sandbox-exec** | Optional Seatbelt profile denying network; writes allowed only under the per-run sandbox dir (passed to the worker as `TMPDIR` and `MPLCONFIGDIR`, named in the profile by its resolved `/private/var/...` path, #97); no file reads or listings under `SEATBELT_PRIVATE_ROOTS` except `worker_read_paths()` (never the parent's cwd, nor an entry that is or contains `$HOME` or a root) and the run dir, re-allowed with `file-read-data` because a later `file-read*` does not override that deny; `stat` allowed everywhere (#163) | OS-level enforcement on macOS; graceful fallback on other platforms |
 
 ### Tools
 

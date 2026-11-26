@@ -1,14 +1,10 @@
 # HANDOVER
 
 _Last updated: 2026-11-25. `main` is at **v2.0.0** (released 2026-07-20)
-plus everything merged since (the #61 split, auth hardening, the desktop
-bridge fix #125, MCP argument validation #124, one-transaction rotation
-#107, rotation rollback #147, `serialize_method_state` raising #150, failed
-tool packages shown in the UI #96, `method_state` save consistency #152,
-degraded-extraction warnings #81, safe tool and API error text #92 and
-#157, URL-fetch pinning #102 — details in git history). This branch,
-`fix/seatbelt-confinement-97`, confines the macOS sandbox worker's writes
-to its per-run directory (#97). The suite is at **4615 passing**._
+plus everything merged since (git history; contracts below). This branch,
+`fix/seatbelt-reads-163` (stacked on PR #164, `fix/seatbelt-confinement-97`,
+#97), confines the macOS sandbox worker's reads as well as its writes. The
+suite is at **4629 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -21,7 +17,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4615 passing (`uv run pytest`, ~90 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4629 passing (`uv run pytest`, ~90 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -223,17 +219,24 @@ Tests: `tests/test_http_fetch.py`, `_pinning.py`, `_guard.py`,
 `tests/test_tools_document_doc_add_budget.py`, `tests/test_app_characterization.py`
 (`failed_provider_record`); each new branch was mutation-checked.
 
-## Sandbox worker writes (#97 — keep this contract)
+## Sandbox worker files (#97, #163 — keep this contract)
 
-`execute_python_handler` makes one per-run directory and passes it to the
-worker as `TMPDIR` (and `MPLCONFIGDIR`), so the worker's own `mkdtemp` and
-any library cache land in it and are deleted with it. The macOS Seatbelt
-profile names it by `os.path.realpath` (Seatbelt matches `/private/var/...`,
-never `/var/...`) as the only writable path; the blanket `/private/tmp/` rule
-is gone. Checked on macOS 27 with numpy, scipy, pandas, matplotlib, sympy,
-scikit-learn, networkx, Pillow and torch. Reads are still allowed everywhere
-(#163). Tests: `tests/test_tools_python_seatbelt.py` (real `sandbox-exec`
-on macOS, skipped elsewhere; each wiring mutation-checked).
+The handler's per-run dir is the worker's `TMPDIR`, `MPLCONFIGDIR` and `cwd`
+(its `os.getcwd()` fails in an unreadable dir). The Seatbelt profile names
+paths by `realpath` (it matches `/private/var/...`, never `/var/...`):
+writes only to the run dir; `(deny file-read-data …)` over
+`SEATBELT_PRIVATE_ROOTS`, then `(allow file-read-data …)` for
+`worker_read_paths()` (prefixes, `sys.path[1:]`, editable `MAPPING`s, a frozen
+bundle's `Contents`) and the run dir. The re-allow **must name
+`file-read-data`**; a later `file-read*` does not override it. The parent's
+`sys.path[0]` and cwd stay out (either may be `$HOME` or the repo with its
+`.env`), and so does any entry that is or contains `$HOME` or a root (logged).
+A run dir the profile cannot quote refuses the run; a worker the profile
+blocks returns a worded error and logs the traceback (it holds host paths).
+Checked on macOS 27 with the scientific stack, torch and a locally built
+frozen worker; joblib still runs serially (no POSIX semaphores). Tests:
+`tests/test_tools_python_seatbelt.py` (real `sandbox-exec`, skipped off
+macOS; each wiring mutation-checked).
 
 ## Speaking rotation after start (#104 — keep this contract)
 
@@ -413,8 +416,7 @@ update every doc naming the old file *and* the content beside the name.
   an email-verification design); #160 (follow-up to #157) how MCP HTTP
   connection errors and bare class-name notices should read.
 - No decision needed: #162 real-pipeline tests for the `doc_add` budget.
-  Suggested next: #162, or ask the repo owner about #160 or #163 (which read
-  paths the Seatbelt profile may allow).
+  Suggested next: #162, or ask the repo owner about #160.
 
 ### Roadmap
 
