@@ -7,17 +7,20 @@ cut off mid-ingestion, so it has its own cap, ``DOC_ADD_DEADLINE``. The
 parse runs in a worker thread, so it no longer stalls the event loop, and
 the cap can fire while it runs.
 
-The last three tests drive the real ``ingest_document`` (#162): a cut-off
-call stores nothing, and the budget fires during a slow parse or fetch.
+The last four tests drive the real pipeline (#162): the fetch
+(``fetch_url_content``) and ``ingest_document``. A cut-off call stores
+nothing, the budget fires during a slow fetch, parse or summary, and once
+stored, a document is not cancelled.
 """
 
 import asyncio
 import threading
+import time
 
 import httpx
 import pytest
 
-from consensus import tools
+from consensus import http_fetch, tools
 from consensus.tools import ToolContext
 from consensus.tools_document import handlers, ingestion
 from consensus.tools_document.provider import create_document_provider
@@ -100,9 +103,12 @@ async def test_parsing_runs_off_the_event_loop(tmp_db, monkeypatch):
 # The budget against the real ingest pipeline (#162)
 # ---------------------------------------------------------------------------
 
-# A budget far below every real step, and a stall far above it.
+# A budget far below every production step (but above a tiny real parse),
+# and a stall far above it.
 TINY_DEADLINE = 0.05
 STALL_SECONDS = 5.0
+# How long a synchronous step blocks past the budget's due time.
+OVERRUN_SECONDS = TINY_DEADLINE * 2
 BUDGET_MESSAGE = (
     f"Failed to add document: it did not finish within {TINY_DEADLINE:g}s "
     "(fetch, parse and summary); nothing was stored")
@@ -117,7 +123,10 @@ def assert_nothing_stored(db, discussion_id: int) -> None:
 async def test_a_slow_summary_stores_nothing(tmp_db, ctx, monkeypatch):
     """The summary call is the last await before storage; cut off there,
     the real pipeline must leave no half-stored document behind."""
+    entered: list[bool] = []
+
     async def slow_summary(*args, **kwargs):
+        entered.append(True)
         await asyncio.sleep(STALL_SECONDS)
         return "never"
 
@@ -127,18 +136,42 @@ async def test_a_slow_summary_stores_nothing(tmp_db, ctx, monkeypatch):
     # Any truthy app enables the summary; the patched call never reads it.
     result = await handlers._doc_add_handler({"text": "# T\n\nbody"}, ctx,
                                              tmp_db, None, object())
+    assert entered, "the budget fired before the summary call"
     assert result.is_error
     assert result.content == BUDGET_MESSAGE
     assert_nothing_stored(tmp_db, ctx.discussion_id)
 
 
+async def test_a_stored_document_is_not_cancelled(tmp_db, ctx, monkeypatch):
+    """Storage does not await, so a budget that falls due while the rows
+    are written cannot cancel the call: guards against a future ``await``
+    after ``db.add_document`` leaving a half-stored document behind an
+    error. An ``await asyncio.sleep(0)`` would slip through (the task
+    resumes before the timer runs); a real I/O or thread hop is caught."""
+    real_add = tmp_db.add_document
+
+    def add_then_overrun(*args, **kwargs):
+        doc_id = real_add(*args, **kwargs)
+        time.sleep(OVERRUN_SECONDS)  # the budget falls due, nothing awaits
+        return doc_id
+
+    monkeypatch.setattr(handlers, "DOC_ADD_DEADLINE", TINY_DEADLINE)
+    monkeypatch.setattr(tmp_db, "add_document", add_then_overrun)
+    result = await handlers._doc_add_handler({"text": "# T\n\nbody"}, ctx,
+                                             tmp_db, None, None)
+    assert not result.is_error, result.content
+    assert len(tmp_db.get_discussion_documents(ctx.discussion_id)) == 1
+
+
 async def test_the_budget_fires_during_a_slow_parse(tmp_db, ctx, monkeypatch):
     """A parse blocking its thread must not block the budget."""
     release = threading.Event()
+    finished: list[bool] = []
     real_parse = ingestion.parse_document
 
     def blocking_parse(*args, **kwargs):
-        release.wait(STALL_SECONDS)  # capped, so a regression fails, not hangs
+        # capped, so a regression fails, not hangs
+        finished.append(release.wait(STALL_SECONDS))
         return real_parse(*args, **kwargs)
 
     monkeypatch.setattr(handlers, "DOC_ADD_DEADLINE", TINY_DEADLINE)
@@ -146,12 +179,11 @@ async def test_the_budget_fires_during_a_slow_parse(tmp_db, ctx, monkeypatch):
                         "parse_document", blocking_parse)
     result = await handlers._doc_add_handler({"text": "# T\n\nbody"}, ctx,
                                              tmp_db, None, None)
-    parse_still_running = not release.is_set()
+    parse_still_running = not finished
     release.set()
-    assert parse_still_running
+    assert parse_still_running, "doc_add returned only after the parse"
     assert result.content == BUDGET_MESSAGE
-    # The abandoned parse finishes in its thread, unused.
-    await asyncio.sleep(TINY_DEADLINE)
+    # The abandoned parse finishes in its thread, unused: its task is gone.
     assert_nothing_stored(tmp_db, ctx.discussion_id)
 
 
@@ -165,6 +197,9 @@ async def test_the_budget_not_the_fetch_reports_a_slow_url(
         return httpx.Response(200, text="never")
 
     fake_dns(monkeypatch)
+    # A cold real transport (SSL context) can outlast the budget before the
+    # request reaches the mock; the mock replaces the wire anyway.
+    monkeypatch.setattr(http_fetch, "pinned_transport", lambda pins: None)
     seen = install_transport(monkeypatch, stalled)
     monkeypatch.setattr(handlers, "DOC_ADD_DEADLINE", TINY_DEADLINE)
     result = await handlers._doc_add_handler(
