@@ -1,10 +1,9 @@
 # HANDOVER
 
-_Last updated: 2026-11-25. `main` is at **v2.0.0** (released 2026-07-20)
+_Last updated: 2026-11-26. `main` is at **v2.0.0** (released 2026-07-20)
 plus everything merged since (git history; contracts below). This branch,
-`fix/seatbelt-reads-163` (stacked on PR #164, `fix/seatbelt-confinement-97`,
-#97), confines the macOS sandbox worker's reads as well as its writes. The
-suite is at **4629 passing**._
+`test/doc-add-budget-162`, adds real-pipeline regression tests for the
+`doc_add` budget (#162). The suite is at **4632 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -17,7 +16,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4629 passing (`uv run pytest`, ~90 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4632 passing (`uv run pytest`, ~90 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ### Merged campaigns (detail in git history)
@@ -216,8 +215,10 @@ Tests: `tests/test_error_text.py`, `tests/test_tools.py` (`SECRET`),
   leave live tools behind a "failed to load" flag.
 
 Tests: `tests/test_http_fetch.py`, `_pinning.py`, `_guard.py`,
-`tests/test_tools_document_doc_add_budget.py`, `tests/test_app_characterization.py`
-(`failed_provider_record`); each new branch was mutation-checked.
+`tests/test_tools_document_doc_add_budget.py` (the real `ingest_document`,
+cut off in its fetch, parse or summary, stores nothing, #162),
+`tests/test_app_characterization.py` (`failed_provider_record`); each new
+branch was mutation-checked.
 
 ## Sandbox worker files (#97, #163 — keep this contract)
 
@@ -415,8 +416,10 @@ update every doc naming the old file *and* the content beside the name.
   and #128 an unverified OAuth sign-up can pre-hijack an address (both want
   an email-verification design); #160 (follow-up to #157) how MCP HTTP
   connection errors and bare class-name notices should read.
-- No decision needed: #162 real-pipeline tests for the `doc_add` budget.
-  Suggested next: #162, or ask the repo owner about #160.
+- #166 Seatbelt read gaps after #163: editable namespace packages, runtime
+  `.pth` paths, the uninstalled-checkout `cwd` (fixable); Homebrew data dirs
+  in `SEATBELT_PRIVATE_ROOTS` (owner's call).
+  Suggested next: the fixable parts of #166, or ask the repo owner about #160.
 
 ### Roadmap
 
