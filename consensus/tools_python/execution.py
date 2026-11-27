@@ -7,6 +7,7 @@ import logging
 import os
 import platform
 import shutil
+import site
 import sys
 import tempfile
 from pathlib import Path
@@ -120,7 +121,9 @@ def worker_read_paths() -> list[str]:
     directory. So is the parent's cwd, wherever it sits in ``sys.path``, and
     any entry that is or contains ``$HOME`` or a ``SEATBELT_PRIVATE_ROOTS``
     root (logged), since re-allowing it would undo the deny. A frozen app
-    needs its bundle's ``Contents`` directory.
+    needs its bundle's ``Contents`` directory; otherwise the worker script's
+    own directory is added. Editable namespace packages and ``.pth`` files
+    written after startup (``install_python_package``) are included too.
 
     Returns:
         Sorted, de-duplicated real paths that exist.
@@ -131,8 +134,16 @@ def worker_read_paths() -> list[str]:
     for name, module in list(sys.modules.items()):
         if name.startswith("__editable__"):
             paths.update(getattr(module, "MAPPING", {}).values())
+            for dirs in getattr(module, "NAMESPACES", {}).values():
+                paths.update(dirs)
+    # A package installed since startup may have added a .pth (issue #166).
+    for site_dir in site.getsitepackages():
+        paths.update(pth_paths(site_dir))
     if is_frozen():
         paths.add(str(Path(sys.executable).resolve().parents[1]))
+    else:
+        # The worker runs by path (frozen.worker_command), so its directory.
+        paths.add(str(Path(__file__).resolve().parents[1]))
     real = {os.path.realpath(p) for p in paths if p and os.path.exists(p)}
     real.discard(os.path.realpath(os.getcwd()))
     covered = [os.path.realpath(Path.home()), *SEATBELT_PRIVATE_ROOTS]
@@ -141,6 +152,38 @@ def worker_read_paths() -> list[str]:
         logger.warning("Sandbox profile will not re-allow reads under %r: it "
                        "covers the home directory or a user-data root", path)
     return sorted(real - broad)
+
+
+def pth_paths(site_dir: str) -> list[str]:
+    """Return the directories the ``.pth`` files in *site_dir* add.
+
+    Mirrors ``site.addpackage``: blank lines, ``#`` comments and lines
+    starting with ``import`` are skipped; other lines are paths relative to
+    *site_dir*. Existence is checked by the caller.
+
+    Args:
+        site_dir: A site-packages directory.
+
+    Returns:
+        The paths, unresolved; empty if *site_dir* cannot be listed.
+    """
+    try:
+        names = sorted(n for n in os.listdir(site_dir) if n.endswith(".pth"))
+    except OSError:
+        return []
+    paths = []
+    for name in names:
+        try:
+            with open(os.path.join(site_dir, name), encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except (OSError, UnicodeDecodeError) as e:
+            logger.warning("Sandbox profile skips unreadable %s: %s", name, e)
+            continue
+        for line in lines:
+            line = line.rstrip()
+            if line and not line.startswith(("#", "import ", "import\t")):
+                paths.append(os.path.join(site_dir, line))
+    return paths
 
 
 def _is_same_or_ancestor(path: str, other: str) -> bool:
