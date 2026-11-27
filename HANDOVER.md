@@ -3,7 +3,7 @@
 _Last updated: 2026-11-27. `main` is at **v2.0.0** (released 2026-07-20)
 plus everything merged since (git history; contracts below). This branch,
 `fix/seatbelt-gaps-166`, closes the remaining Seatbelt read gaps (#166). The
-suite is at **4641 passing**._
+suite is at **4643 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -16,7 +16,7 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4641 passing (`uv run pytest`, ~90 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4643 passing (`uv run pytest`, ~90 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
 
 ## Flow error visibility (#71–#74, merged — keep these contracts)
@@ -215,9 +215,10 @@ paths by `realpath` (it matches `/private/var/...`, never `/var/...`):
 writes only to the run dir; `(deny file-read-data …)` over
 `SEATBELT_PRIVATE_ROOTS`, then `(allow file-read-data …)` for
 `worker_read_paths()` (prefixes, `sys.path[1:]`, editable `MAPPING`s and
-`NAMESPACES`, the path lines of every `.pth` in `site.getsitepackages()` — so
-a package `install_python_package` added since startup imports —, a frozen
-bundle's `Contents`, else the worker script's own dir) and the run dir.
+`NAMESPACES`, the path lines of every `.pth` in `site.getsitepackages()`,
+parsed as `site` does (dot-named and `UF_HIDDEN` files skipped, `utf-8-sig`)
+— so a package `install_python_package` added since startup imports —, a
+frozen bundle's `Contents`, else the worker script's own dir) and the run dir.
 `SEATBELT_PRIVATE_ROOTS` includes Homebrew's `/opt/homebrew/var` and
 `/usr/local/var` (repo owner's call, #166); `/Library` and `/Applications`
 stay readable. The unfrozen worker runs as `python -P <path>/sandbox_worker.py`
@@ -229,6 +230,7 @@ from an uninstalled checkout too, and `-P` keeps the package dir off its
 `.env`), and so does any entry that is or contains `$HOME` or a root (logged).
 A run dir the profile cannot quote refuses the run; a worker the profile
 blocks returns a worded error and logs the traceback (it holds host paths).
+A blocked import inside user code still reads as `ModuleNotFoundError` (#169).
 Checked on macOS 27 with the scientific stack, torch and a locally built
 frozen worker; joblib still runs serially (no POSIX semaphores). Tests:
 `tests/test_tools_python_seatbelt.py` (real `sandbox-exec`, skipped off
