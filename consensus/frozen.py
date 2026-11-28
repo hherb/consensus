@@ -14,9 +14,12 @@ def worker_command() -> tuple[str, list[str]]:
 
     In a frozen app the worker is the sibling ``consensus-worker``
     executable bundled next to the GUI binary (Contents/MacOS on macOS);
-    otherwise it is ``python -m consensus.sandbox_worker``.
+    otherwise it is ``python -P <path>/sandbox_worker.py``. The worker
+    imports nothing from ``consensus``, so running it by path works from an
+    uninstalled checkout too, and ``-P`` keeps its own directory (the
+    ``consensus`` package) off its ``sys.path`` (issue #166).
     """
     if is_frozen():
         worker = Path(sys.executable).resolve().parent / "consensus-worker"
         return str(worker), []
-    return sys.executable, ["-m", "consensus.sandbox_worker"]
+    return sys.executable, ["-P", str(Path(__file__).with_name("sandbox_worker.py"))]

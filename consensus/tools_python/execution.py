@@ -3,10 +3,13 @@
 import ast
 import asyncio
 import json
+import locale
 import logging
 import os
 import platform
 import shutil
+import site
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -116,11 +119,13 @@ def worker_read_paths() -> list[str]:
     the prefixes and every ``sys.path`` entry (``consensus`` is in
     site-packages or, installed editable, in its finder's ``MAPPING``). The
     parent's ``sys.path[0]`` (the launch directory or script directory) is
-    left out: the non-frozen worker computes its own, inside its run
-    directory. So is the parent's cwd, wherever it sits in ``sys.path``, and
-    any entry that is or contains ``$HOME`` or a ``SEATBELT_PRIVATE_ROOTS``
-    root (logged), since re-allowing it would undo the deny. A frozen app
-    needs its bundle's ``Contents`` directory.
+    left out: the non-frozen worker runs with ``-P``, so it has none. So is
+    the parent's cwd, wherever it sits in ``sys.path``, and any entry that
+    is or contains ``$HOME`` or a ``SEATBELT_PRIVATE_ROOTS`` root (logged),
+    since re-allowing it would undo the deny. A frozen app needs its
+    bundle's ``Contents`` directory; otherwise the worker script's own
+    directory is added. Editable namespace packages and ``.pth`` files
+    written after startup (``install_python_package``) are included too.
 
     Returns:
         Sorted, de-duplicated real paths that exist.
@@ -131,8 +136,16 @@ def worker_read_paths() -> list[str]:
     for name, module in list(sys.modules.items()):
         if name.startswith("__editable__"):
             paths.update(getattr(module, "MAPPING", {}).values())
+            for dirs in getattr(module, "NAMESPACES", {}).values():
+                paths.update(dirs)
+    # A package installed since startup may have added a .pth (issue #166).
+    for site_dir in site.getsitepackages():
+        paths.update(pth_paths(site_dir))
     if is_frozen():
         paths.add(str(Path(sys.executable).resolve().parents[1]))
+    else:
+        # The worker runs by path (frozen.worker_command), so its directory.
+        paths.add(str(Path(__file__).resolve().parents[1]))
     real = {os.path.realpath(p) for p in paths if p and os.path.exists(p)}
     real.discard(os.path.realpath(os.getcwd()))
     covered = [os.path.realpath(Path.home()), *SEATBELT_PRIVATE_ROOTS]
@@ -141,6 +154,52 @@ def worker_read_paths() -> list[str]:
         logger.warning("Sandbox profile will not re-allow reads under %r: it "
                        "covers the home directory or a user-data root", path)
     return sorted(real - broad)
+
+
+def pth_paths(site_dir: str) -> list[str]:
+    """Return the directories the ``.pth`` files in *site_dir* add.
+
+    Mirrors ``site.addsitedir`` and ``site.addpackage``: names starting with
+    ``.`` and files flagged hidden are skipped, content is decoded as
+    ``utf-8-sig`` with a locale fallback, and blank lines, ``#`` comments and
+    lines starting with ``import`` are skipped; other lines are paths
+    relative to *site_dir*. Existence is checked by the caller.
+
+    Args:
+        site_dir: A site-packages directory.
+
+    Returns:
+        The paths, unresolved; empty if *site_dir* cannot be listed.
+    """
+    try:
+        names = sorted(n for n in os.listdir(site_dir)
+                       if n.endswith(".pth") and not n.startswith("."))
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        logger.warning("Sandbox profile skips .pth files in %s: %s", site_dir, e)
+        return []
+    paths = []
+    for name in names:
+        full = os.path.join(site_dir, name)
+        try:
+            if getattr(os.lstat(full), "st_flags", 0) & stat.UF_HIDDEN:
+                continue
+            with open(full, "rb") as f:
+                raw = f.read()
+        except OSError as e:
+            logger.warning("Sandbox profile skips unreadable %s: %s; imports from "
+                           "the paths it adds will fail", full, e)
+            continue
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = raw.decode(locale.getencoding(), errors="replace")
+        for line in text.splitlines():
+            line = line.rstrip()
+            if line and not line.startswith(("#", "import ", "import\t")):
+                paths.append(os.path.join(site_dir, line))
+    return paths
 
 
 def _is_same_or_ancestor(path: str, other: str) -> bool:

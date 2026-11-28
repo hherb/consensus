@@ -1,9 +1,9 @@
 # HANDOVER
 
-_Last updated: 2026-11-26. `main` is at **v2.0.0** (released 2026-07-20)
+_Last updated: 2026-11-27. `main` is at **v2.0.0** (released 2026-07-20)
 plus everything merged since (git history; contracts below). This branch,
-`test/doc-add-budget-162`, adds real-pipeline regression tests for the
-`doc_add` budget (#162). The suite is at **4633 passing**._
+`fix/seatbelt-gaps-166`, closes the remaining Seatbelt read gaps (#166). The
+suite is at **4643 passing**._
 
 Briefs the next session on what is open and the conventions to keep;
 per-PR detail lives in git history and `docs/superpowers/`.
@@ -16,18 +16,8 @@ per-PR detail lives in git history and `docs/superpowers/`.
 | Structured outputs | Forced tool calls for every structured phase; humans get a schema-driven form (#57) |
 | Distribution | `consensus-app` on PyPI; notarized + stapled macOS DMG; v2.0.0 is the current stable |
 | Website | `website/` — static site on Cloudflare Pages at https://consensus-ai.org/, incl. a discussion-methods catalogue (`methods.html`, PRs #82/#83; `_headers` cache-busts CSS) |
-| Tests | 4633 passing (`uv run pytest`, ~90 s, offline; runs in `.venv` via the `dev` group) |
+| Tests | 4643 passing (`uv run pytest`, ~90 s, offline; runs in `.venv` via the `dev` group) |
 | Docs | README, QUICKSTART, user manual and `docs/devel/` aligned with the code (PR #62) |
-
-### Merged campaigns (detail in git history)
-
-Method review & repair (#12–#30, #42, #48, #56); NGT, MCDA, Double Crux, ToT
-(#24–#27); evidence-tracked phases (#28, soft by design —
-`memory/evidence-gating-philosophy.md`); structured human input (#57, #59,
-#60); method-flow E2E tests (`tests/test_method_flow_e2e.py`); provider
-resilience (PR #64, #65 — see ROADMAP); distribution
-(`memory/alpha-distribution-release-process.md`); failure visibility
-(#71–#74, #78); lint gate (#86) — contracts below.
 
 ## Flow error visibility (#71–#74, merged — keep these contracts)
 
@@ -209,10 +199,6 @@ Tests: `tests/test_error_text.py`, `tests/test_tools.py` (`SECRET`),
   `SELF_TIMED_TOOL_NAMES`): its summary call alone may take `LLM_TIMEOUT`.
   Storage never awaits, so a timed-out call stores nothing. `ingest_document`
   parses in `asyncio.to_thread`, so a large PDF no longer stalls the loop.
-- **`ConsensusApp._load_tool_package`** loads all four tool packages: only the
-  import and construction are caught (→ `tool_load_failures`, #96); the DB
-  record comes before registration and is not caught, so a DB fault cannot
-  leave live tools behind a "failed to load" flag.
 
 Tests: `tests/test_http_fetch.py`, `_pinning.py`, `_guard.py`,
 `tests/test_tools_document_doc_add_budget.py` (the real fetch and
@@ -221,24 +207,34 @@ once stored, a document is not cancelled, #162),
 `tests/test_app_characterization.py` (`failed_provider_record`); each new
 branch was mutation-checked.
 
-## Sandbox worker files (#97, #163 — keep this contract)
+## Sandbox worker files (#97, #163, #166 — keep this contract)
 
 The handler's per-run dir is the worker's `TMPDIR`, `MPLCONFIGDIR` and `cwd`
 (its `os.getcwd()` fails in an unreadable dir). The Seatbelt profile names
 paths by `realpath` (it matches `/private/var/...`, never `/var/...`):
 writes only to the run dir; `(deny file-read-data …)` over
 `SEATBELT_PRIVATE_ROOTS`, then `(allow file-read-data …)` for
-`worker_read_paths()` (prefixes, `sys.path[1:]`, editable `MAPPING`s, a frozen
-bundle's `Contents`) and the run dir. The re-allow **must name
+`worker_read_paths()` (prefixes, `sys.path[1:]`, editable `MAPPING`s and
+`NAMESPACES`, the path lines of every `.pth` in `site.getsitepackages()`,
+parsed as `site` does (dot-named and `UF_HIDDEN` files skipped, `utf-8-sig`)
+— so a package `install_python_package` added since startup imports —, a
+frozen bundle's `Contents`, else the worker script's own dir) and the run dir.
+`SEATBELT_PRIVATE_ROOTS` includes Homebrew's `/opt/homebrew/var` and
+`/usr/local/var` (repo owner's call, #166); `/Library` and `/Applications`
+stay readable. The unfrozen worker runs as `python -P <path>/sandbox_worker.py`
+(`frozen.worker_command`): it imports nothing from `consensus`, so it starts
+from an uninstalled checkout too, and `-P` keeps the package dir off its
+`sys.path`. Keep the worker stdlib-only. The re-allow **must name
 `file-read-data`**; a later `file-read*` does not override it. The parent's
 `sys.path[0]` and cwd stay out (either may be `$HOME` or the repo with its
 `.env`), and so does any entry that is or contains `$HOME` or a root (logged).
 A run dir the profile cannot quote refuses the run; a worker the profile
 blocks returns a worded error and logs the traceback (it holds host paths).
+A blocked import inside user code still reads as `ModuleNotFoundError` (#169).
 Checked on macOS 27 with the scientific stack, torch and a locally built
 frozen worker; joblib still runs serially (no POSIX semaphores). Tests:
 `tests/test_tools_python_seatbelt.py` (real `sandbox-exec`, skipped off
-macOS; each wiring mutation-checked).
+macOS; each wiring mutation-checked, the #166 ones too).
 
 ## Speaking rotation after start (#104 — keep this contract)
 
@@ -309,8 +305,9 @@ but the retry's blocked re-pause, whose record is JSON-safe).
 profile tool list (their tools are otherwise just absent). A new tool
 package adds its flag to that tuple. All four `_init_*_tools` go through
 `_load_tool_package`, which catches `Exception` from import and construction
-only, so a faulty package is listed rather than crashing startup (a DB fault
-recording it still propagates, #102).
+only, so a faulty package is listed rather than crashing startup. The DB
+record comes before registration and is not caught (#102), so a DB fault
+propagates rather than leaving live tools behind a "failed to load" flag.
 Document tools import `tools_memory`, so a broken memory package lists both.
 Tests: `tests/test_app_characterization.py` (`tool_package` / `tool_load` /
 `tool_provider`).
@@ -417,11 +414,7 @@ update every doc naming the old file *and* the content beside the name.
   and #128 an unverified OAuth sign-up can pre-hijack an address (both want
   an email-verification design); #160 (follow-up to #157) how MCP HTTP
   connection errors and bare class-name notices should read.
-- #166 Seatbelt read gaps after #163: editable namespace packages, runtime
-  `.pth` paths, the uninstalled-checkout `cwd` (fixable); whether to add the
-  Homebrew data dirs (`/opt/homebrew/var`, `/usr/local/var`) to
-  `SEATBELT_PRIVATE_ROOTS` or document them as a known limit (owner's call).
-  Suggested next: the fixable parts of #166, or ask the repo owner about #160.
+  Suggested next: ask the repo owner about #160 or #146, or a ⬜ roadmap item.
 
 ### Roadmap
 

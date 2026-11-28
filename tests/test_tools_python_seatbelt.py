@@ -9,8 +9,10 @@ skipped.
 """
 
 import asyncio
+import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -18,9 +20,10 @@ from pathlib import Path
 
 import pytest
 
+from consensus.frozen import worker_command
 from consensus.tools_python import create_python_provider
 from consensus.tools_python.constants import SEATBELT_PRIVATE_ROOTS
-from consensus.tools_python.execution import _build_macos_sandbox_cmd
+from consensus.tools_python.execution import _build_macos_sandbox_cmd, pth_paths
 
 from .test_tools_python_failures import CTX, FakeProc, FakeSpawner
 
@@ -126,7 +129,7 @@ def test_read_paths_cover_the_interpreter_and_package_not_the_launch_dir(tmp_pat
     paths = worker_read_paths()
     assert os.path.realpath(sys.base_prefix) in paths
     assert os.path.realpath(sys.prefix) in paths
-    assert readable(consensus.__file__), "the worker must import consensus.sandbox_worker"
+    assert readable(consensus.__file__), "the worker must read consensus/sandbox_worker.py"
     assert os.path.realpath(launch_dir) not in paths, "sys.path[0] is the parent's own"
     assert os.path.realpath(tmp_path / "gone") not in paths, "missing entries are dropped"
 
@@ -176,7 +179,7 @@ def test_profile_denies_private_roots_and_re_allows_with_file_read_data(monkeypa
 
 
 async def test_worker_starts_in_its_run_directory(monkeypatch):
-    """The worker's sys.path[0] is its cwd, which must be readable under the profile."""
+    """The worker's cwd is its run directory, which is readable under the profile."""
     spawner = FakeSpawner(FakeProc(stdout=b'{"stdout": "x"}'))
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawner)
     await create_python_provider().execute("execute_python", {"code": "1"}, CTX)
@@ -280,3 +283,136 @@ async def test_real_worker_imports_a_compiled_package_under_seatbelt():
     result = await create_python_provider().execute("execute_python", {"code": code}, CTX)
     assert not result.is_error, result.content
     assert "3" in result.content
+
+
+# --- remaining gaps (#166) ---
+
+
+def test_read_paths_include_editable_namespace_roots(tmp_path, monkeypatch):
+    """An editable finder's NAMESPACES maps a package to a list of dirs."""
+    import types
+
+    from consensus.tools_python.execution import worker_read_paths
+
+    first, second = tmp_path / "ns_a", tmp_path / "ns_b"
+    first.mkdir()
+    second.mkdir()
+    finder = types.ModuleType("__editable___nspkg_1_0_finder")
+    finder.MAPPING = {}
+    finder.NAMESPACES = {"nspkg": [str(first), str(second)]}
+    monkeypatch.setitem(sys.modules, finder.__name__, finder)
+    paths = worker_read_paths()
+    assert os.path.realpath(first) in paths
+    assert os.path.realpath(second) in paths
+
+
+def test_pth_paths_mirror_site(tmp_path):
+    """Path lines count, relative to the site dir; comments and import lines do not."""
+    from consensus.tools_python.execution import pth_paths
+
+    absolute = tmp_path / "elsewhere"
+    absolute.mkdir()
+    (tmp_path / "rel").mkdir()
+    (tmp_path / "a.pth").write_text(
+        f"# comment\n\n{absolute}\nrel\nimport sys; sys.path.append('/x')\n"
+        "import\tthis\n")
+    (tmp_path / "not-a-pth.txt").write_text(str(tmp_path / "nope"))
+    assert sorted(pth_paths(str(tmp_path))) == sorted(
+        [str(absolute), str(tmp_path / "rel")])
+    assert pth_paths(str(tmp_path / "missing")) == []
+
+
+def test_read_paths_include_pth_added_after_startup(tmp_path, monkeypatch):
+    """A package installed at runtime may add a .pth the parent never processed."""
+    import site
+
+    from consensus.tools_python.execution import worker_read_paths
+
+    site_dir, source = tmp_path / "site-packages", tmp_path / "src"
+    site_dir.mkdir()
+    source.mkdir()
+    (site_dir / "late.pth").write_text(f"{source}\n")
+    monkeypatch.setattr(site, "getsitepackages", lambda: [str(site_dir)])
+    assert os.path.realpath(source) in worker_read_paths()
+
+
+def test_worker_is_launched_by_path_without_a_path_zero():
+    """The worker needs no installed consensus, and -P keeps its own dir off sys.path."""
+    from consensus import frozen
+
+    exe, args = frozen.worker_command()
+    assert args[0] == "-P"
+    assert Path(args[1]).name == "sandbox_worker.py" and Path(args[1]).is_file()
+
+
+def test_read_paths_include_the_worker_script_dir(monkeypatch):
+    """Uninstalled: no editable finder and no sys.path entry covers consensus/."""
+    from consensus import sandbox_worker
+    from consensus.tools_python.execution import worker_read_paths
+
+    worker_dir = os.path.realpath(Path(sandbox_worker.__file__).parent)
+    for name in [n for n in sys.modules if n.startswith("__editable__")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(sys, "path", [p for p in sys.path if not p or not (
+        worker_dir + os.sep).startswith(os.path.realpath(p).rstrip(os.sep) + os.sep)])
+    monkeypatch.setattr("site.getsitepackages", lambda: [])
+    assert worker_dir in worker_read_paths()
+
+
+def test_worker_runs_without_consensus_importable(tmp_path):
+    """-S drops site-packages (and the editable finder): an uninstalled checkout."""
+    exe, args = worker_command()
+    result = subprocess.run([exe, "-S", *args], input="print(6 * 7)", cwd=tmp_path,
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert "42" in json.loads(result.stdout)["stdout"]
+
+
+def test_homebrew_data_dirs_are_private():
+    assert {"/opt/homebrew/var", "/usr/local/var"} <= set(SEATBELT_PRIVATE_ROOTS)
+
+
+@needs_seatbelt
+@pytest.mark.parametrize("root", ["/opt/homebrew/var", "/usr/local/var"])
+def test_seatbelt_denies_reads_in_homebrew_var(sandbox_dir, root):
+    if not os.access(root, os.W_OK):
+        pytest.skip(f"no writable {root}")
+    target = tempfile.mkdtemp(prefix="consensus-sb166-", dir=root)
+    try:
+        secret = os.path.join(target, "secret.txt")
+        with open(secret, "w") as f:
+            f.write("s3cret")
+        result = _run_in_profile(sandbox_dir, READ_PROBE.format(path=secret))
+        assert result.stdout.strip() == "DENIED", result.stderr
+    finally:
+        shutil.rmtree(target, ignore_errors=True)
+
+
+def test_pth_paths_skip_hidden_files_and_decode_like_site(tmp_path):
+    """site skips dot-names and UF_HIDDEN files, and strips a UTF-8 BOM."""
+    for name in ("shown", "dot", "flagged", "latin"):
+        (tmp_path / name).mkdir()
+    (tmp_path / "bom.pth").write_bytes(b"\xef\xbb\xbfshown\n")
+    (tmp_path / ".dot.pth").write_text("dot\n")
+    flagged = tmp_path / "flagged.pth"
+    flagged.write_text("flagged\n")
+    os.chflags(flagged, stat.UF_HIDDEN)
+    (tmp_path / "latin.pth").write_bytes("latin\n# caf\xe9\n".encode("latin-1"))
+    assert sorted(pth_paths(str(tmp_path))) == sorted(
+        [str(tmp_path / "shown"), str(tmp_path / "latin")])
+
+
+@needs_seatbelt
+def test_seatbelt_worker_imports_from_a_pth_added_dir(sandbox_dir, tmp_path, monkeypatch):
+    """The profile, not just the path list, lets the worker read a .pth dir."""
+    import site
+
+    site_dir, source = tmp_path / "site-packages", tmp_path / "src"
+    site_dir.mkdir()
+    source.mkdir()
+    (source / "latemod.py").write_text("X = 42\n")
+    (site_dir / "late.pth").write_text(f"{source}\n")
+    monkeypatch.setattr(site, "getsitepackages", lambda: [str(site_dir)])
+    result = _run_in_profile(
+        sandbox_dir, f"import sys; sys.path.append({str(source)!r}); import latemod; print(latemod.X)")
+    assert result.stdout.strip() == "42", result.stderr

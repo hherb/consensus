@@ -13,7 +13,7 @@ def test_is_frozen_false_by_default():
 def test_worker_command_unfrozen():
     exe, args = frozen.worker_command()
     assert exe == sys.executable
-    assert args == ["-m", "consensus.sandbox_worker"]
+    assert args == ["-P", str(Path(frozen.__file__).with_name("sandbox_worker.py"))]
 
 
 def test_is_frozen_true_when_sys_frozen(monkeypatch):
